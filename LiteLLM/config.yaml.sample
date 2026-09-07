@@ -141,16 +141,18 @@ model_list:
         chat_template_kwargs: {"enable_thinking": false}
 
   # Qwen3.8-27B NVFP4 + DFlash2 via llama-swap/SGLang.
-  - model_name: qwen38-27b
+  - model_name: Qwen3.8-27B-NVFP4-DFlash2
     litellm_params:
-      model: openai/qwen38-27b
+      model: openai/Qwen3.8-27B-NVFP4-DFlash2
       api_base: "http://llama-swap:8080/v1"
       api_key: "sk-your-litellm-master-key"
       max_tokens: 32768
       drop_params: true
-      model_info:
-        max_input_tokens: 262144
-        max_output_tokens: 32768
+    model_info:
+      # SGLang KV pool is 131072 tokens (--max-total-tokens); input + output
+      # must fit inside it, so these two values sum to exactly that.
+      max_input_tokens: 98304
+      max_output_tokens: 32768
 
 #  - model_name: Nemotron-3-Nano-4B-Q4_K_M-GGUF
 #    litellm_params:
@@ -376,9 +378,9 @@ model_list:
 #      api_key: "sk-your-litellm-master-key"
 
   # Qwen3.8-Flash-Next 180B NVFP4 + HashK PLE + NEXTN.
-  - model_name: flash-next
+  - model_name: Qwen3.8-Flash-Next-NVFP4
     litellm_params:
-      model: openai/flash-next
+      model: openai/Qwen3.8-Flash-Next-NVFP4
       api_base: "http://llama-swap:8080/v1"
       api_key: "sk-your-litellm-master-key"
       max_tokens: 32768
