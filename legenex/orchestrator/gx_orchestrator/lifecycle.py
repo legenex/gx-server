@@ -262,10 +262,54 @@ class GxMaxLifecycle:
         except Exception as exc:  # noqa: BLE001 - surfaced to the caller verbatim
             err = f"gx-max-start.sh failed: {exc!r}"
 
+        # gx-max-start.sh can fail AFTER it already started one or both ranks
+        # (rank0/rank1 are `docker run -d`, detached from the script's own
+        # process -- killing or exiting the script does not stop them). Left
+        # alone that is an ~80-90GiB leak per rank with no lease and nothing
+        # watching it: exactly the unmanaged-residency shape that caused
+        # B-012, just triggered by a hung/failed acquire instead of a second
+        # manual launch. Unwind unconditionally on every failure path,
+        # best-effort, before reporting the ORIGINAL error to the caller.
+        err = self._cleanup_after_failed_acquire(err)
+
         log.error("gx-max acquisition failed: %s", err)
         with self._cv:
             self._last_error = err
         self._set_state(State.DOWN, "acquisition failed")
+
+    def _cleanup_after_failed_acquire(self, original_err: str) -> str:
+        """Best-effort unwind of any rank a failed acquire left running.
+
+        Never raises and never masks `original_err` with a cleanup exception
+        -- it only appends a note when the cleanup itself could not be
+        confirmed, so the operator knows a rank may still be resident.
+        """
+        stop_script = self._dir / "gx-max-stop.sh"
+        try:
+            proc = subprocess.run(
+                ["bash", str(stop_script), "--force"],
+                capture_output=True,
+                text=True,
+                timeout=180,
+            )
+            if proc.returncode != 0:
+                tail = (proc.stderr or proc.stdout or "").strip().splitlines()[-10:]
+                log.error(
+                    "gx-max post-failure cleanup exited %s: %s", proc.returncode, " | ".join(tail)
+                )
+                return (
+                    original_err + " [cleanup after failure also failed, exit "
+                    f"{proc.returncode} -- a rank may still be running, check "
+                    "`docker ps` on both nodes]"
+                )
+            log.info("gx-max post-failure cleanup: both ranks stopped, ledger released")
+        except Exception as exc:  # noqa: BLE001
+            log.error("gx-max post-failure cleanup raised: %r", exc)
+            return (
+                original_err + f" [cleanup after failure raised {exc!r} -- a rank "
+                "may still be running, check `docker ps` on both nodes]"
+            )
+        return original_err
 
     # ---------------------------------------------------------------- release
     def release(self, *, force: bool = False, restore: bool = True) -> None:

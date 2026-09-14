@@ -102,6 +102,49 @@ class TestAcquire(LifecycleTestBase):
         self.assertIs(lc.status().state, State.DOWN)
         lc.shutdown()
 
+    def test_failed_acquisition_after_partial_start_unwinds_via_stop_script(self):
+        # Simulates the real B-012-adjacent gap: gx-max-start.sh manages to
+        # start a rank (here: touch a marker, standing in for `docker run -d`)
+        # before later failing for an unrelated reason. The lifecycle must
+        # invoke gx-max-stop.sh to unwind that partial start, not just flip
+        # to DOWN and leave it resident.
+        marker = self.dir / "rank0-started"
+        self.write_start(
+            "#!/usr/bin/env bash\n"
+            f"touch {marker}\n"
+            "echo 'boom: health probe never answered' >&2\n"
+            "exit 1\n"
+        )
+        cleanup_ran = self.dir / "cleanup-ran"
+        self.write_stop(
+            "#!/usr/bin/env bash\n"
+            f"rm -f {marker}\n"
+            f"touch {cleanup_ran}\n"
+            "exit 0\n"
+        )
+        lc = GxMaxLifecycle(self.dir, self.health_url, idle_ttl=0, acquire_timeout=15)
+        with self.assertRaises(AcquisitionError) as ctx:
+            lc.acquire(timeout=12)
+        self.assertIn("boom", str(ctx.exception))
+        self.assertIs(lc.status().state, State.DOWN)
+        self.assertTrue(cleanup_ran.exists(), "gx-max-stop.sh was not invoked after a failed acquire")
+        self.assertFalse(marker.exists(), "the partially-started rank was not unwound")
+        lc.shutdown()
+
+    def test_cleanup_failure_is_appended_not_swallowed(self):
+        # If the unwind itself cannot be confirmed, the caller must still see
+        # the ORIGINAL failure reason, plus a clear note that a rank may still
+        # be resident -- never silently swallowed.
+        self.write_start("#!/usr/bin/env bash\necho 'boom: original failure' >&2\nexit 1\n")
+        self.write_stop("#!/usr/bin/env bash\necho 'stop script itself is broken' >&2\nexit 9\n")
+        lc = GxMaxLifecycle(self.dir, self.health_url, idle_ttl=0, acquire_timeout=15)
+        with self.assertRaises(AcquisitionError) as ctx:
+            lc.acquire(timeout=12)
+        msg = str(ctx.exception)
+        self.assertIn("boom: original failure", msg)
+        self.assertIn("cleanup after failure also failed", msg)
+        lc.shutdown()
+
     def test_concurrent_acquire_starts_script_once(self):
         marker = self.dir / "invocations"
         self.write_start(
