@@ -1,0 +1,295 @@
+# ==============================================================================
+# LiteLLM — the single OpenAI-compatible gateway for the gx cluster
+# ==============================================================================
+# Runs on NODE 1 (gx10-01), container port 4000.
+# This file is the ONLY user-facing surface. It exposes EXACTLY seven aliases:
+#
+#   gx-mini    gx-fast    gx-reason    gx-max    gx-auto    gx-image    gx-video
+#
+# There is deliberately NO gx-vision alias: vision is a capability of the
+# underlying model (gx-mini is multimodal), not a separate product.
+#
+# ------------------------------------------------------------------------------
+# SECRETS
+# ------------------------------------------------------------------------------
+# Every credential is read from the environment via LiteLLM's `os.environ/` form.
+# NO secret, and no credential-bearing URL, may ever appear in this file.
+# See legenex/gateway/.env.sample for the variables and how to generate them.
+#
+# ------------------------------------------------------------------------------
+# WHERE EACH ALIAS ACTUALLY GOES
+# ------------------------------------------------------------------------------
+#   gx-mini   -> node 1 llama-swap  http://gx-llama-swap-node01:8080/v1   (compose DNS)
+#   gx-fast   -> node 1 llama-swap  http://gx-llama-swap-node01:8080/v1   (compose DNS)
+#   gx-reason -> node 2 llama-swap  http://192.168.100.11:28080/v1        (RoCE fabric A)
+#   gx-max    -> lead's orchestrator http://host.docker.internal:18900/v1 (host loopback)
+#   gx-auto   -> lead's orchestrator http://host.docker.internal:18900/v1 (host loopback)
+#   gx-image  -> node 2 media router http://192.168.100.11:18800/v1       (PENDING)
+#   gx-video  -> node 2 media router http://192.168.100.11:18800/v1       (PENDING)
+#
+# host.docker.internal resolves to the host gateway (docker-compose.gateway.yml
+# sets extra_hosts: host-gateway). From the HOST's point of view the orchestrator
+# is 127.0.0.1:18900; from inside this container 127.0.0.1 would be the container
+# itself, which is why the alias is required. Same endpoint, correct addressing.
+#
+# Model traffic to node 2 goes over the ConnectX/RoCE fabric (192.168.100.x)
+# ONLY. Tailscale carries management/SSH and must never appear in this file.
+#
+# ------------------------------------------------------------------------------
+# gx-max SAFETY
+# ------------------------------------------------------------------------------
+# gx-max is DeepSeek V4 Flash on SGLang TP=2 across BOTH nodes. It is served by
+# the lead's orchestrator, NOT directly at :30000, so acquisition/drain is
+# enforced before any token is generated. Pointing gx-max at :30000 would bypass
+# that and is forbidden.
+# gx-max has NO fallbacks. If the cluster cannot serve it, the request must FAIL
+# — silently answering from a different model would be worse than an error.
+# Enforced globally below: num_retries 0, fallbacks [], context_window_fallbacks
+# [], content_policy_fallbacks [].
+# ==============================================================================
+
+general_settings:
+  # --- authentication -------------------------------------------------------
+  # Required. Every API call needs Authorization: Bearer <this key> (or a
+  # virtual key minted from it). Sourced from the environment only.
+  master_key: os.environ/LITELLM_MASTER_KEY
+
+  # Admin UI credentials are supplied to the container as UI_USERNAME /
+  # UI_PASSWORD environment variables and are intentionally NOT referenced here,
+  # so this file can never leak them.
+  ui_access_mode: admin_only
+
+  # Do not echo the master key back in API responses.
+  disable_master_key_return: true
+
+  # --- least privilege ------------------------------------------------------
+  # No runtime model creation: the alias set is fixed by this file and reviewed
+  # in git. Anything else would let a UI session add an unaudited upstream.
+  allow_model_creation: false
+  store_model_in_db: false
+
+  # --- health ---------------------------------------------------------------
+  # Background health checks are OFF. LiteLLM probing every model would make
+  # llama-swap cold-start every model at once and exhaust unified memory.
+  # /health/liveliness and /health/readiness still work (they do not touch
+  # upstreams); /health is authenticated.
+  background_health_checks: false
+  health_check_interval: 0
+  health_check_details: false
+
+  # --- rate limiting / back-pressure ----------------------------------------
+  # Single shared semaphore across the whole proxy. Excess requests are rejected
+  # with 429 rather than queued into a cold-start stampede.
+  global_max_parallel_requests: 32
+  max_request_size_mb: 64
+  max_response_size_mb: 64
+
+model_list:
+
+  # ===========================================================================
+  # gx-mini — small, fast, multimodal. Node 1, llama.cpp, resident/always-hot.
+  # ===========================================================================
+  # PROVEN WORKING. Qwen3.5-4B-Q4_K_M + BF16 mmproj, vision verified, ~48 tok/s.
+  # llama-swap keeps it loaded (ttl 0); it survives heavy-model swaps.
+  - model_name: gx-mini
+    litellm_params:
+      model: openai/gx-mini
+      api_base: "http://gx-llama-swap-node01:8080/v1"
+      api_key: os.environ/GX_SWAP_API_KEY
+      drop_params: true
+      # llama.cpp's STREAMING tool-call parser intermittently fails on complex
+      # tool calls; its non-streaming parser is reliable. fake_stream makes
+      # LiteLLM call llama.cpp non-streaming and fake-stream the buffered result.
+      # (Carried forward from the single-Spark base stack — same engine, same bug.)
+      fake_stream: true
+      extra_body:
+        chat_template_kwargs: {"enable_thinking": false}
+    model_info:
+      # llama.cpp is started with --ctx-size 65536 (total across 2 slots).
+      # input + output must fit inside that.
+      max_input_tokens: 61440
+      max_output_tokens: 4096
+      supports_vision: true
+      supports_function_calling: true
+
+  # ===========================================================================
+  # gx-fast — agentic / tool-using workhorse. Node 1, heavy tier.
+  # ===========================================================================
+  # *** CHECKPOINT PENDING VERIFICATION ***
+  # Another agent is confirming the exact ~30-40B class MoE checkpoint. The
+  # upstream model ID is NOT invented here: llama-swap exposes it under the
+  # stable ID "gx-fast" and the real checkpoint is bound inside
+  # legenex/gateway/llama-swap/node01.yaml (macros gx_fast_model_dir /
+  # vllm_image). So this block does not change when the checkpoint lands —
+  # only node01.yaml does.
+  # The token limits below are PROVISIONAL and must be re-checked against the
+  # verified checkpoint's real context window and the vLLM --max-model-len.
+  - model_name: gx-fast
+    litellm_params:
+      model: openai/gx-fast
+      api_base: "http://gx-llama-swap-node01:8080/v1"
+      api_key: os.environ/GX_SWAP_API_KEY
+      drop_params: true
+    model_info:
+      # PROVISIONAL — matches node01.yaml --max-model-len 65536.
+      max_input_tokens: 57344
+      max_output_tokens: 8192
+      supports_function_calling: true
+
+  # ===========================================================================
+  # gx-reason — deep reasoning. Node 2, heavy tier, over the RoCE fabric.
+  # ===========================================================================
+  # *** CHECKPOINT PENDING VERIFICATION ***
+  # Same pattern as gx-fast: the stable upstream ID is "gx-reason"; the real
+  # ~100-125B sparse MoE checkpoint is bound in
+  # legenex/gateway/llama-swap/node02.yaml.
+  #
+  # api_base uses the fabric IP on purpose. Node 2's Tailscale address
+  # (100.73.238.4) must NEVER be used here — management plane only.
+  - model_name: gx-reason
+    litellm_params:
+      model: openai/gx-reason
+      api_base: "http://192.168.100.11:28080/v1"
+      api_key: os.environ/GX_SWAP_API_KEY
+      drop_params: true
+      include_reasoning: true
+      supports_reasoning: true
+      merge_reasoning_content_in_choices: true
+      # Cold start of a 100B+ model on unified memory is minutes, not seconds.
+      timeout: 2400
+    model_info:
+      # PROVISIONAL — matches node02.yaml --max-model-len 32768.
+      max_input_tokens: 24576
+      max_output_tokens: 8192
+      supports_function_calling: true
+
+  # ===========================================================================
+  # gx-max — DeepSeek V4 Flash, SGLang TP=2 across BOTH nodes.
+  # ===========================================================================
+  # MUST go through the lead's orchestrator on :18900, NEVER directly to the
+  # SGLang server on :30000. The orchestrator enforces cluster acquisition and
+  # drain; bypassing it can collide with a live distributed job.
+  #
+  # NO FALLBACKS. Ever. A failed gx-max request returns an error.
+  #
+  # PENDING: the model ID the orchestrator expects. The SGLang server itself
+  # reports its model literally as "/model". If the orchestrator passes the
+  # model field straight through, change `model:` below to `openai//model`.
+  # If it maps aliases itself, "openai/gx-max" is correct. Lead to confirm.
+  - model_name: gx-max
+    litellm_params:
+      model: openai/gx-max
+      api_base: "http://host.docker.internal:18900/v1"
+      api_key: os.environ/GX_ORCHESTRATOR_API_KEY
+      drop_params: true
+      include_reasoning: true
+      supports_reasoning: true
+      merge_reasoning_content_in_choices: true
+      # The orchestrator may have to acquire both nodes and cold-start SGLang.
+      timeout: 3600
+      num_retries: 0
+    model_info:
+      # PENDING: must be <= the orchestrator's SGLang --max-total-tokens.
+      # Conservative until the lead confirms the KV pool size; input + output
+      # must both fit inside that pool or long prompts abort on first decode.
+      max_input_tokens: 65536
+      max_output_tokens: 16384
+      supports_function_calling: true
+
+  # ===========================================================================
+  # gx-auto — tier routing. Node 1.
+  # ===========================================================================
+  # The routing LOGIC is the lead's, inside the orchestrator on :18900. This
+  # gateway deliberately implements none of it — no complexity hook, no
+  # auto_router, no semantic router. gx-auto is a plain pass-through so there is
+  # exactly one place where tier selection happens.
+  - model_name: gx-auto
+    litellm_params:
+      model: openai/gx-auto
+      api_base: "http://host.docker.internal:18900/v1"
+      api_key: os.environ/GX_ORCHESTRATOR_API_KEY
+      drop_params: true
+      timeout: 3600
+    model_info:
+      # Smallest common denominator across the tiers gx-auto may pick, so a
+      # client that sizes its prompt to gx-auto cannot overflow whichever tier
+      # the orchestrator chooses.
+      max_input_tokens: 24576
+      max_output_tokens: 8192
+      supports_function_calling: true
+
+  # ===========================================================================
+  # gx-image — ComfyUI-backed image generation. Node 2.
+  # ===========================================================================
+  # *** UPSTREAM PENDING *** — the media router on node 2 is being specified by
+  # another agent. The address below is a placeholder on the RoCE fabric and is
+  # expected to change. Requests will fail until that router exists; that is
+  # intentional and preferable to routing them somewhere wrong.
+  - model_name: gx-image
+    litellm_params:
+      model: openai/gx-image
+      api_base: "http://192.168.100.11:18800/v1"
+      api_key: os.environ/GX_MEDIA_API_KEY
+      drop_params: true
+      timeout: 1800
+    model_info:
+      mode: image_generation
+      # Token limits are not meaningful for image generation; values kept small
+      # and present only so clients that read model_info get a sane answer.
+      max_input_tokens: 4096
+      max_output_tokens: 4096
+
+  # ===========================================================================
+  # gx-video — ComfyUI-backed video generation. Node 2.
+  # ===========================================================================
+  # *** UPSTREAM PENDING *** — same router as gx-image.
+  # There is no OpenAI-standard video endpoint; how this is surfaced depends on
+  # the router's contract. Treated as a pass-through until that is specified.
+  - model_name: gx-video
+    litellm_params:
+      model: openai/gx-video
+      api_base: "http://192.168.100.11:18800/v1"
+      api_key: os.environ/GX_MEDIA_API_KEY
+      drop_params: true
+      timeout: 3600
+    model_info:
+      max_input_tokens: 4096
+      max_output_tokens: 4096
+
+litellm_settings:
+  drop_params: true
+  set_verbose: false
+
+  # Long enough for a cold start of a large model behind llama-swap.
+  request_timeout: 1800
+
+  # --- NEVER silently substitute a model ------------------------------------
+  # This is the rule that protects gx-max, and it is applied to every alias:
+  # a failure surfaces as an error to the caller instead of being answered by a
+  # different model. Do not add entries to any of these lists.
+  num_retries: 0
+  fallbacks: []
+  context_window_fallbacks: []
+  content_policy_fallbacks: []
+
+  merge_reasoning_content_in_choices: true
+
+  # --- privacy-safe logging -------------------------------------------------
+  # Prompts and completions are never written to logs or the spend database.
+  # Only metadata (model, token counts, latency, status) is retained.
+  turn_off_message_logging: true
+  redact_user_api_key_info: true
+
+  # Guard against runaway repetition on long code/numeric generation.
+  # (Carried forward from the single-Spark base stack; DGX Spark community
+  # recommendation, forums.developer.nvidia.com/t/374423.)
+  repetition_penalty: 1.02
+
+router_settings:
+  routing_strategy: simple-shuffle
+  # Reinforces the no-silent-substitution rule at the router layer.
+  num_retries: 0
+  # Do not park a model in cooldown after a transient failure — each alias is a
+  # single distinct upstream, so a cooldown would just mean a hard outage.
+  allowed_fails: 0
+  cooldown_time: 0

@@ -1,0 +1,241 @@
+# ==============================================================================
+# llama-swap — NODE 2 (gx10-02, compute node, user legenex-02)
+# ==============================================================================
+# Role: MODEL PROCESS LIFECYCLE ONLY, same contract as node01.yaml.
+#
+# Managed here: gx-reason (heavy tier).
+# Reserved here: the ComfyUI / media tier that backs gx-image and gx-video.
+#                That router is being specified by ANOTHER AGENT; this file only
+#                reserves its memory budget and leaves a commented scaffold.
+#
+# NOT managed here: gx-max rank1. The SGLang distributed job is owned by the
+# lead's orchestrator. llama-swap must never start, stop or health-check it.
+#
+# ------------------------------------------------------------------------------
+# MEMORY BUDGET — NODE 2 (hard rule)
+# ------------------------------------------------------------------------------
+# Node 2 is a SEPARATE 128 GB (~121 GiB) unified-memory system. It is NOT part of
+# a coherent 256 GB pool with node 1. CPU and GPU allocations compete for the
+# same bytes.
+#
+#   heavy tier (group "heavy")   <= 78 GB   (exactly ONE member at a time)
+#   media tier (group "media")   <= 22 GB   (ComfyUI / gx-image / gx-video)
+#   --------------------------------------------
+#   ceiling                      ~100 GB    -> >= 28 GB headroom
+#
+# Structural enforcement:
+#   * "heavy" has swap: true  -> at most one heavy model is ever loaded.
+#   * gx-reason pins --gpu-memory-utilization (${gx_reason_gpu_fraction}); it is
+#     not adaptive, so its footprint cannot drift upward.
+#   * "media" is persistent + non-exclusive so image/video work is not evicted by
+#     a text request and does not evict gx-reason.
+#
+# WHILE gx-max IS RUNNING: rank1 holds ~93 GiB on this node. NOTHING in this file
+# may be loaded during a gx-max job. llama-swap is on-demand only and has no
+# preload, so simply not sending requests is sufficient; the lead's orchestrator
+# is the component that enforces acquisition/drain.
+#
+# ------------------------------------------------------------------------------
+# GPU ACCESS
+# ------------------------------------------------------------------------------
+# Use CDI (--device nvidia.com/gpu=all), matching node 1 and the live
+# gx-max-rank1 container. VERIFY on node 2 before first start:
+#     docker info --format '{{json .Runtimes}}'    # expect runc only
+#     ls /var/run/cdi                              # expect nvidia.yaml
+# If node 2 does have an `nvidia` runtime registered, CDI still works; do not
+# switch to --runtime nvidia without checking.
+#
+# ------------------------------------------------------------------------------
+# REACHABILITY FROM NODE 1  (required for gx-reason to work)
+# ------------------------------------------------------------------------------
+# LiteLLM on node 1 calls this instance at:
+#     http://192.168.100.11:28080/v1        (ConnectX/RoCE fabric A)
+# So node 2's llama-swap service MUST publish 8080 on the FABRIC address:
+#     ports: ["192.168.100.11:28080:8080"]
+# NEVER publish it on the Tailscale interface: management traffic only there,
+# model traffic only on the fabric.
+#
+# ------------------------------------------------------------------------------
+# SCHEMA NOTE
+# ------------------------------------------------------------------------------
+# Targets the current llama-swap schema (`routing.router.settings.groups`).
+# If the deployed binary rejects `routing:`, delete that whole section — the
+# default one-model-at-a-time behaviour is strictly more conservative.
+# Validate without starting anything:  llama-swap -config node02.yaml -dry-run
+# ==============================================================================
+
+# A ~100-125B sparse MoE cold start on unified memory is slow (weight load,
+# FlashInfer autotune, CUDA graph capture).
+healthCheckTimeout: 2400
+
+logLevel: info
+logTimeFormat: rfc3339
+logToStdout: proxy
+metricsMaxInMemory: 1000
+captureBuffer: 0
+
+startPort: 25800
+globalTTL: 0
+unloadTimeout: 240
+globalConcurrencyLimit: 8
+
+sendLoadingState: false
+includeAliasesInList: false
+
+# ------------------------------------------------------------------------------
+# AUTHENTICATION
+# ------------------------------------------------------------------------------
+# This instance IS network-exposed (on the fabric), so the bearer token is not
+# optional. Value comes from the environment ONLY. Unset -> llama-swap refuses to
+# start. Use the SAME value as node 1 so LiteLLM needs one credential.
+apiKeys:
+  - "${env.GX_SWAP_API_KEY}"
+
+# ------------------------------------------------------------------------------
+# MACROS
+# ------------------------------------------------------------------------------
+macros:
+  host: "0.0.0.0"
+
+  # Host-side model root on node 2 (see coordination/node2/NODE2_STATE.md).
+  models_root: "/srv/models"
+
+  # Must match container_name of node 2's llama-swap service.
+  swap_netns: "container:gx-llama-swap-node02"
+
+  # ---- gx-reason: PENDING VERIFICATION ---------------------------------------
+  # Another agent is verifying the exact ~100-125B sparse MoE checkpoint.
+  # DO NOT guess a model ID. Placeholders fail fast on start.
+  vllm_image: "PENDING-VERIFY-gx-reason-vllm-image"
+  gx_reason_model_dir: "/models/vllm/PENDING-VERIFY-gx-reason"
+
+  # 0.61 x ~128 GB ~= 78 GB. Raising this above 0.61 eats the ComfyUI reservation.
+  gx_reason_gpu_fraction: "0.61"
+
+models:
+
+  # ============================================================================
+  # gx-reason — heavy tier                    *** CHECKPOINT PENDING ***
+  # ============================================================================
+  # Intent: ~100-125B class sparse MoE, deep reasoning, node 2, vLLM.
+  #
+  # PENDING (lead to supply, see README "Pending" list):
+  #   1. exact checkpoint ID + on-disk path -> macro gx_reason_model_dir
+  #   2. serving engine image               -> macro vllm_image
+  #   3. quantisation-specific flags (NVFP4 / int4 / FP8 all need different args)
+  #   4. correct --reasoning-parser / --tool-call-parser for that checkpoint
+  #   5. whether the image ENTRYPOINT is `vllm serve` (then drop `serve` below)
+  #
+  # --max-model-len 32768 is deliberately conservative: KV for a 100B+ model at
+  # long context is what actually blows the budget, not the weights. Raise it
+  # only together with a measured KV figure.
+  #
+  # ttl: 900 -> 15 min idle then unload. Node 2 must be able to hand its memory
+  # back to gx-max / ComfyUI quickly.
+  gx-reason:
+    name: "gx-reason (pending checkpoint)"
+    description: "100-125B class sparse MoE reasoning model, node 2. CHECKPOINT PENDING VERIFICATION."
+    checkEndpoint: "/health"
+    ttl: 900
+    unloadTimeout: 240
+    cmd: |
+      docker run --rm --name ${MODEL_ID}
+      --network ${swap_netns}
+      --device nvidia.com/gpu=all
+      --ipc host --shm-size 32g
+      --ulimit memlock=-1 --ulimit stack=67108864
+      --security-opt seccomp=unconfined
+      -e NVIDIA_DISABLE_FORWARD_COMPATIBILITY=1
+      -e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+      -e VLLM_USE_DEEP_GEMM=0
+      -v ${models_root}/vllm:/models/vllm:ro
+      ${vllm_image}
+      serve ${gx_reason_model_dir}
+      --served-model-name gx-reason
+      --host ${host} --port ${PORT}
+      --gpu-memory-utilization ${gx_reason_gpu_fraction}
+      --max-model-len 32768
+      --max-num-seqs 4
+      --max-num-batched-tokens 8192
+      --kv-cache-dtype fp8
+      --enable-prefix-caching
+      --enable-auto-tool-choice
+      --trust-remote-code
+    cmdStop: "docker stop -t 200 ${MODEL_ID}"
+
+  # ============================================================================
+  # RESERVED: ComfyUI / media tier  (gx-image, gx-video)
+  # ============================================================================
+  # Owned by another agent. Left commented so this file does not conflict with
+  # their design; the 22 GB reservation above is what matters here.
+  #
+  # When that agent delivers the router, un-comment, fix the image/args, AND add
+  # the model ID to the "media" group at the bottom of this file — otherwise it
+  # lands in the implicit default group and can be evicted by (or evict)
+  # gx-reason.
+  #
+  # Note llama-swap's `upstream.ignorePaths` already special-cases ComfyUI's
+  # /ws and /api/jobs so an open UI does not trigger model swaps.
+  #
+  # gx-media:
+  #   name: "ComfyUI media backend"
+  #   description: "Backs gx-image and gx-video. PENDING another agent's router spec."
+  #   proxy: "http://127.0.0.1:18800"
+  #   checkEndpoint: "/system_stats"
+  #   ttl: 1800
+  #   unloadTimeout: 60
+  #   cmd: |
+  #     docker run --rm --name ${MODEL_ID}
+  #     --network ${swap_netns}
+  #     --device nvidia.com/gpu=all
+  #     --ipc host
+  #     -v ${models_root}/image:/comfy/models/image
+  #     -v ${models_root}/video:/comfy/models/video
+  #     PENDING-VERIFY-comfyui-image
+  #     --listen ${host} --port 18800
+  #   cmdStop: "docker stop -t 30 ${MODEL_ID}"
+
+# ------------------------------------------------------------------------------
+# Keep an open ComfyUI web UI from triggering model swaps.
+# ------------------------------------------------------------------------------
+upstream:
+  ignorePaths:
+    - '.*\.(js|json|css|png|gif|jpg|jpeg|ico|txt|woff2)$'
+    - '^\/ws$|^\/api\/jobs$'
+
+# ==============================================================================
+# ROUTING / CONCURRENCY CONTROL
+# ==============================================================================
+#   heavy : swap true       -> only ONE heavy model loaded at a time
+#           exclusive false -> does not evict the media tier
+#   media : persistent true -> a text request can never evict in-flight image or
+#                              video work
+#
+# Worst case simultaneously loaded = one heavy (<=78 GB) + media (<=22 GB).
+#
+# The "media" group is commented out together with gx-media above: llama-swap
+# rejects a group whose members do not exist. Re-enable both at the same time.
+routing:
+  router:
+    use: group
+    settings:
+      groups:
+        heavy:
+          persistent: false
+          swap: true
+          exclusive: false
+          members:
+            - gx-reason
+        # media:
+        #   persistent: true
+        #   swap: false
+        #   exclusive: false
+        #   members:
+        #     - gx-media
+
+# ==============================================================================
+# NO STARTUP PRELOAD — DELIBERATE
+# ==============================================================================
+# `hooks.on_startup.preload` is intentionally absent. Node 2 must never allocate
+# GPU memory just because llama-swap restarted — gx-max rank1 may own the node.
+# ==============================================================================

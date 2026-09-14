@@ -1,3 +1,57 @@
+# READ THIS FIRST — two-node GX10 cluster deployment (`legenex-dual-gx10`)
+
+> This branch deploys the stack on a **two-node NVIDIA DGX Spark / ASUS GX10
+> cluster** (gx10-01 + gx10-02). The sections below the divider are the original
+> single-Spark community instructions and still apply, but **this block wins
+> wherever they conflict.**
+
+## Start here
+
+1. `CURRENT_STATE.md` — what is actually running right now.
+2. `ARCHITECTURE.md` — the locked decisions and why.
+3. `coordination/BLOCKERS.md` — what needs a human.
+4. `coordination/DECISIONS.md` — the decision log.
+
+## LOCKED — do not change without asking the human first
+
+| # | Constraint |
+|---|---|
+| L-1 | Two **separate** 128 GB nodes. They are NOT a coherent 256 GB pool. Budget memory per node. |
+| L-2 | Node roles fixed: gx10-01 = control/gateway/lifecycle/gx-mini/gx-fast. gx10-02 = gx-reason/media/rank 1. |
+| L-3 | **Tailscale is management only.** Model and NCCL traffic run ONLY on the ConnectX/RoCE fabric (192.168.100.x / 192.168.101.x). |
+| L-4 | **Kernel pinned to `6.17.0-1032-nvidia` on both nodes. NEVER upgrade to 7.0** — it breaks RDMA memory registration and kills gx-max. |
+| L-5 | Do **not** attempt GPUDirect RDMA, `nvidia-peermem`, GDRCopy, or `NCCL_NET_GDR_LEVEL` hacks. DGX Spark does not support it in this topology. |
+| L-6 | **gx-max = SGLang, TP=2, 2 nodes, `nvidia/DeepSeek-V4-Flash-0731-NVFP4`.** Never vLLM, never another model, never a silent downgrade. |
+| L-7 | Do **not** modify MTU, Netplan, RDMA setup, ConnectX firmware, or routing without concrete evidence of a fault. |
+| L-8 | Keep `/swapfile-sglang` (48 G) on both nodes. |
+| L-9 | Stack is LiteLLM + llama-swap + llama.cpp + vLLM + SGLang + ComfyUI. **Do not replace it with Ollama.** |
+| L-10 | The gateway exposes exactly: `gx-mini`, `gx-fast`, `gx-reason`, `gx-max`, `gx-auto`, `gx-image`, `gx-video`. No `gx-vision` — vision is a model capability. |
+
+## Environment facts that break naive assumptions
+
+* **No sudo** on either node (password required). Everything runs via Docker and
+  `systemctl --user`. Do not write anything that needs root.
+* **GPU passthrough is CDI**: `--device nvidia.com/gpu=all`. There is **no**
+  `nvidia` docker runtime. `--gpus all`, `--runtime nvidia`, and compose
+  `deploy.resources.reservations.devices` all fail here.
+* `/srv/models` is a plain directory on each node. **There is no shared
+  filesystem** — large checkpoints are duplicated per node.
+* SSH to node 2 is `ssh legenex-02@gx10-02` (over Tailscale). SSH to
+  `192.168.100.11` is refused; the fabric addresses are not SSH endpoints.
+* **Never invent a model ID.** Verify against the live HuggingFace API before
+  using one. Note `Alibaba/Qwen3.5-35B-A3B-Uncensored-HauhauCS-*` in the older
+  recipes is a *local folder path*, not an upstream repo — it returns HTTP 401.
+
+## Forbidden operations
+
+Do not run, on either node, without a specific proven reason and human sign-off:
+`apt upgrade`, `apt autoremove`, any kernel or firmware update, `docker system
+prune -a`, `rm -rf` on `/srv`, netplan/MTU/RDMA changes, or `git push --force`.
+
+Do **not** auto-start gx-max at boot. It takes over both nodes.
+
+---
+
 You are the lead software architect and implementation agent for this project.
 
 Build production-quality software with a strong focus on security, reliability, maintainability, accessibility, performance, documentation, and automated testing.

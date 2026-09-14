@@ -1,0 +1,226 @@
+# ==============================================================================
+# gx cluster — GATEWAY STACK (NODE 1 / gx10-01 only)
+# ==============================================================================
+# Brings up, and only up:
+#   1. litellm            the single OpenAI-compatible gateway   (host :4000)
+#   2. litellm-db         Postgres for LiteLLM keys/usage/UI     (host :15432)
+#   3. llama-swap-node01  model process lifecycle manager        (host :28080)
+#                         + publishes gx-mini's proven :19001
+#
+# WHAT THIS FILE DELIBERATELY DOES NOT DO
+# ---------------------------------------
+#   * It does NOT start any model. llama-swap has no `preload`; models are
+#     cold-started on the first request that needs them.
+#   * It does NOT start, stop or touch gx-max. The SGLang TP=2 job across both
+#     nodes (containers gx-max-rank0 / gx-max-rank1) belongs to the lead's
+#     orchestrator on :18900. Nothing here references :30000.
+#   * It does NOT run node 2's llama-swap. That is a separate compose file on
+#     gx10-02 using legenex/gateway/llama-swap/node02.yaml.
+#
+# NO ROOT REQUIRED
+# ----------------
+#   Everything runs through the docker daemon as a member of the `docker` group
+#   plus `systemctl --user` for autostart. There is no sudo, no host package
+#   install, no privileged container, no host network mode, no kernel or netplan
+#   change. `docker compose up -d` from an unprivileged shell is sufficient.
+#
+# GPU
+# ---
+#   None of these three services needs a GPU. llama-swap only spawns containers.
+#   That matters here: gx10-01 has NO `nvidia` docker runtime (docker info lists
+#   runc only), so a `deploy.resources.reservations.devices: [{driver: nvidia}]`
+#   block would fail outright. Spawned model containers get GPUs via CDI
+#   (--device nvidia.com/gpu=all) from inside the llama-swap configs.
+#
+# SECURITY BOUNDARY — READ THIS
+# -----------------------------
+#   llama-swap mounts /var/run/docker.sock. That is root-equivalent on this host.
+#   It is unavoidable for a container that spawns model containers, and it is
+#   exactly why llama-swap's published port is bound to 127.0.0.1 by default and
+#   why its inference API requires GX_SWAP_API_KEY. Do not expose :28080 to the
+#   LAN. If it must be reachable off-box, bind it to the Tailscale address.
+#
+# USAGE
+#   cp .env.sample .env && $EDITOR .env      # fill in every REQUIRED value
+#   docker compose -f docker-compose.gateway.yml config      # validate only
+#   docker compose -f docker-compose.gateway.yml up -d
+#   docker compose -f docker-compose.gateway.yml down        # stops nothing else
+# ==============================================================================
+
+# Stable compose project name, so `docker compose ls/ps` is unambiguous on a host
+# that also runs other stacks.
+name: gx-gateway
+
+x-logging: &default-logging
+  # Docker's json-file driver never rotates by default. One oversized logged
+  # response can corrupt the file for `docker logs`' full-history reader while
+  # `docker logs -f` keeps working, making the log look frozen with no error.
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+
+services:
+
+  # ==========================================================================
+  # 1. LITELLM — the one gateway
+  # ==========================================================================
+  litellm:
+    image: ${GX_LITELLM_IMAGE:-ghcr.io/berriai/litellm:main-stable}
+    container_name: gx-litellm
+    restart: unless-stopped
+    depends_on:
+      litellm-db:
+        condition: service_healthy
+    ports:
+      # Default bind is LOOPBACK ONLY. The admin UI shares this port with the
+      # API, so exposing it widely exposes the UI too. To reach the gateway from
+      # other machines set GX_LITELLM_BIND to this host's TAILSCALE address
+      # (management plane) — never to 0.0.0.0 unless you mean it.
+      - "${GX_LITELLM_BIND:-127.0.0.1}:${GX_LITELLM_PORT:-4000}:4000"
+    extra_hosts:
+      # Lets the container reach the lead's orchestrator, which listens on the
+      # HOST's 127.0.0.1:18900. Inside a container 127.0.0.1 is the container,
+      # hence the gateway alias. gx-max and gx-auto use it.
+      - "host.docker.internal:host-gateway"
+    environment:
+      # --- secrets: environment only, never in config.yaml, never in a URL ---
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:?LITELLM_MASTER_KEY is required}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-litellm}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@litellm-db:5432/${POSTGRES_DB:-litellm}
+      # Admin UI credentials. Read straight from the environment by LiteLLM and
+      # intentionally NOT referenced from config.yaml.
+      UI_USERNAME: ${LITELLM_UI_USERNAME:?LITELLM_UI_USERNAME is required}
+      UI_PASSWORD: ${LITELLM_UI_PASSWORD:?LITELLM_UI_PASSWORD is required}
+      # --- upstream credentials ---
+      GX_SWAP_API_KEY: ${GX_SWAP_API_KEY:?GX_SWAP_API_KEY is required}
+      GX_ORCHESTRATOR_API_KEY: ${GX_ORCHESTRATOR_API_KEY:-not-required}
+      GX_MEDIA_API_KEY: ${GX_MEDIA_API_KEY:-not-required}
+      LITELLM_LOG: ${LITELLM_LOG_LEVEL:-INFO}
+    volumes:
+      - ./litellm/config.yaml:/app/config.yaml:ro
+    command:
+      - "--config"
+      - "/app/config.yaml"
+      - "--port"
+      - "4000"
+      - "--num_workers"
+      - "1"
+    healthcheck:
+      # /health/liveliness does not touch upstreams, so it cannot trigger a
+      # model cold start. The official image is Python-based; urllib avoids
+      # depending on curl being present.
+      test:
+        - "CMD"
+        - "python"
+        - "-c"
+        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:4000/health/liveliness', timeout=5).status==200 else 1)"
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 90s
+    security_opt:
+      - no-new-privileges:true
+    # Hard cap so the gateway can never contend with model memory.
+    mem_limit: ${GX_LITELLM_MEM_LIMIT:-2g}
+    logging: *default-logging
+    networks: [gx_gateway]
+
+  # ==========================================================================
+  # 2. LITELLM DATABASE
+  # ==========================================================================
+  # Backs virtual keys, budgets, usage records and the admin UI session store.
+  # Prompt/completion bodies are NOT stored (turn_off_message_logging in
+  # litellm/config.yaml), so this database holds metadata only.
+  litellm-db:
+    image: ${GX_POSTGRES_IMAGE:-postgres:16-alpine}
+    container_name: gx-litellm-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-litellm}
+      POSTGRES_USER: ${POSTGRES_USER:-litellm}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      # Deterministic initdb; avoids locale surprises across rebuilds.
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --lc-collate=C --lc-ctype=C"
+    ports:
+      # Loopback only, always. There is no reason for this to leave the host.
+      - "127.0.0.1:${GX_PG_PORT:-15432}:5432"
+    volumes:
+      - gx_litellm_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB} || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: ${GX_PG_MEM_LIMIT:-1g}
+    logging: *default-logging
+    networks: [gx_gateway]
+
+  # ==========================================================================
+  # 3. LLAMA-SWAP (node 1) — model process lifecycle
+  # ==========================================================================
+  # container_name is load-bearing: legenex/gateway/llama-swap/node01.yaml spawns
+  # model containers with `--network container:gx-llama-swap-node01`. Rename one
+  # and you must rename the other (macro `swap_netns`).
+  llama-swap-node01:
+    # The upstream llama-swap image has no docker CLI, so it cannot spawn model
+    # containers. The repo's Dockerfile adds it; build it once with:
+    #   docker compose -f docker-compose.gateway.yml build llama-swap-node01
+    image: ${GX_LLAMA_SWAP_IMAGE:-gx-llama-swap:latest}
+    build:
+      context: ../../llama-swap
+      dockerfile: llama-swap.Dockerfile
+    container_name: gx-llama-swap-node01
+    restart: unless-stopped
+    ports:
+      # Control API + admin UI. Loopback only — see the SECURITY BOUNDARY note.
+      - "${GX_SWAP_BIND:-127.0.0.1}:${GX_SWAP_PORT:-28080}:8080"
+      # gx-mini's proven direct endpoint. Spawned model containers share this
+      # container's network namespace, so publishing 19001 here is what makes
+      # http://127.0.0.1:19001/v1 work on the host exactly as it did before.
+      - "${GX_MINI_BIND:-127.0.0.1}:${GX_MINI_PORT:-19001}:19001"
+    entrypoint:
+      - /usr/bin/llama-swap
+      - -config
+      - /app/config.yaml
+      - -listen
+      - 0.0.0.0:8080
+    environment:
+      # Consumed by node01.yaml as ${env.GX_SWAP_API_KEY}. If unset, llama-swap
+      # refuses to start — fail closed.
+      GX_SWAP_API_KEY: ${GX_SWAP_API_KEY:?GX_SWAP_API_KEY is required}
+    volumes:
+      - ./llama-swap/node01.yaml:/app/config.yaml:ro
+      # Required to spawn/stop model containers. Root-equivalent — see the
+      # SECURITY BOUNDARY note at the top of this file.
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Read-only view of the model tree, so llama-swap (and any launcher
+      # script) can inspect weights and configs without being able to alter them.
+      - ${GX_MODELS_ROOT:-/srv/models}:/models:ro
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    # llama-swap itself is a small Go proxy. The memory the MODELS use is not
+    # accounted here — spawned containers are siblings, not children — which is
+    # exactly why the budget is enforced inside node01.yaml's routing groups.
+    mem_limit: ${GX_SWAP_MEM_LIMIT:-512m}
+    logging: *default-logging
+    networks: [gx_gateway]
+
+networks:
+  gx_gateway:
+    name: ${GX_NET_NAME:-gx_gateway}
+    driver: bridge
+    # Compose-managed on purpose: no pre-created external network, so `up`
+    # works from a clean checkout without any privileged setup step.
+
+volumes:
+  gx_litellm_db_data:
+    name: ${GX_NET_NAME:-gx_gateway}_litellm_db_data

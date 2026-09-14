@@ -1,0 +1,276 @@
+# ==============================================================================
+# llama-swap — NODE 1 (gx10-01, control node)
+# ==============================================================================
+# Role: MODEL PROCESS LIFECYCLE ONLY.
+#   - starts a model container on the first request that needs it
+#   - health-checks it, proxies to it, unloads it when idle (ttl)
+#   - enforces which models may be resident at the same time (routing.groups)
+#
+# NOT its job:
+#   - user-facing routing / aliasing      -> LiteLLM (legenex/gateway/litellm/config.yaml)
+#   - tier selection for gx-auto          -> lead's orchestrator on :18900
+#   - gx-max (SGLang TP=2 across nodes)   -> lead's orchestrator, NEVER this file
+#
+# Managed here: gx-mini (resident tier), gx-fast (heavy tier).
+#
+# ------------------------------------------------------------------------------
+# MEMORY BUDGET — NODE 1 (hard rule)
+# ------------------------------------------------------------------------------
+# The node has 128 GB (~121 GiB) of UNIFIED memory shared by CPU and GPU.
+# Budget, never to be exceeded:
+#
+#   resident tier (group "resident")   <= 14 GB   (gx-mini only)
+#   heavy tier    (group "heavy")      <= 86 GB   (exactly ONE member at a time)
+#   ------------------------------------------------
+#   ceiling                            ~100 GB     -> >= 28 GB headroom
+#
+# Structural enforcement:
+#   * "heavy"   has swap: true  -> at most one heavy model is ever loaded.
+#   * "resident" has swap: false but is capped by design to gx-mini only.
+#   * gx-fast pins --gpu-memory-utilization (see ${gx_fast_gpu_fraction});
+#     it is NOT adaptive, so its footprint cannot drift upward under load.
+#
+# RULE FOR FUTURE MODELS ON NODE 1:
+#   Every new model MUST be added to exactly one of these two groups.
+#   - resident: only if its full footprint fits inside the remaining part of 14 GB
+#   - heavy:    anything larger; the group's swap:true keeps it exclusive
+#   A model left out of both groups lands in llama-swap's implicit default group
+#   and may then coexist with the heavy tier -> budget blown. Do not do that.
+#
+# ------------------------------------------------------------------------------
+# GPU ACCESS ON THIS NODE
+# ------------------------------------------------------------------------------
+# gx10-01 has NO `nvidia` docker runtime. `docker info` lists only runc.
+# GPUs are exposed through CDI (spec: /var/run/cdi/nvidia.yaml), exactly as the
+# live gx-max-rank0 container does it. Therefore every spawned container below
+# uses:   --device nvidia.com/gpu=all
+# Do NOT change these to `--runtime nvidia --gpus all` — that fails on this node.
+#
+# ------------------------------------------------------------------------------
+# NETWORKING
+# ------------------------------------------------------------------------------
+# Spawned model containers join the llama-swap container's network namespace
+# (--network container:gx-llama-swap-node01), so inside llama-swap every model
+# is reachable on 127.0.0.1:<port>. Ports that must be visible on the host
+# (gx-mini on 19001) are published by the llama-swap service in
+# docker-compose.gateway.yml, because they share the same namespace.
+#
+# Model traffic never leaves this node except over the ConnectX/RoCE fabric.
+# Tailscale is management/SSH only.
+#
+# ------------------------------------------------------------------------------
+# SCHEMA NOTE (read before editing)
+# ------------------------------------------------------------------------------
+# This file targets the CURRENT llama-swap schema, where group routing lives under
+# `routing.router.settings.groups`. Older releases used a TOP-LEVEL `groups:` key.
+# If the deployed binary rejects the `routing:` block, the safe fallback is to
+# DELETE the whole `routing:` section: llama-swap then falls back to its default
+# of one model at a time, which is strictly more conservative than this budget
+# (gx-mini simply stops being resident while gx-fast runs). Never "fix" it by
+# loosening the groups.
+# Validate without starting anything:  llama-swap -config node01.yaml -dry-run
+# ==============================================================================
+
+# Seconds to wait for a freshly started model to answer its checkEndpoint.
+# vLLM cold start on unified memory (weight load + CUDA graph capture) is slow.
+healthCheckTimeout: 1800
+
+logLevel: info
+logTimeFormat: rfc3339
+logToStdout: proxy
+metricsMaxInMemory: 1000
+captureBuffer: 0            # do not buffer request/response bodies (privacy)
+
+# ${PORT} allocation base. Kept clear of: 4000 (LiteLLM), 18900 (orchestrator),
+# 19001 (gx-mini, pinned), 28080 (this service), 30000 (SGLang / gx-max).
+startPort: 15800
+
+# Never auto-unload unless a model sets its own ttl.
+globalTTL: 0
+
+# `docker stop` on a large vLLM process is not instant. Give it room to drain
+# in-flight requests before llama-swap force-kills it.
+unloadTimeout: 180
+
+# Cluster-wide back-pressure: reject rather than queue unbounded work.
+globalConcurrencyLimit: 16
+
+sendLoadingState: false
+includeAliasesInList: false
+
+# ------------------------------------------------------------------------------
+# AUTHENTICATION
+# ------------------------------------------------------------------------------
+# Inference endpoints require a bearer token. The value comes from the
+# environment ONLY (${env.*}); nothing secret is ever written into this file.
+# If GX_SWAP_API_KEY is unset, llama-swap REFUSES to start — fail closed, by design.
+# NOTE: this protects the inference API. The admin UI / /api surface is protected
+# by binding the published port to 127.0.0.1 (see docker-compose.gateway.yml).
+apiKeys:
+  - "${env.GX_SWAP_API_KEY}"
+
+# ------------------------------------------------------------------------------
+# MACROS
+# ------------------------------------------------------------------------------
+macros:
+  host: "0.0.0.0"
+
+  # Host-side model root. Mounted read-only into every spawned container.
+  models_root: "/srv/models"
+
+  # Network namespace shared by all spawned model containers. MUST match
+  # container_name of the llama-swap service in docker-compose.gateway.yml.
+  swap_netns: "container:gx-llama-swap-node01"
+
+  # llama.cpp image — already present locally on gx10-01 (verified: docker images).
+  llamacpp_image: "legenex/llama-cpp-spark:latest"
+
+  # ---- gx-fast: PENDING VERIFICATION -----------------------------------------
+  # Another agent is verifying the exact ~30-40B MoE checkpoint. Until the lead
+  # supplies it, these three macros stay as PENDING-VERIFY placeholders.
+  # A start attempt fails fast (image/path do not exist) instead of silently
+  # serving the wrong model. DO NOT guess a model ID here.
+  vllm_image: "PENDING-VERIFY-gx-fast-vllm-image"
+  gx_fast_model_dir: "/models/vllm/PENDING-VERIFY-gx-fast"
+  gx_fast_host_dir: "PENDING-VERIFY-gx-fast"
+
+  # 0.66 x ~128 GB ~= 85 GB. This is the heavy-tier ceiling. Raising it above
+  # 0.66 breaks the node-1 memory budget documented at the top of this file.
+  gx_fast_gpu_fraction: "0.66"
+
+models:
+
+  # ============================================================================
+  # gx-mini — resident tier
+  # ============================================================================
+  # PROVEN WORKING — do not redesign. llama.cpp + Qwen3.5-4B-Q4_K_M with the
+  # BF16 mmproj for vision. ~48 tok/s, vision verified, previously served on
+  # 127.0.0.1:19001/v1. That port is preserved here so existing clients and
+  # test scripts keep working.
+  #
+  # Footprint: 2.6 GB weights + 0.65 GB mmproj + ~4.8 GB KV (65536 total tokens,
+  # f16) + runtime ~= 9-10 GB. Inside the 14 GB resident budget.
+  #
+  # ttl: 0 -> never auto-unloaded. It is the always-hot low-latency path and the
+  # only model that stays up while a heavy model runs.
+  gx-mini:
+    name: "gx-mini"
+    description: "Qwen3.5-4B Q4_K_M (llama.cpp, multimodal/vision). Node 1 resident tier, always hot."
+    # Fixed port, not ${PORT}: 19001 is published on the host by the llama-swap
+    # service, so the proven direct endpoint http://127.0.0.1:19001/v1 survives.
+    proxy: "http://127.0.0.1:19001"
+    checkEndpoint: "/health"
+    ttl: 0
+    unloadTimeout: 30
+    cmd: |
+      docker run --rm --name ${MODEL_ID}
+      --network ${swap_netns}
+      --device nvidia.com/gpu=all
+      --ipc host
+      --ulimit memlock=-1 --ulimit stack=67108864
+      --security-opt seccomp=unconfined
+      -e GGML_CUDA_ENABLE_UNIFIED_MEMORY=1
+      -v ${models_root}/gguf:/models/gguf:ro
+      ${llamacpp_image}
+      -m /models/gguf/Qwen3.5-4B/Qwen3.5-4B-Q4_K_M.gguf
+      --mmproj /models/gguf/Qwen3.5-4B/mmproj-BF16.gguf
+      --alias gx-mini
+      --host ${host} --port 19001
+      --ctx-size 65536
+      --n-gpu-layers 99
+      --parallel 2
+      --no-mmap
+      --jinja
+      --chat-template-kwargs '{"enable_thinking":false}'
+      --timeout 600
+    cmdStop: "docker stop -t 25 ${MODEL_ID}"
+
+  # ============================================================================
+  # gx-fast — heavy tier                      *** CHECKPOINT PENDING ***
+  # ============================================================================
+  # Intent: ~30-40B class MoE, agentic / tool-using, node 1.
+  #
+  # PENDING (lead to supply, see README "Pending" list):
+  #   1. exact checkpoint ID              -> macro gx_fast_model_dir / gx_fast_host_dir
+  #   2. serving engine image             -> macro vllm_image
+  #   3. correct --tool-call-parser and --reasoning-parser for that checkpoint
+  #   4. whether the image's ENTRYPOINT is `vllm serve` (then drop the leading
+  #      `serve` token below) or the raw api_server module
+  #   5. if the checkpoint turns out to need llama.cpp instead of vLLM, replace
+  #      this whole block with a copy of gx-mini's shape and keep it in "heavy"
+  #
+  # Until then this block is INTENTIONALLY non-functional: every start attempt
+  # fails because the image and path do not exist. That is the desired behaviour
+  # — better a hard error than quietly serving an unverified model.
+  #
+  # ttl: 1800 -> unloads after 30 min idle, returning ~85 GB to the node. The
+  # heavy tier must not squat on memory the cluster may need for gx-max.
+  gx-fast:
+    name: "gx-fast (pending checkpoint)"
+    description: "30-40B class agentic MoE, node 1 heavy tier. CHECKPOINT PENDING VERIFICATION."
+    checkEndpoint: "/health"
+    ttl: 1800
+    unloadTimeout: 180
+    cmd: |
+      docker run --rm --name ${MODEL_ID}
+      --network ${swap_netns}
+      --device nvidia.com/gpu=all
+      --ipc host --shm-size 16g
+      --ulimit memlock=-1 --ulimit stack=67108864
+      --security-opt seccomp=unconfined
+      -e NVIDIA_DISABLE_FORWARD_COMPATIBILITY=1
+      -e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+      -e VLLM_USE_DEEP_GEMM=0
+      -v ${models_root}/vllm:/models/vllm:ro
+      ${vllm_image}
+      serve ${gx_fast_model_dir}
+      --served-model-name gx-fast
+      --host ${host} --port ${PORT}
+      --gpu-memory-utilization ${gx_fast_gpu_fraction}
+      --max-model-len 65536
+      --max-num-seqs 8
+      --max-num-batched-tokens 16384
+      --kv-cache-dtype fp8
+      --enable-prefix-caching
+      --enable-auto-tool-choice
+      --trust-remote-code
+    cmdStop: "docker stop -t 150 ${MODEL_ID}"
+
+# ==============================================================================
+# ROUTING / CONCURRENCY CONTROL
+# ==============================================================================
+# This is what makes the 100 GB ceiling structural rather than aspirational.
+#
+#   resident : swap false      -> members coexist
+#              exclusive false -> loading one does not evict other groups
+#              persistent true -> NO other group can ever evict gx-mini
+#   heavy    : swap true       -> only ONE member loaded at a time
+#              exclusive false -> loading it leaves gx-mini alone
+#
+# Worst case simultaneously loaded = gx-mini (<=14 GB) + one heavy (<=86 GB).
+routing:
+  router:
+    use: group
+    settings:
+      groups:
+        resident:
+          persistent: true
+          swap: false
+          exclusive: false
+          members:
+            - gx-mini
+        heavy:
+          persistent: false
+          swap: true
+          exclusive: false
+          members:
+            - gx-fast
+
+# ==============================================================================
+# NO STARTUP PRELOAD — DELIBERATE
+# ==============================================================================
+# `hooks.on_startup.preload` is intentionally absent. Starting llama-swap must
+# never allocate GPU memory. Models load on the first request that needs them.
+# Do not add a preload list without re-checking the memory budget above and
+# confirming no distributed job (gx-max) owns the node.
+# ==============================================================================
