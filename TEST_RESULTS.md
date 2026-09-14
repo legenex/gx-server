@@ -321,7 +321,57 @@ recovered on its own once the transient load working-set was freed, and the
 engine came up healthy — but node 1 is the tighter of the two nodes and a
 further increase in `mem-fraction-static` would not be safe.
 
-## 6. Remaining
+## 6. Acceptance suite run (node-1 tiers)
+
+```
+$ legenex/tests/acceptance.sh gateway mini fast
+[0] gateway and aliases
+  PASS  all 7 aliases exposed
+  PASS  orchestrator healthy
+[1] gx-mini
+  PASS  gx-mini text inference
+  PASS  gx-mini vision (identified red circle, blue square, digit 7)
+[2] gx-fast
+  PASS  gx-fast text inference (correct arithmetic)
+  PASS  gx-fast tool calling (parsed get_weather)
+
+ PASS=6  FAIL=0  SKIP=0
+```
+
+Run after a full gateway restart and after the gx-max lifecycle cycle, so it
+also demonstrates recovery.
+
+## 7. gx-reason — FAILING
+
+`unsloth/Qwen3.5-122B-A10B-GGUF` (UD-Q4_K_XL, 77 GB) on llama.cpp loads
+correctly and generates at ~13.6 tok/s, but **every token is garbage**:
+
+```
+$ curl .../completion -d '{"prompt":"The capital of France is","n_predict":20,"temperature":0}'
+{"content":"////////////////////","tokens_predicted":20,"tokens_evaluated":5}
+```
+
+Raw `/completion` fails identically to the chat endpoint, so it is not a
+template problem. Memory behaved exactly as intended for llama.cpp — the whole
+model was file-backed (`RssFile` 99.8 GB, `RssAnon` 2 MB) with 56 GiB still
+available — so the engine choice was right and the fault lies in the weights or
+the CUDA kernels for this hybrid architecture. Details and next steps in
+BLOCKERS.md B-011.
+
+## 8. Node-2 incident
+
+Attempting the `-ngl 0` comparison for B-011 started a second 77 GB model on a
+node that already had one resident. Node 2 went into sustained mmap thrashing
+and userspace stopped responding. Kernel liveness confirmed throughout (ICMP on
+both fabric rails, 0% loss, ~0.36 ms). TCP connects succeed on ports 22 and
+28080 but sshd cannot complete a banner exchange.
+
+Node 1 was entirely unaffected and kept serving; the acceptance suite above was
+run while node 2 was down.
+
+Recorded as BLOCKERS.md B-012 with the rule that prevents it recurring.
+
+## 9. Remaining
 
 | Acceptance test | Status |
 |---|---|
