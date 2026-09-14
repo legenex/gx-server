@@ -102,7 +102,14 @@ _TRIVIAL_PATTERNS: tuple[tuple[str, int], ...] = (
 _HARD_PATTERNS: tuple[tuple[str, int], ...] = (
     (r"\bresearch\b.*\b(paper|survey|literature)\b", 3),
     (r"\bwhole (codebase|repository|repo)\b|\bentire (codebase|repo)\b", 4),
-    (r"\bexhaustiv|\bcomprehensive\b.*\b(analysis|review|audit)\b", 3),
+    # Both "exhaustive" and "comprehensive" must be paired with a qualifying
+    # noun. Keep the qualifier grouped across BOTH alternatives (do not split
+    # this into `\bexhaustiv|\bcomprehensive\b.*\b(...)\b`) -- that used to let
+    # a bare "exhaustive" (e.g. "give me an exhaustive list of ...") reach
+    # HARD_SCORE_MAX on its own, which is exactly the single-keyword
+    # gx-max-by-accident that D-005 forbids. See tests/test_classifier.py
+    # TestHardCategoryFalsePositives.
+    (r"\b(exhaustiv\w*|comprehensive)\b.*\b(analysis|review|audit)\b", 3),
     (r"\bformal (verification|proof|spec)", 4),
     (r"\bnovel\b.*\b(algorithm|approach|method)\b", 3),
 )
@@ -353,15 +360,29 @@ def route(
     tier, reasons = _base_tier(f)
 
     # Vision is a capability, not a tier: if the request carries images we must
-    # land on a tier whose model actually accepts them.
+    # land on a tier whose model actually accepts them -- but NEVER at the cost
+    # of the context constraint above. A vision tier that would truncate the
+    # prompt is worse than a non-vision tier that holds all of it; context fit
+    # is the one invariant estimate_tokens() exists to protect (see the
+    # pessimistic-estimate comment at the top of this module), so it outranks
+    # the vision preference.
     if f.has_images and not TIERS[tier].vision:
-        vision_tiers = [t for t in ROUTABLE if TIERS[t].vision]
+        vision_tiers = [
+            t
+            for t in ROUTABLE
+            if TIERS[t].vision and TIERS[t].max_context >= f.total_context_needed
+        ]
         if vision_tiers:
             # Prefer the most capable vision tier at or below the chosen cost.
             at_or_below = [t for t in vision_tiers if TIERS[t].cost_rank <= TIERS[tier].cost_rank]
             chosen = max(at_or_below or vision_tiers, key=lambda t: TIERS[t].cost_rank)
             reasons.append(f"image input present and {tier.value} has no vision: -> {chosen.value}")
             tier = chosen
+        else:
+            reasons.append(
+                f"image input present but no vision-capable tier can hold context "
+                f"{f.total_context_needed}: staying on {tier.value} (context fit wins)"
+            )
 
     original = tier
 
