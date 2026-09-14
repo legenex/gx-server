@@ -1,0 +1,17 @@
+# ==============================================================================
+# gx-hostwatch.timer — run gx-hostwatch.service every 60s, starting 2 min after
+# boot/login-manager-start (gives sshd/tailscaled/docker time to come up so the
+# first cycle is not a false positive).
+# See gx-hostwatch.service for install/verify/uninstall instructions.
+# ==============================================================================
+[Unit]
+Description=Periodic gx-cluster host resilience check
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=60s
+AccuracySec=5s
+Unit=gx-hostwatch.service
+
+[Install]
+WantedBy=timers.target

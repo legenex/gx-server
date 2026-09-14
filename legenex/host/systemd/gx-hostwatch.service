@@ -1,0 +1,52 @@
+# ==============================================================================
+# gx-hostwatch.service — one check cycle of legenex/host/gx-hostwatch.sh
+# ==============================================================================
+# Triggered by gx-hostwatch.timer; not meant to be started directly (though
+# `systemctl --user start gx-hostwatch.service` for an on-demand check is
+# harmless - it is read-only).
+#
+# INSTALL (no root required; this account has lingering enabled so user units
+# survive logout/reboot on THIS node - see CURRENT_STATE.md):
+#   mkdir -p ~/.config/systemd/user
+#   cp legenex/host/systemd/gx-hostwatch.service ~/.config/systemd/user/
+#   cp legenex/host/systemd/gx-hostwatch.timer   ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now gx-hostwatch.timer
+#
+# VERIFY:
+#   systemctl --user status gx-hostwatch.timer
+#   systemctl --user list-timers gx-hostwatch.timer
+#   journalctl --user -u gx-hostwatch.service -n 50 --no-pager
+#   tail -f /srv/logs/gx-hostwatch.log
+#   grep '^ALERT' /srv/logs/gx-hostwatch.log      # non-empty means something tripped
+#
+# UNINSTALL:
+#   systemctl --user disable --now gx-hostwatch.timer
+#   rm ~/.config/systemd/user/gx-hostwatch.{service,timer}
+#   systemctl --user daemon-reload
+# ==============================================================================
+[Unit]
+Description=gx-cluster host resilience watchdog - one check cycle (read-only, no remediation)
+# Deliberately NOT ordered after/wanted-by anything model- or gateway-related:
+# this must be able to report even when every other part of the stack is down.
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/Documents/Projects/Server/gx-cluster
+ExecStart=%h/Documents/Projects/Server/gx-cluster/legenex/host/gx-hostwatch.sh
+# The script exits 1/2 on WARN/CRIT by design (so `systemctl --user is-failed`
+# reflects degraded state) - that must not count as a unit failure needing
+# systemd to restart or escalate anything. No Restart= is set: the timer is
+# the only thing that re-runs this, on its own schedule.
+SuccessExitStatus=0 1 2
+
+# Hardening. This unit only reads /proc, calls systemctl (read-only) and
+# `tailscale status`, opens a loopback TCP socket, and appends to one log
+# file. Same shape as gx-orchestrator.service's hardening block.
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/srv/logs
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target
