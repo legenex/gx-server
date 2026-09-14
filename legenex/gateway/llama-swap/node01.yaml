@@ -75,7 +75,7 @@
 # vLLM cold start on unified memory (weight load + CUDA graph capture) is slow.
 healthCheckTimeout: 1800
 
-logLevel: info
+logLevel: debug
 logTimeFormat: rfc3339
 logToStdout: proxy
 metricsMaxInMemory: 1000
@@ -130,9 +130,9 @@ macros:
   # supplies it, these three macros stay as PENDING-VERIFY placeholders.
   # A start attempt fails fast (image/path do not exist) instead of silently
   # serving the wrong model. DO NOT guess a model ID here.
-  vllm_image: "PENDING-VERIFY-gx-fast-vllm-image"
-  gx_fast_model_dir: "/models/vllm/PENDING-VERIFY-gx-fast"
-  gx_fast_host_dir: "PENDING-VERIFY-gx-fast"
+  vllm_image: "jstarkg/vllm-gb10-flashnext:0.28-sm121-r6"
+  gx_fast_model_dir: "/models/vllm/Qwen3.6-35B-A3B-NVFP4"
+  gx_fast_host_dir: "Qwen3.6-35B-A3B-NVFP4"
 
   # 0.66 x ~128 GB ~= 85 GB. This is the heavy-tier ceiling. Raising it above
   # 0.66 breaks the node-1 memory budget documented at the top of this file.
@@ -170,6 +170,7 @@ models:
       --ulimit memlock=-1 --ulimit stack=67108864
       --security-opt seccomp=unconfined
       -e GGML_CUDA_ENABLE_UNIFIED_MEMORY=1
+      -e 'LLAMA_ARG_CHAT_TEMPLATE_KWARGS={"enable_thinking":false}'
       -v ${models_root}/gguf:/models/gguf:ro
       ${llamacpp_image}
       -m /models/gguf/Qwen3.5-4B/Qwen3.5-4B-Q4_K_M.gguf
@@ -179,9 +180,8 @@ models:
       --ctx-size 65536
       --n-gpu-layers 99
       --parallel 2
-      --no-mmap
+      --load-mode mlock
       --jinja
-      --chat-template-kwargs '{"enable_thinking":false}'
       --timeout 600
     cmdStop: "docker stop -t 25 ${MODEL_ID}"
 
@@ -206,8 +206,8 @@ models:
   # ttl: 1800 -> unloads after 30 min idle, returning ~85 GB to the node. The
   # heavy tier must not squat on memory the cluster may need for gx-max.
   gx-fast:
-    name: "gx-fast (pending checkpoint)"
-    description: "30-40B class agentic MoE, node 1 heavy tier. CHECKPOINT PENDING VERIFICATION."
+    name: "gx-fast"
+    description: "nvidia/Qwen3.6-35B-A3B-NVFP4 on vLLM. Vision + Hermes tool calling. Node 1 heavy tier."
     checkEndpoint: "/health"
     ttl: 1800
     unloadTimeout: 180
@@ -223,7 +223,7 @@ models:
       -e VLLM_USE_DEEP_GEMM=0
       -v ${models_root}/vllm:/models/vllm:ro
       ${vllm_image}
-      serve ${gx_fast_model_dir}
+      ${gx_fast_model_dir}
       --served-model-name gx-fast
       --host ${host} --port ${PORT}
       --gpu-memory-utilization ${gx_fast_gpu_fraction}
@@ -233,6 +233,7 @@ models:
       --kv-cache-dtype fp8
       --enable-prefix-caching
       --enable-auto-tool-choice
+      --tool-call-parser qwen3_xml
       --trust-remote-code
     cmdStop: "docker stop -t 150 ${MODEL_ID}"
 

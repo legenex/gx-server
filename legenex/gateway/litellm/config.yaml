@@ -130,11 +130,17 @@ model_list:
       api_base: "http://gx-llama-swap-node01:8080/v1"
       api_key: os.environ/GX_SWAP_API_KEY
       drop_params: true
+      # Qwen3.6 emits chain-of-thought inline unless the chat template is told
+      # not to. Without this the model spends its output budget "thinking" and
+      # the caller gets prose instead of an answer. Verified 2026-09-14.
+      extra_body:
+        chat_template_kwargs: {"enable_thinking": false}
     model_info:
-      # PROVISIONAL — matches node01.yaml --max-model-len 65536.
+      # Matches node01.yaml --max-model-len 65536.
       max_input_tokens: 57344
       max_output_tokens: 8192
       supports_function_calling: true
+      supports_vision: true
 
   # ===========================================================================
   # gx-reason — deep reasoning. Node 2, heavy tier, over the RoCE fabric.

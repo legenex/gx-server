@@ -1,0 +1,41 @@
+# ==============================================================================
+# gx-cluster — node 2 (gx10-02) model lifecycle stack
+#
+# Runs llama-swap only. It spawns model containers (gx-reason) as SIBLINGS via
+# the host docker socket, so `docker compose down` here does NOT stop a loaded
+# model — unload it through llama-swap first.
+#
+# Bind note: this listens on the ConnectX fabric address (192.168.100.11) so the
+# LiteLLM gateway on node 1 reaches gx-reason over RoCE, never over Tailscale.
+#
+# No root required. GPU access for spawned containers is via CDI
+# (--device nvidia.com/gpu=all) inside llama-swap's model commands.
+# ==============================================================================
+
+services:
+  llama-swap-node02:
+    image: ${GX_LLAMA_SWAP_IMAGE:-gx-llama-swap:latest}
+    container_name: gx-llama-swap-node02
+    restart: unless-stopped
+    command: ["-config", "/app/config.yaml", "-listen", "0.0.0.0:8080"]
+    ports:
+      # Fabric bind for node-1 traffic, plus loopback for local diagnostics.
+      - "${GX_SWAP_BIND_N2:-192.168.100.11}:${GX_SWAP_PORT:-28080}:8080"
+      - "127.0.0.1:${GX_SWAP_PORT:-28080}:8080"
+    volumes:
+      - ./node02.yaml:/app/config.yaml:ro
+      # llama-swap launches sibling containers through the host daemon.
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${GX_MODELS_ROOT:-/srv/models}:/srv/models:ro
+    environment:
+      GX_SWAP_API_KEY: ${GX_SWAP_API_KEY:?GX_SWAP_API_KEY is required}
+    mem_limit: ${GX_SWAP_MEM_LIMIT:-512m}
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-m", "3", "http://127.0.0.1:8080/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    logging:
+      driver: json-file
+      options: { max-size: "20m", max-file: "5" }

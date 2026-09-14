@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Shared helpers for gx-max lifecycle scripts.
-set -euo pipefail
+#
+# NOTE: this library deliberately does NOT set -e. It is sourced by both
+# fail-fast scripts (start/stop, which set their own -euo pipefail) and by
+# tolerant ones (status, which must keep reporting when a probe fails).
 
 _here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=/dev/null
