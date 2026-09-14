@@ -3,18 +3,34 @@
 **This file must always reflect reality.** If you are a new agent resuming this
 work, read this first, then ARCHITECTURE.md (what is locked), then BLOCKERS.md.
 
-Last updated: 2026-09-14 18:16 CEST, by the lead agent on gx10-01.
+Last updated: 2026-09-14 20:20 CEST, by the lead agent on gx10-01.
 
 ---
 
 ## One-paragraph summary
 
-gx-max — the two-node SGLang DeepSeek V4 Flash engine — **works and is serving**.
-That was the open question at the start of the session, and the pinned
-6.17.0-1032 kernel fixed the RDMA failure that kernel 7.0 had caused. The
-orchestrator (gx-auto routing + gx-max lifecycle) is built, tested and verified
-live. Gateway configs are authored but **not yet running**. gx-fast and gx-reason
-weights are downloading. Nothing media-related exists yet.
+**Four of the seven aliases work end-to-end through one endpoint.** gx-mini, gx-fast,
+gx-max and gx-auto are verified serving real inference through the LiteLLM
+gateway on `127.0.0.1:4000` (and over Tailscale), and the full gx-max lifecycle
+— drain, acquire both nodes, serve, release, restore — passes. gx-reason is
+**not working**: the 122B model loads and generates but returns garbage tokens
+(B-011). gx-image/gx-video are **not built**. **Node 2 is currently wedged**
+(B-012) and needs attention before gx-reason or media work can continue.
+
+## ⚠ Immediate issue: node 2 is wedged
+
+Node 2's kernel is alive — ICMP on `192.168.100.11` replies with 0% loss and
+sub-millisecond RTT — but **userspace is starved**: SSH hangs over both
+Tailscale and the fabric, its llama-swap does not answer, and Tailscale reports
+it offline.
+
+Cause: two 77 GB models were resident at once (gx-reason plus a diagnostic
+container), which put a 121 GiB node into sustained mmap thrashing. Because
+mmap pages are reclaimable the OOM killer does not necessarily fire, so it can
+thrash rather than shed load. See BLOCKERS.md B-012.
+
+**If it has not recovered on its own, node 2 needs a power cycle.** Node 1 is
+completely unaffected and continues to serve gx-mini, gx-fast and gx-auto.
 
 ## Hardware
 
@@ -52,27 +68,29 @@ rsync and would fail as written.
 
 | Service | Where | Port | State |
 |---|---|---|---|
-| gx-max rank 0 (SGLang) | node 1 | 30000 | **running, healthy, serving** |
-| gx-max rank 1 (SGLang) | node 2 | — | **running** |
-| gx-orchestrator | node 1 | 18900 (loopback + docker bridge) | **running** |
-| LiteLLM gateway | node 1 | 4000 | **not started** — config authored only |
-| llama-swap node 1 | node 1 | 28080 | **not started** |
-| llama-swap node 2 | node 2 | 28080 | **not started** |
-| gx-mini (llama.cpp) | node 1 | 19001 | **stopped** (evicted by gx-max) |
+| LiteLLM gateway | node 1 | 4000 (loopback + tailnet) | **running, healthy** |
+| gx-orchestrator | node 1 | 18900 (loopback + docker bridge) | **running, healthy** |
+| llama-swap | node 1 | 28080 | **running, healthy** |
+| Postgres (LiteLLM) | node 1 | 15432 | running |
+| gx-mini (llama.cpp) | node 1 | 19001 | loaded |
+| gx-fast (vLLM) | node 1 | via llama-swap | loaded |
+| gx-max rank 0/1 (SGLang) | 1+2 | 30000 | **stopped** — released after the lifecycle test |
+| llama-swap | node 2 | 28080 | **unreachable** — node 2 wedged |
+| gx-reason (llama.cpp) | node 2 | via llama-swap | **unreachable / broken output** |
 | ComfyUI | node 2 | — | **does not exist yet** |
 
-gx-max currently holds the memory of both nodes (~14 GiB available on node 1,
-~18 GiB on node 2). Nothing else of size can run until it is released.
+Node 1 has ~80 GiB available with gx-mini and gx-fast both loaded. Node 2's
+state is unknown beyond kernel liveness.
 
 ## Tier status
 
 | Alias | Model | Engine | Node | State |
 |---|---|---|---|---|
-| gx-mini | Qwen3.5-4B Q4_K_M + BF16 mmproj | llama.cpp | 1 | weights present, container stopped |
-| gx-fast | `nvidia/Qwen3.6-35B-A3B-NVFP4` | vLLM | 1 | **downloading** |
-| gx-reason | `et0dev/Qwen3.5-122B-A10B-NVFP4-FP8Dense-GB10` | vLLM | 2 | **downloading** |
+| gx-mini | Qwen3.5-4B Q4_K_M + BF16 mmproj | llama.cpp | 1 | **WORKING** — 50.6 tok/s, vision verified |
+| gx-fast | `nvidia/Qwen3.6-35B-A3B-NVFP4` | vLLM | 1 | **WORKING** — 72.8 tok/s, tools + vision verified |
+| gx-reason | `unsloth/Qwen3.5-122B-A10B-GGUF` UD-Q4_K_XL | llama.cpp | 2 | **BROKEN** — loads and generates but output is garbage (B-011) |
 | gx-max | `nvidia/DeepSeek-V4-Flash-0731-NVFP4` | SGLang TP=2 | 1+2 | **WORKING** |
-| gx-auto | — | orchestrator | 1 | **working** (logic verified; live tiers pending) |
+| gx-auto | — | orchestrator | 1 | **WORKING** — verified routing across live tiers |
 | gx-image | Qwen-Image 2512 / HiDream I1 | ComfyUI | 2 | model IDs verified; nothing built |
 | gx-video | LTX 2.3 / Wan 2.2 A14B | ComfyUI | 2 | model IDs verified; nothing built |
 

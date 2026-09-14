@@ -121,3 +121,69 @@ compatible) but vLLM logs:
 
 gx-fast still measures 72.8 tok/s, so this is a performance note rather than a
 fault. A vLLM built for `sm_121a` would likely be faster.
+
+## B-011 (S2) — gx-reason GGUF produces garbage output on this llama.cpp build
+**Status: OPEN. gx-reason is NOT working.**
+
+`unsloth/Qwen3.5-122B-A10B-GGUF` (UD-Q4_K_XL) loads cleanly on
+`legenex/llama-cpp-spark:latest` (build b10948, commit 5f436dddb) — model and
+`mmproj-F16.gguf` both load, no architecture warnings, health check passes, and
+it generates at ~13.6 tok/s. **But every token is garbage.**
+
+```
+$ curl .../completion -d '{"prompt":"The capital of France is","n_predict":20,"temperature":0}'
+{"content":"////////////////////", "tokens_predicted":20, "tokens_evaluated":5, ...}
+```
+
+The raw `/completion` endpoint fails identically to `/v1/chat/completions`, so
+this is **not** a chat-template or `enable_thinking` problem — the compute graph
+itself is producing garbage.
+
+Memory is NOT the cause, and this is worth recording because it is the opposite
+of B-009:
+
+```
+VmRSS:    99766300 kB
+RssAnon:      2032 kB      <-- essentially nothing anonymous
+RssFile:  99763920 kB      <-- the whole model is file-backed mmap
+```
+
+56 GiB stayed available with the full 77 GB model mapped. llama.cpp's mmap
+behaviour is exactly what D-009 predicted; the engine choice was right, the
+weights or the kernels are the problem.
+
+**Leading hypothesis:** this llama.cpp build's CUDA path does not correctly
+implement the `qwen3_5_moe` hybrid architecture (3× linear-attention/GDN layers
+to 1× full-attention). gx-mini runs the same build correctly, but Qwen3.5-**4B**
+is dense, so it never exercises the hybrid path.
+
+**Not yet ruled out** (the CPU-only comparison was attempted but wedged the node
+— see B-012):
+1. A CUDA/GDN kernel bug for this architecture — test with `--n-gpu-layers 0`.
+2. A bad dynamic quant — test `UD-IQ4_XS` (60.2 GB) or `bartowski/Qwen_Qwen3.5-122B-A10B-GGUF`.
+3. A stale/incompatible llama.cpp — rebuild `legenex/llama-cpp-spark` from current master.
+
+Next step is the `-ngl 0` comparison, run **on an otherwise idle node 2**.
+
+## B-012 (S2) — node 2 was wedged by running two 77 GB models at once
+**Status: incident, self-inflicted, recorded so it is not repeated.**
+
+While gx-reason (77 GB mmap) was loaded, a second llama.cpp container was
+started on node 2 to run a CPU-only comparison — another 77 GB mmap on a 121 GiB
+node. The node went into sustained mmap thrashing: userspace stopped responding
+(SSH over both Tailscale **and** the fabric hung, llama-swap stopped answering)
+while the kernel stayed alive (ICMP on 192.168.100.11 kept replying with 0% loss
+and sub-millisecond RTT).
+
+Because mmap pages are reclaimable, the OOM killer does not necessarily fire —
+the node can thrash indefinitely rather than shedding load.
+
+**Rule: never run two large models on the same node, even briefly, even for a
+diagnostic.** Unload the resident model through llama-swap first:
+
+```
+curl -X POST http://192.168.100.11:28080/api/models/unload -H "Authorization: Bearer $GX_SWAP_API_KEY"
+```
+
+**Useful diagnostic note:** ICMP on the ConnectX rail is a good liveness signal
+that distinguishes "node is dead" from "node is alive but userspace is starved".
