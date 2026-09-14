@@ -88,6 +88,7 @@ class GxMaxLifecycle:
         self._last_error = ""
         self._worker: threading.Thread | None = None
         self._stopping = threading.Event()
+        self._last_reconcile = 0.0
 
         # Adopt reality at startup: the engine may already be running.
         if self._probe_health():
@@ -101,6 +102,9 @@ class GxMaxLifecycle:
 
     #: How long to keep probing after a successful start before giving up.
     _SETTLE_SECONDS = 60
+    #: Minimum interval between reconciliation probes, so status polling does
+    #: not hammer the engine.
+    _RECONCILE_INTERVAL = 10.0
 
     # ------------------------------------------------------------------ probe
     def _await_health(self, seconds: float) -> bool:
@@ -121,8 +125,36 @@ class GxMaxLifecycle:
         except Exception:
             return False
 
+    # ------------------------------------------------------------ reconcile
+    def _reconcile(self) -> None:
+        """Demote READY -> DOWN if the engine has gone away behind our back.
+
+        The engine can be torn down outside this process (an operator running
+        gx-max-stop.sh, a crash, a node reboot). Without this, the state machine
+        would keep claiming READY and proxy requests into a dead endpoint
+        instead of re-acquiring.
+        """
+        with self._cv:
+            if self._state is not State.READY:
+                return
+            if time.time() - self._last_reconcile < self._RECONCILE_INTERVAL:
+                return
+            self._last_reconcile = time.time()
+
+        # Probe outside the lock: it does network I/O.
+        if self._probe_health():
+            return
+
+        with self._cv:
+            # Re-check: the state may have moved while we were probing.
+            if self._state is State.READY:
+                log.warning("gx-max disappeared while marked READY; marking DOWN")
+                self._last_used = None
+                self._set_state(State.DOWN, "engine vanished (torn down externally)")
+
     # ----------------------------------------------------------------- status
     def status(self) -> LifecycleStatus:
+        self._reconcile()
         with self._cv:
             return LifecycleStatus(
                 state=self._state,
@@ -134,6 +166,7 @@ class GxMaxLifecycle:
             )
 
     def is_ready(self) -> bool:
+        self._reconcile()
         with self._cv:
             return self._state is State.READY
 
@@ -159,6 +192,9 @@ class GxMaxLifecycle:
         it must NEVER fall back to a different model.
         """
         deadline = time.time() + (timeout if timeout is not None else self._acquire_timeout)
+
+        # Never hand back a stale READY: if the engine died, re-acquire it.
+        self._reconcile()
 
         with self._cv:
             self._waiters += 1

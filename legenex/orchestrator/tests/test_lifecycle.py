@@ -174,3 +174,31 @@ class TestIdleReaper(LifecycleTestBase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestReconcile(LifecycleTestBase):
+    """The engine can be torn down outside this process; state must follow."""
+
+    def test_ready_demotes_to_down_when_engine_vanishes(self):
+        _StubHealth.healthy = True
+        self.write_start("#!/usr/bin/env bash\nexit 0\n")
+        self.write_stop()
+        lc = GxMaxLifecycle(self.dir, self.health_url, idle_ttl=0)
+        self.assertIs(lc.status().state, State.READY)
+
+        # Engine goes away behind our back (e.g. an operator ran gx-max-stop.sh).
+        _StubHealth.healthy = False
+        lc._RECONCILE_INTERVAL = 0.0  # do not wait out the probe throttle
+        self.assertIs(lc.status().state, State.DOWN)
+        self.assertFalse(lc.is_ready())
+        lc.shutdown()
+
+    def test_reconcile_does_not_disturb_a_healthy_engine(self):
+        _StubHealth.healthy = True
+        self.write_start("#!/usr/bin/env bash\nexit 0\n")
+        self.write_stop()
+        lc = GxMaxLifecycle(self.dir, self.health_url, idle_ttl=0)
+        lc._RECONCILE_INTERVAL = 0.0
+        for _ in range(3):
+            self.assertIs(lc.status().state, State.READY)
+        lc.shutdown()
