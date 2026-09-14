@@ -146,6 +146,24 @@ class Handler(BaseHTTPRequestHandler):
         self.do_GET()
 
     # -- handlers ----------------------------------------------------------
+    def _named_workflow(self, name: str, expected_kind: str) -> str:
+        """Resolve a caller-supplied workflow name, restricted to ``expected_kind``.
+
+        The name still only ever selects among vetted templates already loaded
+        by the WorkflowRegistry (no filesystem path is ever built from it), but
+        without this check a caller could ask the synchronous /v1/images
+        endpoint to run the video template (or vice versa): the wrong params
+        would apply, the wrong timeout budget would be used, and the response
+        would be mislabelled. Reject the mismatch outright instead.
+        """
+        workflow = self.service.workflows.get(name)  # raises ValidationError if unknown
+        if workflow.kind != expected_kind:
+            raise ValidationError(
+                f"workflow {name!r} is a {workflow.kind!r} workflow, not {expected_kind!r}",
+                param="workflow",
+            )
+        return workflow.name
+
     def _models(self) -> None:
         now = int(time.time())
         self._json(200, {
@@ -162,9 +180,7 @@ class Handler(BaseHTTPRequestHandler):
         quality = v.enum(body, "quality", {"standard", "hd", "auto"}, "standard")
         workflow = IMAGE_WORKFLOWS[{"auto": "standard"}.get(quality, quality)]
         if isinstance(body.get("workflow"), str):
-            if body["workflow"] not in self.service.workflows:
-                raise ValidationError(f"unknown workflow {body['workflow']!r}", param="workflow")
-            workflow = body["workflow"]
+            workflow = self._named_workflow(body["workflow"], "image")
 
         width, height = v.dimensions(body, cfg, cfg.default_image_size)
         params = {
@@ -210,9 +226,7 @@ class Handler(BaseHTTPRequestHandler):
         cfg = self.cfg
         workflow = VIDEO_WORKFLOW
         if isinstance(body.get("workflow"), str):
-            if body["workflow"] not in self.service.workflows:
-                raise ValidationError(f"unknown workflow {body['workflow']!r}", param="workflow")
-            workflow = body["workflow"]
+            workflow = self._named_workflow(body["workflow"], "video")
         fps = v.bounded_float(body, "fps", 4.0, 30.0, 16.0)
         width, height = v.dimensions(body, cfg, "640x640")
         seed = v.seed(body)
@@ -235,8 +249,13 @@ class Handler(BaseHTTPRequestHandler):
     def _content(self, job_id: str, index: int) -> None:
         job = self.service.jobs.get(job_id)
         payload, media_type, filename = self.service.content(job, index)
+        # `filename` comes from ComfyUI's own /history response (see comfy.py),
+        # never from caller input, so this is defense-in-depth rather than a
+        # live injection path: http.server.send_header does not itself strip
+        # CR/LF from header values, so a header value must never carry them.
+        safe_filename = filename.replace("\r", "").replace("\n", "").replace('"', "")
         self._send(200, payload, media_type,
-                   {"Content-Disposition": f'inline; filename="{filename}"'})
+                   {"Content-Disposition": f'inline; filename="{safe_filename}"'})
 
 
 class Server(ThreadingHTTPServer):

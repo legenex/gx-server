@@ -57,9 +57,16 @@ class Config:
 
     @classmethod
     def from_env(cls) -> "Config":
+        # NOTE: there is deliberately no "magic string" (e.g. "not-required",
+        # "none", "disabled") that disables authentication here. Sample env
+        # files elsewhere in this repo have historically used exactly such
+        # placeholder values (see legenex/gateway/.env.sample), and treating
+        # them as "auth off" would let a copy-pasted placeholder silently
+        # defeat both this check and the docker-compose `:?` guard that is
+        # supposed to refuse to start unauthenticated. The ONLY way to
+        # disable authentication is to leave GX_MEDIA_API_KEY unset or empty,
+        # which is already logged loudly at start-up (see __main__.py).
         api_key = os.environ.get("GX_MEDIA_API_KEY", "").strip()
-        if api_key in {"not-required", "none", "disabled"}:
-            api_key = ""
         return cls(
             bind_host=os.environ.get("GX_MEDIA_BIND", "0.0.0.0"),
             bind_port=_int("GX_MEDIA_PORT", 18800, 1, 65535),
