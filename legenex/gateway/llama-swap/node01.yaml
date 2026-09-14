@@ -162,15 +162,15 @@ models:
     checkEndpoint: "/health"
     ttl: 0
     unloadTimeout: 30
-    cmd: |
-      docker run --rm --name ${MODEL_ID}
+    cmd: >
+      sh -c 'docker rm -f gx-mini >/dev/null 2>&1;
+      exec docker run --rm --name gx-mini
       --network ${swap_netns}
       --device nvidia.com/gpu=all
       --ipc host
       --ulimit memlock=-1 --ulimit stack=67108864
       --security-opt seccomp=unconfined
-      -e GGML_CUDA_ENABLE_UNIFIED_MEMORY=1
-      -e 'LLAMA_ARG_CHAT_TEMPLATE_KWARGS={"enable_thinking":false}'
+      --env-file /app/env/gx-mini.env
       -v ${models_root}/gguf:/models/gguf:ro
       ${llamacpp_image}
       -m /models/gguf/Qwen3.5-4B/Qwen3.5-4B-Q4_K_M.gguf
@@ -182,7 +182,7 @@ models:
       --parallel 2
       --load-mode mlock
       --jinja
-      --timeout 600
+      --timeout 600'
     cmdStop: "docker stop -t 25 ${MODEL_ID}"
 
   # ============================================================================
@@ -211,8 +211,9 @@ models:
     checkEndpoint: "/health"
     ttl: 1800
     unloadTimeout: 180
-    cmd: |
-      docker run --rm --name ${MODEL_ID}
+    cmd: >
+      sh -c 'docker rm -f gx-fast >/dev/null 2>&1;
+      exec docker run --rm --name gx-fast
       --network ${swap_netns}
       --device nvidia.com/gpu=all
       --ipc host --shm-size 16g
@@ -234,7 +235,7 @@ models:
       --enable-prefix-caching
       --enable-auto-tool-choice
       --tool-call-parser qwen3_xml
-      --trust-remote-code
+      --trust-remote-code'
     cmdStop: "docker stop -t 150 ${MODEL_ID}"
 
 # ==============================================================================

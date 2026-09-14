@@ -68,7 +68,7 @@
 # FlashInfer autotune, CUDA graph capture).
 healthCheckTimeout: 2400
 
-logLevel: info
+logLevel: debug
 logTimeFormat: rfc3339
 logToStdout: proxy
 metricsMaxInMemory: 1000
@@ -138,8 +138,9 @@ models:
     checkEndpoint: "/health"
     ttl: 900
     unloadTimeout: 240
-    cmd: |
-      docker run --rm --name ${MODEL_ID}
+    cmd: >
+      sh -c 'docker rm -f gx-reason >/dev/null 2>&1;
+      exec docker run --rm --name gx-reason
       --network ${swap_netns}
       --device nvidia.com/gpu=all
       --ipc host --shm-size 32g
@@ -161,7 +162,7 @@ models:
       --enable-prefix-caching
       --enable-auto-tool-choice
       --tool-call-parser qwen3_xml
-      --trust-remote-code
+      --trust-remote-code'
     cmdStop: "docker stop -t 200 ${MODEL_ID}"
 
   # ============================================================================

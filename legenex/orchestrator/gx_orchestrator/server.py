@@ -53,7 +53,11 @@ class TierHealth:
             if time.time() - self._checked < self._ttl and self._cache:
                 return dict(self._cache)
         avail: dict[Tier, bool] = {}
-        gateway_up = probe(f"{self._cfg.gateway_base.rstrip('/')}/models")
+        key = self._cfg.gateway_key()
+        gateway_up = probe(
+            f"{self._cfg.gateway_base.rstrip('/')}/models",
+            headers={"Authorization": f"Bearer {key}"} if key else {},
+        )
         for tier in ROUTABLE:
             if tier is Tier.MAX:
                 # Reachable if the engine is up OR we are able to bring it up.

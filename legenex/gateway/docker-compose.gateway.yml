@@ -193,6 +193,8 @@ services:
       GX_SWAP_API_KEY: ${GX_SWAP_API_KEY:?GX_SWAP_API_KEY is required}
     volumes:
       - ./llama-swap/node01.yaml:/app/config.yaml:ro
+      # env-files for spawned model containers (values contain JSON quotes)
+      - ./llama-swap/env:/app/env:ro
       # Required to spawn/stop model containers. Root-equivalent — see the
       # SECURITY BOUNDARY note at the top of this file.
       - /var/run/docker.sock:/var/run/docker.sock

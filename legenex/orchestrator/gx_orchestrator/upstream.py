@@ -84,10 +84,24 @@ def stream_post(
             yield chunk
 
 
-def probe(url: str, timeout: float = 4.0) -> bool:
-    """True if `url` answers with a 2xx."""
+def probe(
+    url: str,
+    timeout: float = 4.0,
+    *,
+    headers: Mapping[str, str] | None = None,
+) -> bool:
+    """True if `url` answers with a 2xx.
+
+    `headers` matters: the LiteLLM gateway requires a bearer token, and an
+    unauthenticated probe returns 401, which would make every tier look
+    unavailable and push gx-auto into permanent fallback.
+    """
+    req = urllib.request.Request(url, method="GET")
+    for k, v in (headers or {}).items():
+        if v:
+            req.add_header(k, v)
     try:
-        with urllib.request.urlopen(url, timeout=timeout) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             return 200 <= resp.status < 300
     except Exception:
         return False
