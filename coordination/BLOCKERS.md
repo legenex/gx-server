@@ -166,7 +166,9 @@ is dense, so it never exercises the hybrid path.
 Next step is the `-ngl 0` comparison, run **on an otherwise idle node 2**.
 
 ## B-012 (S2) — node 2 was wedged by running two 77 GB models at once
-**Status: incident, self-inflicted, recorded so it is not repeated.**
+**Status: incident understood; structural admission control now shipped on
+node 1 (see below); node 2 itself still needs a physical power cycle and has
+no ledger deployed yet.**
 
 While gx-reason (77 GB mmap) was loaded, a second llama.cpp container was
 started on node 2 to run a CPU-only comparison — another 77 GB mmap on a 121 GiB
@@ -187,6 +189,31 @@ curl -X POST http://192.168.100.11:28080/api/models/unload -H "Authorization: Be
 
 **Useful diagnostic note:** ICMP on the ConnectX rail is a good liveness signal
 that distinguishes "node is dead" from "node is alive but userspace is starved".
+
+**Repair, shipped 2026-09-14:** a resource-ownership/admission-control layer
+(`ARCHITECTURE.md` §9) makes this exact shape of double-large-load
+structurally refused on node 1, proven by concurrency tests (5 real racing
+processes, SIGKILL-recovery, a launch that would violate the 30 GiB reserve
+never runs the caller's command). `legenex/lifecycle/gx-safe-run.sh` is the
+sanctioned replacement for the bare `docker run` that caused this incident.
+**Not yet true of node 2**: it has no ledger/lock module deployed (it has
+been unreachable all session) — `gx-max-start.sh`'s rank1 launch uses a real
+remote `flock` as a documented convention only. Deploy `legenex/lifecycle/`
+and `legenex/orchestrator/` to node 2 once it's reachable to close this gap
+fully.
+
+**Remaining gap, found and partially closed 2026-09-14:** even with the
+admission guard, if node 2 hangs mid-acquisition *after* rank0/rank1 already
+started (the realistic version of tonight's timing), the rank(s) were not
+being automatically torn down — `GxMaxLifecycle._do_acquire()` only recorded
+the error and set state=DOWN. Fixed: it now runs a best-effort
+`gx-max-stop.sh --force` before reporting the failure. `n2()` in `lib.sh`
+still only bounds the TCP-connect phase (`ssh -o ConnectTimeout=10`), not a
+stuck banner exchange — `legenex/scripts/recover-node2.sh` and
+`gx-max-validate.sh` wrap their own SSH calls in a hard `timeout` for this
+reason, but `lib.sh`'s `n2()` itself was not changed (touching it affects
+every node2-touching call in the lifecycle scripts and deserved a dedicated,
+careful pass rather than a rushed one at the end of this session).
 
 ## B-013 (S2) — cannot push; no writable remote is configured
 **Needs:** a human to add a remote this account can write to.
@@ -214,3 +241,54 @@ git push -u legenex legenex-dual-gx10
 
 Credentials must come from a credential helper or SSH key — never put a token
 in the remote URL.
+
+## B-014 (S3) — hardware watchdog exists but is unarmed
+**Needs:** a human with sudo. Investigated 2026-09-14, not applied — arming
+an automatic-reboot mechanism is a hardware-safety decision, not a routine
+engineering one.
+
+`/dev/watchdog`/`/dev/watchdog0` exist (SBSA Generic Watchdog, 10s default
+timeout) but `RuntimeWatchdogSec` is commented out in
+`/etc/systemd/system.conf` and `RuntimeWatchdogUSec=0` confirms it live. No
+NVIDIA/ASUS daemon arms it either. Arming it would have automatically
+rebooted node 2 during tonight's B-012 incident instead of requiring a
+physical power cycle.
+
+**Suggested fix (not applied — needs root, and needs deciding on both
+nodes):**
+```
+# /etc/systemd/system.conf.d/watchdog.conf
+[Manager]
+RuntimeWatchdogSec=30s
+RebootWatchdogSec=10min
+```
+then `sudo systemctl daemon-reexec` (system.conf needs a PID1 re-exec, not
+just a daemon-reload) or a reboot. Verify with
+`systemctl show -p RuntimeWatchdogUSec` (expect `30000000`) and `wdctl`.
+
+**Caveats a human should weigh before applying:** this forces an
+uncontrolled hard reset with no graceful container/model shutdown if it
+trips; the timeout must be chosen consciously against this host's own
+GUI/remote-desktop session and gx-max's long cold-start; must be configured
+on both nodes to help node 2's failure mode specifically, and node 2 is
+unreachable to even attempt it right now.
+
+## B-015 (S3) — sshd/tailscaled/systemd/NetworkManager cannot be OOM-protected without root
+**Needs:** a human with sudo, if this protection is wanted beyond the
+indirect mitigation already shipped.
+
+Confirmed by inspection 2026-09-14, not assumed: these services' cgroups
+(`/sys/fs/cgroup/system.slice/{ssh,tailscaled,NetworkManager}.service/memory.max`)
+are `root:root 644` — unwritable by this account, and `systemctl show`
+confirms `OOMScoreAdjust=0` on all of them, unmodifiable without a privileged
+`systemctl set-property` or editing the system unit.
+
+**Mitigation already shipped, not equivalent to direct protection:** every
+model container now carries a positive `--oom-score-adj` (700-950) so the
+kernel's OOM killer picks them over these daemons (which sit at the default
+0) in an actual memory-pressure event — without ever touching the daemons
+themselves. This helps but does not protect against pure page-cache/mmap
+thrashing the way B-012 actually manifested (userspace-starved, not
+OOM-killed) — that class of failure is addressed by the admission-control
+layer (B-012 repair, above) preventing the double-load in the first place,
+plus the B-014 hardware watchdog as a last resort once armed.

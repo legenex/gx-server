@@ -168,3 +168,102 @@ may influence; everything else is unreachable from the network.
 
 Stdlib-only for the same reason as the orchestrator (D-003): no aarch64 wheel
 risk, nothing to pin, and it starts on a node where pip has never run.
+
+## D-012 — Resource admission control shares one formula across bash and Python
+**Date:** 2026-09-14
+**Decision:** `legenex/orchestrator/gx_orchestrator/resource_guard.py` is the
+single source of truth for workload sizing and admission math.
+`legenex/lifecycle/resource-guard.sh` shells out to the same module rather
+than re-implementing the arithmetic in bash.
+**Why:** B-012 happened because a bash script (a one-off diagnostic) bypassed
+the Python-side lifecycle logic entirely. Any design with two independent
+implementations of "is this launch safe" would eventually drift, and a
+launch-time safety check that can silently disagree with itself is worse
+than none. One shared module, called from both languages, cannot drift.
+**Evidence:** `legenex/lifecycle/tests/test_resource_guard_sh.py::
+test_bash_flock_and_python_nodelock_contend_for_the_identical_lock` proves a
+bash `flock` and Python's `fcntl.flock` on the same path block each other in
+both directions.
+
+## D-013 — gx-reason's admission-control sizing uses the measured B-011
+footprint (95 GiB), not the original 78 GiB design budget
+**Date:** 2026-09-14
+**Decision:** `resource_guard.WORKLOAD_SIZING["gx-reason"]` is set to 95 GiB.
+**Why:** BLOCKERS.md B-011 measured `VmRSS` at 99,766,300 kB (~95.1 GiB) for
+the actual resident gx-reason process, but `node02.yaml`'s own written
+memory-budget comment still says 78 GB. Sizing the admission guard at the
+smaller, stale figure would let the guard itself under-estimate gx-reason's
+footprint — exactly the kind of quiet drift this whole layer exists to
+prevent. The discrepancy is flagged, not silently resolved: whoever next
+fixes B-011 (gx-reason's garbage-output bug) should reconcile which number
+is right once the model is actually working correctly again, since a broken
+model's memory footprint may not be its fixed one.
+**Status:** the admission guard uses 95 GiB; `node02.yaml`'s comment still
+says 78 GB and was deliberately left alone pending that reconciliation.
+
+## D-014 — Tier health reflects each tier's real upstream, not gateway liveness
+**Date:** 2026-09-14
+**Decision:** `TierHealth` (now `gx_orchestrator/health.py`) probes node 1's
+and node 2's own llama-swap `/v1/models` endpoints per tier, instead of a
+single LiteLLM `/models` probe applied to every tier.
+**Why:** LiteLLM's `/models` answers from static config regardless of
+whether the real upstream is reachable. Live effect before this fix:
+`/health/detailed` reported `gx-reason: true` while node 2 was completely
+wedged — a model that could not possibly serve a request was reported
+healthy. Node 2's probe uses a short 2s timeout with no retry, since a
+"kernel alive, userspace starved" node (B-012's exact symptom) would
+otherwise stall every cached health-check refresh for however long the
+default timeout is.
+**Evidence:** live-verified against the actually-wedged node 2:
+`/health/detailed` now returns `gx-reason: {"state":"unavailable",
+"reason":"node2_offline"}`, whole probe bounded at ~2.0s.
+
+## D-015 — Qwen3.8 permanently retired; not gx-fast
+**Date:** 2026-09-14
+**Decision:** `vllm-qwen38-uncensored` (a standalone, unmanaged, always-on
+vLLM container, ~80 GiB resident) and every active runtime/download/routing/
+lifecycle reference to Qwen3.8 in this repo are removed.
+**Why:** it was never part of the seven-alias tier set (L-10), held ~80 GiB
+with no lifecycle management or admission control, and left as little as
+~9 GiB available system-wide — a direct memory-safety risk discovered
+alongside the node-2 incident. The human operator removed the container and
+its checkpoint directly.
+**Evidence:** `c0076f8`. Historical/comparative mentions in CHANGELOG.md and
+MODELS.md (explaining why the 100-125B class has no Qwen3.6/Qwen3.8
+checkpoint) are preserved as context, not active support.
+
+## D-016 — Two real gx-auto classifier bugs fixed; D-005 re-verified, not
+relitigated
+**Date:** 2026-09-14
+**Decision:** fixed a regex-scoping bug where the bare word "exhaustive"
+alone reached the gx-max threshold (worse than the keyword-accumulation D-005
+already forbids — one word, no accumulation needed), and a vision-override
+bug where an oversized multimodal prompt could be routed to a tier whose
+`max_context` couldn't hold it.
+**Why not a redesign:** D-005's escalation rule itself (explicit "extreme"
+marker or unfitting context, not keyword accumulation) was re-verified and
+holds; these were implementation bugs in that rule's execution, not a reason
+to change the rule.
+**Evidence:** `legenex/orchestrator/tests/test_classifier.py` (30 new tests,
+51 total in that file); `tests/CLASSIFIER_TEST_MATRIX.md` for the full
+rule-coverage table.
+
+## D-017 — gx-max's failed-acquire path now unwinds partially-started ranks
+**Date:** 2026-09-14
+**Decision:** `GxMaxLifecycle._do_acquire()` runs a best-effort
+`gx-max-stop.sh --force` on every failure path (non-zero exit, health-probe
+timeout, or the acquire's own subprocess timeout) before reporting DOWN, and
+appends a note rather than masking the original error if that cleanup itself
+cannot be confirmed.
+**Why:** rank0/rank1 are `docker run -d`, detached from gx-max-start.sh's own
+process — a script failing or being killed does not stop them. Traced (not
+assumed) after this session's admission-control work landed: the new guard
+prevents a *second* large load from ever starting, but does nothing about a
+rank *already* started by the current attempt being orphaned by a *later*
+failure (e.g. node 2 wedging mid-acquisition, after rank0 is already up).
+Left unfixed, that is an unmanaged ~80-90 GiB leak with no lease on it — the
+same shape as B-012, just triggered by a failed acquire instead of a manual
+second launch.
+**Evidence:** `legenex/orchestrator/tests/test_lifecycle.py::
+test_failed_acquisition_after_partial_start_unwinds_via_stop_script` and
+`::test_cleanup_failure_is_appended_not_swallowed`.

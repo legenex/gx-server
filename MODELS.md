@@ -102,6 +102,16 @@ All four intended candidates were verified to exist, current, and **ungated**:
 | gx-video | LTX 2.3 | `Lightricks/LTX-2.3` | 200 | LTX-2 Community | No |
 | gx-video | Wan 2.2 A14B | `Wan-AI/Wan2.2-I2V-A14B` | 200 | Apache-2.0 | No |
 
+**Wiring gap, found 2026-09-14, not yet closed:** HiDream I1 Full and a
+no-LoRA "quality" Wan 2.2 variant are verified/documented above as available
+checkpoints, but neither has a `_gx`-enabled template in
+`legenex/media/workflows/` — the router can only build a graph from a
+template that declares one. Concretely, `gx-image` cannot serve HiDream
+today, and `gx-video` has no "hd"-equivalent tier the way `gx-image` does
+(standard/hd). Not blocking (Qwen-Image + Lightning and Wan 2.2 + Lightning
+both work), but worth a deliberate decision before assuming gx-image/
+gx-video are feature-complete.
+
 Non-obvious packaging details:
 
 * Qwen 2512's ComfyUI single-file lives in `Comfy-Org/Qwen-Image_ComfyUI` as

@@ -97,13 +97,36 @@ Timings measured on this hardware:
 ## Which model is loaded right now?
 
 ```bash
+legenex/scripts/gx-status.sh              # one-shot: both nodes + every alias, human or --json
 docker ps --format '{{.Names}}\t{{.Status}}'                       # node 1
 ssh legenex-02@gx10-02 'docker ps --format "{{.Names}}\t{{.Status}}"'  # node 2
 curl -s localhost:18900/health/detailed | python3 -m json.tool
 ```
 
 llama-swap loads models **on demand** and unloads them on an idle TTL, so an
-absent container is normal, not a fault.
+absent container is normal, not a fault. `/health/detailed` and `gx-status.sh`
+report a real per-tier state (`ready`/`stopped`/`loading`/`queued`/
+`unavailable`/`failed`) derived from each tier's own upstream, not just from
+whether the gateway itself is up — a tier whose real upstream (e.g. node 2's
+llama-swap) is unreachable is never reported as healthy.
+
+## Launching a model container by hand — do not use a bare `docker run`
+
+Any medium/large/exclusive workload (gx-fast, gx-reason, gx-max, ComfyUI, or
+a one-off diagnostic) must go through the admission guard, not a bare
+`docker run`. Bypassing it is exactly what wedged node 2 (see
+`coordination/BLOCKERS.md` B-012 and `ARCHITECTURE.md` §9).
+
+```bash
+legenex/lifecycle/gx-safe-run.sh <node> <workload-name> <class> <estimated-gib> -- <docker run ...>
+legenex/lifecycle/resource-guard.sh status <node>     # what does the ledger think is resident?
+legenex/lifecycle/resource-guard.sh check <node> <name> <class> <gib>   # dry-run the admission math
+```
+
+llama-swap-managed tiers (gx-mini, gx-fast, gx-reason) don't need this
+directly — llama-swap's own group exclusivity already serialises them, and
+`gx-max-start.sh`/`gx-max-stop.sh` already route through the guard
+internally. It matters for anything started outside that path.
 
 ## Logs
 
@@ -127,24 +150,37 @@ grep gx.routing /srv/logs/gx-orchestrator.log | tail -5 \
 
 ```bash
 # orchestrator unit tests (no cluster needed)
-cd legenex/orchestrator && python3 -m unittest discover -s . -p 'test_*.py'
+cd legenex/orchestrator && python3 -m unittest discover -s . -p 'test_*.py'   # 116 tests
 
-# end-to-end acceptance suite
+# lifecycle/resource-guard bash tests (no cluster needed)
+cd legenex/lifecycle && python3 -m unittest discover -s tests -p 'test_*.py'  # 9 tests
+
+# media router unit/protocol tests (no GPU, no node 2 needed)
+cd legenex/media/router && ./qa.sh                                            # 43 tests
+
+# end-to-end acceptance suite (needs the live gateway)
 legenex/tests/acceptance.sh                 # fast tiers only
 GX_RUN_SLOW=1 legenex/tests/acceptance.sh   # include gx-max + lifecycle
 legenex/tests/acceptance.sh mini fast       # just these
+
+# node2-dependent, run only once node 2 is confirmed clean
+legenex/scripts/gx-reason-diagnose.sh       # B-011 GPU-vs-CPU comparison, unload-gated
+legenex/tests/gx-max-validate.sh            # full acquire->serve->release->restore cycle
 ```
 
 ## Memory rules of thumb
 
 Each node has 121 GiB of **unified** memory: CPU and GPU allocations compete.
+The admission guard (`ARCHITECTURE.md` §9) enforces a 30 GiB reserve floor
+against these automatically — this table is for human intuition, not the
+authoritative numbers (those live in `resource_guard.WORKLOAD_SIZING`).
 
 | Tier | Node | Resident |
 |---|---|---|
-| gx-mini | 1 | ~3 GiB |
-| gx-fast | 1 | ~20 GiB model, ~84 GiB pool at 0.66 |
-| gx-reason | 2 | ~77 GiB (owns node 2 — do not co-schedule) |
-| gx-max | 1+2 | ~93 GiB per node |
+| gx-mini | 1 | ~10 GiB |
+| gx-fast | 1 | ~22-25 GiB model, up to ~86 GiB pool |
+| gx-reason | 2 | ~95 GiB measured (B-011; design budget said 78 GiB — reconcile when next touched). Owns node 2 exclusively — never co-schedule |
+| gx-max | 1+2 | ~90 GiB ceiling per rank |
 
 **vLLM cannot load a checkpoint bigger than roughly 55 GiB on these nodes** —
 it needs `pool + checkpoint` in anonymous memory. See BLOCKERS.md B-009. Use
@@ -168,9 +204,15 @@ template is told not to think.
 is down, the model directory is missing on a node, or free memory is under
 90 GiB — the message says which.
 
-**gx-max says "not enough free memory".**
-Something is still holding memory. Check `docker ps` on both nodes. Override
-only if you are sure: `GXMAX_FORCE_DRAIN=1 ./legenex/lifecycle/gx-max-start.sh`.
+**gx-max says "not enough free memory" / admission refused.**
+Something is still holding memory. Check `legenex/lifecycle/resource-guard.sh
+status <node>` and `docker ps` on both nodes. `GXMAX_FORCE_DRAIN=1` no longer
+bypasses the admission guard (as of 2026-09-14) — a hard guard an env var
+can switch off is not a hard guard. If the ledger disagrees with reality
+(e.g. a container was removed outside the guarded path), it self-reconciles
+against `docker inspect` on the next check; if it's still wrong, clear the
+stale entry with `legenex/lifecycle/resource-guard.sh` (see its `release`
+subcommand) rather than editing the ledger file by hand.
 
 ## Never do this
 

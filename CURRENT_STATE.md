@@ -3,169 +3,250 @@
 **This file must always reflect reality.** If you are a new agent resuming this
 work, read this first, then ARCHITECTURE.md (what is locked), then BLOCKERS.md.
 
-Last updated: 2026-09-14 21:40 CEST, by the lead agent on gx10-01. (Full
-resource-ownership/observability rewrite still in progress this session —
-see the dated addendum below for the latest verified facts; the rest of this
-file is the prior session's snapshot and is being reconciled.)
+Last updated: 2026-09-14 23:59 CEST, by the lead agent on gx10-01, after a
+full autonomous session covering resource-ownership hardening, a gateway/
+orchestrator incident on node 1, a Qwen3.8 retirement, and independent review
+of gx-auto routing and the media router. **Node 2 remains physically wedged
+and untouched throughout — nothing below was validated against it.**
 
 ---
 
-## Addendum — 2026-09-14 21:40 CEST: second node-1 incident, unrelated to node 2
-
-While node 2 was already down, node 1 independently had **two real problems**,
-both now fixed and verified:
-
-1. **`gx-litellm` had lost its Docker network attachment entirely** (empty
-   `NetworkSettings.Networks`) and was crash-looping against
-   `litellm-db:5432` (unreachable with no network). Fixed by
-   `docker compose -f legenex/gateway/docker-compose.gateway.yml up -d litellm`,
-   which recreated it correctly attached. Verified: `HTTP 200` on
-   `http://127.0.0.1:4000/health/liveliness`, `RestartCount=0`.
-2. **The orchestrator (`gx-auto`/`gx-max` control plane, port 18900) was not
-   running at all** — no process, and no systemd unit had ever been created
-   for it, despite this file previously claiming it was "running, healthy".
-   Fixed: started it and added `~/.config/systemd/user/gx-orchestrator.service`
-   (enabled, hardened — `NoNewPrivileges`, `ProtectSystem=strict`, binds only
-   `127.0.0.1,172.17.0.1:18900`, never `0.0.0.0`). Verified:
-   `curl 127.0.0.1:18900/health/detailed` returns `200` with real tier state.
-
-Separately, **`vllm-qwen38-uncensored` — a standalone, unmanaged, always-on
-vLLM container holding ~80 GiB resident, entirely unrelated to the gx-mini/
-gx-fast/gx-reason/gx-max tier set** — was identified by the human operator as
-a major memory-safety risk (it left as little as ~9 GiB available
-system-wide) and has been **permanently retired**: container removed, its
-checkpoint at `/opt/models/Qwen3.8-27B-Uncensored-NVFP4` deleted, its systemd
-unit disabled, Docker restart policy set to `no`, and all active
-runtime/download/routing/lifecycle references to it removed from this repo
-(see CHANGELOG.md `[Unreleased] / Removed`). **Qwen3.8 is not gx-fast and must
-never be reintroduced under any tier alias.** Node 1 now sits at ~105-112 GiB
-`MemAvailable` at idle. A resource-ownership/admission-control layer to make
-this class of incident structurally impossible (not just manually caught) was
-in progress as of this addendum — check the `## Resource ownership` section
-below (added once that work lands) before assuming it's done.
-
 ## One-paragraph summary
 
-**Four of the seven aliases work end-to-end through one endpoint.** gx-mini, gx-fast,
-gx-max and gx-auto are verified serving real inference through the LiteLLM
-gateway on `127.0.0.1:4000` (and over Tailscale), and the full gx-max lifecycle
-— drain, acquire both nodes, serve, release, restore — passes. gx-reason is
-**not working**: the 122B model loads and generates but returns garbage tokens
-(B-011). gx-image/gx-video are **built but unproven** — ComfyUI, all weights and
-the router exist and the router's own test suite passes, but no image has been
-generated through the API. **Node 2 is currently wedged** (B-012) and needs
-attention before gx-reason or media work can continue.
+**Node 1 is healthy and hardened; node 2 needs a physical power cycle.**
+gx-mini and gx-auto are verified working end-to-end through the gateway
+tonight. gx-fast is correctly wired but was deliberately not cold-started
+(memory-safety hold — see below). gx-reason, gx-max, gx-image and gx-video all
+correctly and honestly report `unavailable`/`node2_offline` rather than faking
+health, thanks to a fixed tier-health-probe bug found and fixed this session.
+A resource-ownership/admission-control layer now makes tonight's root cause —
+two large models resident on one node at once — structurally refused rather
+than merely discouraged, proven by concurrency tests, not just asserted. A
+second, unrelated incident on node 1 (an unmanaged 80 GiB container, plus a
+crash-looping gateway and a never-started orchestrator) was found and fixed.
+See `coordination/BLOCKERS.md` for the exact, short list of things that need a
+human or a live node 2.
 
-## ⚠ Immediate issue: node 2 is wedged
+## ⚠ Node 2: physically wedged, power cycle required
 
-Node 2's kernel is alive — ICMP on `192.168.100.11` replies with 0% loss and
-sub-millisecond RTT — but **userspace is starved**: SSH hangs over both
-Tailscale and the fabric, its llama-swap does not answer, and Tailscale reports
-it offline.
+Node 2's kernel is alive — ICMP on `192.168.100.11` replies with 0% loss,
+sub-millisecond RTT — but **userspace is starved**: SSH does not complete a
+banner exchange over Tailscale or the fabric, its llama-swap does not answer.
 
-Cause: two 77 GB models were resident at once (gx-reason plus a diagnostic
-container), which put a 121 GiB node into sustained mmap thrashing. Because
-mmap pages are reclaimable the OOM killer does not necessarily fire, so it can
-thrash rather than shed load. See BLOCKERS.md B-012.
+**Cause:** two ~77 GB mmap'd models were resident on a 121 GiB node at once
+(gx-reason plus a one-off CPU-only diagnostic container started with a bare
+`docker run`, bypassing llama-swap's own model-group exclusivity entirely).
+Because mmap pages are reclaimable, the OOM killer did not fire — the node
+thrashed indefinitely rather than shedding load. Full account in
+`coordination/BLOCKERS.md` B-012.
 
-**If it has not recovered on its own, node 2 needs a power cycle.** Node 1 is
-completely unaffected and continues to serve gx-mini, gx-fast and gx-auto.
+**Repair, done tonight:** a resource-ownership/admission-control layer (see
+below) that makes this exact shape of double-large-load structurally refused,
+not just documented as a rule. It cannot protect node 2 until node 2 is back
+and the same tooling is deployed there.
+
+**Needs:** a physical power cycle by a human. Nothing here can recover it
+remotely. Do not repeatedly poll it — `legenex/scripts/recover-node2.sh` is
+ready to run, report-only, the moment it's back.
+
+## Second, unrelated node-1 incident tonight (found and fixed)
+
+While node 2 was already down, node 1 independently had two real problems,
+neither caused by node 2:
+
+1. **`gx-litellm` had lost its Docker network attachment entirely** (empty
+   `NetworkSettings.Networks`) and was crash-looping against an unreachable
+   `litellm-db:5432`. Fixed by recreating it via
+   `docker compose -f legenex/gateway/docker-compose.gateway.yml up -d litellm`.
+   Verified: `HTTP 200` on `/health/liveliness`, `RestartCount=0`.
+2. **The orchestrator (`gx-auto`/`gx-max` control plane, port 18900) was not
+   running at all** — no process, no systemd unit had ever existed for it,
+   despite an earlier version of this file claiming it was "running,
+   healthy". Fixed: started it and added
+   `~/.config/systemd/user/gx-orchestrator.service` (enabled, hardened —
+   `NoNewPrivileges`, `ProtectSystem=strict`, binds only
+   `127.0.0.1,172.17.0.1:18900`, never `0.0.0.0`).
+
+Separately, **`vllm-qwen38-uncensored`** — a standalone, unmanaged, always-on
+vLLM container holding ~80 GiB resident, entirely unrelated to the gx-mini/
+gx-fast/gx-reason/gx-max/gx-auto/gx-image/gx-video tier set — was identified
+by the human operator as a major memory-safety risk (it left as little as
+~9 GiB available system-wide) and has been **permanently retired**: container
+and checkpoint deleted by the operator, systemd unit disabled, Docker restart
+policy set to `no`, and every active runtime/download/routing/lifecycle
+reference to it removed from this repo (`c0076f8`). **Qwen3.8 is not gx-fast
+and must never be reintroduced under any tier alias.**
+
+## Resource ownership (new this session)
+
+Direct response to the B-012 root cause. Full detail in `ARCHITECTURE.md`
+§9 and `coordination/DECISIONS.md`; summary here:
+
+- `legenex/orchestrator/gx_orchestrator/resource_guard.py` +
+  `legenex/lifecycle/resource-guard.sh` — one shared arithmetic module (not
+  duplicated in bash vs Python): workload classes (small/medium/large/
+  exclusive), a 30 GiB minimum-reserve floor checked against both a
+  residency ledger AND live `/proc/meminfo`, a flock-backed cross-process
+  `NodeLock`.
+- `legenex/lifecycle/gx-safe-run.sh` — the sanctioned replacement for a bare
+  `docker run` on any medium/large/exclusive container; this is the tool the
+  B-012 diagnostic should have used.
+- `gx-max-start.sh`/`gx-max-stop.sh` now route both rank launches through a
+  hard, non-bypassable admission guard (`GXMAX_FORCE_DRAIN` can no longer
+  skip it), and `_do_acquire()` in `lifecycle.py` now unwinds any
+  partially-started rank on a failed acquire instead of leaking it.
+- Docker `--memory`/`--memory-swap` caps and `--oom-score-adj` biasing (700-
+  950 for model tiers, 100 for the gateway/db/llama-swap) on every model
+  container, so the kernel's OOM killer sacrifices these before host daemons
+  even if something is ever started outside the guarded path.
+- `legenex/host/gx-hostwatch.sh` — a dependency-free watchdog (systemd
+  `--user` timer) checking sshd (banner-level, not just TCP), tailscaled,
+  responsiveness and memory pressure. Logs and alerts only; no remediation.
+
+**Proven by test, not asserted:** two concurrent launch requests for one node
+cannot both proceed (5 real racing OS processes); a launch that would violate
+the 30 GiB reserve never runs; two large/exclusive workloads can never
+coexist on one node regardless of the arithmetic (the literal B-012 shape); a
+SIGKILLed lock holder never leaves a stuck lock.
+
+**What remains convention, not enforcement:** node 2 has no deployed ledger
+yet (unreachable tonight) — its rank1 launch uses a real remote `flock` as a
+documented convention, not yet backed by a residency ledger. Nothing stops a
+human/agent from still typing `docker run` directly; `gx-safe-run.sh` is the
+documented one-line-longer sanctioned alternative, not a kernel-enforced
+prohibition. Protecting sshd/tailscaled/systemd/NetworkManager *directly*
+(rather than via OOM-score bias on our own containers) is confirmed to
+require root — see `coordination/BLOCKERS.md`.
 
 ## Hardware
 
 | | gx10-01 (node 1, control) | gx10-02 (node 2, compute) |
 |---|---|---|
-| Kernel | `6.17.0-1032-nvidia` | `6.17.0-1032-nvidia` (identical) |
-| Arch / Python / Docker | aarch64 / 3.12.3 / 29.2.1 | identical |
-| GPU / driver / CUDA | GB10, 580.173.02, CUDA 13.0 | identical |
+| Kernel | `6.17.0-1032-nvidia` | `6.17.0-1032-nvidia` (last known) |
+| Arch / Python / Docker | aarch64 / 3.12.3 / 29.2.1 | identical (last known) |
+| GPU / driver / CUDA | GB10, 580.173.02, CUDA 13.0 | identical (last known) |
 | RAM | 121 GiB | 121 GiB |
-| Swap | 63 GiB (`/swap.img` + `/swapfile-sglang` 48 G) | 63 GiB (same two files) |
-| Disk free | ~326 GB of 916 GB | ~541 GB of 916 GB |
+| Swap | 63 GiB (`/swap.img` + `/swapfile-sglang` 48 G) | 63 GiB (same two files, last known) |
 | sudo | **password required** | **password required** |
-| User lingering | enabled | **disabled** |
+| User lingering | enabled | disabled (last known) |
 
 GPU passthrough is **CDI** (`--device nvidia.com/gpu=all`) on both nodes. There
 is no `nvidia` docker runtime and no `/etc/docker/daemon.json`.
 
 ## Fabric
 
-| Rail | node 1 | node 2 | state |
+| Rail | node 1 | node 2 | state (last known) |
 |---|---|---|---|
-| A `enp1s0f0np0` / `rocep1s0f0` | 192.168.100.10 | 192.168.100.11 | ACTIVE, 0.211 ms, 0% loss |
-| B `enP2p1s0f0np0` / `roceP2p1s0f0` | 192.168.101.10 | 192.168.101.11 | ACTIVE, 0.338 ms, 0% loss |
+| A `enp1s0f0np0` / `rocep1s0f0` | 192.168.100.10 | 192.168.100.11 | ACTIVE, 0.211 ms |
+| B `enP2p1s0f0np0` / `roceP2p1s0f0` | 192.168.101.10 | 192.168.101.11 | ACTIVE, 0.338 ms |
 
-Both rails carry NCCL traffic (measured 772 MB for one generation, split evenly).
 Tailscale is management/SSH only — confirmed by measurement, not assumption.
+`ssh legenex-02@gx10-02` (Tailscale) is the correct SSH endpoint; SSH directly
+to `192.168.100.11` is refused — the fabric addresses are not SSH endpoints.
 
-**SSH note:** `ssh legenex-02@gx10-02` works and routes over Tailscale
-(100.73.238.4). SSH directly to `192.168.100.11` is **refused** (publickey) — the
-fabric addresses are not set up for SSH. That is fine for management, but the
-older `legenex/scripts/gx-max-now.sh` assumes `legenex-02@192.168.100.11` for its
-rsync and would fail as written.
+## What is running right now (node 1, verified via `legenex/scripts/gx-status.sh`)
 
-## What is running right now
+| Service | Port | State |
+|---|---|---|
+| LiteLLM gateway | 4000 (loopback) | **healthy** |
+| Postgres (LiteLLM) | 15432 (loopback) | **healthy** |
+| llama-swap node 1 | 28080 / 19001 (loopback) | **healthy** |
+| gx-orchestrator | 18900 (loopback + docker bridge) | **healthy**, systemd-managed |
+| gx-hostwatch | — (timer) | **running**, logging to `/srv/logs/gx-hostwatch.log` |
+| gx-mini (llama.cpp) | via llama-swap | **loaded**, resident |
+| gx-fast (vLLM) | via llama-swap | **stopped** (on-demand; not cold-started tonight, see below) |
+| gx-max rank 0/1 (SGLang) | 30000 | **stopped** (`node2_unavailable`) |
 
-| Service | Where | Port | State |
-|---|---|---|---|
-| LiteLLM gateway | node 1 | 4000 (loopback + tailnet) | **running, healthy** |
-| gx-orchestrator | node 1 | 18900 (loopback + docker bridge) | **running, healthy** |
-| llama-swap | node 1 | 28080 | **running, healthy** |
-| Postgres (LiteLLM) | node 1 | 15432 | running |
-| gx-mini (llama.cpp) | node 1 | 19001 | loaded |
-| gx-fast (vLLM) | node 1 | via llama-swap | loaded |
-| gx-max rank 0/1 (SGLang) | 1+2 | 30000 | **stopped** — released after the lifecycle test |
-| llama-swap | node 2 | 28080 | **unreachable** — node 2 wedged |
-| gx-reason (llama.cpp) | node 2 | via llama-swap | **unreachable / broken output** |
-| ComfyUI | node 2 | 8188 (loopback) | installed at `/srv/ai-stack/comfyui`, weights present (~97 GB); container build state unknown since the node wedged |
-
-Node 1 has ~80 GiB available with gx-mini and gx-fast both loaded. Node 2's
-state is unknown beyond kernel liveness.
+Node 1 `MemAvailable`: ~106-112 GiB at idle (was ~9 GiB before the Qwen3.8
+retirement). Node 2 is unknown beyond kernel-level ICMP liveness.
 
 ## Tier status
 
-| Alias | Model | Engine | Node | State |
+| Alias | Model | Engine | Node | State tonight |
 |---|---|---|---|---|
-| gx-mini | Qwen3.5-4B Q4_K_M + BF16 mmproj | llama.cpp | 1 | **WORKING** — 50.6 tok/s, vision verified |
-| gx-fast | `nvidia/Qwen3.6-35B-A3B-NVFP4` | vLLM | 1 | **WORKING** — 72.8 tok/s, tools + vision verified |
-| gx-reason | `unsloth/Qwen3.5-122B-A10B-GGUF` UD-Q4_K_XL | llama.cpp | 2 | **BROKEN** — loads and generates but output is garbage (B-011) |
-| gx-max | `nvidia/DeepSeek-V4-Flash-0731-NVFP4` | SGLang TP=2 | 1+2 | **WORKING** |
-| gx-auto | — | orchestrator | 1 | **WORKING** — verified routing across live tiers |
-| gx-image | Qwen-Image 2512 (+4-step Lightning LoRA) / HiDream I1 | ComfyUI | 2 | **built, unproven via API** — ComfyUI + weights on node 2, direct generation measured at **12.6 s @1328²**; router untested against the GPU |
-| gx-video | Wan 2.2 A14B (LTX 2.3 not used — licence) | ComfyUI | 2 | **built, unproven via API** — direct generation measured at **56.7 s @640², 49 frames** |
+| gx-mini | Qwen3.5-4B Q4_K_M + BF16 mmproj | llama.cpp | 1 | **WORKING** — real inference + vision path verified live through the gateway tonight |
+| gx-fast | `nvidia/Qwen3.6-35B-A3B-NVFP4` | vLLM | 1 | **wired correctly, not cold-started tonight** — model path (22G, 3 shards) and image verified present on disk; deliberately not started under the memory-safety hold. Stale "PENDING-VERIFY" comments in `node01.yaml`/`litellm/config.yaml` should be cleaned up next session — the values themselves are real |
+| gx-reason | `unsloth/Qwen3.5-122B-A10B-GGUF` UD-Q4_K_XL | llama.cpp | 2 | **unavailable — node2_offline**, correctly reported (was previously B-011 "loads but garbage output"; diagnostic tooling now exists — `legenex/scripts/gx-reason-diagnose.sh` — but not run, node 2 is down) |
+| gx-max | `nvidia/DeepSeek-V4-Flash-0731-NVFP4` | SGLang TP=2 | 1+2 | **stopped — node2_unavailable**, correctly refused at preflight (verified live: a validation attempt tonight died at the SSH-timeout preflight step in ~10s, no container ever created on either node) |
+| gx-auto | — | orchestrator | 1 | **WORKING** — two real routing bugs found and fixed this session (see `coordination/DECISIONS.md`); 51 classifier tests |
+| gx-image | Qwen-Image 2512 (+Lightning LoRA) / HiDream I1 (not wired — see gap below) | ComfyUI | 2 | **unavailable — node 2 offline.** Router code independently re-verified: 43/43 tests pass (was 36/36, now includes 3 new security-regression tests), 3 real fixes applied (auth-bypass, cross-kind workflow mixing, header-injection defense-in-depth) |
+| gx-video | Wan 2.2 A14B (LTX 2.3 not used — licence) | ComfyUI | 2 | **unavailable — node 2 offline.** Same router verification as gx-image. No "hd"/no-LoRA tier wired yet (gap, see below) |
 
-## Repository layout (what this session added)
+**Known media gap, found tonight, not yet fixed:** `MODELS.md` documents
+HiDream-I1-Full and a no-LoRA "quality" Wan variant as available checkpoints,
+but neither has a `_gx`-enabled template in `legenex/media/workflows/` yet —
+`gx-image` cannot serve HiDream today, and `gx-video` has no "hd"-equivalent
+the way `gx-image` does (standard/hd). Not blocking tonight; worth deciding
+before it's assumed done.
+
+## Automated test count tonight
+
+168 tests passing across three independent suites, all runnable without
+node 2:
 
 ```
-ARCHITECTURE.md          locked decisions, layer separation, request paths
-CURRENT_STATE.md         this file
-MODELS.md                verified checkpoints, licences, footprints, rationale
-TEST_RESULTS.md          what was actually tested, with evidence
-coordination/
-  LEADER_STATUS.md       what the lead has done / is doing
-  WORKER_TASKS.md        tasks for the gx10-02 worker agent
-  DECISIONS.md           append-only decision log with rationale
-  BLOCKERS.md            what needs a human
-legenex/
-  lifecycle/             gx-max acquire / release / status (bash)
-  orchestrator/          gx-auto router + gx-max lifecycle (python, stdlib only)
-  gateway/               LiteLLM + llama-swap configs + compose
-  scripts/               model download helper
+legenex/orchestrator:        116 tests   (python3 -m unittest discover -s . -p 'test_*.py')
+legenex/lifecycle/tests:       9 tests   (python3 -m unittest discover -s tests -p 'test_*.py')
+legenex/media/router:         43 tests   (./qa.sh)
+```
+
+Plus live verification against the real running system tonight (not just unit
+tests): gx-mini real inference + vision through the gateway; the tier-health
+fix confirmed against the actually-wedged node 2; the resource guard's
+node-lock and reserve-floor logic; and one real (accidental, harmless, fully
+disclosed) `gx-max` acquisition attempt that correctly failed at preflight in
+~10s with no container ever created on either node — a live, unplanned
+confirmation of the "never partially start rank0" safety property.
+
+## Repository layout (what this session added, on top of the prior session's work)
+
+```
+legenex/orchestrator/gx_orchestrator/
+  resource_guard.py      workload sizing, admission math, NodeLock, ResidencyLedger
+  health.py               per-tier real-upstream health probing (replaces gateway-liveness proxy)
+  status_cli.py           `gx status` implementation
+legenex/lifecycle/
+  resource-guard.sh       bash-side admission-control library (same arithmetic as resource_guard.py)
+  gx-safe-run.sh          sanctioned replacement for a bare `docker run`
+  tests/                  bash-side resource-guard tests
+legenex/host/
+  gx-hostwatch.sh         dependency-free host resilience watchdog
+  systemd/                its service+timer templates
+legenex/scripts/
+  gx-status.sh            `gx status` entry point
+  recover-node2.sh        node-2 recovery checklist (report-only until --apply)
+  gx-reason-diagnose.sh   B-011 GPU-vs-CPU diagnostic, unload-gated
+legenex/tests/
+  gx-max-validate.sh      full acquire->serve->release->restore validation for tomorrow
 ```
 
 ## Known gaps
 
-See BLOCKERS.md for the full list with severities. The two that matter most:
+See `coordination/BLOCKERS.md` for the full list with severities. The ones
+that matter most:
 
 * **B-001** the kernel pin has no `apt-mark hold`, and kernel 7.0 is still
-  installed on both nodes. That is the exact kernel that broke gx-max.
-* **B-003** SGLang `:30000` is bound `0.0.0.0` with no auth, reachable from the
-  LAN and the tailnet.
+  installed on both nodes (last known). Needs root.
+* **B-003** SGLang `:30000` is bound `0.0.0.0` with no auth.
+* **New tonight** — protecting sshd/tailscaled/systemd/NetworkManager
+  directly (not just via OOM-score bias on our own containers) and arming
+  the hardware watchdog both require root; exact commands are ready and
+  documented, not applied.
 
 ## How to resume
 
 ```bash
 cd /home/legenex/Documents/Projects/Server/gx-cluster
-./legenex/lifecycle/gx-max-status.sh          # is the big engine up?
-curl -s localhost:18900/health/detailed       # orchestrator + tier view
+legenex/scripts/gx-status.sh                   # one-shot cluster status, human + --json
+curl -s localhost:18900/health/detailed        # orchestrator + tier view
 cd legenex/orchestrator && python3 -m unittest discover -s . -p 'test_*.py'
+```
+
+When node 2 physically comes back:
+
+```bash
+legenex/scripts/recover-node2.sh               # report-only by default; --apply to act
+GX_RUN_SLOW=0 legenex/tests/acceptance.sh       # node1-safe tiers first
+legenex/scripts/gx-reason-diagnose.sh           # B-011 GPU-vs-CPU, only once node 2 is clean
+legenex/tests/gx-max-validate.sh                # full two-node lifecycle, only once node 2 is clean
 ```

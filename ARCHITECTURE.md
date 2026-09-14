@@ -172,3 +172,92 @@ it, under logger `gx.routing`.
 | Recovering | gateway + orchestrator restart first, then gx-mini | media/reason start on demand |
 
 gx-max is never started at boot.
+
+## 9. Resource ownership (added 2026-09-14, after the gx10-02 mmap-thrash incident)
+
+**Incident that motivated this section:** node 2 was wedged by a second
+~77 GB mmap'd model landing on top of an already-resident ~77 GB gx-reason —
+started with a bare `docker run` that bypassed llama-swap's own model-group
+exclusivity entirely. Because mmap pages are reclaimable the OOM killer did
+not fire; the node thrashed into userspace-starvation instead of shedding
+load. Full account: `coordination/BLOCKERS.md` B-012.
+
+**Principle:** no workload — human, agent, or script — may load a
+medium/large/exclusive model onto a node without first clearing a hard,
+non-bypassable admission check. This is enforced in code, in exactly one
+place per language, not left as a convention:
+
+- `legenex/orchestrator/gx_orchestrator/resource_guard.py` (Python) and
+  `legenex/lifecycle/resource-guard.sh` (bash) share **one** admission
+  formula — bash shells out to the same Python module for the arithmetic,
+  so there is never a second implementation to drift out of sync.
+- **Workload classes:** `small` / `medium` / `large` / `exclusive`. gx-mini
+  is small (~10 GiB), gx-fast medium (~25 GiB), gx-reason large (~95 GiB —
+  the measured B-011 footprint, not the older 78 GiB design estimate;
+  reconcile this discrepancy when gx-reason is next touched), gx-max's rank0
+  and rank1 are each exclusive (~90 GiB, generous ceiling above the ~90-93
+  GiB measured working set). `exclusive` also covers gx-reason (D-007: it
+  owns node 2 alone) and any future large media workload.
+- **Hard admission guard:** before any large/exclusive launch, both a
+  JSON-persisted residency ledger AND a live read of `/proc/meminfo`
+  (`MemAvailable`, not process RSS — unified-memory CUDA/vLLM allocations do
+  not reliably show up in RSS, see D-009) must independently show the launch
+  leaves at least a **30 GiB reserve**. Either check failing refuses the
+  launch outright; nothing downstream ever runs.
+- **Cross-process/cross-language locking:** a real `flock`-backed
+  `NodeLock`, one per node. A bash `flock` and Python's `fcntl.flock` on the
+  identical path contend correctly with each other — proven by test, not
+  asserted (`legenex/orchestrator/tests/test_resource_guard.py`,
+  `legenex/lifecycle/tests/test_resource_guard_sh.py`).
+- **Never kill active work casually:** `gx-max-stop.sh`'s default is a
+  graceful drain (wait for in-flight requests, or a fixed quiet period if
+  `/metrics` isn't exposed) before teardown; `--force` skips this only for
+  an already-failed/partial acquisition being unwound.
+- **Stale-state recovery:** a `ResidencyLedger` entry left by a killed
+  process, a container that no longer exists, or a node that rebooted is
+  reconciled against `docker inspect` rather than trusted blindly; a
+  SIGKILLed lock holder never leaves a permanently stuck lock (proven by
+  test).
+- **The sanctioned launch path:** `legenex/lifecycle/gx-safe-run.sh` is the
+  documented replacement for a bare `docker run` on any medium/large/
+  exclusive container — including one-off diagnostics, which is exactly
+  what caused the incident. `gx-max-start.sh`/`gx-max-stop.sh` route both
+  rank launches through the identical guard (`GXMAX_FORCE_DRAIN` can no
+  longer bypass it, unlike before this section was added).
+- **gx-max acquires both leases atomically or unwinds.** If node 2 is
+  unavailable, acquisition fails fast at preflight (verified live: a real
+  attempt against the actually-wedged node 2 died at the SSH-timeout step in
+  ~10s, before any `docker run`). If a rank is left running by a *later*
+  failure (e.g. the health probe never answers after rank0 already
+  started), `GxMaxLifecycle._do_acquire()` now unwinds it via a best-effort
+  `gx-max-stop.sh --force` call before reporting DOWN, rather than leaking
+  an ~80-90 GiB resident rank with no lease on it.
+
+**Host-level backstop, independent of the admission guard above:** every
+model container also carries a static Docker `--memory`/`--memory-swap` cap
+and a positive `--oom-score-adj` (700-950; the gateway/db/llama-swap get 100)
+so the kernel's OOM killer sacrifices these before host daemons, even if a
+container is ever started outside the guarded path. `legenex/host/
+gx-hostwatch.sh` is a dependency-free watchdog (systemd `--user` timer)
+checking sshd at the banner level (not just TCP-accept — the exact
+distinction that would have caught B-012's symptom), tailscaled, general
+responsiveness, and memory pressure (`MemAvailable` + PSI); it only logs and
+alerts, it does not remediate.
+
+**What this does NOT do, on purpose:**
+- It does not protect sshd/tailscaled/systemd/NetworkManager *directly* —
+  their cgroups are root-owned (`memory.max` is `root:root 644`), confirmed
+  by inspection, not assumed. That needs a human with sudo; see
+  `coordination/BLOCKERS.md`.
+- It does not arm the hardware watchdog (`/dev/watchdog`, currently
+  unarmed) — arming an automatic-reboot mechanism is a hardware-safety
+  decision, not a routine one. Exact config for a human is in
+  `coordination/BLOCKERS.md`.
+- Node 2 has no deployed ledger yet (unreachable as of this writing); its
+  rank1 launch uses a real remote `flock` as a documented convention, not
+  yet backed by residency-ledger arithmetic. Full parity needs this
+  session's `legenex/lifecycle/` and `legenex/orchestrator/` deployed there
+  once it's reachable.
+- It cannot stop a human or agent from still typing `docker run` directly.
+  `gx-safe-run.sh` is a documented, one-line-longer sanctioned alternative,
+  not a kernel-enforced prohibition.

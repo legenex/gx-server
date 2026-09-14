@@ -3,7 +3,7 @@
 Only results actually observed are recorded here. Anything not yet run is marked
 NOT RUN rather than assumed.
 
-Last updated: 2026-09-14.
+Last updated: 2026-09-15.
 
 ---
 
@@ -385,3 +385,87 @@ Recorded as BLOCKERS.md B-012 with the rule that prevents it recurring.
 | 8. gx-video real generation | **NOT RUN** — ComfyUI not deployed |
 | 9. gateway restart recovery | **PARTIAL** — restore-normal.sh verified during the lifecycle test; full compose restart not yet run |
 | 10. remote access over Tailscale | **NOT RUN** |
+
+## 10. Session 2026-09-15 — resource ownership, gateway/orchestrator incident, routing/media hardening
+
+Node 2 was found physically wedged at the start of this session (see §8) and
+remained so throughout — every result below is node-1-only, or pure unit
+tests requiring no live node 2.
+
+### Automated suites — all PASSING, all runnable without node 2
+
+```
+legenex/orchestrator:        116 tests   OK   (python3 -m unittest discover -s . -p 'test_*.py')
+legenex/lifecycle/tests:       9 tests   OK   (python3 -m unittest discover -s tests -p 'test_*.py')
+legenex/media/router:         43 tests   OK   (./qa.sh)
+```
+
+The media router's previously-reported 36/36 was independently re-run and
+confirmed accurate before any change was made (+7 new regression tests for
+three fixes found this session, see §below).
+
+### Live verification against the real running system
+
+- **gx-mini, real end-to-end inference through the gateway:**
+  `POST /v1/chat/completions {"model":"gx-mini",...}` → `HTTP 200`,
+  `"content":"I am online, and the capital of France is Paris."`,
+  `predicted_per_second: 51.43`, 0.335s total. Vision path (a 1x1 PNG
+  data-URI) also executed end-to-end with no error through
+  LiteLLM → llama-swap → llama.cpp.
+- **Tier-health fix, verified against the actually-wedged node 2:**
+  `curl http://127.0.0.1:18900/health/detailed` → `gx-reason:
+  {"state":"unavailable","reason":"node2_offline"}`,
+  `gx-max: {"state":"stopped","reason":"node2_unavailable"}`. Whole cold
+  probe measured at 2.017s (dominated entirely by the single 2s-timeout
+  node2 attempt) — confirmed via a direct `curl -m 2` to
+  `192.168.100.11:28080/health` (`http_code=000`, exit 28, 2.010s) against
+  0.38ms ICMP RTT to the same host: the B-012 "kernel-alive/
+  userspace-starved" signature, live.
+- **gx-max node2-offline safety, confirmed live (one real, disclosed
+  attempt):** a validation script triggered a real `gx-max` acquire against
+  the live orchestrator. It attempted the real SSH to node 2, hit
+  `Connection timed out`, and died at preflight — `docker ps -a` confirmed
+  no `gx-max-rank0`/`rank1` container was ever created on node 1. This is a
+  live, unplanned confirmation of "never partially start rank0 while
+  waiting for rank1."
+- **Resource-guard concurrency, proven by test rather than asserted:** 5
+  real OS processes racing `NodeLock` for the same node — exactly one
+  proceeds; a bash process and a Python process racing the identical
+  `flock` path block each other in both directions; a SIGKILLed lock holder
+  never leaves a stuck lock (fresh acquirer succeeds in <4s); a launch that
+  would violate the 30 GiB reserve floor never runs the caller's command,
+  proven for both the bash and Python entry points.
+- **gx-fast:** deliberately NOT cold-started (memory-safety hold). Verified
+  statically instead: model directory present on disk (22G across 3
+  safetensors shards, matches MODELS.md's 23.5GB), Docker image present
+  locally, checkpoint's own `README.md`/`hf_quant_config.json` confirm it is
+  really `nvidia/Qwen3.6-35B-A3B-NVFP4` (not an invented ID), and
+  `litellm/config.yaml`'s routing entry points at the right upstream.
+
+### Real bugs found and fixed this session (see coordination/DECISIONS.md D-012 to D-017 for full rationale)
+
+| Area | Bug | Fix |
+|---|---|---|
+| Orchestrator health | `gx-reason` reported healthy while node 2 was wedged (probed gateway liveness, not the real upstream) | Per-tier real-upstream probing (D-014) |
+| gx-auto routing | Bare word "exhaustive" alone scored `hard_score=3` and routed straight to gx-max (regex scoping bug) | Regex fixed; regression test added |
+| gx-auto routing | Vision override picked the costliest vision tier without checking its context window fit an oversized prompt | Filtered to context-safe tiers, with logged fallback |
+| gx-max lifecycle | A rank started, then failed later (e.g. health probe timeout), was left running with no lease on it | `_do_acquire()` now unwinds via `gx-max-stop.sh --force` on every failure path (D-017) |
+| Media router | `GX_MEDIA_API_KEY` values like `"not-required"` silently disabled authentication — and that's exactly the sample value shipped in `.env.sample` | Magic strings removed; only a genuinely empty key disables auth |
+| Media router | An image request could run through a video workflow template (or vice versa) — wrong params, wrong timeout, mislabelled response | `_named_workflow()` enforces a kind match |
+| Media router | `Content-Disposition` filename (from ComfyUI, currently trusted per D-011) had no CR/LF stripping | Sanitised as defense-in-depth |
+| Node 1 infra (not a code bug) | `gx-litellm` had lost its Docker network attachment entirely and was crash-looping | Recreated via `docker compose up -d litellm` |
+| Node 1 infra (not a code bug) | The orchestrator had no systemd unit and was not running at all, despite prior docs claiming otherwise | New hardened `gx-orchestrator.service`, enabled |
+
+### Known gaps carried forward, unresolved by design tonight
+
+- gx-reason (B-011, garbage output) and gx-image/gx-video real E2E generation
+  all still require node 2 — diagnostic and validation tooling is ready
+  (`legenex/scripts/gx-reason-diagnose.sh`, `legenex/tests/gx-max-validate.sh`)
+  but **NOT RUN**.
+- `lib.sh`'s `n2()` SSH helper still only bounds the TCP-connect phase
+  (`ConnectTimeout=10`), not a stuck banner exchange — the newer
+  node2-recovery/validation scripts wrap their own SSH calls in a hard
+  `timeout` for this reason, but `n2()` itself was deliberately left
+  unchanged this session (see BLOCKERS.md B-012 repair note).
+- HiDream and a video "hd" tier are documented in MODELS.md but not wired
+  into any `_gx`-enabled workflow template — **NOT RUN, not built**.
