@@ -93,3 +93,31 @@ Qwen-Image, Wan 2.2 and HiDream are Apache-2.0/MIT and clean. **LTX 2.3 uses the
 LTX-2 Community License and its pipeline pulls a Gemma-3 text encoder under the
 Gemma Terms.** If the stated ad-creative use case is commercial, a human should
 read both before gx-video is used for client work.
+
+## B-009 (S2) — vLLM cannot load checkpoints larger than ~55 GiB on these nodes
+**Status:** worked around, not fixed.
+
+Measured this session: vLLM reserves its GPU pool and then loads weights into
+*additional anonymous* memory (`RssAnon` 36.6 GB vs `RssFile` 48 MB mid-load).
+On unified memory that means the load needs roughly `pool + checkpoint`, so a
+73 GiB checkpoint cannot be loaded on a 121 GiB node. Full evidence in
+DECISIONS.md D-009.
+
+Consequence: any future tier planned for vLLM must keep its checkpoint under
+roughly 55 GiB, or use llama.cpp instead.
+
+Worth revisiting if a vLLM build appears that loads directly into the reserved
+pool, or that exposes an equivalent of SGLang's
+`--weight-loader-drop-cache-after-load`.
+
+## B-010 (S3) — gx-fast runs weight-only FP4, not native FP4
+The available GB10 vLLM image (`jstarkg/vllm-gb10-flashnext:0.28-sm121-r6`) is
+compiled for `sm_120`; the device is `sm_121`. It runs (minor-version
+compatible) but vLLM logs:
+
+> Your GPU does not have native support for FP4 computation […] Weight-only FP4
+> compression will be used leveraging the Marlin kernel. This may degrade
+> performance for compute-heavy workloads.
+
+gx-fast still measures 72.8 tok/s, so this is a performance note rather than a
+fault. A vLLM built for `sm_121a` would likely be faster.

@@ -83,3 +83,52 @@ they would thrash, and a ComfyUI model-set eviction costs 270–430 s to reload.
 **Why:** Measured/estimated generation times on GB10 are seconds for distilled
 image models but **minutes** for video. A synchronous video endpoint would just
 be a timeout. LiteLLM speaks the async video shape natively.
+
+## D-009 — gx-reason moves from vLLM to llama.cpp (engine change, same tier)
+**Date:** 2026-09-14
+**Decision:** gx-reason is served by **llama.cpp** with a GGUF checkpoint, not
+vLLM with the NVFP4 safetensors checkpoint. The *tier intent* is unchanged: it
+remains a ~122B-class sparse MoE reasoning model on node 2.
+
+**Why — measured, not assumed.** `et0dev/Qwen3.5-122B-A10B-NVFP4-FP8Dense-GB10`
+(73.31 GiB) **cannot be loaded by this vLLM build on a 128 GB unified-memory
+node.** Four attempts, with `--gpu-memory-utilization` at 0.61, 0.66 and 0.78,
+with and without `--enforce-eager`, and with the MoE backend forced from
+`FLASHINFER_CUTLASS` to `MARLIN`. Every attempt stalled on shard 1 of 3.
+
+The decisive measurement, taken from `/proc/<pid>/status` mid-load:
+
+```
+VmRSS:    36742440 kB
+RssAnon:  36612040 kB      <-- weights are ANONYMOUS memory
+RssFile:     48620 kB      <-- almost nothing is file-backed
+```
+
+At that moment the node was at 111 GiB used of 121 GiB with only **half** the
+weights loaded. vLLM reserves its pool up front (≈77 GiB at 0.66) and then
+loads weights into *additional* anonymous memory rather than into the reserved
+pool. On unified memory both come from the same 121 GiB, so the working set is
+roughly `pool + checkpoint`, and the node runs out at about half of a 73 GiB
+checkpoint. Swap absorbed some of it and the loader simply thrashed.
+
+Practical ceiling for this vLLM build on these nodes: a checkpoint of roughly
+**40-55 GiB**. That is consistent with gx-fast succeeding — its checkpoint is
+21.8 GiB, and 2 × 21.8 is comfortably inside 121 GiB.
+
+**Why llama.cpp fixes it.** llama.cpp mmaps GGUF weights, so they are
+file-backed (`RssFile`) and reclaimable, with no second anonymous copy. This is
+the standard way 100B+ models are run on a single DGX Spark.
+
+**Is this a locked-architecture change?** ARCHITECTURE.md L-9 fixes the *stack*
+(llama.cpp is part of it) and says vLLM serves "appropriate single-node Qwen
+tiers **unless benchmarking gives a concrete reason otherwise**". The
+measurement above is that concrete reason. The model class, the node, and the
+alias are all unchanged, so this is an engine choice inside the locked
+architecture, not a redesign. Flagged to the human anyway because it deviates
+from the original intent.
+
+**Checkpoint:** `unsloth/Qwen3.5-122B-A10B-GGUF`, verified HTTP 200, ungated,
+quant `UD-Q4_K_XL` (77.0 GB across 3 shards) plus `mmproj-F16.gguf` (0.91 GB)
+for vision. Fallback if 77 GB proves tight: `UD-IQ4_XS` (60.2 GB).
+
+**Superseded:** D-006's gx-reason half. The gx-fast half of D-006 stands.

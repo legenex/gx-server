@@ -154,7 +154,92 @@ the tailnet, which is the intended security property for a control surface.
 | RDMA f1 ports | PORT_DOWN (expected — only two rails in use) |
 | Kernel both nodes | `6.17.0-1032-nvidia` byte-identical |
 
-## 4. Not yet run
+
+## 5. Gateway, gx-mini, gx-fast (added 2026-09-14 19:0x)
+
+**Status: PASSING.** All seven aliases are served from the single LiteLLM
+endpoint on `127.0.0.1:4000`.
+
+```
+$ curl -s localhost:4000/v1/models -H "Authorization: Bearer $KEY"
+['gx-auto', 'gx-fast', 'gx-image', 'gx-max', 'gx-mini', 'gx-reason', 'gx-video']
+```
+
+### gx-mini (llama.cpp, node 1)
+
+| Test | Result |
+|---|---|
+| Cold load through llama-swap | 6.35 s |
+| Text inference via gateway | **PASS** — correct RoCE definition |
+| Decode throughput | **50.6 tok/s** (matches the expected ~48) |
+| Vision via gateway | **PASS** |
+| Recovery from a squatted container name | **PASS** |
+
+Vision test used a generated 448×448 image containing a red circle, a blue
+square and a black digit 7. The model reported all three plus their positions:
+
+> A **circle** located in the upper-left […] The circle is **red**. The square
+> is **blue**. The number "7" is **black**.
+
+### gx-fast (vLLM, node 1) — `nvidia/Qwen3.6-35B-A3B-NVFP4`
+
+| Test | Result |
+|---|---|
+| Cold load | 329 s (weights 146 s) |
+| Model memory | 20.35 GiB |
+| Text inference | **PASS** — `17*23` → `391` |
+| Decode throughput (warm) | **72.8 tok/s** |
+| Tool calling | **PASS** — `finish_reason: tool_calls`, parsed `get_weather {"city": "Berlin"}` |
+| Vision | **PASS** — identified red circle, blue square, digit 7 |
+
+**NVFP4 kernel note.** The GB10 vLLM image is compiled for `sm_120` while the
+device reports `sm_121`; it runs (minor-version compatible), and vLLM selected
+`MarlinNvFp4LinearKernel`. It logged:
+
+> Your GPU does not have native support for FP4 computation […] Weight-only FP4
+> compression will be used leveraging the Marlin kernel.
+
+So gx-fast is running **weight-only FP4 via Marlin**, not native FP4 tensor
+cores. It works and is fast enough, but a vLLM built for `sm_121a` would likely
+be faster. Recorded rather than assumed — see BLOCKERS.md.
+
+### gx-auto routing against live tiers
+
+| Prompt class | Routed to | Why (from the decision log) |
+|---|---|---|
+| "hi there" | **gx-mini** | complexity -4 < 1: simple/dispatch task |
+| ticket classification | **gx-mini** | complexity -3 < 1: simple/dispatch task |
+| tool-bearing request | **gx-fast** | tool definitions present: tool floor |
+| "debug… derive time complexity… refactor" | **gx-reason** | complexity 10 ≥ 4: hard reasoning/coding |
+
+The tool-bearing request returned a real parsed tool call end-to-end through
+`gx-auto`, so routing and tool parsing both work through the full chain.
+
+Note: LiteLLM does not forward the orchestrator's `X-GX-Routed-To` response
+header to clients, so routing is verified from the orchestrator's decision log,
+which is the authoritative record.
+
+### Defects found by running the stack
+
+These were all found by execution, not inspection:
+
+1. `--no-mmap` no longer exists in this llama.cpp build (replaced by
+   `--load-mode`); it aborted gx-mini at startup.
+2. llama-swap tokenises `cmd` with shell-style splitting and strips quotes, so
+   a JSON-valued flag arrived malformed. Moved to an `--env-file`.
+3. Without the chat-template kwarg, gx-mini put its entire answer in
+   `reasoning_content` and returned **empty** `content` with
+   `finish_reason: length`.
+4. The GB10 vLLM image's ENTRYPOINT is already `["vllm","serve"]`, so a literal
+   `serve` in the command became the positional model name.
+5. Qwen3.6 emits Qwen-XML tool calls, not Hermes JSON — wrong parser meant tool
+   calls came back as unparsed text.
+6. A leftover container holding the model's `--name` made every subsequent
+   start fail permanently. Fixed and verified by deliberately squatting the name.
+7. The orchestrator probed the gateway without a bearer token, so every tier
+   read as unavailable.
+
+## 6. Not yet run
 
 | Acceptance test | Status |
 |---|---|
