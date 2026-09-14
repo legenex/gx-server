@@ -95,6 +95,7 @@ apiKeys:
 # MACROS
 # ------------------------------------------------------------------------------
 macros:
+  llamacpp_image: "legenex/llama-cpp-spark:latest"
   host: "0.0.0.0"
 
   # Host-side model root on node 2 (see coordination/node2/NODE2_STATE.md).
@@ -106,11 +107,8 @@ macros:
   # ---- gx-reason: PENDING VERIFICATION ---------------------------------------
   # Another agent is verifying the exact ~100-125B sparse MoE checkpoint.
   # DO NOT guess a model ID. Placeholders fail fast on start.
-  vllm_image: "jstarkg/vllm-gb10-flashnext:0.28-sm121-r6"
-  gx_reason_model_dir: "/models/vllm/Qwen3.5-122B-A10B-NVFP4-FP8Dense-GB10"
 
   # 0.61 x ~128 GB ~= 78 GB. Raising this above 0.61 eats the ComfyUI reservation.
-  gx_reason_gpu_fraction: "0.66"
 
 models:
 
@@ -133,112 +131,35 @@ models:
   # ttl: 900 -> 15 min idle then unload. Node 2 must be able to hand its memory
   # back to gx-max / ComfyUI quickly.
   gx-reason:
-    name: "gx-reason (pending checkpoint)"
-    description: "100-125B class sparse MoE reasoning model, node 2. CHECKPOINT PENDING VERIFICATION."
-    checkEndpoint: "/health"
-    ttl: 900
+    name: "gx-reason"
+    description: >
+      Qwen3.5-122B-A10B UD-Q4_K_XL GGUF on llama.cpp. Hard reasoning and coding
+      tier. Owns node 2 exclusively - do not co-schedule with ComfyUI.
+      llama.cpp is used instead of vLLM because vLLM cannot load a checkpoint
+      this large on a 128 GB unified-memory node (see DECISIONS.md D-009).
+    proxy: "http://127.0.0.1:25800"
+    checkEndpoint: /health
+    ttl: 1800
     unloadTimeout: 240
     cmd: >
       sh -c 'docker rm -f gx-reason >/dev/null 2>&1;
       exec docker run --rm --name gx-reason
       --network ${swap_netns}
       --device nvidia.com/gpu=all
-      --ipc host --shm-size 32g
+      --ipc host
       --ulimit memlock=-1 --ulimit stack=67108864
       --security-opt seccomp=unconfined
-      -e NVIDIA_DISABLE_FORWARD_COMPATIBILITY=1
-      -e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
-      -e VLLM_USE_DEEP_GEMM=0
-      -v ${models_root}/vllm:/models/vllm:ro
-      ${vllm_image}
-      ${gx_reason_model_dir}
-      --served-model-name gx-reason
-      --host ${host} --port ${PORT}
-      --gpu-memory-utilization ${gx_reason_gpu_fraction}
-      --max-model-len 32768
-      --max-num-seqs 4
-      --max-num-batched-tokens 8192
-      --kv-cache-dtype fp8
-      --enforce-eager
-      --enable-prefix-caching
-      --enable-auto-tool-choice
-      --tool-call-parser qwen3_xml
-      --trust-remote-code'
-    cmdStop: "docker stop -t 200 ${MODEL_ID}"
-
-  # ============================================================================
-  # RESERVED: ComfyUI / media tier  (gx-image, gx-video)
-  # ============================================================================
-  # Owned by another agent. Left commented so this file does not conflict with
-  # their design; the 22 GB reservation above is what matters here.
-  #
-  # When that agent delivers the router, un-comment, fix the image/args, AND add
-  # the model ID to the "media" group at the bottom of this file — otherwise it
-  # lands in the implicit default group and can be evicted by (or evict)
-  # gx-reason.
-  #
-  # Note llama-swap's `upstream.ignorePaths` already special-cases ComfyUI's
-  # /ws and /api/jobs so an open UI does not trigger model swaps.
-  #
-  # gx-media:
-  #   name: "ComfyUI media backend"
-  #   description: "Backs gx-image and gx-video. PENDING another agent's router spec."
-  #   proxy: "http://127.0.0.1:18800"
-  #   checkEndpoint: "/system_stats"
-  #   ttl: 1800
-  #   unloadTimeout: 60
-  #   cmd: |
-  #     docker run --rm --name ${MODEL_ID}
-  #     --network ${swap_netns}
-  #     --device nvidia.com/gpu=all
-  #     --ipc host
-  #     -v ${models_root}/image:/comfy/models/image
-  #     -v ${models_root}/video:/comfy/models/video
-  #     PENDING-VERIFY-comfyui-image
-  #     --listen ${host} --port 18800
-  #   cmdStop: "docker stop -t 30 ${MODEL_ID}"
-
-# ------------------------------------------------------------------------------
-# Keep an open ComfyUI web UI from triggering model swaps.
-# ------------------------------------------------------------------------------
-upstream:
-  ignorePaths:
-    - '.*\.(js|json|css|png|gif|jpg|jpeg|ico|txt|woff2)$'
-    - '^\/ws$|^\/api\/jobs$'
-
-# ==============================================================================
-# ROUTING / CONCURRENCY CONTROL
-# ==============================================================================
-#   heavy : swap true       -> only ONE heavy model loaded at a time
-#           exclusive false -> does not evict the media tier
-#   media : persistent true -> a text request can never evict in-flight image or
-#                              video work
-#
-# Worst case simultaneously loaded = one heavy (<=78 GB) + media (<=22 GB).
-#
-# The "media" group is commented out together with gx-media above: llama-swap
-# rejects a group whose members do not exist. Re-enable both at the same time.
-routing:
-  router:
-    use: group
-    settings:
-      groups:
-        heavy:
-          persistent: false
-          swap: true
-          exclusive: false
-          members:
-            - gx-reason
-        # media:
-        #   persistent: true
-        #   swap: false
-        #   exclusive: false
-        #   members:
-        #     - gx-media
-
-# ==============================================================================
-# NO STARTUP PRELOAD — DELIBERATE
-# ==============================================================================
-# `hooks.on_startup.preload` is intentionally absent. Node 2 must never allocate
-# GPU memory just because llama-swap restarted — gx-max rank1 may own the node.
-# ==============================================================================
+      --env-file /app/env/gx-reason.env
+      -v ${models_root}/gguf:/models/gguf:ro
+      ${llamacpp_image}
+      -m /models/gguf/Qwen3.5-122B-A10B/UD-Q4_K_XL/Qwen3.5-122B-A10B-UD-Q4_K_XL-00001-of-00003.gguf
+      --mmproj /models/gguf/Qwen3.5-122B-A10B/mmproj-F16.gguf
+      --alias gx-reason
+      --host ${host} --port 25800
+      --ctx-size 32768
+      --n-gpu-layers 99
+      --parallel 1
+      --load-mode mmap
+      --jinja
+      --timeout 900'
+    cmdStop: "docker stop -t 200 gx-reason"

@@ -155,7 +155,7 @@ the tailnet, which is the intended security property for a control surface.
 | Kernel both nodes | `6.17.0-1032-nvidia` byte-identical |
 
 
-## 5. Gateway, gx-mini, gx-fast (added 2026-09-14 19:0x)
+## 4. Gateway, gx-mini and gx-fast
 
 **Status: PASSING.** All seven aliases are served from the single LiteLLM
 endpoint on `127.0.0.1:4000`.
@@ -239,16 +239,99 @@ These were all found by execution, not inspection:
 7. The orchestrator probed the gateway without a bearer token, so every tier
    read as unavailable.
 
-## 6. Not yet run
+## 5. gx-max lifecycle — acquire, serve, release, restore
+
+**Status: PASSING.** Acceptance test 6 run end-to-end on hardware.
+
+### Acquire (`gx-max-start.sh`)
+
+Starting state: gx-mini loaded on node 1, both nodes otherwise idle.
+
+```
+=== gx-max preflight ===
+both ConnectX rails reachable
+=== draining conflicting GPU work ===
+  node1: stopping gx-mini (graceful, 60s)
+MemAvailable: node1=112GiB node2=113GiB
+=== starting rank1 on node2 ===
+=== starting rank0 on node1 ===
+=== waiting for gx-max to become healthy (timeout 1800s) ===
+```
+
+Preflight, graceful drain, rank1-before-rank0 ordering and the health gate all
+behaved as designed. Time to healthy: **~9 minutes** (rank0 weight load 357 s,
+draft model 58 s, FlashInfer autotune, CUDA graph capture).
+
+**The kernel-7.0 failure did not recur.** Both ranks passed
+`FlashInfer autotune completed` — the exact stage that previously died with
+`ibv_reg_mr_iova2 failed with error Cannot allocate memory`.
+
+### Served through the gateway alias
+
+| Check | Result |
+|---|---|
+| `/health` | **200** |
+| rank0 / rank1 | both `running` |
+| `gx-max` alias via LiteLLM :4000 | **PASS** — 156 tokens, 24.6 tok/s |
+
+### D-002 verified: `--enable-metrics` works
+
+```
+$ curl -s localhost:30000/metrics | grep num_running_reqs
+sglang:num_running_reqs{engine_type="unified",model_name="/model",...} 0.0
+sglang:num_queue_reqs{...} 0.0
+```
+
+`gx-max-status.sh` now reports `in flight : 0` instead of `unknown`, so the
+graceful drain observes the real queue rather than guessing.
+
+### Release (`gx-max-stop.sh`)
+
+```
+draining: waiting up to 60s for in-flight requests to finish
+queue empty, proceeding
+stopping rank0 on node1
+stopping rank1 on node2
+MemAvailable after release: node1=115GiB node2=114GiB
+restore: LiteLLM gateway is live on :4000
+restore: orchestrator is live on :18900
+restore: starting node-2 llama-swap
+gx-max released; both nodes are back to normal operating state
+```
+
+**29.5 s total.** Both nodes fully reclaimed. gx-mini served again immediately
+afterwards (returned `RESTORED`), confirming normal operation resumes.
+
+### A real bug this test exposed
+
+After the release, the orchestrator still reported `{"state": "ready"}` for
+gx-max, because the state machine trusted its own cache and had not noticed a
+teardown performed outside the process. A `gx-max` request in that window would
+have been proxied into a dead endpoint instead of re-acquiring the cluster.
+Fixed by reconciling against a real health probe in `status()`, `is_ready()` and
+`acquire()`; verified live (state now correctly reads `down`) and covered by two
+new tests.
+
+### Memory headroom observation (not a failure, but worth knowing)
+
+During this acquisition node 1 briefly hit **63/63 GB swap and 1 GiB free**
+while rank0 loaded. Node 1 carries the control plane (gateway, Postgres,
+llama-swap) *and* rank 0, so it has materially less headroom than node 2. It
+recovered on its own once the transient load working-set was freed, and the
+engine came up healthy — but node 1 is the tighter of the two nodes and a
+further increase in `mem-fraction-static` would not be safe.
+
+## 6. Remaining
 
 | Acceptance test | Status |
 |---|---|
-| gx-mini text + vision inference | **NOT RUN** — blocked on gx-max releasing node 1 |
-| gx-fast inference / tool use / vision | **NOT RUN** — model downloading |
-| gx-reason inference | **NOT RUN** — model downloading |
-| gx-auto full multi-class routing against live tiers | **PARTIAL** — logic verified, live tiers pending |
-| Full lifecycle drain/acquire/release cycle | **NOT RUN** |
-| gx-image real generation | **NOT RUN** — ComfyUI not built |
-| gx-video real generation | **NOT RUN** — ComfyUI not built |
-| Gateway restart recovery | **NOT RUN** |
-| Remote access via Tailscale endpoint | **NOT RUN** |
+| 1. gx-mini text + vision | **PASS** |
+| 2. gx-fast inference / tools / vision | **PASS** |
+| 3. gx-reason hard reasoning | **BLOCKED then re-engineered** — vLLM cannot load the 73 GiB checkpoint (D-009/B-009); moved to llama.cpp GGUF, weights downloading |
+| 4. gx-max both nodes, fabric, tok/s | **PASS** |
+| 5. gx-auto routing across classes | **PASS** (gx-reason leg pending its engine) |
+| 6. lifecycle drain/acquire/release/restore | **PASS** |
+| 7. gx-image real generation | **NOT RUN** — ComfyUI not deployed |
+| 8. gx-video real generation | **NOT RUN** — ComfyUI not deployed |
+| 9. gateway restart recovery | **PARTIAL** — restore-normal.sh verified during the lifecycle test; full compose restart not yet run |
+| 10. remote access over Tailscale | **NOT RUN** |

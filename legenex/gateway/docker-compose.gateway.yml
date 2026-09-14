@@ -78,6 +78,11 @@ services:
       # other machines set GX_LITELLM_BIND to this host's TAILSCALE address
       # (management plane) — never to 0.0.0.0 unless you mean it.
       - "${GX_LITELLM_BIND:-127.0.0.1}:${GX_LITELLM_PORT:-4000}:4000"
+      # Tailnet bind: remote clients reach the gateway over Tailscale, which
+      # is authenticated at the network layer. Never bind 0.0.0.0 - that would
+      # expose the gateway to the whole LAN. Set GX_LITELLM_TS_BIND to this
+      # host's tailscale IP, or to 127.0.0.2 to effectively disable it.
+      - "${GX_LITELLM_TS_BIND:-127.0.0.1}:${GX_LITELLM_PORT:-4000}:4000"
     extra_hosts:
       # Lets the container reach the lead's orchestrator, which listens on the
       # HOST's 127.0.0.1:18900. Inside a container 127.0.0.1 is the container,
