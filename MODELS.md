@@ -125,8 +125,24 @@ job queue (minutes).** `gx-video` is exposed as the asynchronous OpenAI
 `/v1/videos` create/status/content shape, which LiteLLM speaks natively.
 
 `Lightricks/LTX-2.5` is newer and better-packaged but is **`gated: "auto"`** — it
-needs a human to click through at huggingface.co and supply an `HF_TOKEN`. Not a
-blocker; LTX 2.3 ships first.
+needs a human to click through at huggingface.co and supply an `HF_TOKEN`.
+
+**LTX 2.3 is currently NOT used.** It carries the LTX-2 Community Licence rather
+than Apache/MIT, and its pipeline pulls a Gemma-3 text encoder under the Gemma
+Terms. Wan 2.2 A14B (Apache-2.0) covers video on its own, so nothing was
+downloaded or accepted under the LTX licence. If LTX is wanted later, a human
+should read both licences first — especially for commercial ad-creative work.
+
+## Measured media performance (node 2, direct against ComfyUI)
+
+| Workflow | Setting | Measured |
+|---|---|---|
+| Qwen-Image-2512 + 4-step Lightning LoRA | 1328x1328 | **12.6 s** |
+| Qwen-Image-2512, no LoRA | 1328x1328 | 251 s |
+| Wan 2.2 A14B text-to-video | 640x640, 49 frames | **56.7 s** |
+
+The Lightning LoRA is worth ~20x and is what makes `gx-image` an interactive
+endpoint rather than a batch job.
 
 ## Disk budget
 

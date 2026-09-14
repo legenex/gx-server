@@ -14,8 +14,10 @@ gx-max and gx-auto are verified serving real inference through the LiteLLM
 gateway on `127.0.0.1:4000` (and over Tailscale), and the full gx-max lifecycle
 — drain, acquire both nodes, serve, release, restore — passes. gx-reason is
 **not working**: the 122B model loads and generates but returns garbage tokens
-(B-011). gx-image/gx-video are **not built**. **Node 2 is currently wedged**
-(B-012) and needs attention before gx-reason or media work can continue.
+(B-011). gx-image/gx-video are **built but unproven** — ComfyUI, all weights and
+the router exist and the router's own test suite passes, but no image has been
+generated through the API. **Node 2 is currently wedged** (B-012) and needs
+attention before gx-reason or media work can continue.
 
 ## ⚠ Immediate issue: node 2 is wedged
 
@@ -77,7 +79,7 @@ rsync and would fail as written.
 | gx-max rank 0/1 (SGLang) | 1+2 | 30000 | **stopped** — released after the lifecycle test |
 | llama-swap | node 2 | 28080 | **unreachable** — node 2 wedged |
 | gx-reason (llama.cpp) | node 2 | via llama-swap | **unreachable / broken output** |
-| ComfyUI | node 2 | — | **does not exist yet** |
+| ComfyUI | node 2 | 8188 (loopback) | installed at `/srv/ai-stack/comfyui`, weights present (~97 GB); container build state unknown since the node wedged |
 
 Node 1 has ~80 GiB available with gx-mini and gx-fast both loaded. Node 2's
 state is unknown beyond kernel liveness.
@@ -91,8 +93,8 @@ state is unknown beyond kernel liveness.
 | gx-reason | `unsloth/Qwen3.5-122B-A10B-GGUF` UD-Q4_K_XL | llama.cpp | 2 | **BROKEN** — loads and generates but output is garbage (B-011) |
 | gx-max | `nvidia/DeepSeek-V4-Flash-0731-NVFP4` | SGLang TP=2 | 1+2 | **WORKING** |
 | gx-auto | — | orchestrator | 1 | **WORKING** — verified routing across live tiers |
-| gx-image | Qwen-Image 2512 / HiDream I1 | ComfyUI | 2 | model IDs verified; nothing built |
-| gx-video | LTX 2.3 / Wan 2.2 A14B | ComfyUI | 2 | model IDs verified; nothing built |
+| gx-image | Qwen-Image 2512 (+4-step Lightning LoRA) / HiDream I1 | ComfyUI | 2 | **built, unproven via API** — ComfyUI + weights on node 2, direct generation measured at **12.6 s @1328²**; router untested against the GPU |
+| gx-video | Wan 2.2 A14B (LTX 2.3 not used — licence) | ComfyUI | 2 | **built, unproven via API** — direct generation measured at **56.7 s @640², 49 frames** |
 
 ## Repository layout (what this session added)
 
