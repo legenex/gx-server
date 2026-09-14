@@ -138,20 +138,6 @@ model_list:
       max_input_tokens: 65536
       max_output_tokens: 4096
 
-  # Qwen3.8-27B NVFP4 + DFlash2 via llama-swap/SGLang.
-  - model_name: Qwen3.8-27B-NVFP4-DFlash2
-    litellm_params:
-      model: openai/Qwen3.8-27B-NVFP4-DFlash2
-      api_base: "http://llama-swap:8080/v1"
-      api_key: "sk-your-litellm-master-key"
-      max_tokens: 32768
-      drop_params: true
-    model_info:
-      # SGLang KV pool is 131072 tokens (--max-total-tokens); input + output
-      # must fit inside it, so these two values sum to exactly that.
-      max_input_tokens: 98304
-      max_output_tokens: 32768
-
   # Always-on 27B llama.cpp GGUF service (manually started by Martin,
   # not managed by llama-swap) — used as the default "agent work" model.
   # Bypasses the vLLM/llama-swap adaptive-VRAM path entirely, so it isn't
@@ -522,17 +508,6 @@ model_list:
 #      model: openai/ikiru/dolphin-mistral-24b-venice-edition:latest
 #      api_base: "http://llama-swap:8080/v1"
 #      api_key: "sk-your-litellm-master-key"
-
-  # Qwen3.8-Flash-Next 180B NVFP4 + HashK PLE + NEXTN.
-  - model_name: Qwen3.8-Flash-Next-NVFP4
-    litellm_params:
-      model: openai/Qwen3.8-Flash-Next-NVFP4
-      api_base: "http://llama-swap:8080/v1"
-      api_key: "sk-your-litellm-master-key"
-      max_tokens: 32768
-    model_info:
-      max_input_tokens: 262144
-      max_output_tokens: 32768
 
 litellm_settings:
   # Complexity routing for model="auto_router1"/"auto" on ALL endpoints

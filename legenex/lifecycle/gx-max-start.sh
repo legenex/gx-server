@@ -20,7 +20,7 @@ source "${here}/lib.sh"
 FORCE_DRAIN="${GXMAX_FORCE_DRAIN:-0}"
 
 # Containers that must not hold GPU/unified memory while gx-max runs.
-CONFLICTS_N1=(gx-mini gx-fast vllm-qwen38-uncensored vllm llama-swap-node01)
+CONFLICTS_N1=(gx-mini gx-fast vllm llama-swap-node01)
 CONFLICTS_N2=(gx-reason comfyui llama-swap-node02)
 
 # ---------------------------------------------------------------- preflight --

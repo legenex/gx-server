@@ -9,6 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+- **Qwen3.8 permanently retired.** `vllm-qwen38-uncensored` (a standalone,
+  always-on vLLM container, ~80 GiB resident, unrelated to the gx-mini/
+  gx-fast/gx-reason/gx-max/gx-auto/gx-image/gx-video tier set) and its
+  checkpoint at `/opt/models/Qwen3.8-27B-Uncensored-NVFP4` have been removed
+  from gx10-01 by the human operator. All active runtime/download/routing/
+  lifecycle support for Qwen3.8 has been removed from the canonical repo:
+  `setup/setup-flashnext.sh` (deleted — the file existed solely to prepare
+  Qwen3.8-Flash-Next), the `QWEN38_ROOT` variable and the two Qwen3.8 download
+  entries in `setup/download-models.sh`, `QWEN38_ROOT` in `.env.sample`,
+  `vllm-qwen38-uncensored` from the gx-max conflict-drain list in
+  `legenex/lifecycle/gx-max-start.sh`, and the `Qwen3.8-27B-NVFP4-DFlash2` /
+  `Qwen3.8-Flash-Next-NVFP4` entries in `LiteLLM/config.yaml.sample` and
+  `llama-swap/config.yaml.sample`. Qwen3.8 is **not** gx-fast and must not be
+  reintroduced under any tier alias. Historical rationale for why the
+  100-125B class has no Qwen3.6/Qwen3.8 checkpoint (see `MODELS.md`) is
+  unaffected and remains as comparative context, not active support.
+- Retiring this container also resolved tonight's memory-safety incident on
+  gx10-01: it held ~80 GiB resident with no lifecycle management, leaving as
+  little as ~9 GiB available system-wide. See `CURRENT_STATE.md` and
+  `coordination/BLOCKERS.md` for the resource-ownership work this motivated.
+
 ### Changed
 - **Sample configs**: `LiteLLM/config.yaml.sample` and `llama-swap/config.yaml.sample`
   are regenerated from the live configs, so they now document all 31 LiteLLM models

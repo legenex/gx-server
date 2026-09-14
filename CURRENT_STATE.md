@@ -3,9 +3,46 @@
 **This file must always reflect reality.** If you are a new agent resuming this
 work, read this first, then ARCHITECTURE.md (what is locked), then BLOCKERS.md.
 
-Last updated: 2026-09-14 20:20 CEST, by the lead agent on gx10-01.
+Last updated: 2026-09-14 21:40 CEST, by the lead agent on gx10-01. (Full
+resource-ownership/observability rewrite still in progress this session —
+see the dated addendum below for the latest verified facts; the rest of this
+file is the prior session's snapshot and is being reconciled.)
 
 ---
+
+## Addendum — 2026-09-14 21:40 CEST: second node-1 incident, unrelated to node 2
+
+While node 2 was already down, node 1 independently had **two real problems**,
+both now fixed and verified:
+
+1. **`gx-litellm` had lost its Docker network attachment entirely** (empty
+   `NetworkSettings.Networks`) and was crash-looping against
+   `litellm-db:5432` (unreachable with no network). Fixed by
+   `docker compose -f legenex/gateway/docker-compose.gateway.yml up -d litellm`,
+   which recreated it correctly attached. Verified: `HTTP 200` on
+   `http://127.0.0.1:4000/health/liveliness`, `RestartCount=0`.
+2. **The orchestrator (`gx-auto`/`gx-max` control plane, port 18900) was not
+   running at all** — no process, and no systemd unit had ever been created
+   for it, despite this file previously claiming it was "running, healthy".
+   Fixed: started it and added `~/.config/systemd/user/gx-orchestrator.service`
+   (enabled, hardened — `NoNewPrivileges`, `ProtectSystem=strict`, binds only
+   `127.0.0.1,172.17.0.1:18900`, never `0.0.0.0`). Verified:
+   `curl 127.0.0.1:18900/health/detailed` returns `200` with real tier state.
+
+Separately, **`vllm-qwen38-uncensored` — a standalone, unmanaged, always-on
+vLLM container holding ~80 GiB resident, entirely unrelated to the gx-mini/
+gx-fast/gx-reason/gx-max tier set** — was identified by the human operator as
+a major memory-safety risk (it left as little as ~9 GiB available
+system-wide) and has been **permanently retired**: container removed, its
+checkpoint at `/opt/models/Qwen3.8-27B-Uncensored-NVFP4` deleted, its systemd
+unit disabled, Docker restart policy set to `no`, and all active
+runtime/download/routing/lifecycle references to it removed from this repo
+(see CHANGELOG.md `[Unreleased] / Removed`). **Qwen3.8 is not gx-fast and must
+never be reintroduced under any tier alias.** Node 1 now sits at ~105-112 GiB
+`MemAvailable` at idle. A resource-ownership/admission-control layer to make
+this class of incident structurally impossible (not just manually caught) was
+in progress as of this addendum — check the `## Resource ownership` section
+below (added once that work lands) before assuming it's done.
 
 ## One-paragraph summary
 

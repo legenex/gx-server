@@ -69,8 +69,6 @@ echo "Loading configuration from: $REPO_ROOT/.env"
 echo "Storage path: $LLM_ROOT_PATH"
 echo ""
 
-QWEN38_ROOT="${QWEN38_ROOT:-$LLM_ROOT_PATH/qwen38}"
-
 # Create model directories
 mkdir -p "$LLM_ROOT_PATH"/{vllm,ollama,gguf}
 
@@ -124,8 +122,6 @@ if [ "$INSTALL_S_TIER" = "true" ]; then
         "unsloth/Qwen2-7B"
         "unsloth/Qwen3-Coder-Next-FP8-Dynamic"
         "HauhauCS/Qwen3.5-35B-A3B-Uncensored-HauhauCS-Aggressive"
-        "RadixArk/Qwen3.8-27B-NVFP4|$QWEN38_ROOT/RadixArk/Qwen3.8-27B-NVFP4"
-        "z-lab/Qwen3.8-27B-DFlash2|$QWEN38_ROOT/z-lab/Qwen3.8-27B-DFlash2"
     )
     
     for model in "${MODELS[@]}"; do
