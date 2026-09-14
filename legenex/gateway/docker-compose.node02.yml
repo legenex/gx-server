@@ -31,6 +31,12 @@ services:
     environment:
       GX_SWAP_API_KEY: ${GX_SWAP_API_KEY:?GX_SWAP_API_KEY is required}
     mem_limit: ${GX_SWAP_MEM_LIMIT:-512m}
+    # Host-resilience hardening (2026-09-14, post gx10-02 mmap-thrash incident,
+    # see BLOCKERS.md B-012): bias the kernel to kill this small proxy before
+    # sshd/tailscaled/systemd/NetworkManager in a genuine system-wide OOM. The
+    # model containers it spawns (gx-reason) carry their own, much higher
+    # oom-score-adj set inside node02.yaml.
+    oom_score_adj: ${GX_SWAP_OOM_SCORE_ADJ:-100}
     healthcheck:
       test: ["CMD", "curl", "-fsS", "-m", "3", "http://127.0.0.1:8080/health"]
       interval: 15s

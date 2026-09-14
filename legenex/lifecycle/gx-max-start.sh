@@ -16,8 +16,13 @@ set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=/dev/null
 source "${here}/lib.sh"
+# shellcheck source=./resource-guard.sh
+source "${here}/resource-guard.sh"
 
 FORCE_DRAIN="${GXMAX_FORCE_DRAIN:-0}"
+# Estimated whole-node footprint of one SGLang rank, used by the hard
+# admission guard below. See gx_orchestrator.resource_guard.WORKLOAD_SIZING.
+GXMAX_RANK_ESTIMATED_GIB="${GXMAX_RANK_ESTIMATED_GIB:-90}"
 
 # Containers that must not hold GPU/unified memory while gx-max runs.
 CONFLICTS_N1=(gx-mini gx-fast vllm llama-swap-node01)
@@ -69,17 +74,37 @@ drain_node2
 docker rm -f "${GXMAX_RANK0_NAME}" >/dev/null 2>&1 || true
 n2 "docker rm -f ${GXMAX_RANK1_NAME} >/dev/null 2>&1 || true"
 
-# Memory sanity: SGLang needs roughly the whole node. Warn loudly if something
-# large is still resident, but do not silently kill unknown workloads.
-avail_n1=$(awk '/MemAvailable/{print int($2/1048576)}' /proc/meminfo)
-avail_n2=$(n2 "awk '/MemAvailable/{print int(\$2/1048576)}' /proc/meminfo")
-log "MemAvailable: node1=${avail_n1}GiB node2=${avail_n2}GiB"
-if [ "${avail_n1}" -lt 90 ] || [ "${avail_n2}" -lt 90 ]; then
-  if [ "${FORCE_DRAIN}" = "1" ]; then
-    log "WARN: low free memory but GXMAX_FORCE_DRAIN=1, continuing"
-  else
-    die "not enough free memory (need ~90GiB/node). Something is still holding memory. Inspect with 'docker ps' on both nodes, or re-run with GXMAX_FORCE_DRAIN=1 to override."
-  fi
+# ------------------------------------------------------ hard admission guard --
+# One hard, non-bypassable safety check per node before ANY docker run is
+# attempted (2026-09-14 hardening -- see coordination/BLOCKERS.md B-012: node
+# 2 was wedged by a second ~77GB model landing on top of gx-reason). This
+# reuses the EXACT SAME arithmetic gx-safe-run.sh and the Python orchestrator
+# use (gx_orchestrator.resource_guard.compute_admission) -- there is one
+# formula, not a second one duplicated in bash.
+#
+# GXMAX_FORCE_DRAIN no longer has any effect on this check: a hard guard that
+# an env var can switch off is not a hard guard. It is read below only to
+# emit a note if someone still sets it, so existing callers do not silently
+# think they bypassed something.
+log "=== hard admission guard (node1 + node2, reserve=${GX_GUARD_RESERVE_GIB}GiB) ==="
+guard_meminfo_n2="$(mktemp)"
+trap 'rm -f "${guard_meminfo_n2}"' EXIT
+n2 "cat /proc/meminfo" > "${guard_meminfo_n2}" || die "could not read node2 /proc/meminfo for the admission guard"
+
+if guard_n1_result="$(gx_guard_check node1 gx-max-rank0 exclusive "${GXMAX_RANK_ESTIMATED_GIB}")"; then
+  log "node1 admission: ${guard_n1_result}"
+else
+  die "node1 admission guard REFUSED gx-max-rank0: ${guard_n1_result} -- hard refusal, cannot be bypassed"
+fi
+if guard_n2_result="$(GX_GUARD_MEMINFO="${guard_meminfo_n2}" gx_guard_check node2 gx-max-rank1 exclusive "${GXMAX_RANK_ESTIMATED_GIB}")"; then
+  log "node2 admission: ${guard_n2_result}"
+else
+  die "node2 admission guard REFUSED gx-max-rank1: ${guard_n2_result} -- hard refusal, cannot be bypassed"
+fi
+log "admission guard: both nodes admitted gx-max"
+
+if [ "${FORCE_DRAIN}" = "1" ]; then
+  log "NOTE: GXMAX_FORCE_DRAIN=1 is set but no longer bypasses the hard admission guard above. It has no effect in this script any more."
 fi
 
 # ------------------------------------------------------------------- start --
@@ -90,16 +115,33 @@ log "=== starting rank1 on node2 ==="
 # Build the remote command as a single properly quoted string.
 r1_cmd=$(printf '%q ' docker run -d --name "${GXMAX_RANK1_NAME}" --restart no \
   "${DFLAGS[@]}" "${EFLAGS[@]}" "${GXMAX_IMAGE}" $(gxmax_args 1))
-n2 "${r1_cmd}" >/dev/null || die "failed to start rank1"
+# Wrap in a remote flock so a concurrent large-workload launch against node2
+# cannot race past this point. Lock path is a documented convention
+# (~/.gx-guard/node2.lock) that any future node2-side tooling should reuse --
+# node2 has no deployed copy of resource-guard.sh yet (it is unreachable as
+# of this task), so this is the one piece of cross-process protection it
+# gets tonight: a real flock, just not yet backed by the residency ledger.
+r1_locked_cmd="mkdir -p \$HOME/.gx-guard && exec 9>\$HOME/.gx-guard/node2.lock && flock -x -w ${GX_GUARD_LOCK_TIMEOUT} 9 && ${r1_cmd}"
+n2 "${r1_locked_cmd}" >/dev/null || die "failed to start rank1 (node2 lock busy, or launch failed)"
 n2 "docker logs -f ${GXMAX_RANK1_NAME} > \$HOME/gx-max-rank1.log 2>&1 &" >/dev/null 2>&1 || true
+# Best-effort local bookkeeping: node1 has no authoritative view of node2's
+# residency (no ledger runs there), but recording this here means a later
+# gx-max-stop.sh release, or a `resource-guard.sh status node2` check run
+# from node1, at least reflects what THIS script believes it started.
+gx_guard_register node2 gx-max-rank1 exclusive "${GXMAX_RANK_ESTIMATED_GIB}" "${GXMAX_RANK1_NAME}" || true
 log "rank1 started"
 
 sleep 5
 
 log "=== starting rank0 on node1 ==="
-docker run -d --name "${GXMAX_RANK0_NAME}" --restart no \
-  "${DFLAGS[@]}" "${EFLAGS[@]}" "${GXMAX_IMAGE}" $(gxmax_args 0) >/dev/null \
-  || die "failed to start rank0"
+# Routed through gx_guard_run: this re-validates admission (holding node1's
+# lock for the whole launch) at the exact moment of the real docker run, and
+# registers residency on success -- the same sanctioned path gx-safe-run.sh
+# uses for any other large/exclusive container on this node.
+gx_guard_run node1 gx-max-rank0 exclusive "${GXMAX_RANK_ESTIMATED_GIB}" -- \
+  docker run -d --name "${GXMAX_RANK0_NAME}" --restart no \
+  "${DFLAGS[@]}" "${EFLAGS[@]}" "${GXMAX_IMAGE}" $(gxmax_args 0) \
+  || die "failed to start rank0 (admission refused, node1 lock busy, or launch failed)"
 ( docker logs -f "${GXMAX_RANK0_NAME}" > "${GXMAX_LOG_DIR}/gx-max-rank0.log" 2>&1 & ) || true
 log "rank0 started"
 

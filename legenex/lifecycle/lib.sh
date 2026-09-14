@@ -71,6 +71,12 @@ gxmax_env_flags() {
 
 # Docker flags common to both ranks. GPU access is via CDI (nvidia.com/gpu=all);
 # /dev/infiniband + CAP_IPC_LOCK + unlimited memlock are required for RoCE.
+#
+# --memory / --oom-score-adj: host-resilience hardening, see gx-max.conf for
+# the full rationale on why the cap is a generous ceiling above gx-max's
+# documented working set rather than an attempt to enforce the 30 GiB
+# host-reserve policy during a gx-max run (that policy applies to normal
+# operation; gx-max monopolising the node is a documented, locked exception).
 gxmax_docker_flags() {
   printf '%s\n' \
     --network host \
@@ -80,6 +86,9 @@ gxmax_docker_flags() {
     --device /dev/infiniband \
     --cap-add IPC_LOCK \
     --ulimit memlock=-1:-1 \
+    --memory "${GXMAX_MEM_LIMIT:-106g}" \
+    --memory-swap "${GXMAX_MEM_LIMIT:-106g}" \
+    --oom-score-adj "${GXMAX_OOM_SCORE_ADJ:-950}" \
     -v "${GXMAX_MODEL_DIR}:/model:ro" \
     -v "${GXMAX_CACHE_DIR}:/root/.cache"
 }

@@ -138,6 +138,35 @@ macros:
   # 0.66 breaks the node-1 memory budget documented at the top of this file.
   gx_fast_gpu_fraction: "0.66"
 
+  # ----------------------------------------------------------------------------
+  # HOST-RESILIENCE HARDENING (added 2026-09-14, after the gx10-02 mmap-thrash
+  # incident that took SSH down on that node - see coordination/BLOCKERS.md
+  # B-012). These are DOCKER-level cgroup backstops, not a change to the budget
+  # numbers above - they encode the SAME ceilings the group-exclusivity routing
+  # already assumes, as an enforced `--memory` cap rather than a purely
+  # structural one, plus `--oom-score-adj` so the kernel prefers to kill a
+  # runaway model container over sshd/tailscaled/systemd/NetworkManager (which
+  # run outside Docker, at the host's default oom_score_adj=0, and cannot be
+  # given cgroup memory.min/priority without root - see the host-resilience
+  # writeup for the full root-vs-no-root evidence).
+  #
+  # This does NOT replace the admission-control work in legenex/orchestrator
+  # (the pre-launch "is there enough free memory" check) - it is the layer
+  # that still protects the host if that check is ever bypassed, wrong, or a
+  # container is started outside the normal path (exactly how B-012 happened:
+  # a second model container was started by hand, outside llama-swap's group
+  # routing entirely).
+  #
+  # oom-score-adj scale used across this stack (-1000..1000, higher = killed
+  # first): 700 for the small resident tier, 900 for the heavy/one-at-a-time
+  # tier, 950 for gx-max (see legenex/lifecycle/gx-max.conf). Gateway/control
+  # containers use 100 (see docker-compose.gateway.yml). Everything we run is
+  # positive, i.e. preferred for OOM-kill ahead of any unmodified host daemon.
+  gx_mini_mem_limit: "14g"
+  gx_mini_oom_score_adj: "700"
+  gx_fast_mem_limit: "86g"
+  gx_fast_oom_score_adj: "900"
+
 models:
 
   # ============================================================================
@@ -172,6 +201,9 @@ models:
       --security-opt seccomp=unconfined
       --env-file /app/env/gx-mini.env
       -v ${models_root}/gguf:/models/gguf:ro
+      --memory ${gx_mini_mem_limit}
+      --memory-swap ${gx_mini_mem_limit}
+      --oom-score-adj ${gx_mini_oom_score_adj}
       ${llamacpp_image}
       -m /models/gguf/Qwen3.5-4B/Qwen3.5-4B-Q4_K_M.gguf
       --mmproj /models/gguf/Qwen3.5-4B/mmproj-BF16.gguf
@@ -223,6 +255,9 @@ models:
       -e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
       -e VLLM_USE_DEEP_GEMM=0
       -v ${models_root}/vllm:/models/vllm:ro
+      --memory ${gx_fast_mem_limit}
+      --memory-swap ${gx_fast_mem_limit}
+      --oom-score-adj ${gx_fast_oom_score_adj}
       ${vllm_image}
       ${gx_fast_model_dir}
       --served-model-name gx-fast

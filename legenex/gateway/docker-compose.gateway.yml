@@ -127,6 +127,15 @@ services:
       - no-new-privileges:true
     # Hard cap so the gateway can never contend with model memory.
     mem_limit: ${GX_LITELLM_MEM_LIMIT:-2g}
+    # Host-resilience hardening (2026-09-14, post gx10-02 mmap-thrash incident,
+    # see BLOCKERS.md B-012): bias the kernel to kill this container before
+    # sshd/tailscaled/systemd/NetworkManager (default oom_score_adj=0, and not
+    # adjustable without root - see the host-resilience writeup) in a genuine
+    # system-wide OOM. Small positive value: this container is memory-capped
+    # at 2g already and matters operationally, so it is a much lower kill
+    # priority than the model tiers (700/900/950 - see node01.yaml,
+    # node02.yaml, gx-max.conf).
+    oom_score_adj: ${GX_LITELLM_OOM_SCORE_ADJ:-100}
     logging: *default-logging
     networks: [gx_gateway]
 
@@ -160,6 +169,8 @@ services:
     security_opt:
       - no-new-privileges:true
     mem_limit: ${GX_PG_MEM_LIMIT:-1g}
+    # See the litellm service above for the host-resilience rationale.
+    oom_score_adj: ${GX_PG_OOM_SCORE_ADJ:-100}
     logging: *default-logging
     networks: [gx_gateway]
 
@@ -218,6 +229,11 @@ services:
     # accounted here — spawned containers are siblings, not children — which is
     # exactly why the budget is enforced inside node01.yaml's routing groups.
     mem_limit: ${GX_SWAP_MEM_LIMIT:-512m}
+    # See the litellm service above for the host-resilience rationale. Note
+    # this only covers llama-swap's OWN small footprint; the model containers
+    # it spawns as siblings carry their own oom-score-adj set inside
+    # node01.yaml (700/900 - much higher, i.e. killed well before this).
+    oom_score_adj: ${GX_SWAP_OOM_SCORE_ADJ:-100}
     logging: *default-logging
     networks: [gx_gateway]
 

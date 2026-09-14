@@ -23,6 +23,11 @@ ds4/
 # --- Runtime Logs & State ---
 logs/
 
+# Resource-guard runtime state (node locks + residency ledgers) --
+# see legenex/lifecycle/resource-guard.sh. Per-node, regenerated, never
+# meaningful to commit.
+legenex/lifecycle/.state/
+
 # --- Setup Output (auto-generated, not tracked) ---
 setup/SETUP_SUMMARY.txt
 

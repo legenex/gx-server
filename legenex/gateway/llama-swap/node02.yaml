@@ -110,6 +110,32 @@ macros:
 
   # 0.61 x ~128 GB ~= 78 GB. Raising this above 0.61 eats the ComfyUI reservation.
 
+  # ----------------------------------------------------------------------------
+  # HOST-RESILIENCE HARDENING (added 2026-09-14, after the gx10-02 mmap-thrash
+  # incident - see coordination/BLOCKERS.md B-012 and node01.yaml's matching
+  # block for the full rationale: --memory is an enforced backstop for the
+  # SAME ceiling the "heavy" group above already assumes structurally, and
+  # --oom-score-adj biases the kernel to kill this container, not sshd/
+  # tailscaled/systemd/NetworkManager, in a genuine system-wide OOM.
+  #
+  # ** KNOWN DISCREPANCY - flagged, not silently resolved **
+  # The 78 GB figure above predates BLOCKERS.md B-011's measurement of the
+  # actual resident gx-reason process: VmRSS ~99,766,300 kB (~95.1 GiB), almost
+  # entirely RssFile (mmap'd GGUF pages), once the full model was loaded. That
+  # is ~17 GiB over this stated budget. gx-reason is currently BROKEN (garbage
+  # output, B-011 open) and node 2 is currently wedged (B-012), so this has not
+  # been exercised under this cap. Setting gx_reason_mem_limit to the older,
+  # smaller 78 GB figure is a DELIBERATE choice to keep enforcing the number
+  # the architecture has actually committed to in writing above, NOT a claim
+  # that it is sufficient - if gx-reason's real footprint really is ~95 GiB,
+  # this cap will make it fail closed (OOM-killed by the cgroup) rather than
+  # fail open (thrash the host as it did in B-012). Whoever picks up B-011
+  # next should re-measure and raise gx_reason_mem_limit together with the
+  # budget comment above, as one deliberate, documented change - not left as
+  # two numbers quietly disagreeing.
+  gx_reason_mem_limit: "78g"
+  gx_reason_oom_score_adj: "900"
+
 models:
 
   # ============================================================================
@@ -151,6 +177,9 @@ models:
       --security-opt seccomp=unconfined
       --env-file /app/env/gx-reason.env
       -v ${models_root}/gguf:/models/gguf:ro
+      --memory ${gx_reason_mem_limit}
+      --memory-swap ${gx_reason_mem_limit}
+      --oom-score-adj ${gx_reason_oom_score_adj}
       ${llamacpp_image}
       -m /models/gguf/Qwen3.5-122B-A10B/UD-Q4_K_XL/Qwen3.5-122B-A10B-UD-Q4_K_XL-00001-of-00003.gguf
       --mmproj /models/gguf/Qwen3.5-122B-A10B/mmproj-F16.gguf

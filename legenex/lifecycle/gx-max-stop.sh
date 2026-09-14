@@ -14,6 +14,8 @@ set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=/dev/null
 source "${here}/lib.sh"
+# shellcheck source=./resource-guard.sh
+source "${here}/resource-guard.sh"
 
 FORCE=0; GRACE=300; RESTORE=1
 while [ $# -gt 0 ]; do
@@ -54,6 +56,13 @@ docker rm -f "${GXMAX_RANK0_NAME}" >/dev/null 2>&1 || true
 
 log "stopping rank1 on node2"
 n2 "docker stop -t 30 ${GXMAX_RANK1_NAME} >/dev/null 2>&1 || true; docker rm -f ${GXMAX_RANK1_NAME} >/dev/null 2>&1 || true"
+
+# Release both residency-ledger entries so the admission guard's ledger math
+# (see resource-guard.sh / gx_orchestrator.resource_guard) reflects reality
+# immediately rather than waiting for the next reconcile to notice the
+# containers are gone.
+gx_guard_release node1 gx-max-rank0 || true
+gx_guard_release node2 gx-max-rank1 || true
 
 # Give the kernel a moment to actually reclaim the unified-memory allocations.
 sleep 5
