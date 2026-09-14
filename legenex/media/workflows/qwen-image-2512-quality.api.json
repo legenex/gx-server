@@ -1,0 +1,44 @@
+{
+  "_gx": {
+    "kind": "image",
+    "title": "Qwen-Image-2512 fp8, full sampling (no distill LoRA)",
+    "note": "Quality path. ~250 s at 1328x1328/50 steps on GB10 -- roughly 20x slower than the Lightning workflow for visually comparable output. Selected by quality=hd.",
+    "output_node": "10",
+    "bindings": {
+      "prompt": "5.text",
+      "negative_prompt": "6.text",
+      "width": "7.width",
+      "height": "7.height",
+      "batch_size": "7.batch_size",
+      "seed": "8.seed",
+      "steps": "8.steps",
+      "cfg": "8.cfg",
+      "sampler_name": "8.sampler_name",
+      "scheduler": "8.scheduler",
+      "shift": "4.shift",
+      "filename_prefix": "10.filename_prefix"
+    },
+    "defaults": {
+      "width": 1328,
+      "height": 1328,
+      "batch_size": 1,
+      "steps": 20,
+      "cfg": 4.0,
+      "negative_prompt": "blurry, low quality, jpeg artifacts, watermark, text, deformed"
+    }
+  },
+
+  "1":  {"class_type": "UNETLoader", "inputs": {"unet_name": "qwen_image_2512_fp8_e4m3fn.safetensors", "weight_dtype": "default"}},
+  "2":  {"class_type": "CLIPLoader", "inputs": {"clip_name": "qwen_2.5_vl_7b_fp8_scaled.safetensors", "type": "qwen_image", "device": "default"}},
+  "3":  {"class_type": "VAELoader", "inputs": {"vae_name": "qwen_image_vae.safetensors"}},
+  "4":  {"class_type": "ModelSamplingAuraFlow", "inputs": {"model": ["1", 0], "shift": 3.1}},
+  "5":  {"class_type": "CLIPTextEncode", "inputs": {"clip": ["2", 0], "text": "a photograph"}},
+  "6":  {"class_type": "CLIPTextEncode", "inputs": {"clip": ["2", 0], "text": ""}},
+  "7":  {"class_type": "EmptySD3LatentImage", "inputs": {"width": 1328, "height": 1328, "batch_size": 1}},
+  "8":  {"class_type": "KSampler", "inputs": {
+           "model": ["4", 0], "positive": ["5", 0], "negative": ["6", 0], "latent_image": ["7", 0],
+           "seed": 0, "steps": 20, "cfg": 4.0,
+           "sampler_name": "euler", "scheduler": "simple", "denoise": 1.0}},
+  "9":  {"class_type": "VAEDecode", "inputs": {"samples": ["8", 0], "vae": ["3", 0]}},
+  "10": {"class_type": "SaveImage", "inputs": {"images": ["9", 0], "filename_prefix": "gx-image/qwen2512-hd"}}
+}

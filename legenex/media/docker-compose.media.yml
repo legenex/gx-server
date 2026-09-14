@@ -1,0 +1,124 @@
+# =============================================================================
+# gx-image / gx-video media stack -- NODE 2 (gx10-02) ONLY.
+#
+#   gx-media-router  192.168.100.11:18800   the ONLY thing on a routable address
+#   gx-comfyui       127.0.0.1:8188         loopback on the host; generation engine
+#
+# ComfyUI is never the ingress: POST /prompt executes an arbitrary node graph and
+# GET /view is an unauthenticated file-read primitive. The router accepts a small
+# validated request and builds the graph itself from a vetted template.
+#
+# GPU ACCESS IS CDI ON THESE NODES. `--gpus all` / `runtime: nvidia` DO NOT WORK.
+# Compose passes CDI device ids through `devices:`; that requires Compose v2.30+
+# with CDI enabled in the daemon (both true on gx10-02: `docker --version` 29.2.1).
+#
+# MEMORY INTERLOCK -- READ BEFORE STARTING:
+#   * gx-max-rank0 / gx-max-rank1 running  -> DO NOT START. That job owns both nodes.
+#   * gx-reason (~77 GB) loaded on node 2  -> unload it first via node 2 llama-swap:
+#       curl -sS -X POST http://192.168.100.11:28080/api/models/unload \
+#            -H "Authorization: Bearer $GX_SWAP_API_KEY"
+#   ComfyUI and gx-reason must never be resident at the same time: 121 GiB is
+#   UNIFIED memory shared between CPU and GPU.
+#
+# Usage:
+#   docker compose -f docker-compose.media.yml up -d
+#   docker compose -f docker-compose.media.yml logs -f
+#   docker compose -f docker-compose.media.yml down
+# =============================================================================
+
+name: gx-media
+
+services:
+  comfyui:
+    image: gx-comfyui:sm121
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        COMFY_REF: ${GX_COMFY_REF:-b00584967778871f329c2d31190a5e9b767b8366}
+    container_name: gx-comfyui
+    hostname: gx-comfyui
+    restart: unless-stopped
+    init: true
+    # CDI. NOT `--gpus all`, NOT `runtime: nvidia` -- neither exists on this host.
+    devices:
+      - nvidia.com/gpu=all
+    ipc: host
+    # Loopback only. Deliberately NOT 0.0.0.0 and NOT the fabric address.
+    ports:
+      - "127.0.0.1:8188:8188"
+    volumes:
+      - ${GX_MODELS_ROOT:-/srv/models}:/srv/models
+      - ${GX_CACHE_ROOT:-/srv/cache}:/srv/cache
+      - ./comfyui/extra_model_paths.yaml:/opt/comfyui/extra_model_paths.yaml:ro
+    environment:
+      PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
+      HF_HOME: /srv/cache/hf
+      TRITON_CACHE_DIR: /srv/cache/triton
+      # Offline by default: the engine has no business calling out.
+      HF_HUB_OFFLINE: "1"
+    networks:
+      - media
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8188/system_stats"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 300s
+    stop_grace_period: 60s
+    logging:
+      driver: json-file
+      options: {max-size: "20m", max-file: "5"}
+
+  router:
+    image: gx-media-router:1.0.0
+    build:
+      context: ./router
+      dockerfile: Dockerfile
+    container_name: gx-media-router
+    hostname: gx-media-router
+    restart: unless-stopped
+    init: true
+    depends_on:
+      comfyui:
+        condition: service_started
+    # The ConnectX fabric address, and nothing else. Model traffic must never
+    # cross Tailscale, and this must never bind 0.0.0.0.
+    ports:
+      - "${GX_MEDIA_BIND_ADDR:-192.168.100.11}:${GX_MEDIA_PORT:-18800}:18800"
+    volumes:
+      - ./workflows:/opt/router/workflows:ro
+    environment:
+      GX_MEDIA_BIND: "0.0.0.0"          # inside the container only
+      GX_MEDIA_PORT: "18800"
+      GX_COMFY_URL: "http://comfyui:8188"
+      GX_MEDIA_API_KEY: ${GX_MEDIA_API_KEY:?GX_MEDIA_API_KEY must be set - refusing to run unauthenticated}
+      GX_MEDIA_WORKFLOW_DIR: /opt/router/workflows
+      GX_MEDIA_QUEUE_WAIT: "${GX_MEDIA_QUEUE_WAIT:-900}"
+      GX_MEDIA_IMAGE_TIMEOUT: "${GX_MEDIA_IMAGE_TIMEOUT:-1800}"
+      GX_MEDIA_VIDEO_TIMEOUT: "${GX_MEDIA_VIDEO_TIMEOUT:-3600}"
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - media
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request,sys;sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:18800/health',timeout=4).status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options: {max-size: "20m", max-file: "5"}
+
+networks:
+  media:
+    name: gx-media
+    driver: bridge
+    # Internal service-to-service traffic only. ComfyUI is reachable from the
+    # router and from host loopback; from nowhere else.

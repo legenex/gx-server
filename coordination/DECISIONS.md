@@ -132,3 +132,39 @@ quant `UD-Q4_K_XL` (77.0 GB across 3 shards) plus `mmproj-F16.gguf` (0.91 GB)
 for vision. Fallback if 77 GB proves tight: `UD-IQ4_XS` (60.2 GB).
 
 **Superseded:** D-006's gx-reason half. The gx-fast half of D-006 stands.
+
+## D-010 — Media traffic uses the ConnectX fabric, not Tailscale
+**Date:** 2026-09-14
+**Decision:** the media router listens on `192.168.100.11:18800` (ConnectX
+fabric). `gx-image`/`gx-video` traffic from the node-1 gateway crosses the RoCE
+rails like every other model tier.
+
+**Why this needed deciding:** the node-2 worker's `COMFYUI_API.md` asserts the
+opposite — that media should use Tailscale/LAN because "the 192.168.100.x fabric
+is reserved for distributed inference". That constraint does not come from the
+locked architecture.
+
+**Resolution:** ARCHITECTURE.md L-3 says Tailscale is **management and remote
+access only**, and that model traffic runs on the fabric. Generated images and
+video frames are model traffic — a 1328² PNG or a 49-frame clip is exactly the
+kind of payload L-3 exists to keep off a userspace WireGuard mesh. The fabric is
+also idle whenever gx-max is not running, which is precisely when media runs.
+
+If this is ever reversed it is one line in `docker-compose.media.yml` `ports:`
+plus the `api_base` for gx-image/gx-video in `litellm/config.yaml`.
+
+## D-011 — Media router is stdlib-only and builds the ComfyUI graph itself
+**Date:** 2026-09-14
+**Decision:** `gx-media-router` has zero third-party dependencies, and never
+forwards caller-supplied graph structure, node ids, model filenames or paths to
+ComfyUI.
+
+**Why:** ComfyUI's `POST /prompt` executes an arbitrary graph — it is remote code
+execution by design — and `GET /view` is an unauthenticated file-read primitive.
+So ComfyUI binds loopback only and the router is the sole ingress. The router
+builds the graph from vetted templates in `legenex/media/workflows/`, each
+carrying a `_gx` binding block that declares exactly which node inputs a request
+may influence; everything else is unreachable from the network.
+
+Stdlib-only for the same reason as the orchestrator (D-003): no aarch64 wheel
+risk, nothing to pin, and it starts on a node where pip has never run.

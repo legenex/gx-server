@@ -1,0 +1,48 @@
+# ComfyUI model search paths for gx10-02.
+#
+# Three roots so image and video checkpoints stay separate, while the LARGE
+# shared components (Qwen/UMT5/T5 text encoders and the common VAEs) live
+# exactly once under /srv/models/shared and are never duplicated.
+#
+# Mounted read-only into the container at /opt/comfyui/extra_model_paths.yaml.
+
+gx_shared:
+    base_path: /srv/models/shared/
+    is_default: true
+    text_encoders: |
+        text_encoders/
+        clip/
+    clip_vision: clip_vision/
+    vae: vae/
+    diffusion_models: diffusion_models/
+    checkpoints: checkpoints/
+    loras: loras/
+    upscale_models: upscale_models/
+    controlnet: controlnet/
+    model_patches: model_patches/
+    audio_encoders: audio_encoders/
+    embeddings: embeddings/
+
+gx_image:
+    base_path: /srv/models/image/
+    diffusion_models: diffusion_models/
+    text_encoders: text_encoders/
+    vae: vae/
+    clip_vision: clip_vision/
+    checkpoints: checkpoints/
+    loras: loras/
+    controlnet: controlnet/
+    upscale_models: upscale_models/
+    model_patches: model_patches/
+
+gx_video:
+    base_path: /srv/models/video/
+    diffusion_models: diffusion_models/
+    text_encoders: text_encoders/
+    vae: vae/
+    clip_vision: clip_vision/
+    checkpoints: checkpoints/
+    loras: loras/
+    controlnet: controlnet/
+    model_patches: model_patches/
+    audio_encoders: audio_encoders/

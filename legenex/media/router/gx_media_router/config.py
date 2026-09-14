@@ -1,0 +1,73 @@
+"""Runtime configuration, resolved once from the environment at start-up."""
+
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass, field
+from pathlib import Path
+
+
+def _int(name: str, default: int, lo: int, hi: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None or raw == "":
+        return default
+    try:
+        value = int(raw)
+    except ValueError as exc:  # pragma: no cover - start-up failure path
+        raise SystemExit(f"{name}: not an integer: {raw!r}") from exc
+    if not lo <= value <= hi:
+        raise SystemExit(f"{name}: {value} out of range [{lo}, {hi}]")
+    return value
+
+
+@dataclass(frozen=True)
+class Config:
+    """Immutable service configuration."""
+
+    bind_host: str = "0.0.0.0"
+    bind_port: int = 18800
+
+    # Upstream ComfyUI. Loopback/compose-internal only -- never a routable name.
+    comfy_url: str = "http://127.0.0.1:8188"
+    comfy_connect_timeout: float = 10.0
+
+    # Shared secret. Empty string disables authentication (development only).
+    api_key: str = ""
+
+    workflow_dir: Path = field(default_factory=lambda: Path("/opt/router/workflows"))
+
+    # A generation holds the single global mutex; these bound how long a caller
+    # waits for the mutex and how long one generation may run.
+    queue_wait_seconds: int = 900
+    image_timeout_seconds: int = 1800
+    video_timeout_seconds: int = 3600
+
+    # Bounds enforced on every request. Deliberately conservative: this is a
+    # 121 GiB UNIFIED memory node, so an oversized latent starves the host too.
+    max_body_bytes: int = 65536
+    max_prompt_chars: int = 4000
+    max_images_per_request: int = 4
+    min_dimension: int = 256
+    max_dimension: int = 2048
+    dimension_multiple: int = 16
+    max_video_frames: int = 161
+    max_jobs_retained: int = 200
+
+    default_image_size: str = "1328x1328"
+
+    @classmethod
+    def from_env(cls) -> "Config":
+        api_key = os.environ.get("GX_MEDIA_API_KEY", "").strip()
+        if api_key in {"not-required", "none", "disabled"}:
+            api_key = ""
+        return cls(
+            bind_host=os.environ.get("GX_MEDIA_BIND", "0.0.0.0"),
+            bind_port=_int("GX_MEDIA_PORT", 18800, 1, 65535),
+            comfy_url=os.environ.get("GX_COMFY_URL", "http://127.0.0.1:8188").rstrip("/"),
+            api_key=api_key,
+            workflow_dir=Path(os.environ.get("GX_MEDIA_WORKFLOW_DIR", "/opt/router/workflows")),
+            queue_wait_seconds=_int("GX_MEDIA_QUEUE_WAIT", 900, 1, 7200),
+            image_timeout_seconds=_int("GX_MEDIA_IMAGE_TIMEOUT", 1800, 30, 7200),
+            video_timeout_seconds=_int("GX_MEDIA_VIDEO_TIMEOUT", 3600, 30, 28800),
+            default_image_size=os.environ.get("GX_MEDIA_DEFAULT_SIZE", "1328x1328"),
+        )
