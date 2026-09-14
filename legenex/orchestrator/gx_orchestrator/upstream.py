@@ -62,6 +62,25 @@ def post_json(
         raise UpstreamError(exc.code, exc.read().decode("utf-8", "replace")) from exc
 
 
+def get_json(
+    url: str,
+    *,
+    headers: Mapping[str, str] | None = None,
+    timeout: float = 4.0,
+) -> UpstreamResponse:
+    """GET `url` and buffer the response. Raises UpstreamError on a non-2xx.
+
+    Used to probe a node's own service (e.g. llama-swap's `/v1/models`) for
+    its REAL state, as opposed to `probe()`, which only answers true/false.
+    """
+    req = _request(url, None, headers or {}, timeout, method="GET")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return UpstreamResponse(resp.status, dict(resp.headers), resp.read())
+    except urllib.error.HTTPError as exc:
+        raise UpstreamError(exc.code, exc.read().decode("utf-8", "replace")) from exc
+
+
 def stream_post(
     url: str,
     payload: Mapping[str, Any],

@@ -24,54 +24,49 @@ from typing import Any
 
 from .classifier import route
 from .config import CONFIG, Config
-from .lifecycle import AcquisitionError, GxMaxLifecycle, State
+from .health import AliasState, TierHealth, TierStatus
+from .lifecycle import AcquisitionError, GxMaxLifecycle, LifecycleStatus, State
 from .tiers import TIERS, ROUTABLE, Tier
-from .upstream import UpstreamError, post_json, probe, stream_post
+from .upstream import UpstreamError, post_json, stream_post
 
 log = logging.getLogger("gx.server")
 
 ROUTING_LOG = "gx.routing"
 
+#: How lifecycle.State maps onto the shared AliasState vocabulary (see
+#: health.py). RELEASING has no exact match in that six-word vocabulary; it is
+#: reported as LOADING (a transition in progress) rather than inventing a
+#: seventh state just for gx-max.
+_MAX_STATE_MAP: dict[State, AliasState] = {
+    State.DOWN: AliasState.STOPPED,
+    State.ACQUIRING: AliasState.QUEUED,
+    State.READY: AliasState.READY,
+    State.RELEASING: AliasState.LOADING,
+}
 
-class TierHealth:
-    """Cached availability probe for the routable tiers.
 
-    gx-max's availability comes from the lifecycle state machine, not a probe:
-    "down" is a normal resting state for it, not a fault.
+def _max_tier_status(st: LifecycleStatus, node2_status: TierStatus) -> TierStatus:
+    """Derive gx-max's TierStatus from its lifecycle state.
+
+    This does NOT change gx-max's lifecycle semantics (DOWN stays a valid
+    resting state, never a fault) -- it only reports that state through the
+    same vocabulary as the other tiers, and folds in node 2 reachability so a
+    human reading `gx status` sees "would need node 2, which is offline"
+    instead of a bare false. `usable` is preserved EXACTLY from the original
+    logic: READY, DOWN and ACQUIRING are all routable (gx-auto/direct gx-max
+    may attempt acquisition from any of them); RELEASING is not.
     """
+    alias_state = _MAX_STATE_MAP[st.state]
+    usable = st.state in (State.READY, State.DOWN, State.ACQUIRING)
 
-    def __init__(self, cfg: Config, lifecycle: GxMaxLifecycle, ttl: float = 15.0) -> None:
-        self._cfg = cfg
-        self._lifecycle = lifecycle
-        self._ttl = ttl
-        self._lock = threading.Lock()
-        self._cache: dict[Tier, bool] = {}
-        self._checked = 0.0
-
-    def snapshot(self) -> dict[Tier, bool]:
-        with self._lock:
-            if time.time() - self._checked < self._ttl and self._cache:
-                return dict(self._cache)
-        avail: dict[Tier, bool] = {}
-        key = self._cfg.gateway_key()
-        gateway_up = probe(
-            f"{self._cfg.gateway_base.rstrip('/')}/models",
-            headers={"Authorization": f"Bearer {key}"} if key else {},
-        )
-        for tier in ROUTABLE:
-            if tier is Tier.MAX:
-                # Reachable if the engine is up OR we are able to bring it up.
-                avail[tier] = self._lifecycle.status().state in (
-                    State.READY,
-                    State.DOWN,
-                    State.ACQUIRING,
-                )
-            else:
-                avail[tier] = gateway_up
-        with self._lock:
-            self._cache = avail
-            self._checked = time.time()
-        return dict(avail)
+    if st.state is State.DOWN and node2_status.state is AliasState.UNAVAILABLE:
+        # gx-max needs BOTH nodes (ARCHITECTURE.md L-2/L-6). DOWN is still a
+        # valid resting state, but a human asking why it would fail right now
+        # deserves the real reason, not a bare boolean.
+        return TierStatus(alias_state, "node2_unavailable", usable=usable)
+    if st.last_error:
+        return TierStatus(alias_state, st.last_error, usable=usable)
+    return TierStatus(alias_state, st.detail or alias_state.value, usable=usable)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -117,12 +112,16 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/health/detailed":
             st = self.lifecycle.status()
+            tiers = self.health.snapshot()
+            max_status = _max_tier_status(st, tiers[Tier.REASON])
+            tiers_out = {t.value: v.as_dict() for t, v in tiers.items()}
+            tiers_out[Tier.MAX.value] = max_status.as_dict()
             self._send_json(
                 200,
                 {
                     "status": "ok",
                     "gx_max": st.as_dict(),
-                    "tiers": {t.value: v for t, v in self.health.snapshot().items()},
+                    "tiers": tiers_out,
                     "gateway": self.cfg.gateway_base,
                 },
             )
@@ -201,8 +200,16 @@ class Handler(BaseHTTPRequestHandler):
             )
 
     def _serve_auto(self, path: str, payload: dict[str, Any]) -> None:
-        avail = self.health.snapshot()
-        gxmax_busy = self.lifecycle.status().state is State.ACQUIRING
+        tiers = self.health.snapshot()
+        lc_status = self.lifecycle.status()
+        max_status = _max_tier_status(lc_status, tiers[Tier.REASON])
+
+        # route() takes a plain tier->bool map; richer state (why a tier is
+        # down, whether it is loading vs. genuinely failed) lives in `tiers`
+        # and `max_status` for /health/detailed and `gx status`, not here.
+        avail = {t: v.usable for t, v in tiers.items()}
+        avail[Tier.MAX] = max_status.usable
+        gxmax_busy = lc_status.state is State.ACQUIRING
         decision = route(payload, available=avail, busy={Tier.MAX: gxmax_busy})
 
         # Every routing decision is logged, as required by the spec.
@@ -322,7 +329,7 @@ def build_servers(cfg: Config | None = None) -> tuple[list[ThreadingHTTPServer],
     handler = type(
         "BoundHandler",
         (Handler,),
-        {"cfg": cfg, "lifecycle": lifecycle, "health": TierHealth(cfg, lifecycle)},
+        {"cfg": cfg, "lifecycle": lifecycle, "health": TierHealth(cfg)},
     )
     servers: list[ThreadingHTTPServer] = []
     for host in cfg.hosts:

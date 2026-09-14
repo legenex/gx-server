@@ -27,6 +27,13 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name, "") or default)
+    except ValueError:
+        return default
+
+
 @dataclass(frozen=True)
 class Config:
     """Orchestrator configuration."""
@@ -71,9 +78,46 @@ class Config:
     #: Upstream request timeout for proxied inference.
     upstream_timeout: int = field(default_factory=lambda: _env_int("GX_UPSTREAM_TIMEOUT", 900))
 
+    # --- per-node llama-swap health (see gx_orchestrator.health) --------------
+    # TierHealth probes each node's OWN llama-swap instance for a tier's real
+    # state, instead of trusting the LiteLLM gateway's aggregate `/models`
+    # (which answers 200 from its static config regardless of whether the
+    # upstream it points at is alive -- see CURRENT_STATE.md / the gx-reason
+    # incident this fixes).
+    #: Node 1 llama-swap control API (gx-mini, gx-fast). Loopback: the
+    #: orchestrator and node 1's llama-swap are on the same host.
+    node1_swap_base: str = field(
+        default_factory=lambda: _env("GX_NODE1_SWAP_BASE", "http://127.0.0.1:28080")
+    )
+    #: Node 2 llama-swap control API (gx-reason). MUST be the fabric address,
+    #: never Tailscale -- see legenex/gateway/README.md port map.
+    node2_swap_base: str = field(
+        default_factory=lambda: _env("GX_NODE2_SWAP_BASE", "http://192.168.100.11:28080")
+    )
+    #: Node 1 is local: a generous timeout costs nothing when it is healthy and
+    #: still fails fast if it is not.
+    node1_probe_timeout: float = field(
+        default_factory=lambda: _env_float("GX_NODE1_PROBE_TIMEOUT", 4.0)
+    )
+    #: Node 2 can be "alive but userspace-starved" (BLOCKERS.md B-012): the
+    #: kernel answers ICMP while llama-swap never answers TCP at all. This
+    #: timeout MUST stay short, and probing MUST NOT retry -- TierHealth
+    #: refreshes on its own TTL, so a retry loop here would stack additional
+    #: multi-second stalls onto every cache refresh while node 2 is down.
+    node2_probe_timeout: float = field(
+        default_factory=lambda: _env_float("GX_NODE2_PROBE_TIMEOUT", 2.0)
+    )
+
     def gateway_key(self) -> str | None:
         """API key for the LiteLLM gateway, from the environment only."""
         return os.environ.get("GX_GATEWAY_KEY") or os.environ.get("LITELLM_MASTER_KEY")
+
+    def swap_key(self) -> str | None:
+        """Bearer token llama-swap requires, from the environment only.
+
+        Same value on both nodes (see legenex/gateway/.env.sample).
+        """
+        return os.environ.get("GX_SWAP_API_KEY")
 
 
 CONFIG = Config()
