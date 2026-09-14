@@ -187,3 +187,30 @@ curl -X POST http://192.168.100.11:28080/api/models/unload -H "Authorization: Be
 
 **Useful diagnostic note:** ICMP on the ConnectX rail is a good liveness signal
 that distinguishes "node is dead" from "node is alive but userspace is starved".
+
+## B-013 (S2) — cannot push; no writable remote is configured
+**Needs:** a human to add a remote this account can write to.
+
+All work is committed locally on `legenex-dual-gx10` (8 commits ahead of
+`origin/main`). Pushing is not possible:
+
+```
+$ git push --dry-run origin legenex-dual-gx10
+remote: Permission to mARTin-B78/dgx-spark_lite-llm_llama-swap_vllm_llama-cpp_ollama.git denied to legenex.
+fatal: ... The requested URL returned error: 403
+```
+
+The only configured remote is the **upstream community repo**, owned by another
+account. The backup remote named in CLAUDE.md
+(`gitea.martin-bierschenk.de/...`) is **not configured** here at all.
+
+Nothing was force-pushed and no remote was modified. To publish, add a fork or
+the gitea backup as a remote, e.g.:
+
+```
+git remote add legenex <your-writable-repo-url>
+git push -u legenex legenex-dual-gx10
+```
+
+Credentials must come from a credential helper or SSH key — never put a token
+in the remote URL.
