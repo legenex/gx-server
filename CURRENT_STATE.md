@@ -3,11 +3,20 @@
 **This file must always reflect reality.** If you are a new agent resuming this
 work, read this first, then ARCHITECTURE.md (what is locked), then BLOCKERS.md.
 
-Last updated: 2026-09-15 10:40 CEST, by the lead agent on gx10-01, during
-integration of the ChatGPT-project seed files into the canonical repo. This
-update is based on **live checks run against both nodes during this session**
-(SSH, `docker ps`, `free -h`, `curl` health endpoints, `recover-node2.sh`), not
-just a re-read of prior notes — see "Verified live this session" below.
+Last updated: 2026-09-15 12:35 CEST, by the lead agent on gx10-01, after a
+full autonomous two-node completion pass (Phases 1-6 of the recovery/
+validation task: node 2 recovery, resource-ownership deployment to node 2,
+gx-reason diagnosis, real gx-image/gx-video E2E validation, a first-ever
+gx-max acquisition attempt through the real orchestrator, and a full
+acceptance-suite run). This update is based on **live checks and real
+inference/generation against both nodes**, not a re-read of prior notes.
+See `CHANGELOG.md`'s `[Unreleased]` section for the full list of fixes and
+findings; the highlights: two real production bugs found and fixed
+(gx-orchestrator boot-race, D-019; gx-max-start.sh's dead conflict-drain
+list), one real, unresolved architecture decision surfaced and documented
+rather than worked around (gx-max vs the 30 GiB reserve floor, B-017), and
+gx-image/gx-video validated end-to-end for the first time (real generations,
+visually inspected).
 
 ---
 
@@ -236,31 +245,32 @@ to `192.168.100.11` is refused — the fabric addresses are not SSH endpoints.
 | gx-mini / gx-fast / gx-reason (llama-swap-managed) | via llama-swap | **stopped** — on-demand, correct |
 | gx-max rank 0/1 (SGLang) | 30000 | **stopped** — `down`, correct |
 
-**Node 2** (verified via SSH + `gx-node2ctl status` inside `recover-node2.sh`):
+**Node 2** (verified live at end of this session — `free -h`, `docker ps`):
 
 | Service | State |
 |---|---|
 | llama-swap node 2 (`gx-llama-swap-node02`) | **healthy**, both loopback and fabric-reachable |
-| gx-reason | `NOT_PROVISIONED` in the node2ctl summary (placeholder line — do not read as a real status; the authoritative source is node 1's orchestrator, which reports `gx-reason: stopped/usable`) |
-| ComfyUI | `STOPPED` — on-demand, correct; present/provisioned (not "not installed") |
-| gx-max rank 1 | `STOPPED` — correct |
+| gx-comfyui + gx-media-router | **healthy, running idle** (built and started this session — first time ever). Low footprint at idle (~2-3 GiB); ComfyUI's per-generation model cache is explicitly freed after each test (see B-018 for the one gap this doesn't close: a generation run by hand, outside the test suite, still leaves ~70 GiB cached until `/free` is called or `docker compose down`) |
+| gx-reason | `STOPPED` — unloaded after testing, correct |
+| gx-max rank 1 | `STOPPED` — never successfully started this session, see B-017 |
 | GPU owner | `free` |
+| MemAvailable | **113 GiB** |
 
-No large model is resident on either node. No large model was started during
-this session's integration work (deliberately — this was a documentation
-integration pass, not a validation run).
+No large model is resident on either node right now. Real inference/generation
+WAS run against gx-mini, gx-fast, gx-reason (confirmed broken), gx-image, and
+gx-video this session — see the Tier status table below for results.
 
 ## Tier status
 
 | Alias | Model | Engine | Node | State right now |
 |---|---|---|---|---|
-| gx-mini | Qwen3.5-4B Q4_K_M + BF16 mmproj | llama.cpp | 1 | **stopped, on-demand.** Previously verified working end-to-end (text + vision) through the gateway multiple times; infra healthy |
-| gx-fast | `nvidia/Qwen3.6-35B-A3B-NVFP4` | vLLM | 1 | **stopped, not cold-started this session either.** Verified statically present on disk (22G, 3 shards) and correctly wired; no memory-safety reason to hold it back right now (node 1 has 114 GiB available), just not exercised in a docs-integration pass |
-| gx-reason | `unsloth/Qwen3.5-122B-A10B-GGUF` UD-Q4_K_XL | llama.cpp | 2 | **infra reachable (node 2 recovered), but functionally BROKEN — B-011 OPEN.** GPU path produces garbage output; isolated to a CUDA/GDN kernel bug, not the checkpoint. Do not route real traffic here until fixed |
-| gx-max | `nvidia/DeepSeek-V4-Flash-0731-NVFP4` | SGLang TP=2 | 1+2 | **stopped, down.** Both nodes are now reachable so an acquire should be *possible*, but `gx-max-validate.sh` has not been re-run since node 2's recovery — treat as unverified until it is |
-| gx-auto | — | orchestrator | 1 | **working** — routing logic unchanged this session |
-| gx-image | Qwen-Image 2512 (+Lightning LoRA) / HiDream I1 (not wired) | ComfyUI | 2 | **infra reachable; real E2E generation still NOT RUN** through the gateway (see `TEST_PLAN.md`) |
-| gx-video | Wan 2.2 A14B (LTX 2.3 not used — licence) | ComfyUI | 2 | **infra reachable; real E2E generation still NOT RUN.** No "hd"/no-LoRA tier wired yet |
+| gx-mini | Qwen3.5-4B Q4_K_M + BF16 mmproj | llama.cpp | 1 | **WORKING.** Real text inference verified live this session through the gateway; stopped/on-demand now |
+| gx-fast | `nvidia/Qwen3.6-35B-A3B-NVFP4` | vLLM | 1 | **WORKING.** Real text inference + tool-calling (`get_weather`) verified live this session; stopped/on-demand now |
+| gx-reason | `unsloth/Qwen3.5-122B-A10B-GGUF` UD-Q4_K_XL | llama.cpp | 2 | **functionally BROKEN — B-011 OPEN, re-confirmed this session.** Loads cleanly, GPU path produces garbage (`////...`); isolated to a CUDA/GDN kernel bug for this build (rebuild from current llama.cpp master did NOT fix it — see B-011). CPU-only path is coherent, proving the weights are fine. Do not route real traffic here |
+| gx-max | `nvidia/DeepSeek-V4-Flash-0731-NVFP4` | SGLang TP=2 | 1+2 | **stopped, down — first real acquisition attempt this session, correctly refused, see B-017.** Not a memory-safety incident: the admission guard hard-refused rank0 (gx-max needs ~90 GiB/rank by locked design, which does not leave the standard 30 GiB reserve floor) before either rank ever started. Cleanup verified correct on both nodes. Needs a human decision (B-017), not further automated attempts |
+| gx-auto | — | orchestrator | 1 | **WORKING — a real, live-production bug was found and fixed this session (D-019).** The orchestrator's `172.17.0.1` bind failed at this morning's boot (race with `docker0` getting its address) and nobody noticed for 2.5+ hours: every gx-auto request from the LiteLLM container was silently unable to reach the classifier. Fixed (ExecStartPre wait-for-docker0) and reverified: all 3 routing test cases pass, including correct escalation to gx-reason for a hard-reasoning prompt |
+| gx-image | Qwen-Image 2512 (+Lightning LoRA) / HiDream I1 (not wired) | ComfyUI | 2 | **WORKING — real E2E generation verified for the first time this session.** Built+started the media stack (previously never deployed), real 1024x1024 image via the gateway in 28s, visually inspected (a genuine hummingbird/sailboat, not noise). Stopped again after testing (on-demand is the intent, though nothing currently auto-restarts it — see B-018) |
+| gx-video | Wan 2.2 A14B (LTX 2.3 not used — licence) | ComfyUI | 2 | **WORKING — real E2E generation verified for the first time this session.** Real playable MP4 via the router's async contract in 58s. No "hd"/no-LoRA tier wired yet (unchanged gap) |
 
 **Known media gap, unchanged:** HiDream-I1-Full and a no-LoRA "quality" Wan
 variant are documented in `MODELS.md` as available checkpoints but have no
@@ -304,20 +314,33 @@ legenex/tests/
 See `coordination/BLOCKERS.md` for the full list with severities. The ones
 that matter most right now:
 
+* **B-017 (S1, new this session)** gx-max cannot acquire through the real
+  orchestrator: its locked ~90 GiB/rank footprint doesn't leave the
+  admission guard's 30 GiB reserve floor. Needs a human decision between
+  three documented options — not a bug, a genuine unresolved design
+  collision. See ARCHITECTURE.md §5 and BLOCKERS.md B-017.
 * **B-011** gx-reason is functionally broken on GPU (garbage output),
-  isolated to a CUDA/GDN kernel bug, still OPEN — see above.
+  isolated to a CUDA/GDN kernel bug — confirmed this session it is NOT a
+  stale-build problem (rebuilt from current llama.cpp master, identical
+  result). Still OPEN.
+* **B-018 (S2, new this session)** ComfyUI's `docker compose up` start does
+  not go through the resource-ownership admission guard at all — a real
+  near-miss (node 2 hit ~10 GiB available mid-testing) was caught live and
+  the test suite hardened, but the underlying gap in the launch path itself
+  is not fixed.
 * **B-001** the kernel pin has no `apt-mark hold`; kernel 7.0 is still
   installed on both nodes. Needs root.
 * **B-003** SGLang `:30000` is bound `0.0.0.0` with no auth.
-* **B-013** no writable git remote is configured — 9+ local commits on
+* **B-013** no writable git remote is configured — commits on
   `legenex-dual-gx10` not yet pushed anywhere.
 * **B-016** no BMC/IPMI/Redfish path on either node — a future wedge needs a
   human physically present.
 * `gx-max-start.sh`'s rank1 launch still doesn't call through the (now
   node-2-deployed) resource-guard module directly — it uses its original
   real remote `flock` convention. Cosmetic/consistency gap, not a safety one.
-* gx-image/gx-video real end-to-end generation has never been run through
-  the gateway.
+* ~~gx-image/gx-video real end-to-end generation has never been run through
+  the gateway~~ — **done this session**, both confirmed working with real,
+  visually-inspected output.
 
 ## How to resume
 

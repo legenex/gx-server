@@ -109,6 +109,17 @@ Concurrency is serialised by a condition variable in `GxMaxLifecycle`: five
 simultaneous callers produce exactly one invocation of the start script
 (covered by `tests/test_lifecycle.py::test_concurrent_acquire_starts_script_once`).
 
+**Known unresolved gap (2026-09-15, see `coordination/BLOCKERS.md` B-017):**
+step 1's admission check (added 2026-09-14 as the B-012 resource-ownership
+repair, §9 below) enforces a uniform 30 GiB reserve floor for every
+`exclusive`-class workload. gx-max's own locked ~90 GiB/rank footprint does
+not leave that floor free, so the first real acquisition attempt through
+the orchestrator was correctly hard-refused at step 1 rather than starting
+either rank. This is a genuine, undecided collision between two separately
+locked designs (this section's ~90 GiB footprint vs §9's 30 GiB floor), not
+a bug in either — resolving it needs an explicit human decision (see B-017
+for the options), not a unilateral change to either side.
+
 **Never-downgrade rule.** A request that explicitly names `gx-max` and cannot be
 served returns HTTP 503 with an explicit message. It is never answered by a
 smaller model. `gx-auto` is the only path allowed to route around a busy gx-max,
