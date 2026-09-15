@@ -150,8 +150,21 @@ preflight() {
     && step_pass "node2 kernel is ${EXPECTED_KERNEL}" \
     || { step_fail "node2 kernel" "got '${k2}', expected ${EXPECTED_KERNEL} (L-4)"; return 1; }
 
+  # Not `ping`: needs CAP_NET_RAW, which fails under a NoNewPrivileges=true
+  # systemd unit even with the binary's file capability set, and this host's
+  # ping_group_range has no unprivileged fallback either -- see the matching
+  # fix and full explanation in gx-max-start.sh. A plain TCP connect attempt
+  # needs no special capability; a fast "Connection refused" proves the peer
+  # answered (nothing needs to listen on the probe port), a real timeout
+  # means genuinely unreachable.
+  fabric_rail_reachable() {
+    local peer="$1" out rc
+    out=$(timeout 2 bash -c "exec 3<>/dev/tcp/${peer}/1" 2>&1); rc=$?
+    [ "${rc}" -eq 0 ] && return 0
+    printf '%s' "${out}" | grep -qi 'connection refused'
+  }
   for peer in "${NODE2_FABRIC_A}" "${NODE2_FABRIC_B}"; do
-    ping -c 2 -W 2 "${peer}" >/dev/null 2>&1 \
+    fabric_rail_reachable "${peer}" \
       && step_pass "fabric rail reachable: ${peer}" \
       || { step_fail "fabric rail" "${peer} unreachable"; return 1; }
   done

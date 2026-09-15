@@ -10,6 +10,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **gx-max validated through the real orchestrator for the first time --
+  found and fixed one real bug, surfaced one genuine unresolved
+  architecture decision (BLOCKERS.md B-017).** `legenex/tests/gx-max-validate.sh`
+  drives acquisition through the actual `POST /lifecycle/gx-max/acquire`
+  production path rather than calling the shell scripts directly, and had
+  never been run to completion before. Fixed: the fabric-rail preflight
+  used `ping`, which needs CAP_NET_RAW -- fails under
+  `gx-orchestrator.service`'s (correct, intentional) `NoNewPrivileges=true`
+  hardening, so gx-max could never acquire through its real entry point,
+  only via a direct interactive shell invocation. Replaced with a
+  capability-free TCP-connect probe in both `gx-max-start.sh` and
+  `gx-max-validate.sh`. With that fixed, the next attempt reached the
+  resource-ownership admission guard and was correctly, hard-refused: gx-max
+  needs ~90 GiB/rank by locked design, which does not leave the standard
+  30 GiB reserve floor the B-012 guard enforces for every exclusive-class
+  workload. `gx-max.conf`'s own comment (written the same day the guard
+  shipped) already named this exact collision as needing a human decision;
+  not resolved unilaterally in either direction. Verified cleanup was
+  correct on both nodes after the refusal: both ranks stopped, ledger
+  released, ~113/115 GiB available restored, no orphaned containers.
 - **`gx-max-start.sh`: fixed a container-name bug in its conflict-drain
   list.** `CONFLICTS_N2` named `comfyui` and `llama-swap-node02`, neither of
   which matches any real container on node 2 (`gx-comfyui`,

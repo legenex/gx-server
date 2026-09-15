@@ -51,8 +51,30 @@ docker image inspect "${GXMAX_IMAGE}" >/dev/null 2>&1 || die "image missing on n
 n2 "docker image inspect '${GXMAX_IMAGE}' >/dev/null 2>&1" || die "image missing on node2: ${GXMAX_IMAGE}"
 
 # Fabric must be alive on both rails before we try a two-node job.
+#
+# NOT `ping`: found 2026-09-15, the first time this script was ever actually
+# invoked through the real orchestrator (gx_orchestrator.server, systemd unit
+# with NoNewPrivileges=true) rather than run directly from an interactive
+# shell. `ping` needs a raw ICMP socket, normally granted via the binary's
+# cap_net_raw file capability -- but NoNewPrivileges blocks a process from
+# gaining ANY capability via exec, file capabilities included, and this
+# host's net.ipv4.ping_group_range is empty so there is no unprivileged
+# fallback either. Confirmed empirically: `ping` under NoNewPrivileges=true
+# fails immediately with "socket: Operation not permitted", which this
+# preflight was silently treating as "rail unreachable" -- so gx-max could
+# never succeed via its actual production entry point, only via a direct
+# shell invocation. A plain TCP connect attempt needs no special capability
+# and works identically either way: a fast "Connection refused" proves the
+# kernel on the far end answered (nothing needs to be listening on the probe
+# port), while a real timeout means genuinely unreachable.
+fabric_rail_reachable() {
+  local peer="$1" out rc
+  out=$(timeout 2 bash -c "exec 3<>/dev/tcp/${peer}/1" 2>&1); rc=$?
+  [ "${rc}" -eq 0 ] && return 0
+  printf '%s' "${out}" | grep -qi 'connection refused'
+}
 for peer in 192.168.100.11 192.168.101.11; do
-  ping -c 2 -W 2 "${peer}" >/dev/null 2>&1 || die "ConnectX rail unreachable: ${peer}"
+  fabric_rail_reachable "${peer}" || die "ConnectX rail unreachable: ${peer}"
 done
 log "both ConnectX rails reachable"
 

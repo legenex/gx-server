@@ -420,3 +420,92 @@ graphical (seat0) session colliding with remote RDP login attempts. It has
 been disabled (`AutomaticLoginEnable = false` in the GDM config) — see
 `OPERATIONS.md` for the recovery procedure if a stale session recurs. This
 does not affect SSH.
+
+## B-017 (S1) — gx-max cannot acquire through the real orchestrator: the 30 GiB admission-guard reserve floor and gx-max's own ~90 GiB/rank footprint are structurally incompatible
+**Needs:** a human decision. Not fixed; not bypassed. See below for why.
+
+**First real test, 2026-09-15.** `legenex/tests/gx-max-validate.sh` — which
+drives acquisition through the actual production path
+(`POST /lifecycle/gx-max/acquire` on the real orchestrator), not by calling
+`gx-max-start.sh` directly — had never been run to completion before. Doing
+so surfaced two real, previously-undiscovered issues, both now understood:
+
+**1. Fixed this session:** the fabric-rail preflight check used `ping`,
+which needs `CAP_NET_RAW`. `gx-orchestrator.service` runs with
+`NoNewPrivileges=true` (correct, intentional hardening for a control-plane
+service — see its unit file comment), which blocks a process from gaining
+*any* capability via exec, file capabilities included, and this host's
+`net.ipv4.ping_group_range` is empty so there is no unprivileged-ping
+fallback either. Confirmed empirically: `systemd-run -p NoNewPrivileges=true
+ping ...` fails immediately with `socket: Operation not permitted`. This
+meant `gx-max-start.sh` could **never** succeed when invoked through its
+real, locked, production entry point — only when run directly from an
+interactive shell, which is almost certainly how every previous "verified
+working" gx-max run (including the worker's own W-1 validation on
+2026-09-14, `~/gx-worker/run-gx-max.sh` on node 2) was actually launched.
+Fixed in both `gx-max-start.sh` and `gx-max-validate.sh`: replaced the
+`ping` check with a capability-free TCP connect probe (a fast "Connection
+refused" proves the peer answered; a real timeout means unreachable).
+
+**2. NOT fixed, genuinely blocked:** with the fabric check passing, the next
+attempt reached the resource-ownership admission guard
+(`legenex/orchestrator/gx_orchestrator/resource_guard.py`, shipped
+2026-09-14 as the B-012 repair) and was **correctly, hard-refused**:
+
+```
+node1 admission guard REFUSED gx-max-rank0:
+  live MemAvailable 113.8 GiB - new 90.0 GiB leaves 23.8 GiB,
+  below the 30.0 GiB reserve floor
+```
+
+This is not a bug in the guard's arithmetic — it is a genuine, documented,
+**unresolved collision between two separately-locked decisions**:
+
+* L-6 / `gx-max.conf`: gx-max is *locked* to take over each node almost
+  entirely (~90–93 GiB/rank on a ~121 GiB node), and `gx-max.conf`'s own
+  comment (written 2026-09-14, the same day the guard shipped) says so
+  explicitly: *"Why gx-max is NOT capped down to leave the same 30 GiB
+  reserve as the other tiers: gx-max is DOCUMENTED and LOCKED to take over
+  the node... Capping it at ~91 GiB to force a 30 GiB floor would make it
+  OOM-kill itself under its own verified-working footprint... If the 30 GiB
+  floor must hold even during a gx-max run, that is an
+  admission-control/architecture decision for a human, not something
+  encoded here as a silent tightening."*
+* The B-012 admission guard enforces a uniform 30 GiB reserve floor for
+  every `exclusive`-class workload, gx-max included, with no
+  per-tier override.
+
+The comment already named the exact decision this needs, before this
+session ever ran into it live. I am not making that call unilaterally in
+either direction: loosening the guard for gx-max risks silently
+reintroducing a B-012-shaped hole; leaving it as-is means gx-max, a locked,
+flagship, explicitly-required tier, can **never** acquire through its real
+production path, only by bypassing the orchestrator entirely (which defeats
+the point of the orchestrator's serialisation/state-machine guarantees and
+is not how a real client request would reach it).
+
+**Cleanup verified correct on both nodes after the refusal** — this is the
+never-downgrade rule and the admission guard working exactly as designed,
+not a failure of either: `gx-max post-failure cleanup: both ranks stopped,
+ledger released`, orchestrator state `acquiring -> down`, `POST
+.../release` 200, node1 back to 113 GiB available, node2 back to 115 GiB
+available, no orphaned containers, no stuck locks. The drain step correctly
+stopped `gx-comfyui`/`gx-media-router`/`gx-llama-swap-node02` first (see the
+`gx-max-start.sh` `CONFLICTS_N2` fix, same session) before the guard was
+even reached.
+
+**Options for the human to choose between** (none applied):
+1. Give gx-max's own admission check a smaller, explicitly-documented
+   reserve (e.g. 3–5 GiB, enough to keep sshd/the orchestrator/docker
+   itself alive, not 30) instead of the generic tier floor — the most
+   direct read of what the `gx-max.conf` comment was already asking for.
+2. Lower `GXMAX_RANK_ESTIMATED_GIB` (currently 90) if there is real
+   evidence the true footprint is smaller than documented — not attempted;
+   the current figure is consistent with `gx-max.conf`'s own "~93 GiB"
+   note and D-013's measured 95 GiB figure for the (broken) gx-reason
+   process, so shrinking it without new measurement would be guessing.
+3. Accept that gx-max is acquired by a human running `gx-max-start.sh`
+   directly (bypassing the orchestrator's queueing/state-machine), and
+   have the orchestrator's `/lifecycle/gx-max/acquire` remain permanently
+   unable to serve a real request — a real, user-visible product gap for
+   the `gx-max`/`gx-auto` aliases documented in ARCHITECTURE.md.
