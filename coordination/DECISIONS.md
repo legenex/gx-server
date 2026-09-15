@@ -300,3 +300,58 @@ session" table for what was actually re-checked against the real machines
 during this integration, including finding and fixing doc drift the seed
 had nothing to do with (node 2's actual recovery state, the gateway needing
 a restart).
+
+## D-019 — gx-orchestrator boot-time bind race found and fixed; gx-auto was silently unreachable from the gateway all session
+**Date:** 2026-09-15
+**Decision:** Added `ExecStartPre=.../wait-for-docker0.sh` to
+`gx-orchestrator.service` (now also checked into the repo at
+`legenex/orchestrator/systemd/gx-orchestrator.service` — it previously
+existed only as a live file in `~/.config/systemd/user/`, not in git).
+
+**Why — found while investigating an apparent gx-auto classifier bug.**
+`legenex/tests/acceptance.sh`'s gx-auto routing test failed with "expected
+gx-reason, got gx-mini". Investigation showed **zero** `gx.routing` log
+entries had been written all day: every `gx-auto` request from the LiteLLM
+container was failing with `Connection error` before ever reaching the
+orchestrator's classifier. The test's `tail -1` on the routing log was
+picking up a stale entry from the previous day, making all three of its
+comparisons coincidental rather than real — the reported "classifier bug"
+was a complete false positive.
+
+**Root cause:** `gx-orchestrator.service`'s startup log showed every prior
+start (2026-09-14, through 23:54:57) successfully bound both
+`127.0.0.1:18900` and `172.17.0.1:18900` (the docker bridge address
+`host.docker.internal` resolves to from any container, confirmed — this is
+the correct, D-004-documented design, not itself wrong). **This morning's
+boot (09:33:30) failed the second bind** with `Cannot assign requested
+address` (`EADDRNOTAVAIL`) and — because `build_servers()` treats each bind
+as best-effort and only logs a warning, not fatal — the process kept
+running anyway, silently degraded to loopback-only for the rest of its
+life (over 2.5 hours, spanning this entire session, until found). Cause:
+`After=docker.service` guarantees dockerd has *started*, not that `docker0`
+already has its IPv4 address assigned — a real, if narrow, boot-order race.
+
+**Fix:** wait for `docker0` to actually have an address (poll up to 30s)
+before `ExecStart`, so the orchestrator either starts fully bound or fails
+its `ExecStartPre` (which `Restart=on-failure`/`RestartSec=5` retries,
+rather than starting degraded and silently). Verified: `systemctl --user
+restart gx-orchestrator.service` now binds both addresses every time;
+`ExecStartPre` shows `code=exited, status=0/SUCCESS`.
+
+**Verified the actual fix, not just the restart:** with both addresses
+bound, re-ran the exact prompt from the failing test directly —
+`"Debug this stack trace and derive the time complexity, then refactor the
+algorithm."` — and the classifier correctly produced
+`{"tier": "gx-reason", "complexity": 9, "reasoning_score": 10, ...}`. The
+classifier itself was never broken; D-005/D-016's escalation logic is
+intact.
+
+**Impact while broken:** every `gx-auto` request for this entire session
+(and probably since this morning's boot, before this session started) was
+silently served by whatever LiteLLM's own error/fallback path did, never
+by the orchestrator's classifier — a real, live production gap, not a
+theoretical one. `gx-max`'s `/lifecycle/gx-max/acquire` (also served by
+this same process) was unaffected by *this* bug specifically, since
+`legenex/tests/gx-max-validate.sh` calls the orchestrator from node 1's own
+shell (`127.0.0.1:18900`), not from inside a container — B-017 is a
+separate, still-open issue.

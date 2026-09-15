@@ -1,0 +1,57 @@
+# ==============================================================================
+# gx-orchestrator.service — gx-cluster orchestrator (gx-auto routing +
+# gx-max lifecycle), node 1.
+#
+# INSTALL (no root required; user lingering is enabled on gx10-01):
+#   mkdir -p ~/.config/systemd/user
+#   cp legenex/orchestrator/systemd/gx-orchestrator.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now gx-orchestrator.service
+#
+# VERIFY:
+#   systemctl --user status gx-orchestrator.service
+#   ss -tlnp | grep 18900          # expect BOTH 127.0.0.1:18900 and 172.17.0.1:18900
+#   curl -sS http://127.0.0.1:18900/health
+# ==============================================================================
+[Unit]
+Description=gx-cluster orchestrator (gx-auto routing + gx-max lifecycle), node 1
+After=network-online.target docker.service
+Wants=network-online.target
+# Never let this control-plane unit be pulled in as a dependency of a model
+# service; it also must never be conditioned on any model being up.
+DefaultDependencies=yes
+
+[Service]
+Type=simple
+WorkingDirectory=/home/legenex/Documents/Projects/Server/gx-cluster/legenex/orchestrator
+EnvironmentFile=-/home/legenex/Documents/Projects/Server/gx-cluster/legenex/gateway/.env
+Environment=PYTHONUNBUFFERED=1
+# Found 2026-09-15: even with After=docker.service, dockerd being "started"
+# does not guarantee docker0's IPv4 address is assigned yet -- on that
+# morning's boot the orchestrator's bind to 172.17.0.1 failed with
+# "Cannot assign requested address" (EADDRNOTAVAIL) and the process kept
+# running anyway (bind is best-effort per-address, not fatal), silently
+# degrading to loopback-only for the rest of its life. That meant every
+# container on the gateway's docker network -- LiteLLM included, so gx-auto
+# entirely -- could not reach it via host.docker.internal until someone
+# noticed and restarted the service by hand. Wait for docker0's address
+# here instead of guessing a fixed delay; retries (RestartSec=5) if it
+# somehow still isn't up in time, rather than starting degraded.
+ExecStartPre=/home/legenex/Documents/Projects/Server/gx-cluster/legenex/orchestrator/systemd/wait-for-docker0.sh
+ExecStart=/usr/bin/python3 -m gx_orchestrator.server
+Restart=on-failure
+RestartSec=5
+StandardOutput=append:/srv/logs/gx-orchestrator.log
+StandardError=append:/srv/logs/gx-orchestrator.log
+
+# Hardening. This is a control surface that can start/stop cluster-wide jobs
+# (see ARCHITECTURE.md security boundaries) — it binds loopback + the docker
+# bridge only (GX_ORCH_HOSTS), never 0.0.0.0, and gets no extra filesystem
+# access beyond its own logs.
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/srv/logs
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target

@@ -10,6 +10,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Found and fixed a real production gap: gx-orchestrator had been
+  silently unreachable from the gateway container all session.** An
+  apparent gx-auto classifier test failure ("expected gx-reason, got
+  gx-mini") turned out to be a complete false positive from a stale
+  log-tail read -- investigation found zero routing decisions had been
+  logged all day, because every gx-auto request from LiteLLM's container
+  was failing to connect to the orchestrator. Root cause: this morning's
+  boot raced `docker0` getting its IPv4 address, so the orchestrator's
+  second bind (`172.17.0.1:18900`, what `host.docker.internal` resolves to
+  from any container) failed and was silently swallowed (bind is
+  best-effort per-address, not fatal), leaving it loopback-only for over
+  2.5 hours. Fixed with an `ExecStartPre` wait-for-docker0 check in
+  `gx-orchestrator.service` (now also checked into the repo at
+  `legenex/orchestrator/systemd/`, previously only a live file) so it
+  either starts fully bound or fails loudly and retries, rather than
+  degrading silently. Verified the classifier itself was never broken by
+  re-running the exact failing prompt once connectivity was fixed -- it
+  correctly chose gx-reason. See `coordination/DECISIONS.md` D-019.
 - **gx-max validated through the real orchestrator for the first time --
   found and fixed one real bug, surfaced one genuine unresolved
   architecture decision (BLOCKERS.md B-017).** `legenex/tests/gx-max-validate.sh`
