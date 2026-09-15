@@ -212,8 +212,69 @@ t_lifecycle(){
 # ------------------------------------------------------------- 7/8. media
 t_media(){
   echo "[7/8] gx-image / gx-video"
-  skip "gx-image generation" "ComfyUI not yet deployed"
-  skip "gx-video generation" "ComfyUI not yet deployed"
+  local media_key
+  if [ -f "${ENV_FILE}" ]; then
+    media_key="$(grep '^GX_MEDIA_API_KEY=' "${ENV_FILE}" | cut -d= -f2-)"
+  else
+    media_key="${GX_MEDIA_API_KEY:-}"
+  fi
+  if [ -z "${media_key}" ]; then
+    skip "gx-image generation" "no GX_MEDIA_API_KEY found"
+    skip "gx-video generation" "no GX_MEDIA_API_KEY found"
+    return
+  fi
+
+  local health; health=$(curl -fsS -m 10 http://192.168.100.11:18800/health 2>&1)
+  if [[ "$(printf '%s' "${health}" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("comfyui",{}).get("reachable"))' 2>/dev/null)" != "True" ]]; then
+    skip "gx-image generation" "media router/ComfyUI not reachable -- not deployed this run"
+    skip "gx-video generation" "media router/ComfyUI not reachable -- not deployed this run"
+    return
+  fi
+
+  # Real image generation through the gateway (the single ingress a real
+  # client uses), not the router directly -- proves the whole production path.
+  local img_resp
+  img_resp=$(curl -sS -m 60 -X POST "${GATEWAY}/v1/images/generations" \
+    -H "Authorization: Bearer ${KEY}" -H 'Content-Type: application/json' \
+    -d '{"model":"gx-image","prompt":"a single red apple on a wooden table, soft daylight","size":"1024x1024","n":1}')
+  local img_b64; img_b64=$(printf '%s' "${img_resp}" | python3 -c 'import json,sys
+try:
+    d=json.load(sys.stdin); print(d["data"][0].get("b64_json") or d["data"][0].get("url") or "")
+except Exception: print("")' 2>/dev/null)
+  [ -n "${img_b64}" ] \
+    && pass "gx-image real generation via gateway" \
+    || fail "gx-image generation" "${img_resp:0:200}"
+
+  # Real video generation, async: submit -> poll -> fetch content. Router is
+  # the documented client contract for /v1/videos (README.md), so this hits
+  # it directly rather than guessing at a LiteLLM video pass-through shape.
+  local vid_id
+  vid_id=$(curl -sS -m 15 -X POST http://192.168.100.11:18800/v1/videos \
+    -H "Authorization: Bearer ${media_key}" -H 'Content-Type: application/json' \
+    -d '{"prompt":"a candle flame flickering gently in still air","seconds":2}' \
+    | python3 -c 'import json,sys; print(json.load(sys.stdin).get("id",""))' 2>/dev/null)
+  if [ -z "${vid_id}" ]; then
+    fail "gx-video submit" "no job id returned"
+  else
+    local vid_status="" i
+    for i in $(seq 1 60); do
+      vid_status=$(curl -sS -m 10 "http://192.168.100.11:18800/v1/videos/${vid_id}" \
+        -H "Authorization: Bearer ${media_key}" \
+        | python3 -c 'import json,sys; print(json.load(sys.stdin).get("status",""))' 2>/dev/null)
+      [ "${vid_status}" = "completed" ] || [ "${vid_status}" = "failed" ] && break
+      sleep 5
+    done
+    if [ "${vid_status}" = "completed" ]; then
+      local vid_bytes
+      vid_bytes=$(curl -sS -m 30 "http://192.168.100.11:18800/v1/videos/${vid_id}/content" \
+        -H "Authorization: Bearer ${media_key}" -o /tmp/gxacc_video.mp4 -w '%{size_download}')
+      [ "${vid_bytes:-0}" -gt 1000 ] \
+        && pass "gx-video real generation, ${vid_bytes} bytes" \
+        || fail "gx-video content fetch" "only ${vid_bytes:-0} bytes"
+    else
+      fail "gx-video generation" "status=${vid_status:-timeout}"
+    fi
+  fi
 }
 
 # ----------------------------------------------------------- 9. restart test

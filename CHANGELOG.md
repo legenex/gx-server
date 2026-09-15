@@ -10,6 +10,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **gx-image / gx-video: real end-to-end validation, first time both were
+  actually deployed and exercised.** Built `gx-comfyui:sm121` and
+  `gx-media-router:1.0.0` on node 2 (first build on this recovered node;
+  confirmed torch 2.14.0+cu130 with `sm_120` cubins, matching the
+  Dockerfile's documented sm_121-compatibility rationale). Started both
+  containers with the documented memory interlock respected (node 2 fully
+  idle first). Real requests through the full production path (LiteLLM
+  gateway -> router -> ComfyUI -> GPU): a genuine 1024x1024 image in 28s
+  (Lightning workflow) and a genuine playable MP4 in 58s
+  (wan22-t2v-a14b-lightning), both visually inspected, not just
+  status-code-checked. Confirmed the security boundary holds: ComfyUI
+  itself (8188) is unreachable from node 1, only the router (18800)
+  answers. `legenex/tests/acceptance.sh`'s `t_media` no longer skips --
+  replaced with real generation + content-fetch checks against the
+  gateway and the router, so this stays a regression test rather than a
+  one-off manual check. Fixed two stale "UPSTREAM PENDING" comments in
+  `legenex/gateway/litellm/config.yaml` that no longer matched reality
+  (the router has existed and been unit-tested since 2026-09-14; this
+  session is the first time it was actually built, started, and proven
+  end-to-end).
 - **Integrated the ChatGPT project-seed bundle** into the canonical docs:
   node LAN/Tailscale IP addresses, a corroborating NCCL `all_gather_perf`
   benchmark, the finding that no BMC/IPMI/Redfish/MCTP remote-power path

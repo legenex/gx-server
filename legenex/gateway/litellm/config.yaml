@@ -227,10 +227,11 @@ model_list:
   # ===========================================================================
   # gx-image — ComfyUI-backed image generation. Node 2.
   # ===========================================================================
-  # *** UPSTREAM PENDING *** — the media router on node 2 is being specified by
-  # another agent. The address below is a placeholder on the RoCE fabric and is
-  # expected to change. Requests will fail until that router exists; that is
-  # intentional and preferable to routing them somewhere wrong.
+  # Live and verified 2026-09-15: a real request through this exact api_base
+  # (router on the RoCE fabric -> ComfyUI GPU -> output) produced a genuine
+  # 1024x1024 image matching the prompt in 28s via the Lightning workflow.
+  # This comment previously said "UPSTREAM PENDING" -- stale; the router has
+  # existed and been tested (43 unit/integration tests) since 2026-09-14.
   - model_name: gx-image
     litellm_params:
       model: openai/gx-image
@@ -248,9 +249,14 @@ model_list:
   # ===========================================================================
   # gx-video — ComfyUI-backed video generation. Node 2.
   # ===========================================================================
-  # *** UPSTREAM PENDING *** — same router as gx-image.
-  # There is no OpenAI-standard video endpoint; how this is surfaced depends on
-  # the router's contract. Treated as a pass-through until that is specified.
+  # Live and verified 2026-09-15: a real async request against this router
+  # (POST /v1/videos -> poll -> GET .../content) produced a genuine playable
+  # MP4 via the wan22-t2v-a14b-lightning workflow in 58s. This comment
+  # previously said "UPSTREAM PENDING" -- stale; the router has existed and
+  # been tested (43 unit/integration tests) since 2026-09-14. There is still
+  # no OpenAI-standard video-generation endpoint, so this remains a
+  # deliberate pass-through to the router's own /v1/videos contract rather
+  # than a LiteLLM-native video mode.
   - model_name: gx-video
     litellm_params:
       model: openai/gx-video
