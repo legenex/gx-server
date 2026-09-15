@@ -9,7 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Integrated the ChatGPT project-seed bundle** into the canonical docs:
+  node LAN/Tailscale IP addresses, a corroborating NCCL `all_gather_perf`
+  benchmark, the finding that no BMC/IPMI/Redfish/MCTP remote-power path
+  exists on either node (`coordination/BLOCKERS.md` B-016), and the
+  GDM-auto-login/RDP stale-session recovery procedure. Added root-level
+  `DECISIONS.md`/`TASKS.md`/`TEST_PLAN.md`/`HANDOFF.md` and `docs/chatgpt/`
+  reference copies. See `coordination/DECISIONS.md` D-018.
+
 ### Fixed
+- **Documentation drift against the live machines.** `CURRENT_STATE.md` and
+  `coordination/BLOCKERS.md` still described node 2 as physically wedged;
+  it had already been power-cycled and recovered (`recover-node2.sh`,
+  16 PASS / 0 FAIL). Node 1's gateway container had exited cleanly (a
+  benign restart artifact, not a crash) and was brought back up.
 - **`recover-node2.sh`: MemAvailable check was silently broken.** The
   accidental-workload-detection step's `awk` invocation was passed to the
   `remote()` SSH helper as multiple shell words instead of one pre-quoted
