@@ -157,13 +157,57 @@ implement the `qwen3_5_moe` hybrid architecture (3× linear-attention/GDN layers
 to 1× full-attention). gx-mini runs the same build correctly, but Qwen3.5-**4B**
 is dense, so it never exercises the hybrid path.
 
-**Not yet ruled out** (the CPU-only comparison was attempted but wedged the node
-— see B-012):
-1. A CUDA/GDN kernel bug for this architecture — test with `--n-gpu-layers 0`.
-2. A bad dynamic quant — test `UD-IQ4_XS` (60.2 GB) or `bartowski/Qwen_Qwen3.5-122B-A10B-GGUF`.
-3. A stale/incompatible llama.cpp — rebuild `legenex/llama-cpp-spark` from current master.
+**Update 2026-09-15, node 2 recovered — hypotheses 1 and 3 tested, both
+narrowed, GPU-CUDA-kernel cause confirmed, still OPEN:**
 
-Next step is the `-ngl 0` comparison, run **on an otherwise idle node 2**.
+* Ran the `--n-gpu-layers 0` GPU-vs-CPU comparison (`gx-reason-diagnose.sh`,
+  fixed first — see CHANGELOG.md, it originally couldn't even start the
+  CPU-only container: `legenex/llama-cpp-spark`'s `llama-server` is linked
+  against `libcuda.so.1`, so the CDI device must stay attached even for a
+  CPU-only run; `--n-gpu-layers 0` alone is what forces the compute path).
+  Result: **GPU path GARBAGE (`////////////////////`, byte-identical to the
+  original repro), CPU-only path SANE (`"The capital of France is Paris."`)
+  with the exact same weights and sampling params.** This rules out the
+  checkpoint/quant (hypothesis 2) — confirms the fault is in the CUDA
+  execution path specifically, not the GGUF weights.
+* Then rebuilt `legenex/llama-cpp-spark` from current upstream
+  `llama.cpp` master (hypothesis 3) — `git clone
+  https://github.com/ggml-org/llama.cpp` has no pinned commit, so this
+  pulled whatever was HEAD as of 2026-09-15. Build succeeded cleanly
+  (~140s). **Re-ran the identical GPU-vs-CPU comparison against the new
+  binary: byte-identical result — GPU still GARBAGE, CPU still SANE.**
+  Old image kept as a rollback tag,
+  `legenex/llama-cpp-spark:pre-b011-fix-backup`, on node 2 only (this was a
+  local rebuild, nothing was pushed to any registry). No functional
+  regression found — the new binary loads, serves and shuts down
+  identically, just with the same wrong GPU output.
+
+**Conclusion: hypothesis 3 (stale build) is ruled out.** The bug is real,
+reproducible, isolated to the CUDA/GDN kernel execution path for this
+architecture, and is either (a) still present in current upstream
+`llama.cpp` for `qwen3_5_moe` on `sm_121`/GB10, or (b) specific to
+something about this exact hardware/driver combination
+(580.173.02 / CUDA 13.0/13.1) that upstream's own test matrix does not
+cover. **B-011 remains OPEN.** gx-reason cannot be served correctly on GPU
+today; running it CPU-only is not a real fix (violates the "no accidental
+CPU execution" requirement, and a 122B-class MoE model on CPU is far too
+slow to be a usable tier) and was not deployed as a workaround.
+
+**Remaining next steps, each a real piece of work, not attempted this
+session:**
+1. File or search an upstream `ggml-org/llama.cpp` issue for `qwen3_5_moe`
+   CUDA/GDN kernel correctness on `sm_121` (Blackwell/GB10) — needs
+   internet research and likely a minimal repro, not just this cluster's
+   context.
+2. Try a different quant — `unsloth/Qwen3.5-122B-A10B-GGUF` `UD-IQ4_XS`
+   (60.2 GB) or `bartowski/Qwen_Qwen3.5-122B-A10B-GGUF`. This means
+   downloading a new multi-GB checkpoint to node 2 — a real disk/bandwidth
+   commitment a human should sign off on before it starts, not something
+   to launch unilaterally mid-session.
+3. Bisect llama.cpp history between a commit known to predate the
+   `qwen3_5_moe` hybrid-attention implementation and current master, to
+   find the exact change that introduced or never fixed this — slow, but
+   would turn "GPU path is broken" into an actionable upstream bug report.
 
 ## B-012 (S2) — node 2 was wedged by running two 77 GB models at once
 **Status: incident understood; structural admission control now shipped on

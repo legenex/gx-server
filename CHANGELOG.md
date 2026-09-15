@@ -40,8 +40,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   isolates the fault to the CUDA execution path of this specific
   `legenex/llama-cpp-spark` build's `qwen3_5_moe` hybrid
   (GDN + full-attention) kernel implementation, not the checkpoint/quant.
-  Attempting a fix by rebuilding the image against current upstream
-  `llama.cpp` master (see B-011 for outcome and current status).
+  Rebuilt the image against current upstream `llama.cpp` master (no pinned
+  commit in the Dockerfile, so this picked up everything upstream as of
+  2026-09-15) to test the "stale build" hypothesis — build succeeded, but
+  re-running the identical comparison against the new binary reproduced the
+  exact same GARBAGE/SANE split byte-for-byte. Rules out a stale build;
+  **B-011 remains OPEN**, now narrowed to either an unfixed upstream CUDA
+  kernel bug or something specific to this GB10/sm_121 environment. Old
+  image kept as `legenex/llama-cpp-spark:pre-b011-fix-backup` on node 2 for
+  rollback; nothing was pushed to any registry. See BLOCKERS.md B-011 for
+  the remaining next steps (upstream issue research, an alternate quant, or
+  a bisect) — none attempted this session, each is a real, separate piece
+  of work.
 
 ### Removed
 - **Qwen3.8 permanently retired.** `vllm-qwen38-uncensored` (a standalone,
