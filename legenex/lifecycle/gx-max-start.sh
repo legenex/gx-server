@@ -149,11 +149,31 @@ r1_cmd=$(printf '%q ' docker run -d --name "${GXMAX_RANK1_NAME}" --restart no \
 # Wrap in a remote flock so a concurrent large-workload launch against node2
 # cannot race past this point. Lock path is a documented convention
 # (~/.gx-guard/node2.lock) that any future node2-side tooling should reuse --
-# node2 has no deployed copy of resource-guard.sh yet (it is unreachable as
-# of this task), so this is the one piece of cross-process protection it
-# gets tonight: a real flock, just not yet backed by the residency ledger.
-r1_locked_cmd="mkdir -p \$HOME/.gx-guard && exec 9>\$HOME/.gx-guard/node2.lock && flock -x -w ${GX_GUARD_LOCK_TIMEOUT} 9 && ${r1_cmd}"
-n2 "${r1_locked_cmd}" >/dev/null || die "failed to start rank1 (node2 lock busy, or launch failed)"
+# node2 has no deployed copy of resource-guard.sh yet, so this is the one
+# piece of cross-process protection it gets: a real flock, not yet backed
+# by the full residency ledger.
+#
+# TOCTOU note (found 2026-09-15 by independent review, coordination/
+# BLOCKERS.md B-019): the admission check above and this launch are not
+# fully atomic -- the check runs unlocked, against a meminfo snapshot taken
+# moments earlier, and only the launch itself is lock-guarded. A full fix
+# means moving the admission arithmetic inside this same held lock, which
+# needs the ledger deployed to node2 (a bigger change, not done here). As a
+# narrower, low-risk mitigation: re-check raw MemAvailable one more time,
+# atomically with the lock, immediately before the docker run -- this
+# closes the most dangerous part of the window (something else consuming
+# node2's memory between the check above and the lock acquired here) even
+# though it re-validates raw headroom rather than the full ledger-aware
+# admission decision.
+# Threshold is computed HERE, on node1, into a literal number -- the
+# remote command below runs on node2's own shell, which has never heard of
+# $GXMAX_RANK_ESTIMATED_GIB/$GX_GUARD_RESERVE_GIB and would silently treat
+# them as 0 in arithmetic context (making the check always pass) if left
+# as variable references instead of an already-computed literal.
+r1_min_avail_gib=$((GXMAX_RANK_ESTIMATED_GIB + GX_GUARD_RESERVE_GIB))
+r1_final_check="avail=\$(awk '/MemAvailable/{print int(\$2/1048576)}' /proc/meminfo); if [ \"\${avail:-0}\" -lt ${r1_min_avail_gib} ]; then echo \"REFUSED: node2 MemAvailable=\${avail}GiB, need >= ${r1_min_avail_gib}GiB (re-checked atomically with the lock)\" >&2; exit 9; fi"
+r1_locked_cmd="mkdir -p \$HOME/.gx-guard && exec 9>\$HOME/.gx-guard/node2.lock && flock -x -w ${GX_GUARD_LOCK_TIMEOUT} 9 && (${r1_final_check}) && ${r1_cmd}"
+n2 "${r1_locked_cmd}" >/dev/null || die "failed to start rank1 (node2 lock busy, final memory re-check failed, or launch failed)"
 n2 "docker logs -f ${GXMAX_RANK1_NAME} > \$HOME/gx-max-rank1.log 2>&1 &" >/dev/null 2>&1 || true
 # Best-effort local bookkeeping: node1 has no authoritative view of node2's
 # residency (no ledger runs there), but recording this here means a later

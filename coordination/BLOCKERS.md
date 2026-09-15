@@ -545,3 +545,74 @@ as sufficient for media (lower risk than gx-max, since ComfyUI's failure
 mode observed here was "admission floor breached", not "node wedged" —
 mmap thrashing specifically requires two *mmap'd* large processes, and
 ComfyUI's weights are not mmap'd the way llama.cpp's are).
+
+## B-019 (S2) — gx-max's node2 admission check is not atomic with the actual rank1 launch (TOCTOU)
+**Status: narrower mitigation applied 2026-09-15; the fuller fix (ledger on
+node2) is still not done, tracked separately under B-012's "remaining
+gap."**
+
+**Found 2026-09-15 by an independent reviewer agent, verified by inspection
+(not yet reproduced live — this is a narrow timing window, not something
+that reliably reproduces on demand).** `gx-max-start.sh`'s node2 admission
+check (`gx_guard_check node2 gx-max-rank1 exclusive ...`, using a `/proc/meminfo`
+snapshot fetched over SSH) and the actual rank1 `docker run` are **not**
+in the same critical section:
+
+* **node1's rank0** is correctly atomic: `gx_guard_run` (the sanctioned
+  path) holds node1's lock across check → launch → register as one
+  critical section.
+* **node2's rank1** is not: the admission check runs once, unlocked, then
+  later the actual launch acquires only an ad hoc `flock` on
+  `$HOME/.gx-guard/node2.lock` on node2 itself — a different lock domain,
+  not backed by the residency ledger the check just consulted (this gap is
+  already noted in B-012's "remaining gap" text and in the script's own
+  comments, but its TOCTOU consequence hadn't been named until now).
+
+**Consequence:** in the window between the check and the launch, any other
+memory-affecting operation on node2 — a manually-started `docker compose up`
+for ComfyUI (B-018), a routed request respawning `gx-reason` before
+`gx-llama-swap-node02` is confirmed stopped, a second concurrent gx-max
+attempt racing past this same window — is invisible to this check and not
+refused. This is distinct from B-018: B-018 is "ComfyUI's own start path
+has no guard at all"; B-019 is "gx-max's *own* guard can go stale before
+its *own* launch."
+
+**Mitigation applied:** rather than restructure the whole check-then-launch
+sequence (which needs the ledger deployed to node2 to do properly -- a
+bigger change, still not done), added a second, narrower check: an atomic
+re-validation of raw `MemAvailable` against `GXMAX_RANK_ESTIMATED_GIB +
+GX_GUARD_RESERVE_GIB`, computed to a literal number on node1 and executed
+*inside* the same held `flock`, immediately before the `docker run`. This
+closes the most dangerous part of the window (something else consuming
+node2's memory between the unlocked admission check and the lock being
+acquired for the actual launch) without needing the full ledger. It
+re-validates raw headroom, not the fuller ledger-aware residency
+accounting, so it is a mitigation, not the complete fix the original
+finding named.
+
+**Caught a real bug in this mitigation itself before shipping it:** the
+first version embedded `$((GXMAX_RANK_ESTIMATED_GIB + GX_GUARD_RESERVE_GIB))`
+literally inside the remote command string -- but that arithmetic would
+have run on node2's shell, which has never heard of those node1-local
+variable names and treats undefined names as 0 in arithmetic context,
+so the check would have silently always passed. Fixed by computing the
+threshold to a literal number on node1 before building the remote command
+string. Verified live against the real node2 (not just unit tests): with
+the threshold set below current MemAvailable it proceeds; with it set
+above, it correctly refuses with the exact "REFUSED: node2 MemAvailable=…"
+message and exit code 9, all inside the held lock. Given the current
+GXMAX_RANK_ESTIMATED_GIB=90 and GX_GUARD_RESERVE_GIB=30, this check will
+refuse on today's node2 (113 GiB < 120 GiB needed) exactly like the earlier
+Python admission guard already does -- consistent with, not a new
+consequence of, B-017.
+
+**Also flagged by the same review, S3, lower priority:**
+* `drain_node2()` uses a uniform `docker stop -t 60` for every container,
+  including `gx-reason`, whose own `node02.yaml` `cmdStop` documents a
+  200s graceful-shutdown budget. Draining via gx-max-start.sh gives it a
+  third of that before SIGKILL — not a memory-safety risk (SIGKILL still
+  reclaims), but undercuts the "let in-flight work finish" intent.
+* `gx-orchestrator.service`'s retry-on-bind-failure behavior (D-019) relies
+  on systemd's *default* `StartLimitBurst`/`StartLimitIntervalSec` being
+  wide enough — works today, but is incidental rather than guaranteed.
+  Consider an explicit `StartLimitIntervalSec=0` for a hard guarantee.

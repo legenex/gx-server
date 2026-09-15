@@ -10,6 +10,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Independent multi-agent review of this session's own changes (4
+  reviewers, memory/lifecycle, networking/gx-max, routing/media security,
+  recovery/docs), findings fixed.** Confirmed clean: locked gx-max config
+  untouched, admission guard not weakened/bypassed, no MTU/RDMA/firmware
+  changes, no Qwen3.8 resurrection. Real findings fixed: a stale
+  "(PENDING)" label contradicting its own file's updated comments; D-019's
+  wording implied a silent wrong-model substitution when the actual
+  behavior (fallbacks globally disabled) was a safe loud error; a media
+  security claim in this same CHANGELOG was true but untested by any
+  regression test, now backed by a real assertion in `t_media`; and a bug
+  in that test's own memory-cleanup call (`-X POST` on a GET-only `/health`
+  endpoint silently short-circuited the actual cleanup) caught live when
+  node 2 was still holding ~75 GiB minutes after the test reported PASS.
+  One new gap found and mitigated: `gx-max-start.sh`'s node2 admission
+  check was not atomic with the rank1 launch (TOCTOU) -- added an atomic
+  re-check under the same lock immediately before the docker run
+  (`coordination/BLOCKERS.md` B-019); caught and fixed a real bug in that
+  fix itself before shipping it (the threshold arithmetic referenced
+  node1-local shell variables that don't exist on node2's remote shell,
+  which would have silently always passed).
 - **Full acceptance suite run clean, with one real near-miss caught and
   fixed live.** `legenex/tests/acceptance.sh` (non-slow suite): 12 PASS,
   1 FAIL (gx-reason, expected -- B-011), 1 SKIP (no vision test fixture).
