@@ -9,6 +9,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **`recover-node2.sh`: MemAvailable check was silently broken.** The
+  accidental-workload-detection step's `awk` invocation was passed to the
+  `remote()` SSH helper as multiple shell words instead of one pre-quoted
+  string, so OpenSSH reassembled it unquoted on the far end and the remote
+  shell hit a syntax error on the `awk` script's parentheses. The check has
+  been silently WARNing instead of verifying node 2's real memory headroom
+  since it was written. Fixed by passing the whole remote command as a
+  single string.
+- **`gx-reason-diagnose.sh`: the CPU-only comparison container couldn't
+  start at all.** It intentionally omitted `--device nvidia.com/gpu=all` to
+  force a "true" CPU-only path, but `legenex/llama-cpp-spark`'s
+  `llama-server` binary is dynamically linked against `libcuda.so.1`, which
+  is only present when the CDI GPU device is mounted. Without it the process
+  exited immediately (exit 127, "cannot open shared object file") before
+  ever touching the model — a missing-library failure, not a CPU-vs-GPU
+  compute result, and the first run of this script against the recovered
+  node 2 (2026-09-15) silently reported it as a script FATAL rather than a
+  real diagnosis. Fixed by keeping the GPU device attached (so the binary
+  can load) while keeping `--n-gpu-layers 0` (so the actual compute still
+  runs on CPU only).
+
+### Diagnosed
+- **BLOCKERS.md B-011 root cause isolated.** Re-ran the (now-fixed)
+  gx-reason GPU-vs-CPU comparison against the recovered node 2: GPU path
+  reproduces the exact recorded garbage output
+  (`////////////////////`), CPU-only path with identical weights and
+  sampling params is coherent (`"The capital of France is Paris."`). This
+  isolates the fault to the CUDA execution path of this specific
+  `legenex/llama-cpp-spark` build's `qwen3_5_moe` hybrid
+  (GDN + full-attention) kernel implementation, not the checkpoint/quant.
+  Attempting a fix by rebuilding the image against current upstream
+  `llama.cpp` master (see B-011 for outcome and current status).
+
 ### Removed
 - **Qwen3.8 permanently retired.** `vllm-qwen38-uncensored` (a standalone,
   always-on vLLM container, ~80 GiB resident, unrelated to the gx-mini/

@@ -44,9 +44,15 @@
 #   5. Run 2 (CPU-only path): start a STANDALONE, differently-named container
 #      (never touching llama-swap's managed "gx-reason" name/port) using the
 #      exact same image, weights (read-only) and sampling params, but
-#      --n-gpu-layers 0 and no GPU device attached at all -- the most
-#      rigorous way to force a true CPU path. Bound to node2's own loopback
-#      only (never the fabric or LAN), queried via SSH exec, matching this
+#      --n-gpu-layers 0 to force every layer's compute onto the CPU. The CDI
+#      GPU device IS still attached (--device nvidia.com/gpu=all): this
+#      image's llama-server binary is linked against libcuda.so.1 at load
+#      time (confirmed 2026-09-15 -- omitting the device makes the process
+#      exit 127 with "libcuda.so.1: cannot open shared object file" before it
+#      ever reaches the model, which is a missing-library failure, not a
+#      CPU-vs-GPU compute-path result). --n-gpu-layers 0 alone is sufficient
+#      to force the actual token compute onto the CPU. Bound to node2's own
+#      loopback only (never the fabric or LAN), queried via SSH exec, matching this
 #      repo's "never expose an unauthenticated llama.cpp endpoint" posture.
 #   6. Classify both outputs with an OBJECTIVE, code-driven test for
 #      "sane" vs "garbage" -- no human eyeballing required.
@@ -297,13 +303,14 @@ CPU_OUTPUT=""
 CPU_VERDICT=""
 
 run_cpu_path() {
-  log "=== run 2: CPU-only path (standalone container, --n-gpu-layers 0, no GPU device attached) ==="
+  log "=== run 2: CPU-only path (standalone container, --n-gpu-layers 0, GPU device attached only so libcuda.so.1 loads) ==="
   require_mem_free || die "insufficient free memory before the CPU-only run; aborting rather than risk a repeat of B-012"
 
   log "starting standalone diagnostic container ${CPU_CONTAINER} on node2 loopback:${CPU_PORT} (never published to the fabric or LAN)"
   remote "docker rm -f ${CPU_CONTAINER} >/dev/null 2>&1 || true"
   remote "docker run --rm -d --name ${CPU_CONTAINER} \
     -p 127.0.0.1:${CPU_PORT}:${CPU_PORT} \
+    --device nvidia.com/gpu=all \
     --ulimit memlock=-1 --ulimit stack=67108864 \
     --security-opt seccomp=unconfined \
     -v ${MODELS_ROOT}/gguf:/models/gguf:ro \

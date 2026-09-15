@@ -365,7 +365,7 @@ check_lifecycle_lease_staleness() {
 detect_giant_accidental_workload() {
   [ "${NODE2_REACHABLE}" = 1 ] || { step_skip "accidental-workload check" "ssh not reachable"; return; }
   local avail rc
-  avail=$(remote awk '/MemAvailable/{print int($2/1048576)}' /proc/meminfo 2>&1); rc=$?
+  avail=$(remote "awk '/MemAvailable/{print int(\$2/1048576)}' /proc/meminfo" 2>&1); rc=$?
   if [ "${rc}" -ne 0 ] || [ -z "${avail}" ]; then
     step_warn "memory availability" "could not read MemAvailable: ${avail:-<none>}"
     return

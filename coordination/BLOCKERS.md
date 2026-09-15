@@ -215,6 +215,47 @@ reason, but `lib.sh`'s `n2()` itself was not changed (touching it affects
 every node2-touching call in the lifecycle scripts and deserved a dedicated,
 careful pass rather than a rushed one at the end of this session).
 
+**Post-recovery forensics, 2026-09-15, from node 2's boot -1 journal (captured
+before rotation, raw excerpt in operator's session scratch space — not
+committed to the repo, since it is a full boot log with no redaction pass):**
+confirms and sharpens the timeline, does not overturn the diagnosis above.
+
+* `gx-llama-swap-node02` (container `2b6e54e2...`, running continuously
+  since before the incident and still running today under the same
+  container ID) started failing its own Docker health check at **20:00:54**
+  SAST — `"timed out starting health check"`.
+* The local GNOME/X11 session (`gdm-x-session`, unrelated to any model
+  container) then failed to allocate a GPU 2D engine context twice —
+  **20:01:10** and **20:04:55–20:05:00** — with the kernel logging
+  `NV_ERR_NO_MEMORY` from `_memdescAllocInternal` /
+  `kernel_graphics_context.c`. This is a **desktop-session GPU allocation
+  failure**, not a model process's allocation failing — but on a unified-
+  memory GB10 it is consistent with the same global exhaustion: once host
+  RAM is saturated by two 77 GB mmap'd models, any new GPU context
+  (including the display compositor's) can fail to allocate too. It does not
+  by itself prove the GPU allocator was the trigger rather than a downstream
+  symptom of the host-memory exhaustion already documented above.
+* Direct evidence of the userspace stall itself: a dockerd log line
+  timestamped internally at `20:03:56.443` was not actually written to the
+  journal until **20:05:33** — a 97-second delivery delay on the local
+  logging pipe, the same class of stall B-012 already describes for SSH and
+  llama-swap's own HTTP port.
+* **Could not identify the exact two model containers**: the two 77 GB
+  llama.cpp containers active during the incident window (candidates:
+  `e28812e3...`, `b1199982...`, `8b0bc402...`, started 19:57–19:59) were
+  already removed by Docker (`docker inspect` now returns "no such object"
+  for all three) before this recovery session began, so their image/name
+  cannot be recovered post hoc. Only the always-on `gx-llama-swap-node02`
+  gateway container survived with an inspectable history.
+
+**Conclusion:** this is corroborating evidence for the existing B-012
+diagnosis (host-memory exhaustion from two large mmap'd models causing
+userspace starvation), not a new or different root cause. Treat any claim
+that this is a distinct "NVIDIA/unified-memory exhaustion" root cause
+requiring an architecture change as unverified — the repair already shipped
+(admission control, 30 GiB reserve, node lock) addresses the actual
+mechanism observed here.
+
 ## B-013 (S2) — cannot push; no writable remote is configured
 **Needs:** a human to add a remote this account can write to.
 
