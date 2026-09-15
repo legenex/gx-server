@@ -210,9 +210,12 @@ session:**
    would turn "GPU path is broken" into an actionable upstream bug report.
 
 ## B-012 (S2) — node 2 was wedged by running two 77 GB models at once
-**Status: incident understood; structural admission control now shipped on
-node 1 (see below); node 2 itself still needs a physical power cycle and has
-no ledger deployed yet.**
+**Status: incident understood and RESOLVED. Node 2 was physically power-cycled
+and is confirmed clean (`recover-node2.sh`, 16 PASS / 0 FAIL / 0 WARN,
+2026-09-15) — see CURRENT_STATE.md. Structural admission control now shipped
+on node 1 (see below); node 2 itself is reachable and healthy again but still
+has no ledger deployed yet, so remains the weaker of the two nodes for this
+specific failure mode until that deploy happens.**
 
 While gx-reason (77 GB mmap) was loaded, a second llama.cpp container was
 started on node 2 to run a CPU-only comparison — another 77 GB mmap on a 121 GiB
@@ -240,11 +243,24 @@ structurally refused on node 1, proven by concurrency tests (5 real racing
 processes, SIGKILL-recovery, a launch that would violate the 30 GiB reserve
 never runs the caller's command). `legenex/lifecycle/gx-safe-run.sh` is the
 sanctioned replacement for the bare `docker run` that caused this incident.
-**Not yet true of node 2**: it has no ledger/lock module deployed (it has
-been unreachable all session) — `gx-max-start.sh`'s rank1 launch uses a real
-remote `flock` as a documented convention only. Deploy `legenex/lifecycle/`
-and `legenex/orchestrator/` to node 2 once it's reachable to close this gap
-fully.
+**Update 2026-09-15, later the same day:** the line above ("no ledger/lock
+module deployed") is now stale — closed this session. `legenex/lifecycle/`
+and `legenex/orchestrator/` (the `resource_guard.py` admission module plus
+the bash `resource-guard.sh`/`gx-safe-run.sh` wrappers) were rsynced to node
+2 at the same relative path, and independently verified working against
+node 2's own real `/proc/meminfo` and its own local flock file: a small
+admission check was admitted correctly, and a deliberately oversized
+(500 GiB) synthetic launch through `gx-safe-run.sh` was correctly refused
+(exit 2) without ever running the wrapped command. `gx-hostwatch.sh` was
+also installed as a `systemctl --user` timer on node 2 (lingering is enabled
+there) and confirmed running a real check cycle every 60s, logging to
+`/srv/logs/gx-hostwatch.log` on node 2. This closes the "not yet true of
+node 2" gap for the admission-control/lock half of B-012's repair.
+`gx-max-start.sh`'s rank1 launch itself still uses its original real remote
+`flock` convention (unchanged, still correct) rather than having been
+rewritten to call through the newly-deployed module — that rewrite is a
+separate, not-yet-done piece of work, distinct from "the module isn't there
+at all."
 
 **Remaining gap, found and partially closed 2026-09-14:** even with the
 admission guard, if node 2 hangs mid-acquisition *after* rank0/rank1 already
@@ -377,3 +393,27 @@ thrashing the way B-012 actually manifested (userspace-starved, not
 OOM-killed) — that class of failure is addressed by the admission-control
 layer (B-012 repair, above) preventing the double-load in the first place,
 plus the B-014 hardware watchdog as a last resort once armed.
+
+## B-016 (S3) — no remote power-cycle path exists for either node
+**Needs:** a decision on whether to add one; no fix applied.
+
+Confirmed during the ChatGPT project-file integration (2026-09-15, source:
+the operator's own investigation while node 2 was down for B-012): a full TCP
+scan of node 2 during its B-012 wedge showed only ports 22 (SSH, accepting
+but not completing a banner) and 3389 (RDP, accepting but not negotiating)
+open. **No usable BMC, IPMI, Redfish, or MCTP management path was found on
+either GX10.** ConnectX does not provide a motherboard-level reset channel.
+
+**Consequence:** the only recovery path from a B-012-style wedge is a human
+physically pressing the power button. `recover-node2.sh` explicitly does not
+attempt a remote reboot for this reason (see its own header comment). If
+node 2 wedges again while unattended (e.g. overnight, while travelling), it
+stays down until someone is physically present — the B-014 hardware watchdog,
+if armed, is the only automatic mitigation for that scenario.
+
+**Related, separate finding (GX10-02, not this incident):** GDM automatic
+login was previously enabled on gx10-02, which could leave a stale local
+graphical (seat0) session colliding with remote RDP login attempts. It has
+been disabled (`AutomaticLoginEnable = false` in the GDM config) — see
+`OPERATIONS.md` for the recovery procedure if a stale session recurs. This
+does not affect SSH.
