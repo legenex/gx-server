@@ -509,3 +509,39 @@ even reached.
    have the orchestrator's `/lifecycle/gx-max/acquire` remain permanently
    unable to serve a real request — a real, user-visible product gap for
    the `gx-max`/`gx-auto` aliases documented in ARCHITECTURE.md.
+
+## B-018 (S2) — ComfyUI's compose-based start bypasses the resource-ownership admission guard entirely
+**Needs:** a decision on wiring `docker-compose.media.yml`'s `comfyui` service
+through the admission system, or an accepted convention (mirroring the
+gx-reason/gx-comfyui manual-unload discipline already documented in
+`legenex/media/README.md`).
+
+**Found 2026-09-15, running the acceptance suite end to end.** `t_reason`
+loads gx-reason (~95 GiB), then `t_auto`'s routing check reloads it again
+after `t_reason`'s own test finished, then `t_media` starts ComfyUI via a
+plain `docker compose up -d` — which, unlike `gx-safe-run.sh`/`gx_guard_run`,
+never calls the resource-ownership admission guard at all. Measured result:
+node 2 dropped to **~10 GiB available**, well under the 30 GiB reserve
+floor, with nothing in the launch path positioned to refuse it — this is
+the same *shape* of gap B-012's admission control was built to close,
+just via a legitimate `docker compose` start instead of a bare `docker run`.
+
+**Mitigated, not fixed, this session:** `legenex/tests/acceptance.sh`'s
+`t_reason` now unloads gx-reason after its own test, and `t_media` now
+independently re-checks/unloads gx-reason immediately before starting
+(belt-and-suspenders, since either test alone leaving it loaded can bite
+the other). This closes the gap for the acceptance suite's own run order,
+not for the general case — a human or agent starting
+`docker-compose.media.yml` by hand while gx-reason happens to be loaded is
+still only protected by the documented convention in `media/README.md`
+("Memory interlock — read before starting anything"), not by anything
+enforced in code.
+
+**Real fix, not attempted:** either (a) wrap the ComfyUI service start in
+`gx-safe-run.sh`/`gx_guard_run` the same way gx-max's ranks are, so a
+launch while gx-reason is resident is structurally refused rather than
+merely documented, or (b) accept the current manual-discipline convention
+as sufficient for media (lower risk than gx-max, since ComfyUI's failure
+mode observed here was "admission floor breached", not "node wedged" —
+mmap thrashing specifically requires two *mmap'd* large processes, and
+ComfyUI's weights are not mmap'd the way llama.cpp's are).

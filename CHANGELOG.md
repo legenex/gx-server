@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Full acceptance suite run clean, with one real near-miss caught and
+  fixed live.** `legenex/tests/acceptance.sh` (non-slow suite): 12 PASS,
+  1 FAIL (gx-reason, expected -- B-011), 1 SKIP (no vision test fixture).
+  gx-auto's routing test passed all three cases cleanly for the first time
+  (previously blocked by the orchestrator bind race, D-019). Mid-run, node 2
+  dropped to ~10 GiB available (below the 30 GiB reserve floor): t_reason
+  loaded gx-reason, t_auto's routing check reloaded it, and t_media then
+  started ComfyUI via plain `docker compose up` with nothing checking what
+  was already resident -- see BLOCKERS.md B-018. Caught live, unloaded
+  gx-reason and freed ComfyUI's cache, memory back to 113 GiB within
+  seconds. Hardened `t_reason` and `t_media` in the test suite itself to
+  check/unload before this can recur in a future run.
 - **Found and fixed a real production gap: gx-orchestrator had been
   silently unreachable from the gateway container all session.** An
   apparent gx-auto classifier test failure ("expected gx-reason, got

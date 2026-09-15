@@ -133,6 +133,26 @@ t_reason(){
     pass "gx-reason hard reasoning (correct answer 15:35)"
   elif [ ${#c} -gt 50 ]; then fail "gx-reason reasoning" "answered but result looks wrong: ${c:0:200}"
   else fail "gx-reason inference" "empty/short: ${c:0:120}"; fi
+
+  # gx-reason is a ~95 GiB resident process on a 121 GiB node (D-013) and
+  # owns node 2 exclusively (D-007) -- unlike the other tiers here, leaving
+  # it loaded between tests is not just wasteful, it is the exact shape of
+  # risk B-012 was about: a later test in this same run (t_media) can start
+  # ComfyUI on the same node without ever checking what else is resident.
+  # Measured 2026-09-15: running t_reason then t_auto (which reloads
+  # gx-reason via routing) then t_media back-to-back left node 2 at ~10 GiB
+  # available, well under the 30 GiB reserve floor, with no guard in the
+  # path to catch it (ComfyUI's docker-compose start does not go through
+  # the resource-ownership admission system at all -- a real, separate gap,
+  # not fixed here). Explicitly unload after this test as a mitigation.
+  local swap_key
+  if [ -f "${ENV_FILE}" ]; then
+    swap_key="$(grep '^GX_SWAP_API_KEY=' "${ENV_FILE}" | cut -d= -f2-)"
+  else
+    swap_key="${GX_SWAP_API_KEY:-}"
+  fi
+  [ -n "${swap_key}" ] && curl -fsS -m 15 -X POST http://192.168.100.11:28080/api/models/unload \
+    -H "Authorization: Bearer ${swap_key}" >/dev/null 2>&1
 }
 
 # ------------------------------------------------------------------- 4. max
@@ -223,6 +243,22 @@ t_media(){
     skip "gx-video generation" "no GX_MEDIA_API_KEY found"
     return
   fi
+
+  # Memory interlock (media/README.md): ComfyUI and gx-reason must never be
+  # resident together on node 2's 121 GiB. An earlier test in this same run
+  # (t_auto's routing check) can reload gx-reason after t_reason's own
+  # cleanup already ran, so re-check and unload here too rather than assume
+  # the earlier cleanup covered it -- measured 2026-09-15 this exact gap
+  # left node 2 at ~10 GiB available with no guard in the path to catch it.
+  local swap_key
+  if [ -f "${ENV_FILE}" ]; then
+    swap_key="$(grep '^GX_SWAP_API_KEY=' "${ENV_FILE}" | cut -d= -f2-)"
+  else
+    swap_key="${GX_SWAP_API_KEY:-}"
+  fi
+  [ -n "${swap_key}" ] && curl -fsS -m 15 -X POST http://192.168.100.11:28080/api/models/unload \
+    -H "Authorization: Bearer ${swap_key}" >/dev/null 2>&1
+  sleep 3
 
   local health; health=$(curl -fsS -m 10 http://192.168.100.11:18800/health 2>&1)
   if [[ "$(printf '%s' "${health}" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("comfyui",{}).get("reachable"))' 2>/dev/null)" != "True" ]]; then
