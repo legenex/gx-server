@@ -267,6 +267,16 @@ t_media(){
     return
   fi
 
+  # Ingress security boundary (media/README.md "Why ComfyUI is not the
+  # ingress"): raw ComfyUI (8188) must be unreachable from node 1, only the
+  # router (18800) may answer. Previously asserted only by manual testing
+  # and stated as fact in CHANGELOG.md without a regression test to back
+  # it -- a reviewer caught that gap 2026-09-15. curl exit 7 (could not
+  # connect) is the expected/required result; anything else is a real
+  # ingress-boundary regression.
+  curl -fsS -m 5 http://192.168.100.11:8188/system_stats >/dev/null 2>&1
+  [ $? -eq 7 ]     && pass "ComfyUI (8188) unreachable from node1 -- ingress boundary holds"     || fail "ComfyUI ingress boundary" "192.168.100.11:8188 answered or failed differently than expected (exit != 7) -- ComfyUI may be exposed outside the router"
+
   # Real image generation through the gateway (the single ingress a real
   # client uses), not the router directly -- proves the whole production path.
   local img_resp

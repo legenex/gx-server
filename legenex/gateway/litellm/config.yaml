@@ -24,8 +24,8 @@
 #   gx-reason -> node 2 llama-swap  http://192.168.100.11:28080/v1        (RoCE fabric A)
 #   gx-max    -> lead's orchestrator http://host.docker.internal:18900/v1 (host loopback)
 #   gx-auto   -> lead's orchestrator http://host.docker.internal:18900/v1 (host loopback)
-#   gx-image  -> node 2 media router http://192.168.100.11:18800/v1       (PENDING)
-#   gx-video  -> node 2 media router http://192.168.100.11:18800/v1       (PENDING)
+#   gx-image  -> node 2 media router http://192.168.100.11:18800/v1       (live, verified 2026-09-15)
+#   gx-video  -> node 2 media router http://192.168.100.11:18800/v1       (live, verified 2026-09-15)
 #
 # host.docker.internal resolves to the host gateway (docker-compose.gateway.yml
 # sets extra_hosts: host-gateway). From the HOST's point of view the orchestrator

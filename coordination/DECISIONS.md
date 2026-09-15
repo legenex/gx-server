@@ -346,12 +346,21 @@ algorithm."` — and the classifier correctly produced
 classifier itself was never broken; D-005/D-016's escalation logic is
 intact.
 
-**Impact while broken:** every `gx-auto` request for this entire session
-(and probably since this morning's boot, before this session started) was
-silently served by whatever LiteLLM's own error/fallback path did, never
-by the orchestrator's classifier — a real, live production gap, not a
-theoretical one. `gx-max`'s `/lifecycle/gx-max/acquire` (also served by
-this same process) was unaffected by *this* bug specifically, since
+**Impact while broken, corrected 2026-09-15 (a reviewer caught the first
+wording as ambiguous):** every `gx-auto` request for this entire session
+(and probably since this morning's boot, before this session started)
+failed to reach the orchestrator's classifier at all -- but this was NOT a
+silent substitution. `legenex/gateway/litellm/config.yaml`'s
+`litellm_settings`/`router_settings` set `num_retries: 0`, `fallbacks: []`,
+`context_window_fallbacks: []`, `content_policy_fallbacks: []` globally,
+with its own comment: *"a failure surfaces as an error to the caller."*
+So every `gx-auto` request during the outage returned a loud connection
+error to the client, never a silent answer from some other model -- the
+safe failure mode, confirmed by re-reading the config this session already
+relied on, not assumed. Still a real, live production gap (gx-auto simply
+did not work for 2.5+ hours), just not the scarier "silently wrong tier"
+shape. `gx-max`'s `/lifecycle/gx-max/acquire` (also served by this same
+process) was unaffected by *this* bug specifically, since
 `legenex/tests/gx-max-validate.sh` calls the orchestrator from node 1's own
 shell (`127.0.0.1:18900`), not from inside a container — B-017 is a
 separate, still-open issue.
