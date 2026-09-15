@@ -154,6 +154,21 @@ the tailnet, which is the intended security property for a control surface.
 | RDMA f1 ports | PORT_DOWN (expected — only two rails in use) |
 | Kernel both nodes | `6.17.0-1032-nvidia` byte-identical |
 
+### NCCL collective benchmark (corroborating evidence, earlier bring-up)
+
+A custom NCCL 2.30.7 build for SM121 ran a two-node `all_gather_perf` (16 GiB)
+with **zero errors**:
+
+| Metric | Result |
+|---|---|
+| Out-of-place bus bandwidth | ~20.86 GB/s |
+| In-place bus bandwidth | ~21.81 GB/s |
+| Average bus bandwidth | ~21.34 GB/s |
+
+This is a different measurement (a synthetic collective test, not a real
+gx-max generation) but corroborates the 772 MB/generation RDMA figure above —
+both point at the same ~21 GB/s-class two-rail fabric.
+
 
 ## 4. Gateway, gx-mini and gx-fast
 
@@ -469,3 +484,42 @@ three fixes found this session, see §below).
   unchanged this session (see BLOCKERS.md B-012 repair note).
 - HiDream and a video "hd" tier are documented in MODELS.md but not wired
   into any `_gx`-enabled workflow template — **NOT RUN, not built**.
+
+## 11. Session 2026-09-15 (earlier) — B-011 GPU-vs-CPU comparison, node 2 recovered
+
+**Status: DIAGNOSTIC PASSING (isolates the fault); the underlying bug is
+still OPEN — this did not fix gx-reason.**
+
+Two script bugs were fixed first (see `CHANGELOG.md` "Unreleased" for full
+detail), then the real comparison was run against the newly power-cycled,
+freshly-verified node 2:
+
+| Run | Result |
+|---|---|
+| GPU (`--n-gpu-layers` default) | `////////////////////` — byte-identical to the original B-011 repro |
+| CPU-only (`--n-gpu-layers 0`, CDI device still attached for `libcuda.so.1`) | `"The capital of France is Paris."` — coherent, same weights, same sampling |
+| Same comparison after rebuilding `legenex/llama-cpp-spark` from current upstream `llama.cpp` master | **identical GARBAGE/SANE split, byte-for-byte** |
+
+**Conclusion:** rules out the checkpoint/quant and a stale build. The fault
+is isolated to the CUDA/GDN kernel execution path of this llama.cpp build's
+`qwen3_5_moe` hybrid-architecture implementation on this hardware
+(`sm_121`/GB10, driver 580.173.02). See `coordination/BLOCKERS.md` B-011 for
+the three remaining next steps, none attempted yet (each needs a human
+decision — upstream issue research, a new multi-GB quant download, or a
+bisect).
+
+## 12. Session 2026-09-15 (this session) — ChatGPT project-seed integration, live re-verification
+
+No code was changed and no large model was started. Live checks only, to
+validate documentation against reality before merging the seed files:
+
+| Check | Result |
+|---|---|
+| `legenex/scripts/recover-node2.sh` (report-only) | **16 PASS / 0 FAIL / 0 WARN / 1 SKIP** |
+| Node 2 SSH, kernel, `nvidia-smi`, Docker, both RDMA rails, `/swapfile-sglang`, disk, container inventory | all PASS |
+| Node 2 llama-swap | healthy on loopback and reachable from node 1 over the fabric |
+| Node 1 `gx-litellm` | found `Exited (128)` (benign — Postgres connection administratively terminated, not a crash); restarted via `docker compose up -d`; confirmed `healthy`, `HTTP 200` |
+| Node 1 orchestrator (`gx-orchestrator.service`) | `active running` throughout, `/health/detailed` → `status: ok`, all tiers correctly `stopped`/`usable: true` |
+| `/opt/models/` on node 1 | confirmed empty — no Qwen3.8 directory remains |
+
+Full detail and the updated operational picture: `CURRENT_STATE.md`.

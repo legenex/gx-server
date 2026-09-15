@@ -25,40 +25,42 @@ Report results in `/home/legenex-02/gx-worker/WORKER_RESULTS.md`.
 `loginctl show-user legenex-02` reports `Linger=no`, so user services will not
 survive logout or reboot on this node. Try `loginctl enable-linger legenex-02`;
 if polkit refuses without a password, record it in WORKER_RESULTS.md and stop.
+**Still open as of 2026-09-15.**
 
-## T-2 — Watch the gx-reason download
-A tmux session `gxdl` is fetching
-`et0dev/Qwen3.5-122B-A10B-NVFP4-FP8Dense-GB10` (78.8 GB) to
-`/srv/models/vllm/Qwen3.5-122B-A10B-NVFP4-FP8Dense-GB10`, logging to
-`/srv/logs/download-gx-reason.log`.
+## Superseded / done — kept for history, no action needed
 
-Report: completion, final `du -sh`, and whether all shards are present. If it
-dies, restart it with `~/gx-scripts/download-model.sh` (same arguments) and say
-so.
+- ~~T-2 (watch the gx-reason download)~~ — done; superseded anyway, since
+  gx-reason moved from vLLM to llama.cpp/GGUF (D-009). The vLLM checkpoint
+  this task downloaded is no longer what's served.
+- ~~T-3 (find a vLLM image with real sm_121a NVFP4 kernels)~~ — moot for
+  gx-reason (moved to llama.cpp, D-009). Still relevant background for
+  gx-fast's B-010 (weight-only FP4 via Marlin, not native) if anyone
+  revisits that, but not an active task.
+- ~~T-4 (ComfyUI feasibility research + Dockerfile)~~ — done; ComfyUI is
+  provisioned on node 2 (confirmed reachable, `STOPPED`/on-demand as of
+  2026-09-15) with real workflow templates in `legenex/media/workflows/`
+  and 43 passing router tests.
+- ~~T-5 (report node-2 memory when gx-max releases)~~ — the memory model is
+  well-established now (`ARCHITECTURE.md` §9, `resource_guard.py`); no
+  longer a standalone task.
 
-## T-3 — Confirm a vLLM image that actually has sm_121a NVFP4 kernels
-This is the single biggest technical unknown for gx-reason and gx-fast. The
-checkpoint author claims stock vLLM works; another community build insisted a
-source build of vLLM 0.23.0 was needed for GB10.
+## T-6 — done: resource-guard ledger deployed to node 2
 
-Find out which vLLM container image genuinely carries compiled NVFP4 kernels for
-`sm_121a` on aarch64. **Do not download a 30 GB image speculatively** — check
-tags/manifests and documentation first, and report what you find before pulling.
+~~Node 2 has no resource-guard ledger deployed yet~~ — **done and verified
+2026-09-15** by the lead: `legenex/lifecycle/` + `legenex/orchestrator/`
+are on node 2, a normal launch is admitted and an oversized synthetic one
+is correctly refused against node 2's own real `/proc/meminfo` and lock
+file, and `gx-hostwatch.sh` is running there as a `systemd --user` timer.
+See `coordination/BLOCKERS.md` B-012. Remaining, separate piece: rewrite
+`gx-max-start.sh`'s rank1 launch to call through the module directly
+instead of its original real remote `flock` convention — not urgent, that
+convention is correct, just not the same code path as node 1.
 
-## T-4 — ComfyUI feasibility on this node (research + Dockerfile only)
-No official ARM64 + sm_121 ComfyUI image exists. The working recipe is a
-self-built CUDA 13 image + PyTorch cu130 aarch64 wheels (verified available
-through 2.14.0+cu130) + SageAttention built with `TORCH_CUDA_ARCH_LIST="12.1"`.
+## T-7 — Real end-to-end gx-image / gx-video generation
 
-Write a Dockerfile at `~/gx-worker/comfyui/Dockerfile`. **Do not build it yet**
-and do not download model weights yet — gx-max currently owns this node's memory
-and node 2 must stay clear.
-
-Known constraints to encode: CUDA ≤12.8 cannot emit sm_121; no PyPI torch; no
-x86 base image; `--force-fp16` produces NaNs on Blackwell; avoid `--gpu-only`
-and `--highvram`; there is no aarch64 `onnxruntime-gpu` wheel, so ControlNet
-preprocessors will silently fall back to CPU.
-
-## T-5 — Report node-2 memory the moment gx-max releases
-When the lead releases gx-max, immediately record `free -g` and confirm how much
-is genuinely reclaimed. gx-reason needs ~86 GiB and must own this node.
+`TEST_PLAN.md` §8-9 are unchecked: no actual image or video has been
+generated through the gateway yet, only unit/protocol tests against the
+router. Once the lead confirms it's safe to load a media model (node 2 has
+~116 GiB available as of 2026-09-15), generate one real image and one real
+video through `gx-image`/`gx-video` and report the output file paths and
+timings in `WORKER_RESULTS.md`.

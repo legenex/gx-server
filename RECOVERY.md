@@ -84,6 +84,21 @@ locked decision — see ARCHITECTURE.md L-6.
 
 ## 3a. Node 2 was physically power-cycled (or came back from a wedge)
 
+**Status as of 2026-09-15: this has already happened.** Node 2 was power-cycled
+by the human operator and `recover-node2.sh` passed all 16 checks. See
+`CURRENT_STATE.md`. The procedure below is what was run, and is exactly what a
+future agent should re-run after any future wedge — do not skip it just
+because it worked last time.
+
+**No remote power-cycle path exists.** A full TCP scan during the wedge showed
+only SSH (open, no banner) and RDP (open, no negotiation) — no usable BMC,
+IPMI, Redfish or MCTP management path was found on either GX10, and ConnectX
+does not provide one either. See `coordination/BLOCKERS.md` B-016. If this
+happens again while no one is physically present, it stays down until someone
+is.
+
+
+
 **Do not** manually SSH in and start guessing. Run the prepared, report-only
 recovery checklist first:
 
@@ -116,6 +131,14 @@ legenex/scripts/gx-reason-diagnose.sh     # unload-gated GPU-vs-CPU comparison;
 legenex/tests/gx-max-validate.sh          # acquire -> both ranks healthy -> serve ->
                                            # release -> restore, as one command
 ```
+
+## 3b. gx10-02's RDP session will not connect
+
+An open port never proves a healthy service — the same lesson as 3a's SSH
+banner check applies to RDP (3389). See `OPERATIONS.md` "Stale RDP session on
+gx10-02" for the full procedure (checking `loginctl list-sessions`, clearing
+only the stale graphical session, never the SSH session). This is unrelated
+to a B-012-style memory wedge and does not need a power cycle.
 
 ## 4. A node is wedged / was rebooted
 
@@ -204,8 +227,15 @@ See `coordination/BLOCKERS.md`. The ones that matter most:
   installed on both nodes. Needs root.
 - **B-002** no sudo on either node.
 - **B-003** SGLang `:30000` is bound `0.0.0.0` with no auth.
-- **New tonight** — protecting sshd/tailscaled/systemd/NetworkManager
-  directly (their cgroup `memory.max` is root-owned, confirmed) and arming
-  the hardware watchdog both need root; commands are ready, not applied.
-- **Physical:** node 2 needs a power cycle before anything above involving
-  it can run.
+- **B-011** gx-reason produces garbage output on GPU — isolated to a
+  CUDA/GDN kernel bug, not a script/config fix. Needs a human decision on
+  which next step to fund (upstream issue, a new quant download, or a
+  bisect) — see `coordination/BLOCKERS.md`.
+- Protecting sshd/tailscaled/systemd/NetworkManager directly (their cgroup
+  `memory.max` is root-owned, confirmed) and arming the hardware watchdog
+  both need root; commands are ready, not applied.
+- **B-016** no BMC/IPMI/Redfish path on either node — a future wedge needs a
+  human physically present; there is no remote power-cycle option.
+- ~~Physical: node 2 needs a power cycle~~ — **done.** Node 2 was
+  power-cycled and re-verified clean 2026-09-15 (`recover-node2.sh`, 16/16
+  pass). See `CURRENT_STATE.md`.

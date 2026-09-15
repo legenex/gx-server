@@ -3,11 +3,44 @@
 Agent role: LEAD. Owns the canonical git repo at
 `/home/legenex/Documents/Projects/Server/gx-cluster`, branch `legenex-dual-gx10`.
 
-Last updated: 2026-09-15 00:15 CEST.
+Last updated: 2026-09-15 10:50 CEST.
 
 ---
 
-## Headline (2026-09-15 session)
+## Headline (2026-09-15, ChatGPT project-seed integration session)
+
+Integrated the ChatGPT-Project bundle (`_project_seed/`) into the canonical
+repo: merged genuinely new facts (node LAN/Tailscale IPs, an NCCL
+`all_gather_perf` benchmark, the BMC/IPMI/Redfish absence finding, the
+GDM/RDP stale-session procedure) into `OPERATIONS.md`, `RECOVERY.md`,
+`TEST_RESULTS.md` and `coordination/BLOCKERS.md`; added the root-level
+`DECISIONS.md`/`TASKS.md`/`TEST_PLAN.md`/`HANDOFF.md` the target layout
+requires (as pointers to the existing canonical logs, not competing ones —
+see D-018); added `docs/chatgpt/` with reference copies for re-upload to the
+ChatGPT Project; removed `_project_seed/`.
+
+While validating the seed's `CURRENT_STATE.md` against this repo's own
+(which the seed could not have known about — it predates the prior session's
+detailed work), found real drift against the **live machines**, not just
+between documents: node 2 — last documented as physically wedged, needing a
+power cycle — had already been power-cycled by the human operator and was
+fully recovered; ran the report-only `recover-node2.sh` fresh and got 16
+PASS / 0 FAIL. Separately, node 1's gateway container was found `Exited
+(128)` (a benign restart artifact — its DB connection had been
+administratively terminated, not a crash) and was brought back up and
+re-verified healthy. `CURRENT_STATE.md` has been substantially rewritten to
+match. No application code changed, no large model started.
+
+## Headline (2026-09-15, B-011 diagnosis session, immediately prior)
+
+Fixed two script bugs (`recover-node2.sh`'s memory check, and
+`gx-reason-diagnose.sh`'s CPU-only comparison) and re-ran the B-011
+GPU-vs-CPU comparison against the newly-recovered node 2: isolated the
+garbage-output bug to the CUDA/GDN kernel execution path for the
+`qwen3_5_moe` hybrid architecture (ruled out the checkpoint/quant and a
+stale build). B-011 remains OPEN; see `coordination/BLOCKERS.md`.
+
+## Headline (2026-09-15, resource-ownership session)
 
 Node 2 was found physically wedged at session start (B-012: two large
 mmap'd models resident at once, bypassing llama-swap's exclusivity via a
@@ -85,22 +118,23 @@ services, media prep, and node-2 benchmarks. It reports results; I integrate.
 `coordination/node2/` — that path is now gitignored and the worker has been asked
 to use `/home/legenex-02/gx-worker/WORKER_RESULTS.md` instead.
 
-## Next (2026-09-15, current)
+## Next (2026-09-15, current — see `TASKS.md` for the full list)
 
-1. **Physical:** node 2 needs a power cycle by a human — nothing remote can
-   recover it.
-2. Run `legenex/scripts/recover-node2.sh` (report-only, then `--apply`) the
-   moment it's back, before touching anything else on it.
-3. Deploy this session's `legenex/lifecycle/` + `legenex/orchestrator/`
-   admission-control layer to node 2 so it gets the same structural
-   protection node 1 now has (currently node 1-only).
-4. Run `legenex/scripts/gx-reason-diagnose.sh` (B-011) once node 2 is
-   confirmed clean — do not skip straight to re-downloading a different
-   quant.
-5. Run `legenex/tests/gx-max-validate.sh` for the full two-node lifecycle.
-6. Decide whether to wire HiDream and a video "hd" tier into
-   `legenex/media/workflows/` (gap found tonight, not blocking) before
-   calling gx-image/gx-video complete.
-7. Reconcile gx-reason's documented 78 GiB memory budget in `node02.yaml`
+1. ~~Physical: node 2 needs a power cycle~~ — **done**, verified clean
+   (16/16 `recover-node2.sh` checks pass).
+2. ~~Run `gx-reason-diagnose.sh` (B-011) once node 2 is confirmed clean~~ —
+   **done, in the session before this one.** Isolated to a CUDA/GDN kernel
+   bug; still OPEN, needs a human decision on the next step (see
+   `coordination/BLOCKERS.md` B-011).
+3. ~~Deploy `legenex/lifecycle/` + `legenex/orchestrator/` to node 2~~ —
+   **done, by a second concurrent session, verified 2026-09-15** (see
+   `coordination/BLOCKERS.md` B-012). Remaining: rewrite `gx-max-start.sh`'s
+   rank1 launch to call through it directly instead of its original real
+   remote `flock` convention (small consistency cleanup, not a safety gap).
+4. Run `legenex/tests/gx-max-validate.sh` for the full two-node lifecycle —
+   the last full pass predates the B-012 wedge and node 2's recovery.
+5. Decide whether to wire HiDream and a video "hd" tier into
+   `legenex/media/workflows/` before calling gx-image/gx-video complete.
+6. Reconcile gx-reason's documented 78 GiB memory budget in `node02.yaml`
    against the measured ~95 GiB footprint (D-013) once B-011 is fixed and
    the real footprint is known to be stable.

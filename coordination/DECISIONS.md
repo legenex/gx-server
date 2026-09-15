@@ -267,3 +267,36 @@ second launch.
 **Evidence:** `legenex/orchestrator/tests/test_lifecycle.py::
 test_failed_acquisition_after_partial_start_unwinds_via_stop_script` and
 `::test_cleanup_failure_is_appended_not_swallowed`.
+
+## D-018 — ChatGPT project-seed files integrated; root pointer docs added
+instead of a second decision/task log
+**Date:** 2026-09-15
+**Decision:** The ChatGPT-Project bundle uploaded to `_project_seed/` was
+merged into the canonical repo, then `_project_seed/` was removed. Root-level
+`DECISIONS.md` and `TASKS.md` were added as required by the repo layout, but
+`DECISIONS.md` is a short pointer/summary — this file (`coordination/
+DECISIONS.md`) remains the single, canonical, numbered decision log. The
+seed's own `D001`–`D010` numbering was **not** merged into this file's
+`D-001`–`D-017` sequence (they use a different numbering scheme for a
+different, smaller set of decisions, and every existing reference to `D-009`,
+`D-013` etc. throughout `ARCHITECTURE.md`/`BLOCKERS.md` points here — renumbering
+would have broken them for no benefit).
+**Why:** avoids two competing "decision log" files silently drifting apart,
+which is exactly the class of bug this project's own admission-control work
+(D-012) was built to prevent in code.
+**What was actually new from the seed and got merged:** node LAN/Tailscale IP
+addresses (now in `OPERATIONS.md` and `CURRENT_STATE.md`), a corroborating
+NCCL `all_gather_perf` benchmark (`TEST_RESULTS.md`), the finding that no
+BMC/IPMI/Redfish/MCTP remote-power path exists on either node
+(`coordination/BLOCKERS.md` B-016), and the GDM-auto-login/RDP stale-session
+procedure (`OPERATIONS.md`, `RECOVERY.md`).
+**What was deliberately NOT merged:** the seed's `CURRENT_STATE.md`,
+`TEST_RESULTS.md`, `TASKS.md` and `HANDOFF.md` describe an earlier, less
+verified snapshot (e.g. "gx-fast/gx-reason checkpoint still requires
+verified selection", "node 2 later recovered" with no forensic detail) that
+this repo's own same-day docs had already superseded with more current,
+evidence-backed content — see `CURRENT_STATE.md`'s "Verified live this
+session" table for what was actually re-checked against the real machines
+during this integration, including finding and fixing doc drift the seed
+had nothing to do with (node 2's actual recovery state, the gateway needing
+a restart).

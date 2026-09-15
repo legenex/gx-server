@@ -24,6 +24,19 @@ curl -s http://127.0.0.1:4000/v1/chat/completions \
 Aliases: `gx-mini`, `gx-fast`, `gx-reason`, `gx-max`, `gx-auto`, `gx-image`,
 `gx-video`. Clients never need to know which node serves which.
 
+## Node addresses
+
+| Node | LAN | Tailscale (management only) | ConnectX rail A | ConnectX rail B |
+|---|---|---|---|---|
+| gx10-01 (`legenex`) | `10.60.21.37` | `100.105.214.61` | `192.168.100.10` | `192.168.101.10` |
+| gx10-02 (`legenex-02`) | `10.60.21.41` | `100.73.238.4` | `192.168.100.11` | `192.168.101.11` |
+
+Mac management device (Tailscale): `100.104.35.71`.
+
+SSH between nodes uses the Tailscale hostname/user, never the fabric address:
+`ssh legenex-02@gx10-02` from node 1, `ssh legenex@gx10-01` from node 2. The
+LAN addresses above are for local health checks only, not routine SSH.
+
 ## Port map
 
 | Port | Service | Node | Bind |
@@ -213,6 +226,38 @@ can switch off is not a hard guard. If the ledger disagrees with reality
 against `docker inspect` on the next check; if it's still wrong, clear the
 stale entry with `legenex/lifecycle/resource-guard.sh` (see its `release`
 subcommand) rather than editing the ledger file by hand.
+
+## Stale RDP session on gx10-02
+
+gx10-02 also serves GNOME remote desktop (RDP, port 3389) for occasions where
+a human needs a graphical session, not just SSH. GDM automatic login is
+**deliberately disabled** there:
+
+```text
+AutomaticLoginEnable = false
+# AutomaticLogin = legenex-02
+```
+
+This avoids a stale local `seat0` X11/Wayland session colliding with a remote
+RDP login attempt. If RDP accepts the TCP connection but the desktop will not
+connect:
+
+```bash
+# on gx10-02 over SSH
+loginctl list-sessions
+```
+
+If `legenex-02` has a stale local graphical session, terminate **only** that
+session, never the SSH session, and never run
+`loginctl terminate-user legenex-02` while relying on SSH to do it (that can
+tear down your own connection too). Restart GDM only if needed. The desired
+end state is: GDM login screen present, no auto-logged-in `legenex-02` seat0
+session.
+
+An open TCP port (22 or 3389) only proves a listener exists, not that the
+service is healthy — see `RECOVERY.md` for the application-level SSH-banner
+check, which is the same signature this stale-session issue can be confused
+with.
 
 ## Never do this
 

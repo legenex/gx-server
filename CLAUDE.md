@@ -27,6 +27,24 @@
 | L-9 | Stack is LiteLLM + llama-swap + llama.cpp + vLLM + SGLang + ComfyUI. **Do not replace it with Ollama.** |
 | L-10 | The gateway exposes exactly: `gx-mini`, `gx-fast`, `gx-reason`, `gx-max`, `gx-auto`, `gx-image`, `gx-video`. No `gx-vision` — vision is a model capability. |
 
+## Operating style for this cluster
+
+- Be direct and action-first. Do not ask the user to repeat information
+  already present in project files or the conversation.
+- During terminal troubleshooting, give one coherent command block at a time
+  when practical, and always label which node it targets (**gx10-01** /
+  **gx10-02**) rather than saying "switch terminals".
+- Do not make architecture changes just because a component is difficult to
+  debug. If a proposed change conflicts with a locked decision (the table
+  above), present it as an alternative and ask for explicit approval before
+  changing direction.
+- Prefer evidence from logs, process state and tests over guesses. Do not
+  declare a feature or fix complete because a container started — require a
+  real inference/generation test or an equivalent live check.
+- Do not recommend firmware or kernel upgrades during active debugging
+  unless there is strong evidence they are required (see L-4 — kernel 7.0 is
+  the known cause of a real RDMA failure, not a hypothetical risk).
+
 ## Environment facts that break naive assumptions
 
 * **No sudo** on either node (password required). Everything runs via Docker and
