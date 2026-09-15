@@ -275,6 +275,16 @@ except Exception: print("")' 2>/dev/null)
       fail "gx-video generation" "status=${vid_status:-timeout}"
     fi
   fi
+
+  # ComfyUI does NOT release cached model weights after a generation on its
+  # own (measured 2026-09-15: ~70 GiB stayed resident after one image + one
+  # video run) -- it keeps them warm for the next request. That is correct
+  # engine behaviour, but this test suite must not be the reason node 2 is
+  # quietly sitting on ~70 GiB afterward, so explicitly free it.
+  curl -fsS -m 15 -X POST http://192.168.100.11:18800/health >/dev/null 2>&1 && \
+    ssh -o BatchMode=yes -o ConnectTimeout=10 legenex-02@gx10-02 \
+      "curl -fsS -m 15 -X POST http://127.0.0.1:8188/free -H 'Content-Type: application/json' -d '{\"unload_models\": true, \"free_memory\": true}'" \
+      >/dev/null 2>&1
 }
 
 # ----------------------------------------------------------- 9. restart test

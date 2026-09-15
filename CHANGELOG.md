@@ -10,6 +10,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`gx-max-start.sh`: fixed a container-name bug in its conflict-drain
+  list.** `CONFLICTS_N2` named `comfyui` and `llama-swap-node02`, neither of
+  which matches any real container on node 2 (`gx-comfyui`,
+  `gx-llama-swap-node02`) -- `docker inspect` on a nonexistent name silently
+  falls through to "not running", so the drain step was a no-op for both.
+  Found only because this session was the first time the media stack was
+  actually deployed and running when the script was read closely. Fixed the
+  names and added `gx-media-router` to the list (stopping ComfyUI without it
+  would leave the router up but broken). This directly affects gx-max safety:
+  before this fix, starting gx-max while the media stack was resident would
+  not have drained it first.
+- **`acceptance.sh`'s new media test now frees ComfyUI's cache afterward.**
+  Measured: ComfyUI keeps ~70 GiB of model weights resident after a
+  generation rather than releasing them (correct engine behaviour, not a
+  leak, but the test suite must not be the reason node 2 is quietly sitting
+  on ~70 GiB afterward). Added an explicit `/free` call at the end of
+  `t_media`.
 - **gx-image / gx-video: real end-to-end validation, first time both were
   actually deployed and exercised.** Built `gx-comfyui:sm121` and
   `gx-media-router:1.0.0` on node 2 (first build on this recovered node;

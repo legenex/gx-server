@@ -25,8 +25,17 @@ FORCE_DRAIN="${GXMAX_FORCE_DRAIN:-0}"
 GXMAX_RANK_ESTIMATED_GIB="${GXMAX_RANK_ESTIMATED_GIB:-90}"
 
 # Containers that must not hold GPU/unified memory while gx-max runs.
+# NOTE 2026-09-15: CONFLICTS_N2 previously listed "comfyui" and
+# "llama-swap-node02", which do not match any real container name on node 2
+# (the actual names are gx-comfyui and gx-llama-swap-node02, per
+# docker-compose.media.yml/docker-compose.node02.yml) -- `docker inspect` on
+# a nonexistent name just falls through to "not running" in drain_node2(), so
+# this was silently draining nothing. Found and fixed the first time the
+# media stack was actually deployed and running when this script was read
+# closely. Also added gx-media-router: stopping gx-comfyui out from under it
+# without stopping it too would leave it up but broken.
 CONFLICTS_N1=(gx-mini gx-fast vllm llama-swap-node01)
-CONFLICTS_N2=(gx-reason comfyui llama-swap-node02)
+CONFLICTS_N2=(gx-reason gx-comfyui gx-media-router gx-llama-swap-node02)
 
 # ---------------------------------------------------------------- preflight --
 log "=== gx-max preflight ==="
