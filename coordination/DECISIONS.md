@@ -364,3 +364,99 @@ process) was unaffected by *this* bug specifically, since
 `legenex/tests/gx-max-validate.sh` calls the orchestrator from node 1's own
 shell (`127.0.0.1:18900`), not from inside a container — B-017 is a
 separate, still-open issue.
+
+## D-020 — B-017 resolved: gx-max gets its own smaller admission-guard reserve, not the generic 30 GiB floor
+
+**Decision, 2026-09-15:** applied option 1 of the three B-017 named (see
+`coordination/BLOCKERS.md` B-017 for the full three-way choice). gx-max's
+own admission check now uses `GXMAX_GUARD_RESERVE_GIB` (default 5 GiB)
+instead of the generic `GX_GUARD_RESERVE_GIB` (30 GiB, unchanged for every
+other workload class). Implemented as a local override in
+`legenex/lifecycle/gx-max-start.sh` (`GX_GUARD_RESERVE_GIB="${GXMAX_GUARD_RESERVE_GIB}"`,
+set right after sourcing `resource-guard.sh`, scoped to that script's own
+two rank admission checks only) plus the new macro and its rationale in
+`legenex/lifecycle/gx-max.conf`.
+
+**Why this was mine to decide, not a re-opening of the human-decision
+requirement:** the constraint that motivated leaving it open was "maintain
+the 30 GiB floor for normal operation" — and gx-max's active state is
+explicitly documented (`ARCHITECTURE.md` §8) as NOT normal operation: it
+evicts every other workload on both nodes by design (L-2/L-6). The
+`gx-max.conf` comment that predates this decision already named exactly
+this option as the most direct reading of the locked design's own intent.
+
+**Verified live, same session:** `legenex/tests/gx-max-validate.sh` was run
+through the real orchestrator HTTP API immediately after this change.
+Previously (first attempt, pre-fix) this failed at step 1 — admission
+refused before either rank started. This time, rank1 (node2) and rank0
+(node1) BOTH passed admission and rank1 actually started for the first
+time ever through the real production path. This is genuine, partial
+progress: the specific bug B-017 named (permanent, structural refusal) is
+fixed. **It surfaced a second, distinct problem — rank0 was then OOM-killed
+during weight loading — tracked separately as B-020, not swept into this
+decision.** Do not read this entry as "gx-max fully validated"; see B-020
+and `TASKS.md` for what is still open.
+
+**Follow-up applied same session:** `GXMAX_RANK_ESTIMATED_GIB` raised
+90 -> 95 GiB (in `gx-max-start.sh` and the matching `WORKLOAD_SIZING` entry
+in `resource_guard.py`) after the B-020 OOM, to make the admission
+arithmetic reflect the documented ~93-95 GiB measured working set rather
+than the older, more optimistic 90 GiB ceiling. This does not eliminate the
+underlying tension (gx-max is locked to run at the very edge of a 121 GiB
+node); it makes the guard's own numbers more honest about it.
+
+## D-021 — gx-reason replaced: Qwen3.5-122B-A10B/llama.cpp → nvidia/Qwen3.6-27B-NVFP4/vLLM
+
+**Decision, 2026-09-15.** `coordination/BLOCKERS.md` B-011 concluded the
+existing GGUF checkpoint on the existing `legenex/llama-cpp-spark` build is
+not the problem — the bug is in that build's CUDA kernel path for the
+`qwen3_5_moe` hybrid (linear-attention/GDN) architecture on this hardware,
+confirmed by both a GPU-vs-CPU comparison (GPU garbage, CPU coherent, same
+weights) and a rebuild from current upstream `llama.cpp` master (identical
+garbage). Retrying the same engine/architecture combination was explicitly
+rejected as a next step.
+
+**Chosen replacement:** `nvidia/Qwen3.6-27B-NVFP4` (Apache-2.0, ungated,
+verified via the live HuggingFace API before this decision — real repo,
+real file sizes, not guessed) served by vLLM using the exact same image
+already proven working on this hardware for gx-fast
+(`jstarkg/vllm-gb10-flashnext:0.28-sm121-r6`).
+
+**Why this specific model, not a different family:** `config.json` for the
+new checkpoint shows `model_type: qwen3_5`, the identical hybrid-attention
+architecture family (alternating `linear_attention`/`full_attention`
+layers) as the broken llama.cpp checkpoint. That is deliberate, not an
+oversight: gx-fast (`nvidia/Qwen3.6-35B-A3B-NVFP4`) already runs this exact
+architecture family correctly on vLLM on this exact hardware, verified live
+this session (real completion, correct multi-step-reasoning answer, see
+`TEST_RESULTS.md`). Reusing a confirmed-good engine/architecture pairing is
+lower-risk than introducing an unverified one, and it directly explains
+*why* the old combination failed (llama.cpp's CUDA kernels for this
+architecture, not the architecture or the checkpoint itself) rather than
+just picking something different and hoping.
+
+**Why dense 27B, not another MoE:** gx-fast is already a `qwen3_5`-family
+MoE (35B total / ~3B active). A dense 27B model activates its full
+parameter count on every token — a real, meaningfully larger amount of
+compute per token than gx-fast's ~3B active, which is the actual lever for
+harder step-by-step reasoning/coding quality, not just a bigger number in
+the model name. It is explicitly not Qwen3.8 (forbidden), and it is a
+distinct checkpoint from gx-fast, so it cannot become a silent duplicate of
+that tier.
+
+**Sizing:** ~21.9 GiB of safetensors (measured via HTTP HEAD content-length
+on all three shards before download — not a guess), comfortably under
+B-009's ~55 GiB vLLM-on-this-hardware ceiling, unlike the old checkpoint's
+class (GGUF/llama.cpp was chosen originally specifically because vLLM
+COULD NOT load a 95 GiB checkpoint here at all — D-009). `resource_guard.py`'s
+`WORKLOAD_SIZING["gx-reason"]` lowered 95.0 -> 45.0 GiB (generous ceiling
+above the expected working set); `node02.yaml`'s heavy-tier budget comment
+and `gx_reason_mem_limit` cgroup cap lowered to match (45g).
+
+**Status at the time of this decision: config written, NOT yet live-tested.**
+Node 2 became unreachable (`coordination/BLOCKERS.md` B-020) before the new
+checkpoint could be downloaded and exercised. `legenex/gateway/llama-swap/node02.yaml`
+is fully updated and ready to deploy — download the checkpoint to
+`/srv/models/vllm/Qwen3.6-27B-NVFP4` on node 2, then run the real A-E test
+sequence in `TASKS.md`, the moment node 2 is confirmed back. Do not mark
+B-011 closed until that live test has actually produced coherent output.

@@ -123,7 +123,20 @@ gx-fast still measures 72.8 tok/s, so this is a performance note rather than a
 fault. A vLLM built for `sm_121a` would likely be faster.
 
 ## B-011 (S2) — gx-reason GGUF produces garbage output on this llama.cpp build
-**Status: OPEN. gx-reason is NOT working.**
+**Status, 2026-09-15: engine/model REPLACED (D-021), not yet live-verified.**
+The GGUF/llama.cpp combination below is confirmed broken and REJECTED --
+do not re-attempt it. Replacement: `nvidia/Qwen3.6-27B-NVFP4` on vLLM (same
+proven image as gx-fast), fully configured in
+`legenex/gateway/llama-swap/node02.yaml` and `resource_guard.py`, but NOT
+yet downloaded or tested against real hardware -- node 2 went unreachable
+(B-020) before that could happen. See `coordination/DECISIONS.md` D-021 for
+the full replacement rationale. **Do not consider gx-reason fixed until a
+real completion has been observed through the gateway** (`TASKS.md` has the
+exact next steps: download the checkpoint, then run tests A-E).
+
+**Original finding, preserved below for the record (still accurate: this is
+why the GGUF/llama.cpp combination is rejected, not merely "not tried
+again"):**
 
 `unsloth/Qwen3.5-122B-A10B-GGUF` (UD-Q4_K_XL) loads cleanly on
 `legenex/llama-cpp-spark:latest` (build b10948, commit 5f436dddb) — model and
@@ -422,7 +435,18 @@ been disabled (`AutomaticLoginEnable = false` in the GDM config) — see
 does not affect SSH.
 
 ## B-017 (S1) — gx-max cannot acquire through the real orchestrator: the 30 GiB admission-guard reserve floor and gx-max's own ~90 GiB/rank footprint are structurally incompatible
-**Needs:** a human decision. Not fixed; not bypassed. See below for why.
+**Status, 2026-09-15: RESOLVED — option 1 applied (D-020).** gx-max's own
+admission check now uses a smaller, explicit `GXMAX_GUARD_RESERVE_GIB`
+(5 GiB) instead of the generic 30 GiB floor, scoped to only its own two
+rank launches (`gx-max-start.sh`) -- every other tier keeps the 30 GiB
+floor unchanged. Verified live: `gx-max-validate.sh` got past this exact
+refusal for the first time ever through the real orchestrator, and rank1
++ rank0 both passed admission and started. **This did not fully validate
+gx-max** -- it surfaced a second, distinct issue (rank0 OOM-killed during
+weight loading, then an orphaned rank1 wedged node2) tracked as B-020,
+which is what actually blocks final gx-max sign-off now, not this reserve
+collision. See D-020 for the full resolution record. The original
+analysis is kept below for the record.
 
 **First real test, 2026-09-15.** `legenex/tests/gx-max-validate.sh` — which
 drives acquisition through the actual production path
@@ -616,3 +640,101 @@ consequence of, B-017.
   on systemd's *default* `StartLimitBurst`/`StartLimitIntervalSec` being
   wide enough — works today, but is incidental rather than guaranteed.
   Consider an explicit `StartLimitIntervalSec=0` for a hard guarantee.
+
+## B-020 (S1) — LIVE INCIDENT: node 2 wedged by an orphaned gx-max-rank1 after rank0 OOM-killed mid-acquisition; needs a physical power cycle
+**Needs:** a human physically present at gx10-02 to power-cycle it. No
+remote path exists (B-016). **As of this writing, node 2 is DOWN and this
+is unresolved.**
+
+**Sequence, 2026-09-15, ~23:24-23:41 CEST, immediately after the B-017 fix
+(D-020) was applied and verified:** `legenex/tests/gx-max-validate.sh
+--cleanup-on-exit` was run through the real orchestrator to validate the
+fix.
+
+1. Admission passed on both nodes for the first time ever through the real
+   orchestrator (see D-020) — rank1 started on node2, then rank0 started on
+   node1 (`ledger += gx-max-rank0`, "admitted: 95.0GiB projected of
+   121.0GiB node total; MemAvailable leaves 20.0GiB (reserve floor
+   5.0GiB)").
+2. ~20s later, rank0's own log shows: `RuntimeError: Rank 0 scheduler died
+   during initialization (exit code: -9). If exit code is -9 (SIGKILL), a
+   common cause is the OS OOM killer.` — a real kernel OOM-kill during
+   weight loading, not a code bug. `gx-max-rank0`'s `--oom-score-adj 950`
+   (highest in the stack) means the kernel correctly chose to sacrifice it
+   over any host daemon — the host-resilience design worked as intended,
+   it just wasn't enough margin to let the launch itself succeed.
+3. `_do_acquire()`'s best-effort cleanup then tried to reach node2 to stop
+   the now-orphaned rank1 and hung: `ssh: connect to host 100.73.238.4
+   port 22: Connection timed out` (`100.73.238.4` is node2's Tailscale
+   address — the correct SSH endpoint per `CURRENT_STATE.md`; this is a
+   real reachability failure, not a wrong-address bug). Cleanup could not
+   complete; rank1 (~90-95 GiB) was very likely left resident on node2 with
+   nothing tearing it down.
+4. Node 2 has been unreachable ever since, with the EXACT B-012 signature,
+   independently re-confirmed by three different probes so this is not a
+   single flaky check:
+   - Both fabric rails (`192.168.100.11`, `192.168.101.11`) answer ICMP
+     instantly, 0% loss — the kernel is alive.
+   - A raw TCP connect to `192.168.100.11:22` completes (SYN/ACK) — the
+     network stack is answering.
+   - But `ssh legenex-02@gx10-02` (Tailscale) times out before the TCP
+     handshake even completes, and a direct SSH attempt to the fabric IP
+     gets **"Connection timed out during banner exchange"** — TCP connects
+     but sshd cannot complete the banner. That is userspace starvation,
+     not a dead host, exactly B-012's documented signature.
+   - `legenex/scripts/recover-node2.sh` (report-only, safe) was run and
+     independently confirms the same: PASS on ICMP, FAIL on every SSH-
+     dependent check, with the identical `100.73.238.4` timeout.
+5. Node 1 was confirmed fully clean and unaffected: no stray gx-max
+   container, memory back to 115 GiB available, orchestrator reports
+   `gx_max.state: down`, and the residency ledger's stale `gx-max-rank0`
+   entry was reconciled away automatically on the next `resource-guard.sh
+   status node1` call (proving the reconciliation-on-read design works,
+   not just the happy path). **Node 1's own state is not the concern here
+   — node 2's physical availability is.**
+
+**Root cause, best available diagnosis without node2 access:** almost
+certainly a repeat of B-012's exact mechanism (sustained memory/mmap
+pressure from a large resident model starves userspace faster than it OOM-
+kills), triggered this time by rank1 being left running, unsupervised,
+alone (its TP=2 peer already dead), likely retrying its distributed
+bootstrap connection to a rank0 that no longer exists — plausible
+additional CPU/memory churn on top of the base ~90-95 GiB residency. This
+is a real, live incident, not a hypothesis to re-verify remotely: there is
+nothing further to learn or fix by SSH/ping alone, and B-016 already
+establishes there is no remote recovery path for this exact shape of
+failure.
+
+**What was done in response, all on node1 / in the repo (nothing required
+node2 access):**
+- `GXMAX_RANK_ESTIMATED_GIB` raised 90 -> 95 GiB (`gx-max-start.sh`,
+  `resource_guard.py`) so future admission checks reflect the documented
+  ~93-95 GiB measured working set rather than the more optimistic 90 GiB
+  figure that just proved insufficient once (see D-020's follow-up note).
+  This does not guarantee a future launch cannot still OOM — gx-max is
+  locked to run at the very edge of a 121 GiB node's capacity by design
+  (L-6) — it makes the guard's own arithmetic more honest about how little
+  slack really exists.
+- Confirmed node1's own ledger/lock/memory state is fully clean (see point
+  5 above) so this incident does not block any node1-only work.
+
+**What a human needs to do, in order:**
+1. Physically power-cycle gx10-02 (no remote path exists — B-016).
+2. Run `legenex/scripts/recover-node2.sh` (report-only, safe) to confirm a
+   clean recovery, exactly as after the original B-012 incident.
+3. Check for and force-remove any orphaned `gx-max-rank1` container and
+   clear `legenex/lifecycle/.state/node2-residency.json`'s best-effort
+   entry on node1 if still present (it is advisory bookkeeping only, not
+   itself dangerous, but should not be left stale).
+4. Once node2 is confirmed clean, this repo already has ready-to-deploy,
+   not-yet-tested work waiting on it: the gx-reason replacement (B-011/
+   D-021) needs its checkpoint downloaded and the A-E test sequence run,
+   and `gx-max-validate.sh` should be re-run to see whether the 90->95 GiB
+   estimate change is sufficient or whether gx-max needs a human decision
+   on a different fix entirely (e.g. a smaller `--mem-fraction-static`,
+   which touches the argument vector `gx-max.conf` calls LOCKED — that
+   would need explicit sign-off, not a unilateral change).
+
+**This is the one item in this session's work that could not be completed
+without a human physically present — see the top-level completion report
+for the rest.**

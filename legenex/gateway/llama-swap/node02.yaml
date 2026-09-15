@@ -18,10 +18,15 @@
 # a coherent 256 GB pool with node 1. CPU and GPU allocations compete for the
 # same bytes.
 #
-#   heavy tier (group "heavy")   <= 78 GB   (exactly ONE member at a time)
+#   heavy tier (group "heavy")   <= 45 GB   (exactly ONE member at a time)
 #   media tier (group "media")   <= 22 GB   (ComfyUI / gx-image / gx-video)
 #   --------------------------------------------
-#   ceiling                      ~100 GB    -> >= 28 GB headroom
+#   ceiling                      ~67 GB     -> >= 54 GB headroom
+#
+# heavy-tier ceiling lowered 78 -> 45 GB on 2026-09-15: gx-reason was
+# replaced (B-011, see the gx-reason macro block below) from a ~95 GiB GGUF/
+# llama.cpp checkpoint to a ~22 GiB safetensors/vLLM one. Headroom is now far
+# more generous than the original design assumed.
 #
 # Structural enforcement:
 #   * "heavy" has swap: true  -> at most one heavy model is ever loaded.
@@ -95,7 +100,8 @@ apiKeys:
 # MACROS
 # ------------------------------------------------------------------------------
 macros:
-  llamacpp_image: "legenex/llama-cpp-spark:latest"
+  llamacpp_image: "legenex/llama-cpp-spark:latest"  # superseded for gx-reason (B-011); kept for any future llama.cpp use on this node
+  vllm_image: "jstarkg/vllm-gb10-flashnext:0.28-sm121-r6"  # same image as node1's gx-fast
   host: "0.0.0.0"
 
   # Host-side model root on node 2 (see coordination/node2/NODE2_STATE.md).
@@ -104,11 +110,47 @@ macros:
   # Must match container_name of node 2's llama-swap service.
   swap_netns: "container:gx-llama-swap-node02"
 
-  # ---- gx-reason: PENDING VERIFICATION ---------------------------------------
-  # Another agent is verifying the exact ~100-125B sparse MoE checkpoint.
-  # DO NOT guess a model ID. Placeholders fail fast on start.
+  # ---- gx-reason: REPLACED 2026-09-15, see coordination/BLOCKERS.md B-011 ----
+  # The previous Qwen3.5-122B-A10B GGUF/llama.cpp combination is CONFIRMED
+  # BROKEN: real, reproducible GARBAGE output on this llama.cpp build's CUDA
+  # path for the qwen3_5_moe hybrid (linear-attention/GDN) architecture --
+  # ruled out as a checkpoint/quant problem (CPU-only path with the identical
+  # weights is coherent) and ruled out as a stale-build problem (rebuilt from
+  # current upstream llama.cpp master, byte-identical garbage). See B-011 for
+  # the full evidence trail. That llama.cpp build is REJECTED for this tier;
+  # do not re-attempt the same engine/architecture combination.
+  #
+  # Replacement: nvidia/Qwen3.6-27B-NVFP4 on vLLM, using the SAME proven
+  # engine image/driver combination already verified working on THIS hardware
+  # for gx-fast (nvidia/Qwen3.6-35B-A3B-NVFP4). config.json for the new
+  # checkpoint shows the identical qwen3_5 hybrid-attention architecture
+  # family (model_type "qwen3_5", alternating linear_attention/full_attention
+  # layers) as the broken llama.cpp checkpoint -- deliberately chosen this
+  # way: gx-fast already proves vLLM's kernel implementation of this exact
+  # architecture family is correct on this GB10/sm_121 hardware, so this
+  # reuses a confirmed-good engine/architecture pairing rather than
+  # introducing an unverified one. It is DENSE (not MoE, unlike gx-fast's
+  # A3B), so its ~27B active params/token is a real, meaningful reasoning/
+  # coding capability step up from gx-fast's ~3B active params/token, while
+  # being small enough (~22 GiB of safetensors) to load via vLLM without
+  # tripping B-009's ~55 GiB vLLM checkpoint ceiling on this unified-memory
+  # node. Apache-2.0, ungated, ~22 GiB total (verified via HF API file sizes
+  # before download, not guessed) -- see coordination/DECISIONS.md for the
+  # full record of this decision.
+  #
+  # NOT yet live-tested end-to-end as of this edit: node 2 is unreachable
+  # (coordination/BLOCKERS.md B-020, a live incident, physical power-cycle
+  # needed) at the time this config was written. This section is prepared
+  # and ready to deploy the moment node 2 is confirmed back; do not consider
+  # gx-reason "fixed" until a real completion has been observed through the
+  # gateway (see TASKS.md).
+  gx_reason_model_dir: "/models/vllm/Qwen3.6-27B-NVFP4"
+  gx_reason_host_dir: "Qwen3.6-27B-NVFP4"
 
-  # 0.61 x ~128 GB ~= 78 GB. Raising this above 0.61 eats the ComfyUI reservation.
+  # ~22 GiB of weights + KV cache for a 65536-token context comfortably fits
+  # a conservative pool; 0.35 x ~121 GiB ~= 42 GiB, leaving the rest of the
+  # heavy-tier budget below untouched for ComfyUI's reservation.
+  gx_reason_gpu_fraction: "0.35"
 
   # ----------------------------------------------------------------------------
   # HOST-RESILIENCE HARDENING (added 2026-09-14, after the gx10-02 mmap-thrash
@@ -118,77 +160,82 @@ macros:
   # --oom-score-adj biases the kernel to kill this container, not sshd/
   # tailscaled/systemd/NetworkManager, in a genuine system-wide OOM.
   #
-  # ** KNOWN DISCREPANCY - flagged, not silently resolved **
-  # The 78 GB figure above predates BLOCKERS.md B-011's measurement of the
-  # actual resident gx-reason process: VmRSS ~99,766,300 kB (~95.1 GiB), almost
-  # entirely RssFile (mmap'd GGUF pages), once the full model was loaded. That
-  # is ~17 GiB over this stated budget. gx-reason is currently BROKEN (garbage
-  # output, B-011 open) and node 2 is currently wedged (B-012), so this has not
-  # been exercised under this cap. Setting gx_reason_mem_limit to the older,
-  # smaller 78 GB figure is a DELIBERATE choice to keep enforcing the number
-  # the architecture has actually committed to in writing above, NOT a claim
-  # that it is sufficient - if gx-reason's real footprint really is ~95 GiB,
-  # this cap will make it fail closed (OOM-killed by the cgroup) rather than
-  # fail open (thrash the host as it did in B-012). Whoever picks up B-011
-  # next should re-measure and raise gx_reason_mem_limit together with the
-  # budget comment above, as one deliberate, documented change - not left as
-  # two numbers quietly disagreeing.
-  gx_reason_mem_limit: "78g"
+  # Lowered 78g -> 45g on 2026-09-15 along with the B-011 engine/model
+  # replacement above: the new checkpoint's real footprint (~22 GiB weights +
+  # a 0.35 vLLM pool, ~42 GiB pool ceiling) is far smaller than the old GGUF's
+  # measured ~95 GiB. 45g is a generous ceiling above the expected working
+  # set (same "ceiling above measured, not exactly measured" convention used
+  # for gx-max in gx-max.conf), not a re-measurement -- re-measure and adjust
+  # once this has actually been exercised live against node 2 (see B-020 for
+  # why that has not happened yet in this session).
+  gx_reason_mem_limit: "45g"
   gx_reason_oom_score_adj: "900"
 
 models:
 
   # ============================================================================
-  # gx-reason — heavy tier                    *** CHECKPOINT PENDING ***
+  # gx-reason — heavy tier
   # ============================================================================
-  # Intent: ~100-125B class sparse MoE, deep reasoning, node 2, vLLM.
+  # nvidia/Qwen3.6-27B-NVFP4 on vLLM. Replaces the confirmed-broken
+  # Qwen3.5-122B-A10B GGUF/llama.cpp combination -- see B-011 (root-caused to
+  # a llama.cpp CUDA/GDN kernel bug for this hybrid architecture, not the
+  # checkpoint) and the macro block above for the full replacement rationale.
   #
-  # PENDING (lead to supply, see README "Pending" list):
-  #   1. exact checkpoint ID + on-disk path -> macro gx_reason_model_dir
-  #   2. serving engine image               -> macro vllm_image
-  #   3. quantisation-specific flags (NVFP4 / int4 / FP8 all need different args)
-  #   4. correct --reasoning-parser / --tool-call-parser for that checkpoint
-  #   5. whether the image ENTRYPOINT is `vllm serve` (then drop `serve` below)
+  # Same vllm_image as node1's gx-fast (jstarkg/vllm-gb10-flashnext:0.28-sm121-r6)
+  # -- a proven-good engine/driver combination on this exact hardware for the
+  # same qwen3_5 hybrid-attention architecture family, deliberately reused
+  # rather than introducing an unverified engine.
   #
-  # --max-model-len 32768 is deliberately conservative: KV for a 100B+ model at
-  # long context is what actually blows the budget, not the weights. Raise it
-  # only together with a measured KV figure.
+  # --quantization modelopt: required per the checkpoint's own model card for
+  # this NVIDIA ModelOpt NVFP4 quantization.
+  # --max-model-len 65536: same conservative figure gx-fast uses; this
+  # checkpoint supports up to 262144 but KV at long context is the real
+  # memory risk (D-009), so raise it only with a measured KV figure.
+  # --tool-call-parser qwen3_xml, --reasoning-parser qwen3: same family as
+  # gx-fast for tool calls; qwen3 reasoning parser extracts <think> content
+  # into reasoning_content instead of burning the output budget on it.
   #
-  # ttl: 900 -> 15 min idle then unload. Node 2 must be able to hand its memory
-  # back to gx-max / ComfyUI quickly.
+  # ttl: 900 -> 15 min idle then unload. Node 2 must be able to hand its
+  # memory back to gx-max / ComfyUI quickly.
   gx-reason:
     name: "gx-reason"
     description: >
-      Qwen3.5-122B-A10B UD-Q4_K_XL GGUF on llama.cpp. Hard reasoning and coding
-      tier. Owns node 2 exclusively - do not co-schedule with ComfyUI.
-      llama.cpp is used instead of vLLM because vLLM cannot load a checkpoint
-      this large on a 128 GB unified-memory node (see DECISIONS.md D-009).
+      nvidia/Qwen3.6-27B-NVFP4 on vLLM. Dense 27B, hybrid attention, hard
+      reasoning and coding tier. Owns node 2 exclusively - do not
+      co-schedule with ComfyUI. Replaces the broken Qwen3.5-122B-A10B
+      GGUF/llama.cpp tier (B-011).
     proxy: "http://127.0.0.1:25800"
     checkEndpoint: /health
-    ttl: 1800
-    unloadTimeout: 240
+    ttl: 900
+    unloadTimeout: 180
     cmd: >
       sh -c 'docker rm -f gx-reason >/dev/null 2>&1;
       exec docker run --rm --name gx-reason
       --network ${swap_netns}
       --device nvidia.com/gpu=all
-      --ipc host
+      --ipc host --shm-size 16g
       --ulimit memlock=-1 --ulimit stack=67108864
       --security-opt seccomp=unconfined
-      --env-file /app/env/gx-reason.env
-      -v ${models_root}/gguf:/models/gguf:ro
+      -e NVIDIA_DISABLE_FORWARD_COMPATIBILITY=1
+      -e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+      -e VLLM_USE_DEEP_GEMM=0
+      -v ${models_root}/vllm:/models/vllm:ro
       --memory ${gx_reason_mem_limit}
       --memory-swap ${gx_reason_mem_limit}
       --oom-score-adj ${gx_reason_oom_score_adj}
-      ${llamacpp_image}
-      -m /models/gguf/Qwen3.5-122B-A10B/UD-Q4_K_XL/Qwen3.5-122B-A10B-UD-Q4_K_XL-00001-of-00003.gguf
-      --mmproj /models/gguf/Qwen3.5-122B-A10B/mmproj-F16.gguf
-      --alias gx-reason
+      ${vllm_image}
+      ${gx_reason_model_dir}
+      --served-model-name gx-reason
       --host ${host} --port 25800
-      --ctx-size 32768
-      --n-gpu-layers 99
-      --parallel 1
-      --load-mode mmap
-      --jinja
-      --timeout 900'
-    cmdStop: "docker stop -t 200 gx-reason"
+      --gpu-memory-utilization ${gx_reason_gpu_fraction}
+      --quantization modelopt
+      --max-model-len 65536
+      --max-num-seqs 8
+      --max-num-batched-tokens 16384
+      --kv-cache-dtype fp8
+      --enable-prefix-caching
+      --enable-auto-tool-choice
+      --tool-call-parser qwen3_xml
+      --reasoning-parser qwen3
+      --trust-remote-code'
+    cmdStop: "docker stop -t 150 gx-reason"

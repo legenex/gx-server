@@ -522,4 +522,85 @@ validate documentation against reality before merging the seed files:
 | Node 1 orchestrator (`gx-orchestrator.service`) | `active running` throughout, `/health/detailed` → `status: ok`, all tiers correctly `stopped`/`usable: true` |
 | `/opt/models/` on node 1 | confirmed empty — no Qwen3.8 directory remains |
 
+---
+
+## 12. 2026-09-15/16 session — B-017 fix, gx-mini/gx-fast re-verification, gx-max attempt, B-020 incident
+
+### gx-mini — real, through the gateway
+
+```
+POST /v1/chat/completions {"model":"gx-mini", "messages":[{"role":"user","content":"Reply with exactly: Paris"}]}
+-> HTTP 200, content: "Paris", 47.9 tok/s predicted
+```
+**PASS.**
+
+### gx-fast — real, through the gateway, cold start
+
+Prompt: "A farmer has 17 sheep. All but 9 die. How many sheep are left?
+Answer with just the number." Cold start (model not resident) took 2m6.9s
+end to end; answer: `"9"` (correct — a classic riddle that a naive
+subtraction gets wrong). **PASS.**
+
+### gx-max — first-ever real acquisition attempt through the orchestrator that got past admission on both nodes
+
+`legenex/tests/gx-max-validate.sh --cleanup-on-exit`, run immediately after
+applying the B-017 fix (`coordination/DECISIONS.md` D-020):
+
+```
+[23:24:43] === acquire (POST http://127.0.0.1:18900/lifecycle/gx-max/acquire) ===
+gx.guard: {"name": "gx-max-rank1", ... "allowed": true, ...}   <- node2 admitted
+[23:24:48] rank1 started
+gx.guard: {"name": "gx-max-rank0", ... "allowed": true,
+  "reason": "admitted: 95.0GiB projected of 121.0GiB node total;
+  MemAvailable leaves 20.0GiB (reserve floor 5.0GiB)"}          <- node1 admitted
+[23:24:53] rank0 started
+...
+RuntimeError: Rank 0 scheduler died during initialization (exit code: -9).
+  If exit code is -9 (SIGKILL), a common cause is the OS OOM killer.
+[23:30:13] rank1 exited. Last 40 log lines: ssh: connect to host
+  100.73.238.4 port 22: Connection timed out
+[23:41:15] FAIL gx-max acquisition :: orchestrator correctly refused
+  rather than downgrading (992s)
+PASS=7  FAIL=1  WARN=0
+```
+
+**Partial result, real progress, real new failure:** the B-017 admission
+deadlock is gone — both ranks were admitted and started for the first time
+ever through the real production path. Rank0 was then genuinely OOM-killed
+by the kernel during weight loading (not a code bug — `dmesg`-class OOM,
+correctly picked gx-max over host daemons per its `--oom-score-adj 950`).
+Cleanup's attempt to reach node2 and stop the orphaned rank1 then itself
+timed out — node2 was already becoming unreachable. Not a clean PASS; not
+the old permanent B-017 refusal either. Full incident and root-cause
+analysis: `coordination/BLOCKERS.md` B-020. Node2 was confirmed down
+(fabric/ICMP alive, SSH/userspace starved — the B-012 signature) by three
+independent probes afterward; recovery needs a human physical power cycle.
+
+### Node 1 post-incident cleanliness — real, verified
+
+```
+$ docker ps -a | grep -i max          -> (nothing)
+$ free -h                             -> 115Gi available, 5.7Gi used
+$ resource-guard.sh status node1      -> reconcile dropping stale resident
+                                          gx-max-rank0 (container not running); {}
+$ curl localhost:18900/health/detailed -> gx_max.state: "down"
+```
+**PASS** — node1's own ledger, lock, memory and orchestrator state are all
+confirmed clean and correct despite the failed run; this incident is a
+node2 hardware-availability problem, not a node1 software leak.
+
+### gx-reason — replacement decided, NOT live-tested
+
+`nvidia/Qwen3.6-27B-NVFP4` on vLLM is fully configured
+(`coordination/DECISIONS.md` D-021) but node2 went down (B-020) before the
+checkpoint could be downloaded or exercised. **NOT RUN** — do not mark
+B-011 closed until this actually produces coherent output through the
+gateway.
+
+### gx-image / gx-video / kernel apt-mark hold / full acceptance suite
+
+**NOT RUN this session** — node2 went down before Phase 1 (media) could be
+reached, and the kernel `apt-mark hold` needs an interactive sudo password
+neither this nor any prior session has had.
+
 Full detail and the updated operational picture: `CURRENT_STATE.md`.

@@ -9,6 +9,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (2026-09-15/16 session)
+- **gx-max's B-017 admission-guard deadlock resolved.** gx-max now uses its
+  own smaller, explicit reserve (`GXMAX_GUARD_RESERVE_GIB`, 5 GiB) instead
+  of the generic 30 GiB floor, scoped only to its two rank launches
+  (`gx-max-start.sh`, `gx-max.conf`) -- every other tier's admission check
+  is unaffected. Verified live: gx-max passed admission on both nodes and
+  actually started rank1+rank0 for the first time ever through the real
+  orchestrator (`coordination/DECISIONS.md` D-020).
+- **gx-reason's engine/model replaced** (`coordination/DECISIONS.md`
+  D-021): the confirmed-broken `unsloth/Qwen3.5-122B-A10B-GGUF`/llama.cpp
+  combination (B-011) is rejected; `legenex/gateway/llama-swap/node02.yaml`
+  now serves `nvidia/Qwen3.6-27B-NVFP4` on vLLM, the same proven engine
+  image already serving gx-fast. Config only -- not yet live-tested (node2
+  went down, B-020, before the checkpoint could be downloaded).
+- gx-mini and gx-fast independently re-verified live through the real
+  gateway: gx-mini answered a factual prompt correctly, gx-fast (real
+  ~2m7s cold start) correctly solved a multi-step logic question.
+
+### Fixed (2026-09-15/16 session)
+- `GXMAX_RANK_ESTIMATED_GIB` raised 90 -> 95 GiB after a real OOM-kill
+  during weight loading exposed the older figure as too optimistic (see
+  B-020) -- `gx-max-start.sh` and `resource_guard.py`'s `WORKLOAD_SIZING`
+  both updated to match.
+
+### Known issue introduced this session, not yet fixed
+- **B-020: node 2 is physically wedged** (needs a human power-cycle, no
+  remote path exists) after the above gx-max run's rank0 OOM-killed and
+  the automatic cleanup could not reach node2 to tear down the orphaned
+  rank1. Full incident record in `coordination/BLOCKERS.md` B-020.
+
 ### Added
 - **Independent multi-agent review of this session's own changes (4
   reviewers, memory/lifecycle, networking/gx-max, routing/media security,

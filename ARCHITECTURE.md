@@ -109,16 +109,20 @@ Concurrency is serialised by a condition variable in `GxMaxLifecycle`: five
 simultaneous callers produce exactly one invocation of the start script
 (covered by `tests/test_lifecycle.py::test_concurrent_acquire_starts_script_once`).
 
-**Known unresolved gap (2026-09-15, see `coordination/BLOCKERS.md` B-017):**
-step 1's admission check (added 2026-09-14 as the B-012 resource-ownership
-repair, §9 below) enforces a uniform 30 GiB reserve floor for every
-`exclusive`-class workload. gx-max's own locked ~90 GiB/rank footprint does
-not leave that floor free, so the first real acquisition attempt through
-the orchestrator was correctly hard-refused at step 1 rather than starting
-either rank. This is a genuine, undecided collision between two separately
-locked designs (this section's ~90 GiB footprint vs §9's 30 GiB floor), not
-a bug in either — resolving it needs an explicit human decision (see B-017
-for the options), not a unilateral change to either side.
+**Resolved 2026-09-15 (`coordination/BLOCKERS.md` B-017,
+`coordination/DECISIONS.md` D-020):** step 1's admission check used to
+enforce the same uniform 30 GiB reserve floor on gx-max as every other
+`exclusive`-class workload, which gx-max's own locked ~90-95 GiB/rank
+footprint could never satisfy on a 121 GiB node — a permanent, structural
+refusal. gx-max's own admission check now uses a smaller, explicit reserve
+(5 GiB, `GXMAX_GUARD_RESERVE_GIB`) instead, on the reasoning that gx-max's
+active state is documented above (§8) as an intentional, non-"normal-
+operation" takeover of the node, not the steady-state §9 was written for.
+Every other tier keeps the 30 GiB floor unchanged. Verified live: gx-max
+passed admission on both nodes for the first time ever through the real
+orchestrator. **This did not fully validate gx-max end to end** — see
+`coordination/BLOCKERS.md` B-020 for a real OOM-kill this same run
+surfaced and the node2 hardware incident that followed from it.
 
 **Never-downgrade rule.** A request that explicitly names `gx-max` and cannot be
 served returns HTTP 503 with an explicit message. It is never answered by a

@@ -113,18 +113,27 @@ WORKLOAD_SIZING: dict[str, WorkloadSpec] = {
         "swap:true (exclusive-one-at-a-time) today.",
     ),
     "gx-reason": WorkloadSpec(
-        "gx-reason", "node2", WorkloadClass.LARGE, 95.0,
-        "Qwen3.5-122B-A10B GGUF on llama.cpp, mmap'd. Measured VmRSS ~95GiB "
-        "(BLOCKERS.md B-011: 99766300 kB). Owns node2 exclusively (D-007) -- "
-        "never co-scheduled with ComfyUI or any other large/exclusive workload.",
+        "gx-reason", "node2", WorkloadClass.LARGE, 45.0,
+        "nvidia/Qwen3.6-27B-NVFP4 on vLLM, replacing the broken "
+        "Qwen3.5-122B-A10B GGUF/llama.cpp combination (B-011, isolated to a "
+        "llama.cpp CUDA/GDN kernel bug for this hybrid architecture, not the "
+        "checkpoint). ~22 GiB weights + a 0.35 vLLM pool; 45 GiB is a "
+        "generous ceiling above the expected working set, not yet a live "
+        "measurement (node2 unreachable at replacement time, B-020) -- "
+        "re-measure once exercised live. Still owns node2 exclusively "
+        "(D-007, kept conservative pending live verification) -- never "
+        "co-scheduled with ComfyUI or any other large/exclusive workload.",
     ),
     "gx-max-rank0": WorkloadSpec(
-        "gx-max-rank0", "node1", WorkloadClass.EXCLUSIVE, 90.0,
-        "SGLang TP=2 rank0, DeepSeek V4 Flash NVFP4. Takes over node1.",
+        "gx-max-rank0", "node1", WorkloadClass.EXCLUSIVE, 95.0,
+        "SGLang TP=2 rank0, DeepSeek V4 Flash NVFP4. Takes over node1. "
+        "Raised 90->95 GiB 2026-09-15 after a real OOM-kill during weight "
+        "loading at 90 GiB estimated + 20 GiB nominal slack (B-020) -- see "
+        "gx-max-start.sh's matching GXMAX_RANK_ESTIMATED_GIB comment.",
     ),
     "gx-max-rank1": WorkloadSpec(
-        "gx-max-rank1", "node2", WorkloadClass.EXCLUSIVE, 90.0,
-        "SGLang TP=2 rank1. Takes over node2.",
+        "gx-max-rank1", "node2", WorkloadClass.EXCLUSIVE, 95.0,
+        "SGLang TP=2 rank1. Takes over node2. See gx-max-rank0's note (B-020).",
     ),
     "comfyui": WorkloadSpec(
         "comfyui", "node2", WorkloadClass.MEDIUM, 44.0,

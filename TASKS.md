@@ -12,6 +12,24 @@ files, cross-checked against live system state (see `CURRENT_STATE.md`).
 
 ## P0 — safety and stability
 
+- [ ] **Physically power-cycle gx10-02** — it is down right now
+  (`coordination/BLOCKERS.md` B-020), wedged the same way as the original
+  B-012 incident (fabric/ICMP alive, SSH/userspace starved), this time by
+  an orphaned gx-max-rank1 left resident after rank0 OOM-killed mid-launch.
+  No remote path exists (B-016). Then run
+  `legenex/scripts/recover-node2.sh` to confirm a clean recovery.
+- [ ] Download `nvidia/Qwen3.6-27B-NVFP4` to
+  `/srv/models/vllm/Qwen3.6-27B-NVFP4` on node 2 and run gx-reason tests
+  A-E (`coordination/BLOCKERS.md` B-011, `coordination/DECISIONS.md`
+  D-021) — config is fully written and ready in
+  `legenex/gateway/llama-swap/node02.yaml`, blocked only on node 2 being
+  reachable again.
+- [ ] Re-run `legenex/tests/gx-max-validate.sh` once node2 is back, to see
+  whether the `GXMAX_RANK_ESTIMATED_GIB` 90->95 GiB change
+  (`coordination/DECISIONS.md` D-020) is enough to avoid a repeat OOM, or
+  whether gx-max needs a genuinely new human decision (e.g. a smaller
+  `--mem-fraction-static`, which touches the LOCKED SGLang argument vector
+  and needs explicit sign-off, not a unilateral change).
 - [x] ~~Deploy the resource-ownership/admission-control layer to node 2~~ —
   **done and verified 2026-09-15.** `legenex/lifecycle/` +
   `legenex/orchestrator/` are now on node 2 too; a normal launch is admitted
@@ -34,22 +52,22 @@ files, cross-checked against live system state (see `CURRENT_STATE.md`).
 
 ## P1 — finish the core text-model platform
 
-- [ ] **Fix or route around B-011** (gx-reason produces garbage output on
-  GPU; isolated to a CUDA/GDN kernel bug in this llama.cpp build, not the
-  checkpoint). Needs a human decision on which of the three documented next
-  steps to fund: file/research an upstream `llama.cpp` issue, download a
-  different quant to test, or bisect llama.cpp history. See
-  `coordination/BLOCKERS.md` B-011.
-- [ ] Cold-start and live-verify `gx-fast` again — it is wired and the
-  checkpoint is on disk, but has not been exercised end-to-end since before
-  the node-1 gateway/orchestrator incident.
+- [x] ~~Decide gx-reason's replacement engine/model~~ — done (D-021):
+  `nvidia/Qwen3.6-27B-NVFP4` on vLLM. What remains is deployment/live-test,
+  moved to P0 above (blocked on node 2 being physically recovered, B-020).
+- [x] Cold-start and live-verify `gx-fast` again — **done this session**:
+  real completion through the gateway, correct answer to a multi-step
+  logic question ("9"), ~2m7s cold start. See `TEST_RESULTS.md`.
 - [ ] Re-run `legenex/tests/gx-max-validate.sh` (full acquire → serve →
-  release → restore) now that node 2 has been power-cycled and re-verified —
-  the last full pass predates the wedge.
-- [ ] Reconcile gx-reason's admission-guard sizing (95 GiB, from the measured
-  B-011 footprint) against `node02.yaml`'s stale 78 GB comment once B-011 is
-  actually fixed and the real working-set is known to be stable
-  (`coordination/DECISIONS.md` D-013).
+  release → restore) — **attempted this session, see B-020**: got further
+  than ever before (both ranks passed admission, rank1 started, rank0
+  started) but rank0 was OOM-killed during weight loading, which then left
+  node2 wedged. Needs a re-run once node2 is physically recovered, with the
+  90->95 GiB estimate change (D-020) in place.
+- [ ] Reconcile gx-reason's admission-guard sizing once the new
+  vLLM/Qwen3.6-27B-NVFP4 checkpoint has actually been exercised live
+  (currently 45 GiB, a documented ceiling-above-expected estimate, not yet
+  a real measurement — see D-021).
 - [ ] Give `lib.sh`'s `n2()` SSH helper a hard `timeout`, not just
   `ConnectTimeout` — the newer recovery/validation scripts already wrap
   their own SSH calls this way; `n2()` itself was deliberately left alone

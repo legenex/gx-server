@@ -19,10 +19,31 @@ source "${here}/lib.sh"
 # shellcheck source=./resource-guard.sh
 source "${here}/resource-guard.sh"
 
+# Override the generic 30 GiB reserve floor with gx-max's own smaller,
+# explicitly-documented reserve (coordination/BLOCKERS.md B-017, decided
+# 2026-09-15; see gx-max.conf's GXMAX_GUARD_RESERVE_GIB comment for the full
+# reasoning). Scoped to THIS script's own two admission checks below --
+# resource-guard.sh's default (30) is unaffected for gx-safe-run.sh or any
+# other caller launching gx-mini/gx-fast/gx-reason/media.
+GX_GUARD_RESERVE_GIB="${GXMAX_GUARD_RESERVE_GIB}"
+
 FORCE_DRAIN="${GXMAX_FORCE_DRAIN:-0}"
 # Estimated whole-node footprint of one SGLang rank, used by the hard
 # admission guard below. See gx_orchestrator.resource_guard.WORKLOAD_SIZING.
-GXMAX_RANK_ESTIMATED_GIB="${GXMAX_RANK_ESTIMATED_GIB:-90}"
+#
+# Raised 90 -> 95 GiB on 2026-09-15 after the first real acquisition through
+# the orchestrator (post-B-017-fix) admitted at 90+5 (20 GiB nominal slack on
+# a 110 GiB-available node1) and rank0 was still OOM-killed by the kernel
+# during weight loading (see coordination/BLOCKERS.md B-020). This does not
+# claim 95 GiB eliminates the risk -- gx-max is LOCKED to take over the node
+# almost entirely (L-6) and load-time transients are not fully captured by
+# any static estimate -- but it stops the admission guard from calling a
+# launch "safe" when only ~20 GiB of nominal slack is left for a rank whose
+# own documentation already states a ~93-95 GiB measured working set
+# (gx-max.conf, D-013). A launch that would leave less real headroom than
+# this now correctly gets refused before wasting a ~10 minute weight-load
+# attempt and risking an orphaned rank on the other node.
+GXMAX_RANK_ESTIMATED_GIB="${GXMAX_RANK_ESTIMATED_GIB:-95}"
 
 # Containers that must not hold GPU/unified memory while gx-max runs.
 # NOTE 2026-09-15: CONFLICTS_N2 previously listed "comfyui" and
