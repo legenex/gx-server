@@ -210,12 +210,15 @@ session:**
    would turn "GPU path is broken" into an actionable upstream bug report.
 
 ## B-012 (S2) — node 2 was wedged by running two 77 GB models at once
-**Status: incident understood and RESOLVED. Node 2 was physically power-cycled
-and is confirmed clean (`recover-node2.sh`, 16 PASS / 0 FAIL / 0 WARN,
-2026-09-15) — see CURRENT_STATE.md. Structural admission control now shipped
-on node 1 (see below); node 2 itself is reachable and healthy again but still
-has no ledger deployed yet, so remains the weaker of the two nodes for this
-specific failure mode until that deploy happens.**
+**Status: RESOLVED, admission control now deployed on both nodes.** Node 2
+was physically power-cycled and is confirmed clean (`recover-node2.sh`,
+16 PASS / 0 FAIL / 0 WARN, 2026-09-15) — see CURRENT_STATE.md. The
+resource-ownership/admission-control layer (see below) now runs on node 2
+too, not node 1 only — deployed and independently verified there later the
+same day (2026-09-15): a normal-sized launch is correctly admitted against
+node 2's own real `/proc/meminfo` and its own local lock file, and a
+deliberately oversized synthetic launch is correctly refused. See the
+"Update 2026-09-15" paragraph below for the deployment details.
 
 While gx-reason (77 GB mmap) was loaded, a second llama.cpp container was
 started on node 2 to run a CPU-only comparison — another 77 GB mmap on a 121 GiB
