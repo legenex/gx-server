@@ -10,6 +10,10 @@ repository, the exact revision and every verified file, so later tooling
 Usage:
     hf-verify.py REPO REVISION DIR [--include GLOB ...] [--exclude GLOB ...]
                  [--jobs N] [--no-hash] [--token-file PATH]
+    hf-verify.py REPO REVISION - --file REPO_PATH=LOCAL_PATH [...] --manifest OUT.json
+
+The second form verifies files that were moved out of the repository layout
+(e.g. into ComfyUI model folders) and writes the manifest to OUT.json.
 
 Exit status: 0 verified, 1 mismatch/missing, 2 usage or API error.
 Standard library only.
@@ -74,10 +78,23 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--jobs", type=int, default=4)
     ap.add_argument("--no-hash", action="store_true", help="size check only")
     ap.add_argument("--token-file")
+    ap.add_argument("--file", action="append", default=[], metavar="REPO_PATH=LOCAL_PATH")
+    ap.add_argument("--manifest", help="manifest output path (required with --file)")
     args = ap.parse_args(argv)
 
+    mapping: dict[str, Path] = {}
+    for item in args.file:
+        repo_path, sep, local = item.partition("=")
+        if not sep or not repo_path or not local:
+            print(f"ERROR: bad --file {item!r}", file=sys.stderr)
+            return 2
+        mapping[repo_path] = Path(local)
+    if mapping and not args.manifest:
+        print("ERROR: --file requires --manifest", file=sys.stderr)
+        return 2
+
     root = Path(args.directory)
-    if not root.is_dir():
+    if not mapping and not root.is_dir():
         print(f"ERROR: {root} is not a directory", file=sys.stderr)
         return 2
     try:
@@ -90,13 +107,18 @@ def main(argv: list[str] | None = None) -> int:
         print(f"ERROR: API returned revision {sha!r}, expected {args.revision}", file=sys.stderr)
         return 2
 
-    wanted = [s for s in listing.get("siblings", []) if _selected(s["rfilename"], args.include, args.exclude)]
-    problems: list[str] = []
+    if mapping:
+        wanted = [s for s in listing.get("siblings", []) if s["rfilename"] in mapping]
+        missing = set(mapping) - {s["rfilename"] for s in wanted}
+    else:
+        wanted = [s for s in listing.get("siblings", []) if _selected(s["rfilename"], args.include, args.exclude)]
+        missing = set()
+    problems: list[str] = [f"NOT IN REVISION {m}" for m in sorted(missing)]
     to_hash: list[tuple[Path, str, str]] = []
     total = 0
     for s in wanted:
         name = s["rfilename"]
-        local = root / name
+        local = mapping[name] if mapping else root / name
         size = s.get("size")
         if not local.is_file():
             problems.append(f"MISSING {name}")
@@ -135,17 +157,20 @@ def main(argv: list[str] | None = None) -> int:
         "hash_checked": not args.no_hash,
         "gated": listing.get("gated", False),
         "files": [
-            {"path": s["rfilename"], "size": s.get("size"), "sha256": verified_hashes.get(s["rfilename"])}
+            {"path": s["rfilename"], "size": s.get("size"), "sha256": verified_hashes.get(s["rfilename"]),
+             **({"local_path": str(mapping[s["rfilename"]])} if mapping else {})}
             for s in wanted
         ],
         "total_bytes": total,
         "include": args.include,
         "exclude": args.exclude,
     }
-    (root / ".gx-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    out = Path(args.manifest) if args.manifest else root / ".gx-manifest.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     print(
         f"VERIFIED {args.repo}@{sha}: {len(wanted)} files, {total / 2**30:.2f} GiB, "
-        f"{len(verified_hashes)} sha256-checked in {time.monotonic() - started:.0f}s"
+        f"{len(verified_hashes)} sha256-checked in {time.monotonic() - started:.0f}s -> {out}"
     )
     return 0
 
