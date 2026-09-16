@@ -133,3 +133,5 @@ same history is on GitHub under the tag `pre-github-migration-20260916`.
 
 gx10-02's previous non-Git copy is kept next to the checkout as
 `gx-cluster.pre-git-<timestamp>`.
+
+_Sync path last exercised end to end: 2026-09-16 13:44 SAST (TEST 1, D-026)._
