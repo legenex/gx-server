@@ -14,6 +14,7 @@ import threading
 import time
 import unittest
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 import zlib
@@ -196,7 +197,7 @@ class MediaApiTests(unittest.TestCase):
     def wait_video(self, job_id):
         for _ in range(200):
             status, body = self.call("GET", f"/v1/videos/{job_id}")
-            if body["status"] in ("completed", "failed"):
+            if body.get("status") in ("completed", "failed"):
                 return body
             time.sleep(0.02)
         self.fail("video job did not finish")
@@ -323,14 +324,14 @@ class MediaApiTests(unittest.TestCase):
         self.wait_video(first["id"])
         status, remix = self.call("POST", f"/v1/videos/{first['id']}/remix", {"prompt": "make it night"})
         self.assertEqual(status, 202, remix)
-        self.assertEqual(remix["remixed_from_video_id"], first["id"])
+        self.assertEqual(remix["remixed_from_video_id"], first["gx_id"])
         done = self.wait_video(remix["id"])
         self.assertEqual(done["status"], "completed")
         self.assertEqual(done["operation"], "v2v")
         status, by_ref = self.call("POST", "/v1/videos/edits", {"prompt": "turn the sky stormy",
                                                                 "video": {"id": first["id"]}})
         self.assertEqual(status, 202, by_ref)
-        self.assertEqual(by_ref["remixed_from_video_id"], first["id"])
+        self.assertEqual(by_ref["remixed_from_video_id"], first["gx_id"])
         self.wait_video(by_ref["id"])
         self.assertEqual(self.staged_files(), [])
 
@@ -354,6 +355,26 @@ class MediaApiTests(unittest.TestCase):
         status, payload = self.call("POST", "/v1/videos", {"prompt": "c"})
         self.wait_video(payload["id"])
         self.assertEqual(self.comfy.frees, before + 1, "switching to video must free the image weights")
+
+    def test_video_ids_are_gateway_encoded_and_accepted_in_both_forms(self):
+        from gx_media_router.jobs import gateway_video_id, plain_job_id
+        status, created = self.call("POST", "/v1/videos", {"prompt": "encoded ids"})
+        self.assertTrue(created["id"].startswith("video_"))
+        self.assertNotIn("/", created["id"])
+        self.assertNotIn("+", created["id"])
+        plain = created["gx_id"]
+        self.assertEqual(plain_job_id(created["id"]), plain)
+        self.assertEqual(gateway_video_id(plain), created["id"])
+        for ident in (created["id"], plain, urllib.parse.quote(created["id"], safe="")):
+            with self.subTest(ident=ident[:12]):
+                status, body = self.call("GET", f"/v1/videos/{ident}")
+                self.assertEqual(status, 200)
+                self.assertEqual(body["gx_id"], plain)
+        self.wait_video(created["id"])
+        status, remix = self.call("POST", f"/v1/videos/{created['id']}/remix", {"prompt": "x"})
+        self.assertEqual(status, 202)
+        self.assertEqual(remix["remixed_from_video_id"], plain)
+        self.wait_video(remix["id"])
 
     def test_listing_and_workflows(self):
         status, body = self.call("GET", "/v1/videos")

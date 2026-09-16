@@ -39,11 +39,13 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from . import __version__, uploads, validation as v
 from .config import Config
 from .errors import AuthError, NotFoundError, RouterError, ValidationError
+from .jobs import plain_job_id
 from .service import MediaService
 
 log = logging.getLogger("gx-media.http")
 
-_ID = r"[A-Za-z0-9\-]{1,64}"
+#: plain router ids (image-/video-<hex>) or their gateway-encoded form
+_ID = r"[A-Za-z0-9\-_=%]{1,160}"
 _IMAGE_CONTENT = re.compile(rf"^/v1/images/(?P<id>{_ID})/content(?:/(?P<index>\d{{1,2}}))?$")
 _VIDEO_STATUS = re.compile(rf"^/v1/videos/(?P<id>{_ID})$")
 _VIDEO_CONTENT = re.compile(rf"^/v1/videos/(?P<id>{_ID})/content$")
@@ -191,7 +193,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
         try:
             parsed = urllib.parse.urlsplit(self.path)
-            path = parsed.path
+            path = urllib.parse.unquote(parsed.path)
             query = urllib.parse.parse_qs(parsed.query, max_num_fields=10)
             if path in ("/health", "/healthz", "/v1/health"):
                 status = self.service.health()
@@ -230,7 +232,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         try:
-            path = self.path.split("?", 1)[0]
+            path = urllib.parse.unquote(self.path.split("?", 1)[0])
             self._authenticate()
             if path == "/v1/images/generations":
                 self._images()
@@ -451,6 +453,8 @@ class Handler(BaseHTTPRequestHandler):
             source_id = ref["id"]
             if not re.fullmatch(_ID, source_id):
                 raise ValidationError("video.id is not a valid id", param="video")
+        if source_id is not None:
+            source_id = plain_job_id(source_id)
         if data is None and source_id is None:
             raise ValidationError("a source `video` (file, base64, or {\"id\": ...}) is required", param="video")
 
@@ -484,10 +488,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def _accepted(self, job) -> None:
         payload = job.public()
-        payload["poll_url"] = f"/v1/videos/{job.id}"
+        payload["poll_url"] = f"/v1/videos/{payload['id']}"
         payload["note"] = "video generation takes minutes; poll poll_url until status=completed"
         self._json(HTTPStatus.OK if self._openai_client() else HTTPStatus.ACCEPTED, payload,
-                   {"Location": f"/v1/videos/{job.id}"})
+                   {"Location": payload["poll_url"]})
 
     def _openai_client(self) -> bool:
         """LiteLLM's OpenAI video client expects 200 on create, like OpenAI."""

@@ -323,7 +323,7 @@ class FullStackTests(unittest.TestCase):
         self.assertEqual(graph["12"]["inputs"]["noise_seed"], graph["13"]["inputs"]["noise_seed"])
         self.assertEqual(payload["object"], "video")
         self.assertEqual(payload["progress"], 100)
-        self.assertEqual(graph["16"]["inputs"]["filename_prefix"], f"gx-video/{job_id}")
+        self.assertEqual(graph["16"]["inputs"]["filename_prefix"], f"gx-video/{payload['gx_id']}")
         status, content = self.call("GET", f"/v1/videos/{job_id}/content")
         self.assertEqual(status, 200)
         self.assertEqual(content, MP4_STUB)   # the primary output is the mp4, not the thumbnail

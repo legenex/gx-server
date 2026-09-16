@@ -8,6 +8,9 @@ Every generation -- synchronous image or asynchronous video -- must hold
 
 from __future__ import annotations
 
+import base64
+import binascii
+import re
 import threading
 import time
 import uuid
@@ -19,6 +22,34 @@ from .comfy import Artefact
 from .errors import BusyError, NotFoundError
 
 JobStatus = Literal["queued", "running", "completed", "failed"]
+
+#: LiteLLM's OpenAI video client encodes the serving deployment into the video
+#: id and needs it on every later call (status, content). It fills it in for
+#: creates but not for edits/remixes, and keeps an id that is already encoded,
+#: so the router hands out encoded ids itself (D-031).
+_GATEWAY_ID_TEMPLATE = "litellm:custom_llm_provider:openai;model_id:gx-video;video_id:{}"
+_GATEWAY_PREFIX = "video_"
+_PLAIN_ID = re.compile(r"^(image|video)-[0-9a-f]{16}$")
+
+
+def gateway_video_id(plain: str) -> str:
+    raw = _GATEWAY_ID_TEMPLATE.format(plain).encode()
+    return _GATEWAY_PREFIX + base64.b64encode(raw).decode()
+
+
+def plain_job_id(value: str) -> str:
+    """Accept a plain router id or its gateway-encoded form."""
+    if value.startswith(_GATEWAY_PREFIX):
+        body = value[len(_GATEWAY_PREFIX):]
+        body += "=" * (-len(body) % 4)
+        try:
+            decoded = base64.b64decode(body.replace("-", "+").replace("_", "/"), validate=False).decode()
+        except (binascii.Error, UnicodeDecodeError, ValueError):
+            return value
+        for part in decoded.split(";"):
+            if part.startswith("video_id:"):
+                return part[len("video_id:"):]
+    return value
 
 
 class GenerationSlot:
@@ -119,7 +150,8 @@ class Job:
         fps = params.get("fps")
         length = params.get("length")
         body: dict = {
-            "id": self.id,
+            "id": gateway_video_id(self.id) if self.kind == "video" else self.id,
+            "gx_id": self.id,
             "object": "video" if self.kind == "video" else "image.generation",
             "status": self._OPENAI_STATUS[self.status] if self.kind == "video" else self.status,
             "model": f"gx-{self.kind}",
@@ -168,7 +200,11 @@ class JobStore:
     def create(self, kind: str, workflow: str, prompt: str, params: dict, *,
                operation: str = "generate", staged: tuple[str, ...] = (),
                source_job: str | None = None) -> Job:
-        job = Job(id=f"{kind}-{uuid.uuid4().hex[:16]}", kind=kind, workflow=workflow,
+        job_id = f"{kind}-{uuid.uuid4().hex[:16]}"
+        while kind == "video" and any(c in gateway_video_id(job_id) for c in "+/"):
+            # Keep the gateway form path-safe: no '+' or '/' in the base64.
+            job_id = f"{kind}-{uuid.uuid4().hex[:16]}"
+        job = Job(id=job_id, kind=kind, workflow=workflow,
                   prompt=prompt, params=params, operation=operation, staged=staged,
                   source_job=source_job)
         with self._lock:
@@ -178,6 +214,7 @@ class JobStore:
         return job
 
     def get(self, job_id: str) -> Job:
+        job_id = plain_job_id(job_id)
         with self._lock:
             job = self._jobs.get(job_id)
         if job is None:
