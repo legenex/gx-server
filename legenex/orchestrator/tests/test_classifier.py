@@ -129,8 +129,14 @@ class TestTierSelection(unittest.TestCase):
     def test_dispatch_to_mini(self):
         self.assertIs(route(msg("Classify this ticket into one of three buckets.")).tier, Tier.MINI)
 
-    def test_tool_floor_raises_to_fast(self):
+    def test_lightweight_tool_request_stays_on_mini(self):
+        # D-030: attached tools alone no longer raise the tier. gx-mini is the
+        # lightweight-tools tier; only actionable coding work gets the floor.
         d = route(msg("look it up", tools=[{"name": "search"}]))
+        self.assertIs(d.tier, Tier.MINI)
+
+    def test_tool_floor_raises_actionable_coding_to_fast(self):
+        d = route(msg("fix the bug in app.py", tools=[{"name": "apply_diff"}]))
         self.assertIs(d.tier, Tier.FAST)
 
     def test_hard_reasoning_to_reason_not_max(self):
@@ -392,10 +398,10 @@ class TestMixedSignals(unittest.TestCase):
         self.assertIs(d.tier, Tier.REASON)
         self.assertTrue(TIERS[d.tier].vision)
 
-    def test_image_plus_tools_plus_trivial_dispatch_still_gets_tool_floor(self):
-        # Trivial + tools alone raises gx-mini -> gx-fast (the tool floor).
-        # Adding an image must not undo that, and gx-fast is already
-        # vision-capable so no further override is needed.
+    def test_image_plus_tools_plus_trivial_dispatch_stays_on_vision_mini(self):
+        # D-030: a trivial dispatch call with a tool attached is gx-mini work
+        # (lightweight tools). The image does not change that, because
+        # gx-mini is vision-capable.
         payload = img_msg(
             "Classify this ticket into one of three buckets." + NEUTRAL_PAD,
             tools=[{"name": "classify"}],
@@ -404,7 +410,7 @@ class TestMixedSignals(unittest.TestCase):
         self.assertTrue(f.has_images)
         self.assertTrue(f.has_tools)
         d = route(payload)
-        self.assertIs(d.tier, Tier.FAST)
+        self.assertIs(d.tier, Tier.MINI)
         self.assertTrue(TIERS[d.tier].vision)
 
     def test_image_alone_on_huge_context_still_respects_context_constraint(self):

@@ -44,6 +44,10 @@ class TierSpec:
     tools: bool
     exclusive_cluster: bool = False
     cost_rank: int = 0
+    #: Largest completion the served engine accepts. gx-auto clamps a
+    #: client's `max_tokens` to this before forwarding (agent clients ask for
+    #: their whole window on every turn).
+    max_output: int = 8_192
     notes: str = ""
 
 
@@ -53,31 +57,36 @@ TIERS: dict[Tier, TierSpec] = {
     Tier.MINI: TierSpec(
         alias=Tier.MINI,
         node="gx10-01",
+        # llama.cpp --ctx-size 131072 --parallel 2 -> 65536 per request slot.
         max_context=65_536,
         vision=True,
         tools=True,
         cost_rank=1,
-        notes="Qwen3.5-4B Q4_K_M + BF16 mmproj on llama.cpp. Multimodal, always-hot.",
+        max_output=8_192,
+        notes="HauhauCS/Qwen3.5-4B-Uncensored-HauhauCS-Aggressive Q4_K_M + BF16 mmproj on "
+              "llama.cpp. Multimodal, resident.",
     ),
     Tier.FAST: TierSpec(
         alias=Tier.FAST,
         node="gx10-01",
-        max_context=262_144,
+        # vLLM --max-model-len 131072.
+        max_context=131_072,
         vision=True,
         tools=True,
         cost_rank=2,
-        notes="nvidia/Qwen3.6-35B-A3B-NVFP4 on vLLM. Vision + native tool calling.",
+        max_output=32_768,
+        notes="kyaky/Qwen3.6-35B-A3B-Uncensored-NVFP4 on vLLM. Primary coding/tool tier, warm.",
     ),
     Tier.REASON: TierSpec(
         alias=Tier.REASON,
         node="gx10-02",
-        # Served context is deliberately below the model's 262k native window:
-        # gx-reason already occupies ~86GiB of node 2's 121GiB.
-        max_context=131_072,
+        # vLLM --max-model-len as served on node 2.
+        max_context=65_536,
         vision=True,
         tools=True,
         cost_rank=3,
-        notes="nvidia/Qwen3.6-27B-NVFP4 on vLLM (D-021). Owns node 2's heavy slot.",
+        max_output=32_768,
+        notes="Single-node reasoning tier on node 2 (see node02.yaml for the bound checkpoint).",
     ),
     Tier.MAX: TierSpec(
         alias=Tier.MAX,
@@ -87,7 +96,8 @@ TIERS: dict[Tier, TierSpec] = {
         tools=True,
         exclusive_cluster=True,
         cost_rank=4,
-        notes="DeepSeek V4 Flash NVFP4 on SGLang TP=2 across both nodes.",
+        max_output=65_536,
+        notes="dealignai/DeepSeek-V4-Flash-0731-CRACK-NVFP4 on SGLang TP=2 across both nodes.",
     ),
 }
 
