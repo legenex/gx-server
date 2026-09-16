@@ -17,7 +17,8 @@ n2() { ssh -o BatchMode=yes -o ConnectTimeout=10 "${GXMAX_NODE2_SSH}" "$@"; }
 # The SGLang argument vector, shared by both ranks. Only --node-rank differs.
 #
 # The LOCKED parts (engine, --model-path, --tp 2, --nnodes 2, the DSV4/b12x
-# backend selection) are literals here and must stay literals. The memory
+# backend selection) are literals here and must stay literals; the MoE runner
+# follows the official cookbook cell for the checkpoint (GXMAX_QUANT_CELL). The memory
 # sizing values come from gx-max.conf, whose defaults are the verified 4b96e49
 # / official-cookbook values (D-025). With the defaults this emits the 4b96e49
 # vector plus --enable-metrics (D-002); only the flag ORDER differs, because
@@ -31,10 +32,21 @@ gxmax_args() {
     --tp 2 \
     --nnodes 2 \
     --node-rank "${rank}" \
-    --dist-init-addr "${GXMAX_DIST_ADDR}" \
-    --moe-runner-backend flashinfer_cutlass \
-    --speculative-moe-runner-backend b12x \
-    --disable-shared-experts-fusion \
+    --dist-init-addr "${GXMAX_DIST_ADDR}"
+  # MoE runner selection: the ONLY difference between the two official DGX
+  # Spark cookbook cells (sgl-project/sglang deepseek-v4.jsx, 2026-09-17).
+  case "${GXMAX_QUANT_CELL:-fp4}" in
+    fp4)
+      printf '%s\n' --moe-runner-backend b12x ;;
+    nvfp4)
+      printf '%s\n' --moe-runner-backend flashinfer_cutlass \
+        --speculative-moe-runner-backend b12x \
+        --disable-shared-experts-fusion ;;
+    *)
+      echo "gx-max.conf: unknown GXMAX_QUANT_CELL '${GXMAX_QUANT_CELL}'" >&2
+      return 1 ;;
+  esac
+  printf '%s\n' \
     --speculative-algorithm DSPARK \
     --weight-loader-drop-cache-after-load \
     --startup-weight-load-mode serial \
