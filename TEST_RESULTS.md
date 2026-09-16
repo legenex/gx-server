@@ -1061,3 +1061,16 @@ sent while gx-max was down, produced this result:
     harness now fails honestly in that case.
 * **After `docker restart gx-llama-swap-node01`:** `acceptance.sh mini auto`
   passed 5/5.
+
+**Post-release acceptance, full suite: 15 PASS / 0 FAIL / 1 SKIP.**
+
+* **Passing:**
+  * all 7 aliases exposed;
+  * gx-mini (text and vision), gx-fast (text and tools), gx-reason;
+  * gx-auto (3 routes);
+  * ingress boundary;
+  * gx-image;
+  * gx-video (166,467-byte MP4);
+  * gateway restart recovery.
+* **Skipped:** "gx-max refusal correctness", correctly, because gx-max is now
+  admissible. The serving path is covered above.
