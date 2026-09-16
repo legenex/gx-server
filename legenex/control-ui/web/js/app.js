@@ -190,6 +190,13 @@ function pageContext() {
 
 function initShell() {
   window.addEventListener('hashchange', route);
+  // Close the mobile drawer on every nav click, including a click on the
+  // page that is already open (which fires no hashchange).
+  $('sidenav').addEventListener('click', (ev) => {
+    if (!ev.target.closest('a')) return;
+    document.body.classList.remove('nav-open');
+    $('nav-toggle').setAttribute('aria-expanded', 'false');
+  });
   $('nav-toggle').addEventListener('click', () => {
     const open = !document.body.classList.contains('nav-open');
     document.body.classList.toggle('nav-open', open);
