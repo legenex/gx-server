@@ -314,7 +314,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _image_response(self, job, fmt: str, extra: dict) -> None:
         data = []
-        outputs = [a for a in job.artefacts if not a.thumbnail]
+        outputs = [a for a in job.artefacts if not a.thumbnail and a.media_type.startswith("image/")]
         for index in range(len(outputs)):
             if fmt == "b64_json":
                 payload, _, _ = self.service.content(job, index)

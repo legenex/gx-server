@@ -181,7 +181,9 @@ class MediaService:
         elif variant not in (None, "", "video", "image"):
             raise ValidationError("variant must be 'thumbnail' or omitted", param="variant")
         else:
-            outputs = [a for a in job.artefacts if not a.thumbnail]
+            primary = job.primary()
+            outputs = [primary] if primary is not None else []
+            outputs += [a for a in job.artefacts if not a.thumbnail and a is not primary]
             try:
                 artefact = outputs[index]
             except IndexError:

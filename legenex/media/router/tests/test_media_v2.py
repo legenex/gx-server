@@ -381,6 +381,25 @@ class MediaApiTests(unittest.TestCase):
         self.assertEqual(remix["remixed_from_video_id"], plain)
         self.wait_video(remix["id"])
 
+    def test_video_content_is_the_video_even_when_an_image_output_comes_first(self):
+        from gx_media_router.comfy import Artefact, Result
+        original = self.comfy.wait
+
+        def wait(prompt_id, **kw):
+            return Result(prompt_id, (
+                Artefact("keyframe_00001_.png", "gx-video", "output", "images"),
+                Artefact("out_00001_.mp4", "gx-video", "output", "images"),
+                Artefact("thumb_00001_.png", "gx-video", "output", "images", thumbnail=True),
+            ), 0.1)
+        self.comfy.wait = wait
+        try:
+            status, created = self.call("POST", "/v1/videos", {"prompt": "order"})
+            self.wait_video(created["id"])
+            status, content = self.call("GET", f"/v1/videos/{created['id']}/content")
+        finally:
+            self.comfy.wait = original
+        self.assertEqual((status, content), (200, MP4_STUB))
+
     def test_listing_and_workflows(self):
         status, body = self.call("GET", "/v1/videos")
         self.assertEqual(status, 200)
