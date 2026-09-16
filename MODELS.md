@@ -52,28 +52,46 @@ Alternatives considered:
   repo recipes referenced. Note the repo's `Alibaba/Qwen3.5-35B-A3B-Uncensored-HauhauCS-*`
   path was a **local folder, not an upstream ID** — fetching it returns HTTP 401.
 
-## gx-reason — `et0dev/Qwen3.5-122B-A10B-NVFP4-FP8Dense-GB10`
+## gx-reason — `nvidia/Qwen3.6-27B-NVFP4`
+
+**LIVE since 2026-09-16.** This tier was re-engined after B-011; see the
+"superseded" note below for what it replaced and why.
 
 | Field | Value |
 |---|---|
-| Verified | `GET https://huggingface.co/api/models/et0dev/Qwen3.5-122B-A10B-NVFP4-FP8Dense-GB10` → **HTTP 200**, `gated: false` |
-| Quantisation | NVFP4 experts + FP8 W8A8 dense + BF16 lm_head |
+| Verified | `GET https://huggingface.co/api/models/nvidia/Qwen3.6-27B-NVFP4` → **HTTP 200**, `gated: false`, `private: false` |
+| Quantisation | NVIDIA ModelOpt `MIXED_PRECISION` — W4A16_NVFP4 MLP + FP8 linear-attention projections, FP8 KV cache. vLLM resolves it as `modelopt_mixed`. |
 | License | Apache-2.0 |
-| Disk | 78.8 GB |
-| Engine | **stock** vLLM — packaged as standard compressed-tensors, no fork needed |
+| Disk | **20.42 GiB** (21,921,697,184 B, 3 shards — measured on disk, matches the HF API exactly) |
+| Engine | vLLM, `jstarkg/vllm-gb10-flashnext:0.28-sm121-r6` — the **same image already proven for gx-fast** |
 | Node | gx10-02 |
-| Context | 262 144 native; **served at 131 072** (memory headroom) |
-| Vision | Yes |
-| Tools | Yes |
-| Expected RAM | ~86 GiB — **must own node 2 exclusively**, do not co-schedule with ComfyUI |
-| Why | Built specifically for DGX Spark. The runner-up `-Full-GB10` (70.8 GB, all-FP4) is ~45% faster but its author documents a real quality regression from 4-bit dense activations. gx-reason is the *quality* tier, so quality wins. |
+| Architecture | `Qwen3_5ForConditionalGeneration`, dense 27B, 64 layers, hybrid attention (3× linear/GDN : 1× full) |
+| Context | 262 144 native; **served at 65 536** (KV headroom, per D-009) |
+| Vision | Yes — the checkpoint carries a `vision_config` and image/video processors |
+| Tools | Yes (`--tool-call-parser qwen3_xml`) — configured, not yet exercised live |
+| Measured RAM | **~44 GiB** node-level with `--gpu-memory-utilization 0.35` (MemAvailable 114 → 70 GiB). Still owns node 2 exclusively — do not co-schedule with ComfyUI. |
+| Measured speed | 12.4 tok/s generation; 401 s cold start |
+| Why | It is the same `qwen3_5` hybrid-attention family that gx-fast already runs correctly on vLLM on this exact hardware, so it reuses a confirmed-good engine/architecture pairing. Dense 27B activates its full parameter count per token — a real compute step up from gx-fast's ~3B active — while being small enough to dodge B-009's ~55 GiB vLLM ceiling. |
 
-**There is no Qwen3.6 or Qwen3.8 in the 100–125B class.** That is a genuine
-upstream generation gap, so this tier stays on Qwen3.5. Vendor fallback if the
-community build misbehaves: `nvidia/Qwen3.5-122B-A10B-NVFP4` (83.5 GB).
+### Superseded gx-reason candidates (do not re-deploy without reading B-011)
 
-No speculative decoding: this checkpoint's MTP tensors are BF16 raw copies vLLM
-cannot load.
+Two 122B-class checkpoints were tried for this tier before it was re-engined.
+Both are still on node 2's disk and neither is in use:
+
+| Checkpoint | On disk (node 2) | Status |
+|---|---|---|
+| `unsloth/Qwen3.5-122B-A10B-GGUF` (UD-Q4_K_XL) | 73 GB at `/srv/models/gguf/Qwen3.5-122B-A10B` | **Rejected.** Loads and generates, but every token is garbage on this llama.cpp build's CUDA path (B-011). CPU-only output is coherent, so the checkpoint is fine and the kernels are not. |
+| `et0dev/Qwen3.5-122B-A10B-NVFP4-FP8Dense-GB10` | 74 GB at `/srv/models/vllm/Qwen3.5-122B-A10B-NVFP4-FP8Dense-GB10` | **Never deployed.** Downloaded as the vLLM candidate for this tier; superseded by the decision in D-021 before it was ever served. |
+
+**147 GB of node-2 disk is held by these two unused checkpoints.** Deleting
+them is a real reclaim, but it is a destructive, hard-to-undo action on
+large downloads and needs a human decision — it is NOT done unilaterally.
+Node 2 currently has 265 GB free, so there is no pressure to decide now.
+
+**Note on the old "no Qwen3.6 in the 100-125B class" reasoning:** that gap is
+real and still true, but it stopped mattering once the tier was re-scoped from
+"biggest model that fits" to "most compute per token on an engine that is
+actually correct here". See `coordination/DECISIONS.md` D-021.
 
 ## gx-max — `nvidia/DeepSeek-V4-Flash-0731-NVFP4`
 
@@ -160,7 +178,9 @@ endpoint rather than a batch job.
 |---|---|---|
 | DeepSeek V4 Flash | both | 164 GB each (duplicated — no shared FS) |
 | Qwen3.6-35B-A3B-NVFP4 | node 1 | 23.5 GB |
-| Qwen3.5-122B (gx-reason) | node 2 | 78.8 GB |
+| Qwen3.6-27B-NVFP4 (gx-reason, LIVE) | node 2 | 20.4 GiB |
+| Qwen3.5-122B-A10B-NVFP4-FP8Dense-GB10 (unused) | node 2 | 74 GB |
+| Qwen3.5-122B-A10B GGUF (rejected, B-011) | node 2 | 73 GB |
 | Qwen3.5-4B GGUF | node 1 | 3.2 GB |
 | Media models (staged) | node 2 | ~147 GB |
 

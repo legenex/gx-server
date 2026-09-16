@@ -9,6 +9,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (2026-09-16 session)
+- **gx-reason is live for the first time; B-011 is CLOSED.**
+  `nvidia/Qwen3.6-27B-NVFP4` (20.42 GiB, verified against the live HF API
+  before download) deployed to node 2 and exercised end to end. The original
+  B-011 repro prompt -- `"The capital of France is"` at `temperature 0`,
+  which produced `////////////////////` on every run under llama.cpp -- now
+  returns `" Paris."`. Through the real LiteLLM gateway, a multi-step
+  reasoning question is answered correctly with `reasoning_content`
+  separated from `content`. Cold start 401 s, 12.4 tok/s, ~44 GiB footprint,
+  unload returns the memory in ~5 s. Full numbers in `TEST_RESULTS.md` §14.
+- **gx-reason vision verified.** The replacement checkpoint is multimodal, so
+  `supports_vision: true` was added to its gateway entry — and then actually
+  exercised rather than assumed: a generated image of three blue circles sent
+  through the gateway was described correctly as "3 blue"
+  (`TEST_RESULTS.md` §14.4). No `gx-vision` alias was added; vision remains a
+  model capability, per L-10.
+- **B-021 recorded: `--memory` cgroup caps do not bound a model's real
+  footprint on this unified-memory hardware.** Measured with gx-reason
+  loaded: the node lost 44 GiB of MemAvailable while the container's own
+  `memory.current` read 10.92 GiB, because the CUDA pool is not charged to
+  the container cgroup. The admission guard is unaffected (it reads real
+  `/proc/meminfo`); `--gpu-memory-utilization` is the real bound.
+
+### Changed (2026-09-16 session)
+- `legenex/gateway/litellm/config.yaml`: gx-reason's stale "CHECKPOINT
+  PENDING VERIFICATION" block replaced with the real checkpoint, and its
+  token budget corrected from the removed model's 32768 context to the
+  current 65536 -- split 49152 in / 16384 out rather than gx-fast's
+  57344/8192, because a single simple question measured 1468 reasoning
+  tokens and `<think>` content spends the OUTPUT budget on this tier.
+- `legenex/gateway/llama-swap/node02.yaml`: measured figures replace
+  estimates (cold-start timing, 20.42 GiB weights, ~44 GiB real footprint),
+  the "not yet live-tested" caveat is replaced with the verification record,
+  the host-resilience comment's overstated claim that `--memory` enforces
+  the full ceiling is corrected per B-021, and a reference to a
+  non-existent `-dry-run` flag is fixed to the real `-validate`.
+- `resource_guard.py`: gx-reason's 45 GiB `WORKLOAD_SIZING` entry is now
+  backed by a live measurement (~44 GiB) instead of being a documented
+  guess, with a warning not to re-derive it from `docker stats`.
+
+### Fixed (2026-09-16 session)
+- **`coordination/BLOCKERS.md` B-020's prescription was wrong and has been
+  corrected.** It required "a human physically present at gx10-02 to
+  power-cycle it". Node 2's `uptime` proves no reboot ever occurred
+  (22 h continuous, straight through the incident) and
+  `docker inspect gx-max-rank1` shows `OOMKilled=true` 80 minutes in. The
+  playbook now says to wait out ~80 minutes and re-probe before dispatching
+  a human. B-016 (no *remote* power-cycle path) is unchanged.
+- Stale node-2 residency bookkeeping (`gx-max-rank1`) cleared through the
+  sanctioned `resource-guard.sh` release path, which reconciled it
+  automatically on read -- B-020 follow-up step 3.
+- `TEST_RESULTS.md` had two different sessions both numbered `## 12`; the
+  later one is renumbered to `## 13`.
+
 ### Added (2026-09-15/16 session)
 - **gx-max's B-017 admission-guard deadlock resolved.** gx-max now uses its
   own smaller, explicit reserve (`GXMAX_GUARD_RESERVE_GIB`, 5 GiB) instead
@@ -21,8 +75,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   D-021): the confirmed-broken `unsloth/Qwen3.5-122B-A10B-GGUF`/llama.cpp
   combination (B-011) is rejected; `legenex/gateway/llama-swap/node02.yaml`
   now serves `nvidia/Qwen3.6-27B-NVFP4` on vLLM, the same proven engine
-  image already serving gx-fast. Config only -- not yet live-tested (node2
-  went down, B-020, before the checkpoint could be downloaded).
+  image already serving gx-fast. (Config only at the time; **live-tested and
+  closed out 2026-09-16** -- see below.)
 - gx-mini and gx-fast independently re-verified live through the real
   gateway: gx-mini answered a factual prompt correctly, gx-fast (real
   ~2m7s cold start) correctly solved a multi-step logic question.
@@ -33,11 +87,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   B-020) -- `gx-max-start.sh` and `resource_guard.py`'s `WORKLOAD_SIZING`
   both updated to match.
 
-### Known issue introduced this session, not yet fixed
-- **B-020: node 2 is physically wedged** (needs a human power-cycle, no
-  remote path exists) after the above gx-max run's rank0 OOM-killed and
-  the automatic cleanup could not reach node2 to tear down the orphaned
-  rank1. Full incident record in `coordination/BLOCKERS.md` B-020.
+### Known issue introduced that session — RESOLVED 2026-09-16
+- ~~**B-020: node 2 is physically wedged** (needs a human power-cycle, no
+  remote path exists)~~ — **node 2 recovered itself; no power cycle was
+  ever performed.** The kernel OOM-killed the orphaned rank1 after 80
+  minutes and userspace un-starved on its own. See the 2026-09-16 entries
+  below and the corrected `coordination/BLOCKERS.md` B-020.
 
 ### Added
 - **Independent multi-agent review of this session's own changes (4

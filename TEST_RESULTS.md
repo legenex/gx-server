@@ -356,7 +356,13 @@ $ legenex/tests/acceptance.sh gateway mini fast
 Run after a full gateway restart and after the gx-max lifecycle cycle, so it
 also demonstrates recovery.
 
-## 7. gx-reason — FAILING
+## 7. gx-reason — FAILING (SUPERSEDED — fixed 2026-09-16, see §14)
+
+> This section records the ORIGINAL failure on the llama.cpp engine. That
+> engine/model combination was replaced (D-021) and the tier now works; the
+> repro below is exactly what §14 re-runs successfully. Kept because it is
+> the evidence that condemns the llama.cpp CUDA path for this architecture.
+
 
 `unsloth/Qwen3.5-122B-A10B-GGUF` (UD-Q4_K_XL, 77 GB) on llama.cpp loads
 correctly and generates at ~13.6 tok/s, but **every token is garbage**:
@@ -524,7 +530,7 @@ validate documentation against reality before merging the seed files:
 
 ---
 
-## 12. 2026-09-15/16 session — B-017 fix, gx-mini/gx-fast re-verification, gx-max attempt, B-020 incident
+## 13. 2026-09-15/16 session — B-017 fix, gx-mini/gx-fast re-verification, gx-max attempt, B-020 incident
 
 ### gx-mini — real, through the gateway
 
@@ -604,3 +610,99 @@ reached, and the kernel `apt-mark hold` needs an interactive sudo password
 neither this nor any prior session has had.
 
 Full detail and the updated operational picture: `CURRENT_STATE.md`.
+
+## 14. 2026-09-16 session — node 2 self-recovery, B-011 closed, gx-reason live
+
+All results below are from live runs against both real nodes on 2026-09-16,
+not re-reads of earlier notes.
+
+### 14.1 Node 2 recovered without a power cycle (B-020 corrected)
+
+The previous session recorded node 2 as physically wedged and needing a human
+at the machine. It was not, and it did not:
+
+| Probe | Result |
+|---|---|
+| `uptime` on gx10-02 | 22 h 07 m at 07:41 → boot 2026-09-15 09:33, i.e. *before* the 23:24 incident. Never rebooted. |
+| `docker inspect gx-max-rank1` | `StartedAt 2026-09-15T21:24:47Z`, `FinishedAt 2026-09-15T22:44:48Z`, `ExitCode=1`, **`OOMKilled=true`** |
+| `docker inspect gx-llama-swap-node02` | `ExitCode=0`, `OOMKilled=false`, finished `21:24:46Z` — one second *before* rank1 started, i.e. the gx-max drain, not a casualty |
+| `docker events` for its 07:35:10 restart | compose labels (`com.docker.compose.project=gx-gateway`) — a human running the documented RECOVERY.md §4 command |
+| `recover-node2.sh` | 14 PASS / 0 FAIL / 1 SKIP (the 2 WARNs were llama-swap being down, before that restart) |
+
+The orphaned rank1 held the node for **80 minutes** and was then OOM-killed
+against its own `--memory 106g` cap; userspace un-starved on its own. The
+B-012 host-resilience design worked — slowly.
+
+### 14.2 gx-reason A–E (B-011 closed)
+
+Checkpoint: `nvidia/Qwen3.6-27B-NVFP4`, verified against the live HF API
+before download (ungated, apache-2.0). On disk at
+`/srv/models/vllm/Qwen3.6-27B-NVFP4`: 21,921,697,184 B across 3 shards =
+**20.42 GiB**, byte-for-byte the sizes HF advertises. Download took 3 m 27 s.
+
+| Test | What was run | Result |
+|---|---|---|
+| **A** — publish | `GET /v1/models` on `192.168.100.11:28080` with the fabric bearer token | PASS — exactly one model, `gx-reason`, `status: unloaded`. Unauthenticated request correctly refused. |
+| **B** — cold start | first request triggers the vLLM launch | PASS — **401 s** to first token: ~225 s weight load (~75 s per 10 GiB shard), 177 s engine init/profile/warmup (31 s compilation). `quantization=modelopt_mixed`, `reasoning_parser='qwen3'`, `max_seq_len=65536`. |
+| **C** — the B-011 repro | `POST /v1/completions`, prompt `"The capital of France is"`, `temperature 0`, `max_tokens 20` — *identical* to the failing call | **PASS — `" Paris."`** (previously `"////////////////////"`), HTTP 200 |
+| **D** — gateway E2E | bat-and-ball problem through LiteLLM `:4000` as `gx-reason` | PASS — `ANSWER: $0.05` (correct; `$0.10` is the intuitive-but-wrong trap). 1690 completion tokens, **1468 of them reasoning tokens**, `reasoning_content` separated from `content`. 12.4 tok/s. |
+| **E** — unload | `POST /api/models/unload` | PASS — container gone in ~5 s, MemAvailable 70 → **116 GiB** |
+
+**Why this is a genuine fix rather than a lucky substitution:** vLLM's own
+logs show it selecting the GDN linear-attention kernels for this checkpoint
+(`Using Triton/FLA GDN prefill kernel`, `GDN decode kernel: cuda`) — the same
+hybrid linear-attention/full-attention path llama.cpp implemented incorrectly.
+The architecture was never the problem, as D-021 predicted.
+
+### 14.3 Memory — measured, and one surprise (B-021)
+
+| Measurement | Value |
+|---|---|
+| Node 2 MemAvailable, idle | 114 GiB |
+| Node 2 MemAvailable, gx-reason loaded | 70 GiB |
+| **Real node-level footprint** | **~44 GiB** (vs 42 GiB predicted by `--gpu-memory-utilization 0.35` × 121 GiB) |
+| Container `memory.current` (cgroup v2) | **10.92 GiB** |
+| `docker stats` MemUsage | 9.65 GiB / 45 GiB (21.45 %) |
+| Largest in-container process RSS | 5.78 GiB (`VLLM::EngineCor`) |
+
+The 45 GiB admission estimate in `resource_guard.py` measured true. But
+~33 GiB of the real footprint is **invisible to the container's memory
+cgroup** — the CUDA pool is not charged to it on this unified-memory
+platform, so `--memory 45g` does not bound it. Recorded as **B-021**. The
+admission guard is unaffected: it reads the node's real `/proc/meminfo`.
+
+Separately confirmed while gx-reason was loaded: the residency ledger read
+`{}` the whole time, because llama-swap launches models with a plain
+`docker run` rather than through `gx_guard_run`. That is the known B-018 gap,
+and it applies to gx-reason exactly as it does to ComfyUI. It is not a safety
+hole today (the guard's own check reads real memory, not the ledger), but the
+ledger under-reports node-2 residency to anything that trusts it alone.
+
+### 14.4 Vision — verified (F)
+
+The replacement checkpoint is multimodal (`Qwen3_5ForConditionalGeneration`
+with a `vision_config` plus image/video processors), so `supports_vision:
+true` was added to its gateway entry. Rather than ship that as an untested
+capability claim, it was exercised:
+
+* Input: a generated 320×160 PNG containing **three blue circles** on white,
+  sent as a base64 `data:` URL in an OpenAI-style multimodal message through
+  the LiteLLM gateway (`:4000`) as `gx-reason`.
+* Prompt: "How many circles are in this image, and what colour are they?
+  Reply with just: `<count> <colour>`"
+* **Result: `"3 blue"` — correct on both counts.** 171 completion tokens
+  (166 reasoning), 108 prompt tokens. 411 s wall clock, essentially all of it
+  a second cold start (weights reloaded in 2 m 43 s from warm page cache vs
+  ~3 m 45 s cold).
+
+Corroborating evidence that the image really went through the vision tower
+rather than being ignored: vLLM JIT-compiled `_bilinear_pos_embed_kernel`
+during this request, and the engine logged an `MM cache hit rate` metric,
+neither of which appears on text-only requests.
+
+### 14.5 Regression check
+
+`gx-mini` was re-tested through the gateway after the LiteLLM config change
+and restart: correct answer, sub-second, no regression. `gx-fast` was not
+re-cold-started this session (it was verified live the previous session and
+nothing in its configuration changed).

@@ -3,54 +3,76 @@
 **This file must always reflect reality.** If you are a new agent resuming this
 work, read this first, then ARCHITECTURE.md (what is locked), then BLOCKERS.md.
 
-## LATEST UPDATE — 2026-09-15 ~23:50 CEST — read this section first
+## LATEST UPDATE — 2026-09-16 ~07:30-08:15 CEST — read this section first
 
-**Node 2 is DOWN right now** (`coordination/BLOCKERS.md` B-020) — physically
-wedged the same way as the original B-012 incident (both ConnectX fabric
-rails answer ICMP instantly; SSH/Tailscale/userspace do not — confirmed
-with three independent probes, not a single flaky check). Root cause:
-during a real, live `gx-max-validate.sh` run (see below), rank0 was
-OOM-killed on node1 mid-weight-load and the automatic cleanup could not
-reach node2 to tear down the now-orphaned rank1, almost certainly leaving
-it resident and repeating B-012's userspace-starvation mechanism. **No
-remote power-cycle path exists (B-016) — this needs a human physically at
-gx10-02.** Node 1 itself is fully healthy and was confirmed clean
-(ledger/lock reconciled, 115 GiB available, no stray containers).
+**Both nodes are healthy and gx-reason works for the first time.** The two
+things that were blocking this project are both closed:
 
-Real progress this session, all verified live, in order:
+**1. Node 2 is back — and it recovered ITSELF. No power cycle happened.**
+The previous update said node 2 was physically wedged and needed a human at
+the machine (B-020, B-016). That turned out to be wrong, and the evidence is
+unambiguous: node 2's `uptime` shows a continuous 22 h since a boot at
+2026-09-15 09:33 — hours *before* the incident. What actually ended it is
+visible in `docker inspect gx-max-rank1`: `OOMKilled=true`,
+`FinishedAt=2026-09-15T22:44:48Z`. The orphaned rank1 held the node for 80
+minutes, the kernel's OOM killer eventually reclaimed it against its own
+`--memory 106g` cap, and userspace un-starved on its own. The host-resilience
+design from B-012 worked; it was just slow. `recover-node2.sh` now passes
+every substantive check. **Operational consequence: for this failure shape,
+wait ~80 minutes and re-probe before dispatching a human.** See B-020 for the
+corrected record.
 
-1. **B-017 RESOLVED** (`coordination/DECISIONS.md` D-020): gx-max's own
-   admission check now uses a smaller, explicit 5 GiB reserve instead of
-   the generic 30 GiB floor (scoped to only gx-max's two rank launches;
-   every other tier is unaffected). Verified: for the first time ever
-   through the real orchestrator, gx-max got past admission on BOTH nodes
-   and rank0 actually started.
-2. That run then surfaced B-020 (above) — a real OOM during weight loading,
-   not the admission bug. `GXMAX_RANK_ESTIMATED_GIB` raised 90->95 GiB in
-   response (more honest, not a guaranteed fix — gx-max is locked to run
-   at the very edge of node capacity by design).
-3. **gx-mini and gx-fast independently re-verified live** through the real
-   gateway: gx-mini answered "Paris" correctly (HTTP 200); gx-fast, after a
-   real ~2m7s cold start, correctly solved a multi-step logic question
-   ("9" — the sheep riddle). Both fully working right now.
-4. **gx-reason's replacement engine/model is DECIDED and fully configured**
-   (`coordination/DECISIONS.md` D-021): the old Qwen3.5-122B-A10B GGUF/
-   llama.cpp combination is confirmed broken (B-011, a llama.cpp CUDA
-   kernel bug, not the checkpoint) and rejected outright — do not retry it.
-   Replacement is `nvidia/Qwen3.6-27B-NVFP4` on vLLM, the same proven image
-   already serving gx-fast. `legenex/gateway/llama-swap/node02.yaml` is
-   fully rewritten and ready to deploy. **Not yet live-tested** — node 2
-   went down (B-020) before the checkpoint could be downloaded. This is the
-   single highest-priority next step once node 2 is back.
-5. Media (gx-image/gx-video) and the kernel `apt-mark hold` (B-001, needs
-   an interactive sudo password neither this session nor any prior one has
-   had) were **not** reached this session — node 2 went down first, and
-   sudo authentication is a human-only action per project rules.
+**2. B-011 is RESOLVED — gx-reason serves correct output through the
+gateway.** The Qwen3.5-122B-A10B GGUF/llama.cpp tier that produced
+`////////////////////` for every prompt has been replaced, per D-021, with
+`nvidia/Qwen3.6-27B-NVFP4` on vLLM (the same image already proven for
+gx-fast). Downloaded, deployed and live-tested end to end today. The clinching
+result is the original repro prompt, run identically against the new engine:
 
-See `coordination/BLOCKERS.md` B-020 for the full incident record and exact
-recovery steps, `TASKS.md` for the prioritized next-step list, and
-`coordination/DECISIONS.md` D-020/D-021 for the two engineering decisions
-made this session and their reasoning.
+```
+"The capital of France is"  ->  " Paris."      (was "////////////////////")
+```
+
+and through the real LiteLLM gateway, a multi-step reasoning question
+answered correctly (bat-and-ball: `$0.05`, not the `$0.10` trap) with
+`reasoning_content` properly separated. vLLM drives the *same* GDN
+linear-attention kernels llama.cpp got wrong — confirming D-021's diagnosis
+that the architecture was never the problem, that llama.cpp build's CUDA
+implementation of it was.
+
+**All four text tiers are now working: gx-mini, gx-fast, gx-reason, and
+gx-max remains the one unproven tier** (its last acquisition OOM-killed
+rank0 mid-load, which is what caused incident 2 above; the 90->95 GiB
+estimate change from D-020 has not been re-tested yet).
+
+**One new finding, recorded as B-021:** `--memory` cgroup caps do NOT bound a
+model's real footprint on this hardware. Measured with gx-reason loaded: the
+node lost 44 GiB of MemAvailable while the container's own `memory.current`
+read 10.92 GiB — the CUDA pool is not charged to the container cgroup on
+DGX Spark unified memory. The admission guard is unaffected (it reads the
+node's real `/proc/meminfo`), and `--gpu-memory-utilization` is what actually
+bounds the pool, but several memory-budget comments in this repo overstated
+what the cgroup cap enforces.
+
+**Measured, live, today (full numbers in `TEST_RESULTS.md`):**
+
+| Item | Value |
+|---|---|
+| gx-reason checkpoint on disk (node 2) | 21,921,697,184 B = 20.42 GiB, 3 shards, matches HF exactly |
+| gx-reason cold start | 401 s to first token (~225 s weights, 177 s engine init) |
+| gx-reason generation | 12.4 tok/s (dense 27B, unified memory) |
+| gx-reason real node footprint | ~44 GiB (MemAvailable 114 -> 70 GiB) |
+| gx-reason unload | 70 -> 116 GiB MemAvailable in ~5 s |
+| Reasoning-token cost of one simple question | 1468 of 1690 completion tokens |
+
+The last figure is why the gateway's `gx-reason` output budget was raised
+from 8192 to 16384 tokens (and input lowered to 49152 to match the 65536
+context): on a reasoning tier, `<think>` content spends the output budget.
+
+**What remains, in priority order:** re-run `gx-max-validate.sh` to test the
+D-020 fix; real end-to-end `gx-image`/`gx-video` generations; then the
+root-requiring items (kernel `apt-mark hold`, watchdog) that still need a
+human with sudo. See `TASKS.md`.
 
 ---
 
@@ -71,9 +93,14 @@ visually inspected).
 
 ---
 
-## One-paragraph summary
+## One-paragraph summary — HISTORICAL, as of 2026-09-15 12:35
 
-**Both nodes are healthy right now.** Node 2 — reported in the previous update
+> Everything from here down is the 2026-09-15 snapshot, kept for the record.
+> The power cycle it mentions is the *earlier* B-012 recovery, not the B-020
+> incident — B-020 needed no power cycle at all (see the top of this file).
+> For current state, read the LATEST UPDATE section above.
+
+**Both nodes were healthy at the time of this 2026-09-15 update.** Node 2 — reported in the previous update
 as physically wedged, needing a power cycle — has since been power-cycled by
 the human operator and is **confirmed clean**: `recover-node2.sh` passed all
 16 checks (kernel, driver, Docker, both ConnectX rails, `/swapfile-sglang`,

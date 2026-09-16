@@ -122,17 +122,55 @@ compatible) but vLLM logs:
 gx-fast still measures 72.8 tok/s, so this is a performance note rather than a
 fault. A vLLM built for `sm_121a` would likely be faster.
 
-## B-011 (S2) — gx-reason GGUF produces garbage output on this llama.cpp build
-**Status, 2026-09-15: engine/model REPLACED (D-021), not yet live-verified.**
-The GGUF/llama.cpp combination below is confirmed broken and REJECTED --
-do not re-attempt it. Replacement: `nvidia/Qwen3.6-27B-NVFP4` on vLLM (same
-proven image as gx-fast), fully configured in
-`legenex/gateway/llama-swap/node02.yaml` and `resource_guard.py`, but NOT
-yet downloaded or tested against real hardware -- node 2 went unreachable
-(B-020) before that could happen. See `coordination/DECISIONS.md` D-021 for
-the full replacement rationale. **Do not consider gx-reason fixed until a
-real completion has been observed through the gateway** (`TASKS.md` has the
-exact next steps: download the checkpoint, then run tests A-E).
+## B-011 (S2) — RESOLVED 2026-09-16 — gx-reason GGUF produced garbage output on this llama.cpp build; tier re-engined onto vLLM
+**Status: RESOLVED.** gx-reason serves correct output through the real
+gateway for the first time. The replacement decided in
+`coordination/DECISIONS.md` D-021 (`nvidia/Qwen3.6-27B-NVFP4` on vLLM, the
+same image already proven for gx-fast) has been downloaded, deployed and
+live-tested end to end on node 2.
+
+**The evidence that closes this blocker — the original repro, inverted:**
+
+```
+# 2026-09-15, llama.cpp CUDA path (the bug):
+prompt "The capital of France is" -> "////////////////////"
+
+# 2026-09-16, vLLM + nvidia/Qwen3.6-27B-NVFP4, identical prompt,
+# identical temperature 0, same /v1/completions endpoint, over the fabric:
+prompt "The capital of France is" -> " Paris."          HTTP 200
+```
+
+Full A-E sequence, all passed 2026-09-16 (numbers in `TEST_RESULTS.md`):
+
+* **A** — node 2's llama-swap publishes exactly one model, `gx-reason`, on
+  the fabric (`192.168.100.11:28080`), auth enforced (an unauthenticated
+  `/v1/models` is refused).
+* **B** — cold start 401 s to first token (~225 s weight load, 177 s engine
+  init/warmup). vLLM resolves `--quantization modelopt` to `modelopt_mixed`
+  and correctly detects the checkpoint's mixed NVFP4/FP8/MXFP8 layers.
+* **C** — the B-011 repro prompt above. Coherent.
+* **D** — through the real LiteLLM gateway: a multi-step reasoning question
+  answered correctly (the bat-and-ball problem: `$0.05`, not the `$0.10`
+  trap), 1690 completion tokens of which 1468 were reasoning tokens,
+  `reasoning_content` correctly separated from `content`, 12.4 tok/s.
+* **E** — unload returns the memory: node 2 went from 70 GiB to 116 GiB
+  MemAvailable within ~5 s of `POST /api/models/unload`.
+
+**Why this is a real fix and not a lucky swap:** vLLM's logs show it
+selecting the GDN linear-attention kernels for this checkpoint
+(`Using Triton/FLA GDN prefill kernel`, `GDN decode kernel: cuda`) — the
+same hybrid linear-attention/full-attention code path that llama.cpp got
+wrong. The architecture is not the problem and never was; that specific
+llama.cpp CUDA implementation of it is. That is exactly what D-021
+predicted, so the diagnosis and the fix agree.
+
+**Still true and still binding:** the GGUF/llama.cpp combination below is
+confirmed broken and REJECTED for this tier — do not re-attempt it. The
+three "remaining next steps" at the end of this entry (file an upstream
+issue, try another quant, bisect llama.cpp) are now OPTIONAL upstream
+citizenship, not blockers on this cluster: nothing here depends on
+llama.cpp for gx-reason any more. gx-mini still uses that build and is
+unaffected (it is dense, and never exercises the hybrid path).
 
 **Original finding, preserved below for the record (still accurate: this is
 why the GGUF/llama.cpp combination is rejected, not merely "not tried
@@ -641,10 +679,68 @@ consequence of, B-017.
   wide enough — works today, but is incidental rather than guaranteed.
   Consider an explicit `StartLimitIntervalSec=0` for a hard guarantee.
 
-## B-020 (S1) — LIVE INCIDENT: node 2 wedged by an orphaned gx-max-rank1 after rank0 OOM-killed mid-acquisition; needs a physical power cycle
-**Needs:** a human physically present at gx10-02 to power-cycle it. No
-remote path exists (B-016). **As of this writing, node 2 is DOWN and this
-is unresolved.**
+## B-020 (S1) — RESOLVED: node 2 wedged by an orphaned gx-max-rank1 after rank0 OOM-killed mid-acquisition; the node recovered ITSELF, no power cycle was needed
+**Status, 2026-09-16 07:34-07:47 CEST: RESOLVED, and the original
+prescription was WRONG.** Node 2 is healthy and back in service. No human
+ever power-cycled it, and none needed to.
+
+**Correction — how it actually ended (evidence, collected 2026-09-16
+07:41-07:46 from node 2 itself):**
+
+* `uptime` on gx10-02 reports **22h07m at 07:41, i.e. boot at 2026-09-15
+  09:33** — more than 13 hours *before* the incident began at 23:24. The
+  node was never rebooted, never power-cycled, and never lost power. The
+  kernel that was running when it wedged is the one running now.
+* `docker inspect gx-max-rank1` gives the mechanism:
+  `StartedAt=2026-09-15T21:24:47Z`, `FinishedAt=2026-09-15T22:44:48Z`,
+  `ExitCode=1`, **`OOMKilled=true`**. The orphaned rank1 held the node for
+  **80 minutes** and was then killed by the kernel's OOM killer, against
+  its own `--memory 106g` cgroup cap. Its final log line is the expected
+  distributed-job error (`Rank 0 scheduler died during initialization`),
+  i.e. it died still waiting for the rank0 that had already been killed on
+  node 1.
+* Once that container died, node 2's userspace un-starved on its own. By
+  the time this was checked (07:34) `recover-node2.sh` passed 14/14
+  substantive checks with 116 GiB available, and SSH answered its banner in
+  4 ms.
+* `gx-llama-swap-node02` had exited cleanly (`ExitCode=0`,
+  `OOMKilled=false`) at `21:24:46Z` — **one second before rank1 started**.
+  That was the gx-max drain doing its job, not a casualty of the incident.
+  It stayed down afterwards only because `docker stop` suppresses
+  `restart: unless-stopped`; a human ran the documented `docker compose
+  up -d` (RECOVERY.md §4) at 07:35:10 and it came back healthy on both
+  loopback and the fabric.
+
+**What this changes for the playbook (the operationally important part):**
+the B-012/B-020 failure shape — fabric/ICMP alive, SSH banner starved by a
+single huge resident container — **is not necessarily terminal, and does
+not automatically require a human at the machine.** The kernel's OOM killer
+did eventually reclaim the node, because the offending workload was
+correctly capped (`--memory`) and correctly biased for sacrifice
+(`--oom-score-adj 950`) — the host-resilience design from B-012 worked, it
+just took 80 minutes rather than seconds. Before dispatching a human, wait
+out at least that long and re-probe. B-016 (no *remote* power-cycle path
+exists) is unchanged and still true; what is now known is that this
+particular failure may not need one.
+
+**Not to be over-read:** there is no evidence about what node 2's userspace
+was doing minute-by-minute during those 80 minutes (nothing could reach it
+to observe), and one self-recovery is not a guarantee of the next. A
+workload that is *not* memory-capped, or that starves the node without
+tripping a cgroup limit, could still wedge it terminally. The original
+B-012 incident is the precedent for that shape.
+
+**On the leftover `gx-max-rank1` container:** the exited container is
+deliberately left in place on node 2 as the forensic record of this incident
+(it is where `OOMKilled=true` and the 80-minute window are readable). It
+holds no memory, and it cannot block a future launch: `gx-max-start.sh`
+already runs `docker rm -f` on both rank names before starting either
+(lines 126-127). The stale node-1 ledger entry for it HAS been cleared, via
+the sanctioned `resource-guard.sh` release path — which reconciled it
+automatically on read, incidentally re-proving the reconciliation design.
+
+**Original prescription, preserved for the record (it said a physical
+power cycle was required; that turned out to be unnecessary):**
 
 **Sequence, 2026-09-15, ~23:24-23:41 CEST, immediately after the B-017 fix
 (D-020) was applied and verified:** `legenex/tests/gx-max-validate.sh
@@ -738,3 +834,57 @@ node2 access):**
 **This is the one item in this session's work that could not be completed
 without a human physically present — see the top-level completion report
 for the rest.**
+
+## B-021 (S2) — `--memory` cgroup caps do not bound a model's real footprint on this unified-memory hardware
+**Needs:** no immediate action, but every memory budget in this repo that
+cites a `--memory` cap as the thing keeping a node safe should be read with
+this correction in mind. A decision is needed only if we ever want a *hard*
+enforced ceiling rather than a cooperative one.
+
+**Found 2026-09-16**, while measuring gx-reason's real footprint during the
+B-011 fix verification. With the model fully loaded and idle on node 2:
+
+| Measurement | Value |
+|---|---|
+| Node 2 MemAvailable before load | 114 GiB |
+| Node 2 MemAvailable with gx-reason loaded | 70 GiB |
+| **Real node-level footprint** | **~44 GiB** |
+| `gx-reason` container `memory.current` (cgroup v2) | **10.92 GiB** |
+| `docker stats` MemUsage for the same container | 9.65 GiB / 45 GiB (21%) |
+| Largest process RSS inside it (`VLLM::EngineCor`) | 5.78 GiB |
+
+About **33 GiB of the 44 GiB is invisible to the container's memory
+cgroup.** On DGX Spark/GB10 the CUDA allocator's pool comes out of the same
+physical unified memory as host RAM, but is not charged to the container's
+`memory.current`. So `--memory 45g` on gx-reason (and by the same mechanism
+`--memory 86g` on gx-fast, `--memory 106g` on the gx-max ranks) does **not**
+cap what those containers actually take from the node.
+
+**What still works, and why this is S2 not S1:**
+
+* The admission guard was never relying on the cgroup number — it reads the
+  node's real `MemAvailable` from `/proc/meminfo`
+  (`resource_guard.compute_admission`), which does see the full 44 GiB. The
+  pre-launch safety check is therefore still sound.
+* `--gpu-memory-utilization` (0.35 for gx-reason, 0.66 for gx-fast) and
+  SGLang's `--mem-fraction-static` are the parameters that genuinely bound
+  the pool, and they measured true: 0.35 x 121 GiB ~= 42 GiB predicted vs
+  ~44 GiB observed.
+* The cap is still a real backstop for host-side allocation, and is not
+  cosmetic: it is what fired on the orphaned `gx-max-rank1` in B-020
+  (`OOMKilled=true` against its 106 GiB cap), which is how node 2 recovered
+  without a power cycle.
+
+**What is now known to be wrong in the docs:** `node02.yaml`'s
+host-resilience comment called `--memory` "an enforced backstop for the SAME
+ceiling the group above already assumes structurally". That is true only for
+the host-side share. The comment has been corrected in place; `node01.yaml`
+carries the same original wording and should get the same correction when it
+is next touched.
+
+**If a hard ceiling is ever actually required** the options are (a) keep
+sizing via `--gpu-memory-utilization`, which is what we do today and what
+the measurements support, or (b) investigate whether the NVIDIA container
+stack on this platform can charge device allocations to the cgroup at all —
+research, not a config change, and not worth doing unless a real incident
+demands it.

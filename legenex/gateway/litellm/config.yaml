@@ -145,10 +145,12 @@ model_list:
   # ===========================================================================
   # gx-reason — deep reasoning. Node 2, heavy tier, over the RoCE fabric.
   # ===========================================================================
-  # *** CHECKPOINT PENDING VERIFICATION ***
-  # Same pattern as gx-fast: the stable upstream ID is "gx-reason"; the real
-  # ~100-125B sparse MoE checkpoint is bound in
-  # legenex/gateway/llama-swap/node02.yaml.
+  # Checkpoint: nvidia/Qwen3.6-27B-NVFP4 on vLLM (dense 27B, hybrid attention),
+  # bound in legenex/gateway/llama-swap/node02.yaml. It replaces the
+  # Qwen3.5-122B-A10B GGUF/llama.cpp tier, which is confirmed broken on this
+  # hardware (coordination/BLOCKERS.md B-011, coordination/DECISIONS.md D-021).
+  # As with gx-fast, the stable upstream ID stays "gx-reason", so this block
+  # does not change when the checkpoint does — only node02.yaml does.
   #
   # api_base uses the fabric IP on purpose. Node 2's Tailscale address
   # (100.73.238.4) must NEVER be used here — management plane only.
@@ -161,13 +163,19 @@ model_list:
       include_reasoning: true
       supports_reasoning: true
       merge_reasoning_content_in_choices: true
-      # Cold start of a 100B+ model on unified memory is minutes, not seconds.
+      # Cold start on unified memory is minutes, not seconds. The 27B NVFP4
+      # checkpoint is far smaller than the 122B GGUF this replaced, so this
+      # is now a generous ceiling rather than a tight one.
       timeout: 2400
     model_info:
-      # PROVISIONAL — matches node02.yaml --max-model-len 32768.
-      max_input_tokens: 24576
-      max_output_tokens: 8192
+      # Matches node02.yaml --max-model-len 65536. Split differently from
+      # gx-fast (57344/8192) on purpose: this is the REASONING tier and its
+      # <think> content is emitted as output tokens, so the output budget is
+      # doubled at the expense of input. Revisit with real traces.
+      max_input_tokens: 49152
+      max_output_tokens: 16384
       supports_function_calling: true
+      supports_vision: true
 
   # ===========================================================================
   # gx-max — DeepSeek V4 Flash, SGLang TP=2 across BOTH nodes.

@@ -453,10 +453,31 @@ COULD NOT load a 95 GiB checkpoint here at all — D-009). `resource_guard.py`'s
 above the expected working set); `node02.yaml`'s heavy-tier budget comment
 and `gx_reason_mem_limit` cgroup cap lowered to match (45g).
 
-**Status at the time of this decision: config written, NOT yet live-tested.**
-Node 2 became unreachable (`coordination/BLOCKERS.md` B-020) before the new
-checkpoint could be downloaded and exercised. `legenex/gateway/llama-swap/node02.yaml`
-is fully updated and ready to deploy — download the checkpoint to
-`/srv/models/vllm/Qwen3.6-27B-NVFP4` on node 2, then run the real A-E test
-sequence in `TASKS.md`, the moment node 2 is confirmed back. Do not mark
-B-011 closed until that live test has actually produced coherent output.
+**Status: VALIDATED LIVE 2026-09-16. B-011 is closed.** The checkpoint was
+downloaded to `/srv/models/vllm/Qwen3.6-27B-NVFP4` on node 2 (21,921,697,184
+bytes across 3 shards, byte-for-byte the sizes the HF API advertises), the
+config was deployed and validated against the llama-swap binary
+(`-validate`: "config is valid: 1 model(s)"), and the full A-E sequence
+passed — including the original B-011 repro prompt, which now answers
+" Paris." where it previously emitted `////////////////////`. See
+`coordination/BLOCKERS.md` B-011 and `TEST_RESULTS.md` for the evidence.
+
+**Two corrections to this decision's own assumptions, from the live run:**
+
+1. **Sizing was right, for a partly wrong reason.** The predicted ~22 GiB of
+   weights is really 20.42 GiB, and the 45 GiB admission estimate held up:
+   the measured node-level footprint is ~44 GiB (MemAvailable 114 -> 70 GiB).
+   But the `--memory 45g` cgroup cap this decision leaned on does **not**
+   enforce that — the container's own `memory.current` was 10.92 GiB while
+   the node lost 44 GiB, because the CUDA pool is not charged to the
+   container cgroup on this hardware. `--gpu-memory-utilization 0.35` is the
+   real bound. See B-021.
+2. **The checkpoint is multimodal, which this decision did not note.** Both
+   it and gx-fast's are `*ForConditionalGeneration` with a `vision_config`
+   and image/video processors. This changes nothing about the text tier and
+   is consistent with L-10 (vision is a model capability, not a separate
+   alias), but it means gx-reason can accept images; `supports_vision: true`
+   has been set on its gateway entry accordingly — and then **verified live
+   rather than assumed**: a generated image of three blue circles, sent
+   through the gateway, was described correctly as "3 blue"
+   (`TEST_RESULTS.md` §14.4).

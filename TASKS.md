@@ -12,19 +12,23 @@ files, cross-checked against live system state (see `CURRENT_STATE.md`).
 
 ## P0 — safety and stability
 
-- [ ] **Physically power-cycle gx10-02** — it is down right now
-  (`coordination/BLOCKERS.md` B-020), wedged the same way as the original
-  B-012 incident (fabric/ICMP alive, SSH/userspace starved), this time by
-  an orphaned gx-max-rank1 left resident after rank0 OOM-killed mid-launch.
-  No remote path exists (B-016). Then run
-  `legenex/scripts/recover-node2.sh` to confirm a clean recovery.
-- [ ] Download `nvidia/Qwen3.6-27B-NVFP4` to
-  `/srv/models/vllm/Qwen3.6-27B-NVFP4` on node 2 and run gx-reason tests
-  A-E (`coordination/BLOCKERS.md` B-011, `coordination/DECISIONS.md`
-  D-021) — config is fully written and ready in
-  `legenex/gateway/llama-swap/node02.yaml`, blocked only on node 2 being
-  reachable again.
-- [ ] Re-run `legenex/tests/gx-max-validate.sh` once node2 is back, to see
+- [x] ~~**Physically power-cycle gx10-02**~~ — **not needed; node 2
+  recovered itself 2026-09-16.** No power cycle ever happened (uptime shows
+  22 h of continuous runtime, straight through the incident). The kernel
+  OOM-killed the orphaned `gx-max-rank1` after 80 minutes
+  (`OOMKilled=true`) and userspace un-starved on its own.
+  `recover-node2.sh` then passed every substantive check. B-020 has been
+  corrected accordingly — for this failure shape, wait ~80 min and re-probe
+  before dispatching a human.
+- [x] ~~Download `nvidia/Qwen3.6-27B-NVFP4` and run gx-reason tests A-E~~ —
+  **done and verified live 2026-09-16; B-011 is CLOSED.** 20.42 GiB
+  downloaded to `/srv/models/vllm/Qwen3.6-27B-NVFP4` (sizes match the HF API
+  exactly), `node02.yaml` deployed and `-validate`-checked, all of A-E
+  passed: the original B-011 repro prompt now answers " Paris.", and a
+  multi-step reasoning question is answered correctly through the real
+  gateway. Numbers in `TEST_RESULTS.md`.
+- [ ] Re-run `legenex/tests/gx-max-validate.sh` — **now unblocked; node 2
+  has been back and healthy since 2026-09-16 07:34** — to see
   whether the `GXMAX_RANK_ESTIMATED_GIB` 90->95 GiB change
   (`coordination/DECISIONS.md` D-020) is enough to avoid a repeat OOM, or
   whether gx-max needs a genuinely new human decision (e.g. a smaller
@@ -68,6 +72,17 @@ files, cross-checked against live system state (see `CURRENT_STATE.md`).
   vLLM/Qwen3.6-27B-NVFP4 checkpoint has actually been exercised live
   (currently 45 GiB, a documented ceiling-above-expected estimate, not yet
   a real measurement — see D-021).
+- [ ] Re-measure gx-reason's admission estimate now that a real figure
+  exists — **the 45 GiB ceiling in `resource_guard.py` measured true**
+  (~44 GiB real node-level footprint), so this is now a confirmation to
+  record rather than an open question; the remaining work is deciding
+  whether to tighten 45 -> ~46-48 GiB with a small explicit margin, or leave
+  the round number.
+- [ ] Decide what to do about B-021 (`--memory` cgroup caps do not bound the
+  CUDA pool on this hardware). No action is required for safety — the
+  admission guard reads real `/proc/meminfo` — but `node01.yaml` still
+  carries the original overstated "enforced backstop" wording that
+  `node02.yaml` has had corrected.
 - [ ] Give `lib.sh`'s `n2()` SSH helper a hard `timeout`, not just
   `ConnectTimeout` — the newer recovery/validation scripts already wrap
   their own SSH calls this way; `n2()` itself was deliberately left alone

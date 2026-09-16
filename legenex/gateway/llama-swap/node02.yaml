@@ -66,11 +66,17 @@
 # Targets the current llama-swap schema (`routing.router.settings.groups`).
 # If the deployed binary rejects `routing:`, delete that whole section — the
 # default one-model-at-a-time behaviour is strictly more conservative.
-# Validate without starting anything:  llama-swap -config node02.yaml -dry-run
+# Validate without starting anything:  llama-swap -config node02.yaml -validate
+#   (verified against gx-llama-swap:latest's own --help, 2026-09-16; there is
+#    no -dry-run flag)
 # ==============================================================================
 
-# A ~100-125B sparse MoE cold start on unified memory is slow (weight load,
-# FlashInfer autotune, CUDA graph capture).
+# Cold start on unified memory is slow (weight load, FlashInfer autotune, CUDA
+# graph capture). MEASURED 2026-09-16 for the current 27B NVFP4 checkpoint:
+# 401 s from request to first token (~225 s of it weight loading at ~75 s per
+# 10 GiB shard, 177 s of engine init/profile/warmup incl. 31 s compilation).
+# 2400 s therefore leaves a ~6x margin; it is deliberately not tightened to the
+# measurement, because a cold page cache after a reboot is slower than this run.
 healthCheckTimeout: 2400
 
 logLevel: debug
@@ -138,18 +144,30 @@ macros:
   # before download, not guessed) -- see coordination/DECISIONS.md for the
   # full record of this decision.
   #
-  # NOT yet live-tested end-to-end as of this edit: node 2 is unreachable
-  # (coordination/BLOCKERS.md B-020, a live incident, physical power-cycle
-  # needed) at the time this config was written. This section is prepared
-  # and ready to deploy the moment node 2 is confirmed back; do not consider
-  # gx-reason "fixed" until a real completion has been observed through the
-  # gateway (see TASKS.md).
+  # LIVE-VERIFIED 2026-09-16 (B-011 closed). Deployed to node 2, cold-started
+  # and exercised end to end:
+  #   * the exact B-011 repro prompt ("The capital of France is", temperature 0,
+  #     /v1/completions) now returns " Paris." -- previously "////////////////"
+  #     byte-for-byte on the llama.cpp CUDA path;
+  #   * a multi-step reasoning question through the real LiteLLM gateway is
+  #     answered correctly, with <think> content separated into
+  #     reasoning_content by --reasoning-parser qwen3;
+  #   * vLLM resolves --quantization modelopt to `modelopt_mixed` and selects
+  #     the GDN linear-attention kernels (Triton/FLA prefill, CUDA decode) --
+  #     i.e. it drives the SAME hybrid-attention code path llama.cpp got wrong,
+  #     and gets it right.
+  # See TEST_RESULTS.md for the full numbers.
   gx_reason_model_dir: "/models/vllm/Qwen3.6-27B-NVFP4"
   gx_reason_host_dir: "Qwen3.6-27B-NVFP4"
 
-  # ~22 GiB of weights + KV cache for a 65536-token context comfortably fits
-  # a conservative pool; 0.35 x ~121 GiB ~= 42 GiB, leaving the rest of the
-  # heavy-tier budget below untouched for ComfyUI's reservation.
+  # 20.42 GiB of weights (measured on disk) + KV cache for a 65536-token
+  # context comfortably fits a conservative pool; 0.35 x ~121 GiB ~= 42 GiB,
+  # leaving the rest of the heavy-tier budget below untouched for ComfyUI's
+  # reservation. MEASURED 2026-09-16: loading gx-reason moves node 2 from
+  # ~114 GiB to ~70 GiB MemAvailable, i.e. a real ~44 GiB node-level
+  # footprint -- within a GiB of this pool figure, so 0.35 behaves as
+  # intended. THIS fraction, not the cgroup cap below, is what actually
+  # bounds the footprint (see the cap's own note).
   gx_reason_gpu_fraction: "0.35"
 
   # ----------------------------------------------------------------------------
@@ -161,13 +179,20 @@ macros:
   # tailscaled/systemd/NetworkManager, in a genuine system-wide OOM.
   #
   # Lowered 78g -> 45g on 2026-09-15 along with the B-011 engine/model
-  # replacement above: the new checkpoint's real footprint (~22 GiB weights +
-  # a 0.35 vLLM pool, ~42 GiB pool ceiling) is far smaller than the old GGUF's
-  # measured ~95 GiB. 45g is a generous ceiling above the expected working
-  # set (same "ceiling above measured, not exactly measured" convention used
-  # for gx-max in gx-max.conf), not a re-measurement -- re-measure and adjust
-  # once this has actually been exercised live against node 2 (see B-020 for
-  # why that has not happened yet in this session).
+  # replacement above. Re-measured live 2026-09-16 and CONFIRMED as the right
+  # order of magnitude: the loaded model's real node-level footprint is
+  # ~44 GiB (MemAvailable 114 -> 70 GiB).
+  #
+  # IMPORTANT, MEASURED 2026-09-16 -- this cgroup cap does NOT bound that
+  # 44 GiB (coordination/BLOCKERS.md B-021). With the model fully loaded the
+  # container's own `memory.current` was only 10.92 GiB while the node lost
+  # 44 GiB: on this unified-memory platform the CUDA/GPU pool is not charged
+  # to the container's memory cgroup. So `--memory 45g` constrains the
+  # HOST-side allocations only; the thing that actually bounds the total
+  # footprint is --gpu-memory-utilization above. Keep the cap (it is still a
+  # real backstop against a host-side leak, and it is what OOM-killed the
+  # orphaned gx-max-rank1 in B-020) but do not size the node budget as if it
+  # were enforcing the whole figure.
   gx_reason_mem_limit: "45g"
   gx_reason_oom_score_adj: "900"
 
