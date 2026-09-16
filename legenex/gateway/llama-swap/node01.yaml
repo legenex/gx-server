@@ -125,18 +125,19 @@ macros:
   # llama.cpp image — already present locally on gx10-01 (verified: docker images).
   llamacpp_image: "legenex/llama-cpp-spark:latest"
 
-  # ---- gx-fast: PENDING VERIFICATION -----------------------------------------
-  # Another agent is verifying the exact ~30-40B MoE checkpoint. Until the lead
-  # supplies it, these three macros stay as PENDING-VERIFY placeholders.
-  # A start attempt fails fast (image/path do not exist) instead of silently
-  # serving the wrong model. DO NOT guess a model ID here.
+  # ---- gx-fast (D-030, 2026-09-17) --------------------------------------------
+  # kyaky/Qwen3.6-35B-A3B-Uncensored-NVFP4 @ 33d5cf837389 (verified manifest in
+  # the model directory). compressed-tensors: NVFP4 W4A16 routed experts, FP8
+  # block attention/shared experts, BF16 vision tower. Rollback checkpoint:
+  # /models/vllm/Qwen3.6-35B-A3B-NVFP4 (nvidia, kept until acceptance).
   vllm_image: "jstarkg/vllm-gb10-flashnext:0.28-sm121-r6"
-  gx_fast_model_dir: "/models/vllm/Qwen3.6-35B-A3B-NVFP4"
-  gx_fast_host_dir: "Qwen3.6-35B-A3B-NVFP4"
+  gx_fast_model_dir: "/models/vllm/Qwen3.6-35B-A3B-Uncensored-NVFP4"
 
-  # 0.66 x ~128 GB ~= 85 GB. This is the heavy-tier ceiling. Raising it above
-  # 0.66 breaks the node-1 memory budget documented at the top of this file.
-  gx_fast_gpu_fraction: "0.66"
+  # Fraction of the node's 121.6 GiB unified memory vLLM may claim (weights
+  # 21 GiB + KV + activations + CUDA graphs). 0.40 ~= 48.6 GiB. Sized so that
+  # gx-mini (~10 GiB) + gx-fast + the control plane leave >= 30 GiB
+  # MemAvailable: both stay resident (measured, TEST_RESULTS.md §18).
+  gx_fast_gpu_fraction: "0.40"
 
   # ----------------------------------------------------------------------------
   # HOST-RESILIENCE HARDENING (added 2026-09-14, after the gx10-02 mmap-thrash
@@ -168,7 +169,7 @@ macros:
 
   gx_mini_mem_limit: "14g"
   gx_mini_oom_score_adj: "700"
-  gx_fast_mem_limit: "86g"
+  gx_fast_mem_limit: "60g"
   gx_fast_oom_score_adj: "900"
 
 models:
@@ -223,30 +224,20 @@ models:
     cmdStop: "docker stop -t 25 ${MODEL_ID}"
 
   # ============================================================================
-  # gx-fast — heavy tier                      *** CHECKPOINT PENDING ***
+  # gx-fast — primary coding / tools / agent tier (resident, D-030)
   # ============================================================================
-  # Intent: ~30-40B class MoE, agentic / tool-using, node 1.
+  # Kilo Code's workhorse. Thinking is off by default at the gateway
+  # (LiteLLM extra_body) so interactive turns answer immediately; a client may
+  # turn it on per request. Tool calls use Qwen3's XML format.
   #
-  # PENDING (lead to supply, see README "Pending" list):
-  #   1. exact checkpoint ID              -> macro gx_fast_model_dir / gx_fast_host_dir
-  #   2. serving engine image             -> macro vllm_image
-  #   3. correct --tool-call-parser and --reasoning-parser for that checkpoint
-  #   4. whether the image's ENTRYPOINT is `vllm serve` (then drop the leading
-  #      `serve` token below) or the raw api_server module
-  #   5. if the checkpoint turns out to need llama.cpp instead of vLLM, replace
-  #      this whole block with a copy of gx-mini's shape and keep it in "heavy"
-  #
-  # Until then this block is INTENTIONALLY non-functional: every start attempt
-  # fails because the image and path do not exist. That is the desired behaviour
-  # — better a hard error than quietly serving an unverified model.
-  #
-  # ttl: 1800 -> unloads after 30 min idle, returning ~85 GB to the node. The
-  # heavy tier must not squat on memory the cluster may need for gx-max.
+  # ttl 0 + startup preload -> resident, so a normal Kilo prompt never waits
+  # for a multi-minute cold start. gx-max's drain still stops it (it stops the
+  # whole llama-swap-node01 container) and restore-normal.sh brings it back.
   gx-fast:
     name: "gx-fast"
-    description: "nvidia/Qwen3.6-35B-A3B-NVFP4 on vLLM. Vision + Hermes tool calling. Node 1 heavy tier."
+    description: "kyaky Qwen3.6-35B-A3B Uncensored NVFP4 on vLLM. Coding, tools, vision. Node 1, resident."
     checkEndpoint: "/health"
-    ttl: 1800
+    ttl: 0
     unloadTimeout: 180
     cmd: >
       sh -c 'docker rm -f gx-fast >/dev/null 2>&1;
@@ -259,6 +250,7 @@ models:
       -e NVIDIA_DISABLE_FORWARD_COMPATIBILITY=1
       -e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
       -e VLLM_USE_DEEP_GEMM=0
+      -e HF_HUB_OFFLINE=1
       -v ${models_root}/vllm:/models/vllm:ro
       --memory ${gx_fast_mem_limit}
       --memory-swap ${gx_fast_mem_limit}
@@ -268,13 +260,16 @@ models:
       --served-model-name gx-fast
       --host ${host} --port ${PORT}
       --gpu-memory-utilization ${gx_fast_gpu_fraction}
-      --max-model-len 65536
+      --max-model-len 131072
       --max-num-seqs 8
       --max-num-batched-tokens 16384
       --kv-cache-dtype fp8
       --enable-prefix-caching
       --enable-auto-tool-choice
       --tool-call-parser qwen3_xml
+      --reasoning-parser qwen3
+      --limit-mm-per-prompt.image 4
+      --limit-mm-per-prompt.video 0
       --trust-remote-code'
     cmdStop: "docker stop -t 150 ${MODEL_ID}"
 
@@ -320,3 +315,4 @@ hooks:
   on_startup:
     preload:
       - gx-mini
+      - gx-fast
