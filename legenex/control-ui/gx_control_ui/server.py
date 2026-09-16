@@ -615,6 +615,18 @@ def api_pg_video_content(h: Handler, job_id: str) -> None:
 
 
 # ============================================================ bootstrap
+class JsonFormatter(logging.Formatter):
+    """One JSON object per line, credentials redacted."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        entry = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(record.created)),
+                 "kind": "log", "level": record.levelname, "logger": record.name,
+                 "msg": redact(record.getMessage())}
+        if record.exc_info:
+            entry["exc"] = redact(self.formatException(record.exc_info))
+        return json.dumps(entry)
+
+
 class Server(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
@@ -641,9 +653,9 @@ def build(cfg: UIConfig) -> tuple[App, list[Server]]:
 
 
 def main() -> int:
-    logging.basicConfig(level=logging.INFO, stream=sys.stdout,
-                        format='{"ts":"%(asctime)s","kind":"log","level":"%(levelname)s",'
-                               '"logger":"%(name)s","msg":%(message)r}')
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(JsonFormatter())
+    logging.basicConfig(level=logging.INFO, handlers=[handler])
     cfg = UIConfig()
     for d in (cfg.state_dir, cfg.log_dir):
         d.mkdir(parents=True, exist_ok=True)

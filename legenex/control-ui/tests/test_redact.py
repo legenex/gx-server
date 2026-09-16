@@ -74,5 +74,20 @@ class TestRedact(unittest.TestCase):
         self.assertFalse(is_credential_key("tokens"))
 
 
+
+class TestJsonLogging(unittest.TestCase):
+    def test_log_lines_are_json_and_redacted(self):
+        import json
+        import logging
+
+        from gx_control_ui.server import JsonFormatter
+        secret = fake_key()
+        record = logging.LogRecord("gx.ui", logging.INFO, __file__, 1, "call with Bearer %s done", (secret,), None)
+        line = JsonFormatter().format(record)
+        data = json.loads(line)
+        self.assertEqual(data["level"], "INFO")
+        self.assertNotIn(secret, line)
+
+
 if __name__ == "__main__":
     unittest.main()
