@@ -67,6 +67,8 @@ class Config:
     #: Qwen-Image-Edit works at about one megapixel.
     edit_target_pixels: int = 1024 * 1024
     max_edit_seconds: float = 10.0
+    #: Free ComfyUI's model cache when the next job needs different weights.
+    free_on_model_switch: bool = True
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -92,4 +94,5 @@ class Config:
             default_image_size=os.environ.get("GX_MEDIA_DEFAULT_SIZE", "1328x1328"),
             input_dir=Path(os.environ.get("GX_MEDIA_INPUT_DIR", "/srv/comfy-input")),
             max_video_upload_bytes=_int("GX_MEDIA_MAX_VIDEO_UPLOAD", 150 * 1024 * 1024, 1024, 1 << 31),
+            free_on_model_switch=os.environ.get("GX_MEDIA_FREE_ON_SWITCH", "1") != "0",
         )

@@ -1,5 +1,6 @@
 {
   "_gx": {
+    "models": ["wan2.2_t2v_high_noise_14B_fp8_scaled.safetensors", "wan2.2_t2v_low_noise_14B_fp8_scaled.safetensors", "wan2.2_t2v_lightx2v_4steps_lora_v1.1_high_noise.safetensors", "wan2.2_t2v_lightx2v_4steps_lora_v1.1_low_noise.safetensors"],
     "kind": "video",
     "title": "Wan 2.2 T2V-A14B fp8, two experts + 4-step lightx2v LoRAs",
     "note": "Two 14B experts, BOTH required (high-noise steps 0-2, low-noise steps 2-4). Measured 56.7 s at 640x640/49 frames on GB10. length must satisfy (length-1) % 4 == 0.",

@@ -33,6 +33,8 @@ class MediaService:
         self.slot = GenerationSlot()
         self.jobs = JobStore(cfg.max_jobs_retained)
         self._client_id = f"gx-media-router-{uuid.uuid4().hex[:8]}"
+        #: model files of the last generation (see _switch_models)
+        self._resident_models: frozenset[str] = frozenset()
         self._video_queue: "queue.Queue[str]" = queue.Queue()
         self._worker = threading.Thread(target=self._video_worker, name="video-worker", daemon=True)
         self._worker.start()
@@ -119,7 +121,29 @@ class MediaService:
                 self._video_queue.task_done()
 
     # -- shared execution --------------------------------------------------
+    def _switch_models(self, workflow_name: str) -> None:
+        """Free ComfyUI's cached models before a job that needs different weights.
+
+        ComfyUI keeps every model it has loaded. On this 121 GiB unified-memory
+        node, the image, edit, text-to-video and image-to-video weights together
+        are ~110 GiB, so letting them stack would starve the host (B-012/B-018).
+        Called with the generation slot held, so nothing is running.
+        """
+        if not self.cfg.free_on_model_switch:
+            return
+        models = frozenset(self.workflows.get(workflow_name).models)
+        if not models:
+            return
+        if self._resident_models and not models <= self._resident_models:
+            log.info("model set changes (%s -> %s): freeing ComfyUI models first",
+                     sorted(self._resident_models), sorted(models))
+            self.comfy.free(unload_models=True, free_memory=True)
+            self._resident_models = frozenset()
+        # A subset of what is already loaded reuses it; the loaded set is unchanged.
+        self._resident_models = self._resident_models | models
+
     def _run(self, job: Job, graph: dict, timeout: float, thumbnail_node: str | None) -> None:
+        self._switch_models(job.workflow)
         job.status = "running"
         job.started_at = time.time()
         try:

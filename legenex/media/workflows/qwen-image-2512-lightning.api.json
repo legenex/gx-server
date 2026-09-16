@@ -1,5 +1,6 @@
 {
   "_gx": {
+    "models": ["qwen_image_2512_fp8_e4m3fn.safetensors", "Qwen-Image-2512-Lightning-4steps-V1.0-fp32.safetensors"],
     "kind": "image",
     "title": "Qwen-Image-2512 fp8 + Lightning 4-step LoRA",
     "note": "Interactive default. Measured 12.6 s at 1328x1328 on GB10. The Lightning distill LoRA REQUIRES steps=4 and cfg=1.0; raising cfg re-enables classifier-free guidance the LoRA was distilled to remove and produces burnt output.",

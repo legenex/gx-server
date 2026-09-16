@@ -1,5 +1,6 @@
 {
   "_gx": {
+    "models": ["qwen_image_2512_fp8_e4m3fn.safetensors"],
     "kind": "image",
     "title": "Qwen-Image-2512 fp8, full sampling (no distill LoRA)",
     "note": "Quality path. ~250 s at 1328x1328/50 steps on GB10 -- roughly 20x slower than the Lightning workflow for visually comparable output. Selected by quality=hd.",

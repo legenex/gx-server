@@ -78,6 +78,11 @@ class FakeComfy:
     def queue_depth(self):
         return 0
 
+    frees = 0
+
+    def free(self, *, unload_models=True, free_memory=True):
+        self.frees += 1
+
 
 class WorkflowTests(unittest.TestCase):
     def test_all_shipped_workflows_load_and_validate(self):

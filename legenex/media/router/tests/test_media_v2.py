@@ -346,6 +346,15 @@ class MediaApiTests(unittest.TestCase):
         self.assertEqual(status, 400)
         self.assertEqual(self.staged_files(), [])
 
+    def test_models_are_freed_only_when_the_model_set_changes(self):
+        self.call("POST", "/v1/images/generations", {"prompt": "a"})
+        before = self.comfy.frees
+        self.call("POST", "/v1/images/generations", {"prompt": "b"})
+        self.assertEqual(self.comfy.frees, before, "same model set must not reload")
+        status, payload = self.call("POST", "/v1/videos", {"prompt": "c"})
+        self.wait_video(payload["id"])
+        self.assertEqual(self.comfy.frees, before + 1, "switching to video must free the image weights")
+
     def test_listing_and_workflows(self):
         status, body = self.call("GET", "/v1/videos")
         self.assertEqual(status, 200)
