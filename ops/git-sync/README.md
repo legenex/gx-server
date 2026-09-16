@@ -113,6 +113,30 @@ journalctl --user -u gx-git-reconcile -n 50  # gx10-02
 git -C <checkout> rev-parse HEAD; git ls-remote https://github.com/legenex/gx-server.git main
 ```
 
+## Regression tests
+
+```bash
+ops/git-sync/tests/sync-regression.sh
+```
+
+This runs the real `node1-autosync.sh` and `node2-reconcile.sh` against
+throwaway repositories. A local bare repository stands in for GitHub, and an
+ssh shim stands in for gx10-02. Nothing real is touched.
+
+It covers:
+
+* the quiet commit, push and notify;
+* the gitleaks gate and the regex fallback;
+* forbidden paths;
+* a GitHub outage, and recovery;
+* role refusal;
+* node-2 drift: the evidence is saved with secrets masked, the push URL is
+  re-disabled, and ignored files are kept;
+* a fetch failure;
+* conflict markers.
+
+Expected result: `PASS=19 FAIL=0`.
+
 ## Containers that bind-mount the checkout
 
 `gx-litellm` and `gx-llama-swap-node01` on gx10-01 bind-mount files and

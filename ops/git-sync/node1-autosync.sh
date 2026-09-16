@@ -118,13 +118,18 @@ do_commit() {
     return 0
   fi
 
-  if g diff --cached --check 2>&1 | grep -q 'conflict marker'; then
+  # `git diff --check` exits non-zero whenever it reports anything, so its
+  # output is captured first: piping it straight into grep under pipefail made
+  # this gate a no-op (found 2026-09-16 by ops/git-sync/tests/sync-regression.sh S9).
+  local check_out
+  check_out="$(g diff --cached --check 2>&1)" || true
+  if printf '%s\n' "${check_out}" | grep -q 'conflict marker'; then
     gxs_log "BLOCKED: staged change contains merge conflict markers; unstaging"
     g reset -q >/dev/null 2>&1
     return 1
   fi
-  if ws="$(g diff --cached --check 2>&1)"; then :; else
-    gxs_log "note: whitespace issues in staged change (not blocking): $(printf '%s' "${ws}" | grep -c .) line(s)"
+  if [ -n "${check_out}" ]; then
+    gxs_log "note: whitespace issues in staged change (not blocking): $(printf '%s\n' "${check_out}" | grep -c .) line(s)"
   fi
 
   hits="$(gxs_scan_staged)"; case $? in

@@ -51,7 +51,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Integrity audit** also checks the installed control-UI unit against the
   rendered repo template.
 
+- **Git sync regression suite** `ops/git-sync/tests/sync-regression.sh`
+  (19 hermetic checks).
+
 ### Fixed
+- **Autosync conflict-marker gate was a no-op.** `git diff --check` exits
+  non-zero whenever it reports something, so under `pipefail` the
+  `... | grep -q` test was always false. The versioned pre-commit hook still
+  caught such commits, so nothing leaked. The gate now captures the output
+  first; the hook got the same hardening.
 - `gx_orchestrator/tiers.py`: stale gx-reason checkpoint note (now
   `nvidia/Qwen3.6-27B-NVFP4`, D-021).
 

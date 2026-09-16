@@ -16,7 +16,10 @@ if [ "${#bad[@]}" -gt 0 ]; then
   echo "pre-commit: refusing forbidden or oversized paths: ${bad[*]}" >&2
   exit 1
 fi
-if git diff --cached --check 2>&1 | grep -q 'conflict marker'; then
+# Capture first: `git diff --check` exits non-zero when it reports anything, which
+# would defeat the grep if this hook ever ran under pipefail.
+check_out="$(git diff --cached --check 2>&1)" || true
+if printf '%s\n' "${check_out}" | grep -q 'conflict marker'; then
   echo "pre-commit: staged change contains conflict markers" >&2
   exit 1
 fi
