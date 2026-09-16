@@ -118,7 +118,8 @@ PY
   local hits
   hits="$(g diff --cached -U0 --no-color | awk '
     /^\+\+\+ b\//{file=substr($0,7); next}
-    /^\+/{ if ($0 ~ /(ghp_|gho_|ghs_|github_pat_)[A-Za-z0-9_]{20,}|tskey-[A-Za-z0-9-]{10,}|hf_[A-Za-z0-9]{30,}|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----|sk-[A-Za-z0-9_-]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}/) print file ": secret-like token" }')"
+    /^\+/{ if (tolower($0) ~ /(ghp_|gho_|ghs_|github_pat_|hf_|sk-)(your|example|xxxx|placeholder|changeme)/) next
+          if ($0 ~ /(ghp_|gho_|ghs_|github_pat_)[A-Za-z0-9_]{20,}|tskey-[A-Za-z0-9-]{10,}|hf_[A-Za-z0-9]{30,}|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----|sk-[A-Za-z0-9_-]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}/) print file ": secret-like token" }')"
   if [ -n "${hits}" ]; then printf '%s\n' "${hits}"; return 1; fi
   [ -x "${GX_SYNC_GITLEAKS}" ] && return 2
   return 0

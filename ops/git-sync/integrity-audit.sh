@@ -144,7 +144,12 @@ if [ -x "${GX_SYNC_GITLEAKS}" ]; then
   fi
   rm -rf "${tree}"
 else
-  hits="$(g grep -I -l -E '(ghp_|gho_|github_pat_)[A-Za-z0-9_]{20,}|tskey-[A-Za-z0-9-]{10,}|hf_[A-Za-z0-9]{30,}|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----' HEAD 2>/dev/null || true)"
+  # `git grep ... HEAD` prints HEAD:<file>:<line>:<text>; obvious documentation
+  # placeholders (ghp_your..., hf_example...) are not credentials.
+  pat='(ghp_|gho_|github_pat_)[A-Za-z0-9_]{20,}|tskey-[A-Za-z0-9-]{10,}|hf_[A-Za-z0-9]{30,}|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----'
+  hits="$(g grep -I -n -E "${pat}" HEAD 2>/dev/null \
+    | grep -viE '(ghp_|gho_|github_pat_|hf_)(your|example|xxxx|placeholder|changeme)' \
+    | cut -d: -f2 | sort -u || true)"
   [ -z "${hits}" ] && r PASS "regex scan: no credential patterns in the tracked tree (gitleaks not installed on this node)" \
     || r FAIL "regex scan: credential-like patterns in: $(printf '%s' "${hits}" | tr '\n' ' ')"
 fi
