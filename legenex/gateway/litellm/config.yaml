@@ -81,16 +81,19 @@ general_settings:
   # Single shared semaphore across the whole proxy. Excess requests are rejected
   # with 429 rather than queued into a cold-start stampede.
   global_max_parallel_requests: 32
-  max_request_size_mb: 64
-  max_response_size_mb: 64
+  # Media uploads (image/video edits, image-to-video) go through the gateway
+  # as multipart bodies; the node-2 router caps its own uploads at 150 MB.
+  max_request_size_mb: 160
+  max_response_size_mb: 160
 
 model_list:
 
   # ===========================================================================
-  # gx-mini — small, fast, multimodal. Node 1, llama.cpp, resident/always-hot.
+  # gx-mini — small, fast, multimodal, uncensored. Node 1, llama.cpp, resident.
   # ===========================================================================
-  # PROVEN WORKING. Qwen3.5-4B-Q4_K_M + BF16 mmproj, vision verified, ~48 tok/s.
-  # llama-swap keeps it loaded (ttl 0); it survives heavy-model swaps.
+  # HauhauCS/Qwen3.5-4B-Uncensored-HauhauCS-Aggressive @ c09cdbcdb1fe, Q4_K_M
+  # + BF16 mmproj (D-030). Verified 2026-09-17: ~52 tok/s, vision, tools.
+  # llama-swap preloads it (ttl 0); it survives heavy-model swaps.
   - model_name: gx-mini
     litellm_params:
       model: openai/gx-mini
@@ -100,45 +103,35 @@ model_list:
       # llama.cpp's STREAMING tool-call parser intermittently fails on complex
       # tool calls; its non-streaming parser is reliable. fake_stream makes
       # LiteLLM call llama.cpp non-streaming and fake-stream the buffered result.
-      # (Carried forward from the single-Spark base stack — same engine, same bug.)
       fake_stream: true
       extra_body:
         chat_template_kwargs: {"enable_thinking": false}
     model_info:
-      # llama.cpp is started with --ctx-size 65536 (total across 2 slots).
-      # input + output must fit inside that.
-      max_input_tokens: 61440
-      max_output_tokens: 4096
+      # llama.cpp --ctx-size 131072 --parallel 2 -> 65536 per request.
+      max_input_tokens: 57344
+      max_output_tokens: 8192
       supports_vision: true
       supports_function_calling: true
 
   # ===========================================================================
-  # gx-fast — agentic / tool-using workhorse. Node 1, heavy tier.
+  # gx-fast — primary coding / tools / agent tier. Node 1, vLLM, resident.
   # ===========================================================================
-  # *** CHECKPOINT PENDING VERIFICATION ***
-  # Another agent is confirming the exact ~30-40B class MoE checkpoint. The
-  # upstream model ID is NOT invented here: llama-swap exposes it under the
-  # stable ID "gx-fast" and the real checkpoint is bound inside
-  # legenex/gateway/llama-swap/node01.yaml (macros gx_fast_model_dir /
-  # vllm_image). So this block does not change when the checkpoint lands —
-  # only node01.yaml does.
-  # The token limits below are PROVISIONAL and must be re-checked against the
-  # verified checkpoint's real context window and the vLLM --max-model-len.
+  # kyaky/Qwen3.6-35B-A3B-Uncensored-NVFP4 @ 33d5cf837389 (D-030), bound in
+  # llama-swap/node01.yaml. Verified 2026-09-17: ~55 tok/s, tools, vision,
+  # 0.08 s warm TTFT. Thinking is off by default for interactive turns; a
+  # request may send chat_template_kwargs {"enable_thinking": true}.
   - model_name: gx-fast
     litellm_params:
       model: openai/gx-fast
       api_base: "http://gx-llama-swap-node01:8080/v1"
       api_key: os.environ/GX_SWAP_API_KEY
       drop_params: true
-      # Qwen3.6 emits chain-of-thought inline unless the chat template is told
-      # not to. Without this the model spends its output budget "thinking" and
-      # the caller gets prose instead of an answer. Verified 2026-09-14.
       extra_body:
         chat_template_kwargs: {"enable_thinking": false}
     model_info:
-      # Matches node01.yaml --max-model-len 65536.
-      max_input_tokens: 57344
-      max_output_tokens: 8192
+      # vLLM --max-model-len 131072.
+      max_input_tokens: 98304
+      max_output_tokens: 32768
       supports_function_calling: true
       supports_vision: true
 
@@ -178,8 +171,9 @@ model_list:
       supports_vision: true
 
   # ===========================================================================
-  # gx-max — DeepSeek V4 Flash, SGLang TP=2 across BOTH nodes.
+  # gx-max — DeepSeek V4 Flash 0731 (uncensored), SGLang TP=2 across BOTH nodes.
   # ===========================================================================
+  # dealignai/DeepSeek-V4-Flash-0731-CRACK-NVFP4 @ c66fe3848cb8 (D-032).
   # MUST go through the lead's orchestrator on :18900, NEVER directly to the
   # SGLang server on :30000. The orchestrator enforces cluster acquisition and
   # drain; bypassing it can collide with a live distributed job.
@@ -203,11 +197,9 @@ model_list:
       timeout: 3600
       num_retries: 0
     model_info:
-      # PENDING: must be <= the orchestrator's SGLang --max-total-tokens.
-      # Conservative until the lead confirms the KV pool size; input + output
-      # must both fit inside that pool or long prompts abort on first decode.
-      max_input_tokens: 65536
-      max_output_tokens: 16384
+      # SGLang --context-length 327680 (gx-max.conf).
+      max_input_tokens: 262144
+      max_output_tokens: 65536
       supports_function_calling: true
 
   # ===========================================================================
@@ -225,16 +217,20 @@ model_list:
       drop_params: true
       timeout: 3600
     model_info:
-      # Smallest common denominator across the tiers gx-auto may pick, so a
-      # client that sizes its prompt to gx-auto cannot overflow whichever tier
-      # the orchestrator chooses.
-      max_input_tokens: 24576
+      # gx-mini's window: the smallest tier gx-auto may pick for a short task.
+      # Larger requests are routed to a tier that holds them (D-030), and the
+      # orchestrator clamps max_tokens to the chosen tier's output limit.
+      max_input_tokens: 57344
       max_output_tokens: 8192
       supports_function_calling: true
+      supports_vision: true
 
   # ===========================================================================
-  # gx-image — ComfyUI-backed image generation. Node 2.
+  # gx-image — ComfyUI-backed image generation AND editing. Node 2.
   # ===========================================================================
+  # /v1/images/generations (text-to-image, uncensored template by default),
+  # /v1/images/edits (Qwen-Image-Edit-2511; multipart image + prompt) and
+  # /v1/images/variations are forwarded to the router (D-031).
   # Live and verified 2026-09-15: a real request through this exact api_base
   # (router on the RoCE fabric -> ComfyUI GPU -> output) produced a genuine
   # 1024x1024 image matching the prompt in 28s via the Lightning workflow.
@@ -255,8 +251,11 @@ model_list:
       max_output_tokens: 4096
 
   # ===========================================================================
-  # gx-video — ComfyUI-backed video generation. Node 2.
+  # gx-video — ComfyUI-backed video generation and editing. Node 2.
   # ===========================================================================
+  # OpenAI video API (D-031): POST /v1/videos (text-to-video, or image-to-video
+  # with input_reference), GET /v1/videos/{id}, GET /v1/videos/{id}/content,
+  # POST /v1/videos/{id}/remix and POST /v1/videos/edits (video-to-video).
   # Live and verified 2026-09-15: a real async request against this router
   # (POST /v1/videos -> poll -> GET .../content) produced a genuine playable
   # MP4 via the wan22-t2v-a14b-lightning workflow in 58s. This comment
@@ -273,6 +272,7 @@ model_list:
       drop_params: true
       timeout: 3600
     model_info:
+      mode: video_generation
       max_input_tokens: 4096
       max_output_tokens: 4096
 
