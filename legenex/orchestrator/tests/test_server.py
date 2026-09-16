@@ -122,27 +122,6 @@ class TestGxAutoNeverAcquiresGxMax(unittest.TestCase):
         from gx_orchestrator import server as srv
         return Path(srv.__file__).read_text()
 
-    def test_auto_path_has_no_bare_acquire_call(self):
-        src = self._source()
-        start = src.index("if decision.tier is Tier.MAX:")
-        end = src.index("def _serve_gx_max", start)
-        auto_max_block = src[start:end]
-        self.assertNotIn(
-            "self.lifecycle.acquire()", auto_max_block,
-            "gx-auto must not acquire gx-max: acquisition drains both nodes. "
-            "Only _serve_gx_max (direct requests) and the explicit "
-            "/lifecycle/gx-max/acquire endpoint may acquire.",
-        )
-
-    def test_auto_proxies_to_gx_max_only_when_already_ready(self):
-        src = self._source()
-        start = src.index("if decision.tier is Tier.MAX:")
-        end = src.index("def _serve_gx_max", start)
-        auto_max_block = src[start:end]
-        self.assertIn("lc_status.state is State.READY", auto_max_block)
-        # and it must still fall back rather than error out
-        self.assertIn("busy={Tier.MAX: True}", auto_max_block)
-
     def test_direct_gx_max_path_still_acquires(self):
         """The direct path MUST still acquire -- it is the operator-initiated one."""
         src = self._source()
@@ -205,3 +184,162 @@ class TestNode2OfflineOutranksAdmission(unittest.TestCase):
             admission_blocked=lambda: "admission_refused: would not fit",
         )
         self.assertEqual(status.reason, "node2_unavailable")
+
+
+# ---------------------------------------------------------------------------
+# Behavioural gx-auto tests: a real HTTP server, fake upstreams, fake
+# lifecycle. They replace the earlier source-text checks.
+# ---------------------------------------------------------------------------
+import json as _json  # noqa: E402
+import tempfile as _tempfile  # noqa: E402
+import threading as _threading  # noqa: E402
+import urllib.request as _urlreq  # noqa: E402
+from http.server import BaseHTTPRequestHandler as _BH, ThreadingHTTPServer as _TS  # noqa: E402
+
+from gx_orchestrator import server as _srv  # noqa: E402
+from gx_orchestrator.tiers import TIERS as _TIERS, Tier as _Tier  # noqa: E402
+
+
+class _FakeUpstream:
+    def __init__(self):
+        self.calls: list[dict] = []
+        outer = self
+
+        class H(_BH):
+            def log_message(self, *a):
+                pass
+
+            def do_POST(self):
+                body = _json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                outer.calls.append(body)
+                out = _json.dumps({"choices": [{"message": {"content": "ok"}}], "model": body.get("model")}).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(out)))
+                self.end_headers()
+                self.wfile.write(out)
+
+        self.httpd = _TS(("127.0.0.1", 0), H)
+        _threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+        self.base = f"http://127.0.0.1:{self.httpd.server_address[1]}/v1"
+
+
+class _FakeLifecycle:
+    def __init__(self, state):
+        self.state = state
+        self.acquired = 0
+
+    def status(self):
+        return _lc_status(self.state)
+
+    def acquire(self, timeout=None):
+        self.acquired += 1
+
+    def mark_used(self):
+        pass
+
+
+class _FakeHealth:
+    def snapshot(self):
+        return {t: TierStatus(AliasState.READY, "ok", usable=True) for t in (_Tier.MINI, _Tier.FAST, _Tier.REASON)}
+
+
+class _Cfg:
+    def __init__(self, gw, mx):
+        self.gateway_base = gw
+        self.gxmax_base = mx
+        self.gxmax_model_id = "/model"
+        self.upstream_timeout = 10
+
+    def gateway_key(self):
+        return None
+
+
+class TestGxAutoBehaviour(unittest.TestCase):
+    def setUp(self):
+        self.gw = _FakeUpstream()
+        self.mx = _FakeUpstream()
+        self.tmp = _tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.addCleanup(self.gw.httpd.shutdown)
+        self.addCleanup(self.mx.httpd.shutdown)
+
+    def _serve(self, lc_state):
+        lifecycle = _FakeLifecycle(lc_state)
+        journal = _srv.RoutingJournal(Path(self.tmp.name) / "routing.jsonl")
+        handler = type("H", (_srv.Handler,), {
+            "cfg": _Cfg(self.gw.base, self.mx.base),
+            "lifecycle": lifecycle,
+            "health": _FakeHealth(),
+            "journal": journal,
+        })
+        httpd = _TS(("127.0.0.1", 0), handler)
+        _threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        self.addCleanup(httpd.shutdown)
+        return f"http://127.0.0.1:{httpd.server_address[1]}", lifecycle, journal
+
+    def _post(self, base, payload, rid="req-test-1"):
+        req = _urlreq.Request(base + "/v1/chat/completions", data=_json.dumps(payload).encode(),
+                              headers={"Content-Type": "application/json", "X-GX-Request-Id": rid})
+        try:
+            with _urlreq.urlopen(req, timeout=10) as r:
+                return r.status, dict(r.headers), _json.loads(r.read())
+        except _urlreq.HTTPError as e:
+            return e.code, dict(e.headers), _json.loads(e.read())
+
+    _EXTREME = {"model": "gx-auto", "messages": [{"role": "user", "content":
+                "Do a comprehensive audit of the entire codebase and formal verification"}]}
+
+    def test_extreme_prompt_with_gx_max_down_falls_back_and_never_acquires(self):
+        base, lc, journal = self._serve(State.DOWN)
+        status, headers, _ = self._post(base, self._EXTREME)
+        self.assertEqual(status, 200)
+        self.assertEqual(lc.acquired, 0)
+        self.assertEqual(self.mx.calls, [])
+        self.assertEqual(self.gw.calls[0]["model"], "gx-reason")
+        self.assertEqual(headers.get("X-GX-Request-Id"), "req-test-1")
+        recs = journal.find(request_id="req-test-1")
+        self.assertEqual({r["event"] for r in recs}, {"decision", "completed"})
+        decision = [r for r in recs if r["event"] == "decision"][0]
+        self.assertEqual(decision["tier"], "gx-reason")
+        self.assertIn("does not acquire", decision["note"])
+
+    def test_extreme_prompt_uses_gx_max_when_already_ready(self):
+        base, lc, _ = self._serve(State.READY)
+        status, _, _ = self._post(base, self._EXTREME)
+        self.assertEqual(status, 200)
+        self.assertEqual(lc.acquired, 0)
+        self.assertEqual(self.mx.calls[0]["model"], "/model")
+
+    def test_oversized_context_with_gx_max_down_is_503_not_acquire(self):
+        base, lc, _ = self._serve(State.DOWN)
+        huge = {"model": "gx-auto", "messages": [{"role": "user", "content": "x" * 1_200_000}]}
+        status, _, body = self._post(base, huge)
+        self.assertEqual(status, 503)
+        self.assertEqual(body["error"]["code"], "gx_max_not_running")
+        self.assertEqual(lc.acquired, 0)
+        self.assertEqual(self.mx.calls, [])
+
+    def test_output_budget_is_clamped_to_tier(self):
+        base, _, _ = self._serve(State.DOWN)
+        self._post(base, {"model": "gx-auto", "max_tokens": 262_144,
+                          "messages": [{"role": "user", "content": "hello"}]})
+        self.assertEqual(self.gw.calls[0]["model"], "gx-mini")
+        self.assertEqual(self.gw.calls[0]["max_tokens"], _TIERS[_Tier.MINI].max_output)
+
+    def test_decisions_endpoint_finds_by_fingerprint(self):
+        base, _, _ = self._serve(State.DOWN)
+        payload = {"model": "gx-auto", "messages": [{"role": "user", "content": "hello"}]}
+        self._post(base, payload, rid="abc-1")
+        fp = _srv.request_fingerprint(payload)
+        with _urlreq.urlopen(f"{base}/routing/decisions?fingerprint={fp}", timeout=5) as r:
+            data = _json.loads(r.read())["data"]
+        self.assertTrue(data)
+        self.assertTrue(all(d["fingerprint"] == fp for d in data))
+
+    def test_hostile_request_id_is_replaced(self):
+        base, _, journal = self._serve(State.DOWN)
+        _, headers, _ = self._post(base, {"model": "gx-auto", "messages": [{"role": "user", "content": "hi"}]},
+                                   rid="bad id\twith spaces")
+        self.assertNotEqual(headers.get("X-GX-Request-Id"), "bad id\twith spaces")
+        self.assertEqual(len(headers.get("X-GX-Request-Id", "")), 32)
