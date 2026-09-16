@@ -1212,3 +1212,53 @@ small per-job cache, were added, with tests.
 * **B-024 opened:** the media router key is the public placeholder. It was
   not rotated in this run, because the permission policy blocked writes to
   the secret stores.
+
+## 18. gx10-02 production finalization (2026-09-16, run on gx10-02)
+
+Commit under test: `637ddf4`. No gx-max-critical code changed in this run,
+so no new gx-max cycle was run. The section 17 cycle stands.
+
+### 18.1 Changes
+
+* The live containers `gx-llama-swap-node02`, `gx-media-router` and
+  `gx-comfyui` bind-mounted files from `~/gx-worker`. Before the change,
+  `/proc/self/mountinfo` inside each container showed `gx-worker` paths.
+  The cause: `~/gx-gateway`, `~/gx-media` and `~/gx-kernel-lock` were
+  symlinks into that tree.
+* Those three are now real directories deployed from `legenex/`, and every
+  file matches the repository. The containers were recreated on them.
+  `mountinfo` now shows `/home/legenex-02/gx-gateway/...` and
+  `/home/legenex-02/gx-media/...`.
+* `~/gx-worker`, `~/gx-scripts` (symlink),
+  `~/Documents/Projects/Server/gx-cluster-worker` (symlink) and
+  `~/run-gx-max.sh` (an unused manual rank launcher) are archived at
+  `~/archives/gx-worker-retired-20260916/` (mode 0700) and removed. A sweep
+  of systemd, cron, dotfiles, Docker mounts and labels, processes and
+  repository code found no remaining reference.
+* `acceptance.sh` `t_auto` fix. The test read the **last** `gx.routing`
+  line in the log. While gx-reason cold-loaded, a foreign 9k-token agent
+  request was logged as gx-fast, so the test reported a false FAIL. The
+  orchestrator had already routed the test request to gx-reason (22:41:45),
+  and llama-swap served it with HTTP 200.
+
+### 18.2 Results
+
+| Check | Result |
+|---|---|
+| Kernel / `verify-kernel-lock.sh` | `6.17.0-1032-nvidia`; **13 passed, 0 warnings, 0 failed** |
+| RoCE | both rails ACTIVE at 200 Gb; ping 0 % loss to .100.10 and .101.10 |
+| `recover-node2.sh` (from gx10-01) | **PASS=15 FAIL=0 WARN=0 SKIP=1** (nothing to clear) |
+| `acceptance.sh gateway reason auto media` | gateway 2/2; gx-reason **15:35 correct** (1289 reasoning tokens); gx-image PASS; gx-video PASS (205 386 B); ComfyUI ingress boundary PASS. gx-auto reason route: false FAIL, fixed above |
+| `acceptance.sh auto` after the fix | **PASS=3 FAIL=0** (mini / reason / mini) |
+| gx-reason unload | node 2 went from 67 GiB to 113 GiB MemAvailable within seconds of the unload |
+| gx-image, separate gateway call | PNG **1024×1024**, 1 477 288 B, luma range 4–239, visually checked (lighthouse prompt) |
+| gx-video | h264 **640×640**, 16 fps, **33 frames, 33 distinct frame MD5s**, mean consecutive diff 5.13, first vs last 69.15 |
+| `unwind-tests.sh E1 E2 E3 E4 E6` on gx10-02 | **PASS=8 FAIL=0** |
+| `sync-regression.sh` | **PASS=19 FAIL=0** |
+| lifecycle / orchestrator unit tests | 22 OK / 147 OK |
+| Control-UI node2 collector (`hostfacts.py` over SSH) | hostname, kernel, memory, swap, PSI, RDMA, Tailscale, Docker, units, Git, hostwatch, lock and watcher all accurate |
+| Mirror `integrity-audit.sh` | **PASS=22 WARN=0 FAIL=0** |
+
+The gx-max rank1 evidence (the log, the deadman log and memory samples
+from the 20:06 release) is kept at
+`/srv/logs/gx-max-evidence-node2-20260916T2006/`.

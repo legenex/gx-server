@@ -23,6 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `recover-node2.sh`: dropped the `gx-worker` `gx-node2ctl` and
   `sync-status-to-lead.sh` steps. ComfyUI status now comes from the media
   router's `/health`.
+- `acceptance.sh` gx-auto test: it now matches its own routing decision
+  instead of the last log line, so concurrent gx-auto traffic no longer
+  causes a false FAIL.
 
 ## [0.14.0] - 2026-09-16
 
