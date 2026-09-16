@@ -56,14 +56,24 @@ do_push() {
   # A remote-tracking ref that does not exist yet (first push) counts as ahead.
   g rev-parse --verify -q "${GX_SYNC_REMOTE}/${GX_SYNC_BRANCH}" >/dev/null || ahead=1
   [ "${ahead}" -gt 0 ] || return 0
+  # Back off after a failure so a long GitHub outage costs one attempt per
+  # GX_SYNC_PUSH_BACKOFF_S, not one per 15 s watcher poll. A manual commit
+  # (MODE=push) always tries immediately.
+  local stamp="${GX_SYNC_STATE_DIR}/last-push-failure"
+  if [ "${MODE}" != push ] && [ -f "${stamp}" ] && \
+     [ $(( $(date +%s) - $(stat -c %Y "${stamp}") )) -lt "${GX_SYNC_PUSH_BACKOFF_S:-60}" ]; then
+    return 1
+  fi
   out="$(GIT_TERMINAL_PROMPT=0 timeout "${GX_SYNC_NET_TIMEOUT}" git -C "${GX_SYNC_REPO}" push --quiet "${GX_SYNC_REMOTE}" "HEAD:refs/heads/${GX_SYNC_BRANCH}" 2>&1)"; rc=$?
   if [ "${rc}" -ne 0 ]; then
     printf '%s push FAILED rc=%s ahead=%s head=%s: %s\n' "$(date -Is)" "${rc}" "${ahead}" \
       "$(g rev-parse --short HEAD)" "$(printf '%s' "${out}" | tr '\n' ' ' | cut -c1-300)" \
       >> "${GX_SYNC_LOG_DIR}/push-failures.log"
     gxs_log "push failed (rc=${rc}); ${ahead} commit(s) kept locally, will retry"
+    touch "${stamp}"
     return 1
   fi
+  rm -f "${stamp}"
   g fetch --quiet "${GX_SYNC_REMOTE}" "${GX_SYNC_BRANCH}" >/dev/null 2>&1 || true
   gxs_log "pushed ${ahead} commit(s); origin/${GX_SYNC_BRANCH} = $(g rev-parse --short HEAD)"
   if gxs_notify_node2; then
