@@ -1,0 +1,55 @@
+# ==============================================================================
+# gx-control-ui.service — gx-cluster management web UI, node 1 (gx10-01).
+#
+# INSTALL / REPAIR (no root; idempotent):
+#   legenex/control-ui/scripts/install.sh
+#
+# VERIFY:
+#   systemctl --user status gx-control-ui.service
+#   curl -sS http://127.0.0.1:8088/api/ready
+#
+# Small infrastructure, so it starts at boot. It never starts a model: model
+# changes go through the orchestrator / llama-swap APIs on explicit request.
+# @REPO@ is replaced by install.sh with the checkout path.
+# ==============================================================================
+[Unit]
+Description=gx-cluster control UI (management web interface), node 1
+After=network-online.target docker.service gx-orchestrator.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=@REPO@/legenex/control-ui
+# Upstream credentials (LiteLLM master key, llama-swap key, media key) come
+# from the SAME ignored file the orchestrator uses. Nothing is copied.
+EnvironmentFile=-@REPO@/legenex/gateway/.env
+Environment=PYTHONUNBUFFERED=1
+# Loopback + this host's Tailscale address. Never a wildcard (enforced in code).
+Environment=GX_UI_HOSTS=127.0.0.1,tailscale
+Environment=GX_UI_PORT=8088
+Environment=GX_REPO_ROOT=@REPO@
+ExecStartPre=@REPO@/legenex/control-ui/scripts/wait-for-tailscale.sh
+ExecStart=/usr/bin/python3 -m gx_control_ui
+Restart=always
+RestartSec=5
+TimeoutStopSec=15
+StandardOutput=append:/srv/logs/gx-control-ui/control-ui.log
+StandardError=append:/srv/logs/gx-control-ui/control-ui.log
+
+# Resource limits: this must never compete with a model for memory.
+MemoryMax=512M
+MemoryHigh=384M
+CPUQuota=150%
+TasksMax=256
+
+# Hardening, mirroring gx-orchestrator.service. The UI reads /proc, /sys,
+# the checkout and logs; it writes only its own state, secrets and logs
+# (plus the Git-sync log directory used by the integrity audit it can run).
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/srv/logs /srv/projects/gx-cluster/state /srv/projects/gx-cluster/secrets/control-ui
+PrivateTmp=true
+UMask=0077
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,22 @@
+{
+  "name": "gx-control-ui",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Management web UI for the two-node gx-cluster (dev tooling only; the UI itself has no runtime npm dependencies)",
+  "license": "UNLICENSED",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "node scripts/build-check.mjs",
+    "test:unit": "python3 -m unittest discover -s tests",
+    "test:e2e": "playwright test --project=offline",
+    "test:live": "playwright test --project=live",
+    "qa": "bash scripts/qa.sh"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "4.13.0",
+    "@playwright/test": "1.63.0"
+  }
+}

@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Set or reset the gx-cluster control-UI password (gx10-01 only).
+#
+#   gx-ui-passwd               prompt twice for a new password
+#   gx-ui-passwd --status      show whether a password is configured
+#   gx-ui-passwd --generate    write a random password to a 0600 file
+#   gx-ui-passwd --stdin       read the new password from stdin
+#
+# The hash is stored in /srv/projects/gx-cluster/secrets/control-ui/auth.json
+# (mode 0600). Changing it logs out every session. Nothing is written to Git.
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+umask 077
+cd "${here}"
+exec /usr/bin/python3 -m gx_control_ui.passwd "$@"

@@ -21,6 +21,7 @@ import hashlib
 import json
 import logging
 import mimetypes
+import os
 import re
 import socket
 import sys
@@ -47,6 +48,10 @@ from . import views
 log = logging.getLogger("gx.ui")
 
 MAX_BODY = 64 * 1024
+#: Client-side routes that fall back to index.html. Anything else that is not
+#: a known asset is a plain 404.
+_SPA_ROUTE = re.compile(r"/(dashboard|models|runtime|cluster|jobs|logs|playground|docs|settings)(/[a-z0-9\-]{0,64}){0,2}")
+ACCESS_LOG = os.environ.get("GX_UI_ACCESS_LOG", "1") != "0"
 MAX_BODY_PLAYGROUND = 12 * 1024 * 1024
 
 CSP = (
@@ -303,13 +308,13 @@ class Handler(BaseHTTPRequestHandler):
             "ip": self._client_ip(),
             "user": getattr(getattr(self, "session", None), "username", None),
         }
-        if path and (path.startswith("/api/") or entry["status"] >= 400):
+        if ACCESS_LOG and path and (path.startswith("/api/") or entry["status"] >= 400):
             print(json.dumps(entry), flush=True)
 
     # --------------------------------------------------------------- static
     def _static(self, path: str) -> None:
         files = self.app.static
-        if path == "/" or (not Path(path).suffix and not path.startswith("/js/")):
+        if path == "/" or _SPA_ROUTE.fullmatch(path):
             path = "/index.html"
         entry = files.get(path)
         if entry is None:
