@@ -333,9 +333,11 @@ class GxMaxLifecycle:
                 if self._await_health(self._SETTLE_SECONDS):
                     with self._cv:
                         self._last_used = time.time()
-                    self._set_state(State.READY, "engine healthy")
+                    # Finish the job record BEFORE the transition wakes the
+                    # waiters, so anyone reading status sees it complete.
                     self._set_phase(PHASE_SERVING)
                     self._end_job("ready")
+                    self._set_state(State.READY, "engine healthy")
                     return
                 err = (
                     f"gx-max-start.sh exited 0 but the engine did not answer "
@@ -362,9 +364,9 @@ class GxMaxLifecycle:
         log.error("gx-max acquisition failed: %s", err)
         with self._cv:
             self._last_error = err
-        self._set_state(State.DOWN, "acquisition failed")
         self._set_phase(PHASE_FAILED)
         self._end_job("failed", error=err)
+        self._set_state(State.DOWN, "acquisition failed")
 
     def _cleanup_after_failed_acquire(self, original_err: str) -> str:
         """Best-effort unwind of any rank a failed acquire left running.
