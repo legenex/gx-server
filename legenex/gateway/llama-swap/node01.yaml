@@ -162,6 +162,10 @@ macros:
   # tier, 950 for gx-max (see legenex/lifecycle/gx-max.conf). Gateway/control
   # containers use 100 (see docker-compose.gateway.yml). Everything we run is
   # positive, i.e. preferred for OOM-kill ahead of any unmodified host daemon.
+  # gx-mini checkpoint (verified: /srv/models/gguf/<dir>/.gx-manifest.json)
+  gx_mini_model: "/models/gguf/Qwen3.5-4B-Uncensored-HauhauCS-Aggressive/Qwen3.5-4B-Uncensored-HauhauCS-Aggressive-Q4_K_M.gguf"
+  gx_mini_mmproj: "/models/gguf/Qwen3.5-4B-Uncensored-HauhauCS-Aggressive/mmproj-Qwen3.5-4B-Uncensored-HauhauCS-Aggressive-BF16.gguf"
+
   gx_mini_mem_limit: "14g"
   gx_mini_oom_score_adj: "700"
   gx_fast_mem_limit: "86g"
@@ -170,23 +174,22 @@ macros:
 models:
 
   # ============================================================================
-  # gx-mini — resident tier
+  # gx-mini — resident tier (D-030, 2026-09-17)
   # ============================================================================
-  # PROVEN WORKING — do not redesign. llama.cpp + Qwen3.5-4B-Q4_K_M with the
-  # BF16 mmproj for vision. ~48 tok/s, vision verified, previously served on
-  # 127.0.0.1:19001/v1. That port is preserved here so existing clients and
-  # test scripts keep working.
+  # HauhauCS/Qwen3.5-4B-Uncensored-HauhauCS-Aggressive @ c09cdbcdb1fe
+  #   Q4_K_M GGUF (2.71 GB) + BF16 mmproj (0.68 GB, vision).
+  # Uncensored ("aggressive" refusal removal), multimodal, tool calling via
+  # the model's own Jinja template (--jinja).
   #
-  # Footprint: 2.6 GB weights + 0.65 GB mmproj + ~4.8 GB KV (65536 total tokens,
-  # f16) + runtime ~= 9-10 GB. Inside the 14 GB resident budget.
+  # Context: --ctx-size 131072 split over --parallel 2 -> 65536 tokens per
+  # request slot. Hybrid Gated-DeltaNet/attention (3:1), so the KV cache for
+  # the full 131072 is ~4 GB f16. Footprint ~10 GB: inside the 14 GB budget.
   #
-  # ttl: 0 -> never auto-unloaded. It is the always-hot low-latency path and the
-  # only model that stays up while a heavy model runs.
+  # ttl 0 + startup preload (hooks below) -> resident. Port 19001 is pinned
+  # (published by the llama-swap service in docker-compose.gateway.yml).
   gx-mini:
     name: "gx-mini"
-    description: "Qwen3.5-4B Q4_K_M (llama.cpp, multimodal/vision). Node 1 resident tier, always hot."
-    # Fixed port, not ${PORT}: 19001 is published on the host by the llama-swap
-    # service, so the proven direct endpoint http://127.0.0.1:19001/v1 survives.
+    description: "HauhauCS Qwen3.5-4B Uncensored Aggressive Q4_K_M (llama.cpp, vision, tools). Node 1, resident."
     proxy: "http://127.0.0.1:19001"
     checkEndpoint: "/health"
     ttl: 0
@@ -205,15 +208,17 @@ models:
       --memory-swap ${gx_mini_mem_limit}
       --oom-score-adj ${gx_mini_oom_score_adj}
       ${llamacpp_image}
-      -m /models/gguf/Qwen3.5-4B/Qwen3.5-4B-Q4_K_M.gguf
-      --mmproj /models/gguf/Qwen3.5-4B/mmproj-BF16.gguf
+      -m ${gx_mini_model}
+      --mmproj ${gx_mini_mmproj}
       --alias gx-mini
       --host ${host} --port 19001
-      --ctx-size 65536
+      --ctx-size 131072
       --n-gpu-layers 99
       --parallel 2
+      --flash-attn on
       --load-mode mlock
       --jinja
+      --temp 0.7 --top-p 0.8 --top-k 20 --min-p 0
       --timeout 600'
     cmdStop: "docker stop -t 25 ${MODEL_ID}"
 
