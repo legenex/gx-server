@@ -86,3 +86,32 @@ test('settings shows versions, sync units and runs the read-only kernel verifier
   expect(full.result['gx10-01'].summary).toContain('13 passed, 0 warnings, 0 failed');
   expect(full.result['gx10-02'].summary).toContain('13 passed, 0 warnings, 0 failed');
 });
+
+test('settings: integrity audit and node-2 reconcile run from the UI', async ({ page }) => {
+  test.setTimeout(10 * 60_000);
+  await login(page, livePassword());
+  const run = async (name, confirm) => page.evaluate(async ({ n, c }) => {
+    const s = await (await fetch('/api/session')).json();
+    const r = await fetch(`/api/actions/${n}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': s.csrf },
+      body: JSON.stringify(c === undefined ? {} : { confirm: c }),
+    });
+    return r.json();
+  }, { n: name, c: confirm });
+  const wait = async (id) => {
+    for (;;) {
+      const j = await apiGet(page, `/api/actions/jobs/${id}`);
+      if (j.state !== 'running') return j;
+      await page.waitForTimeout(3000);
+    }
+  };
+  const audit = await wait((await run('system.integrity_audit')).id);
+  console.log('integrity audit:', JSON.stringify(audit.result));
+  expect(audit.state, audit.output.slice(-20).join('\n')).toBe('succeeded');
+  expect(audit.result['gx10-01'].summary).toMatch(/FAIL=0/);
+  expect(audit.result['gx10-02'].summary).toMatch(/FAIL=0/);
+  const rec = await wait((await run('system.reconcile_node2', true)).id);
+  console.log('reconcile:', JSON.stringify(rec.result));
+  expect(rec.state).toBe('succeeded');
+  expect(rec.result.node2_head).toMatch(/^[0-9a-f]{40}$/);
+});
