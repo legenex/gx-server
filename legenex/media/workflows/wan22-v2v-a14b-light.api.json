@@ -1,0 +1,253 @@
+{
+  "_gx": {
+    "kind": "video",
+    "operation": "v2v",
+    "title": "Wan 2.2 video-to-video (light edit): low-noise expert only",
+    "note": "Video edit that preserves structure and motion (D-031): re-noise from step `start_step` (2 = medium, 3 = light) and denoise with the low-noise expert only. rzgar/Wan2.2_LightX2V_4Step_Uncensored @adc4ca9 (uncensored, LightX2V 4-step distill merged; keep strength 1.0).",
+    "output_node": "16",
+    "thumbnail_node": "18",
+    "inputs": {
+      "video": "input_video"
+    },
+    "models": [
+      "wan2.2_t2v_low_noise_14B_fp8_scaled.safetensors",
+      "Wan2.2_LightX2V_low_n54vv.safetensors"
+    ],
+    "bindings": {
+      "prompt": "9.text",
+      "negative_prompt": "10.text",
+      "seed": "13.noise_seed",
+      "filename_prefix": "16.filename_prefix",
+      "thumb_prefix": "18.filename_prefix",
+      "input_video": "20.file",
+      "max_seconds": "21.duration",
+      "length": "23.length",
+      "width": "24.width",
+      "height": "24.height",
+      "start_step": "13.start_at_step"
+    },
+    "defaults": {
+      "width": 640,
+      "height": 640,
+      "length": 49,
+      "max_seconds": 6.0,
+      "negative_prompt": "blurry, low quality, distorted, watermark, text, static, frozen frame",
+      "start_step": 2
+    }
+  },
+  "1": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+      "type": "wan",
+      "device": "default"
+    }
+  },
+  "2": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "wan_2.1_vae.safetensors"
+    }
+  },
+  "4": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "wan2.2_t2v_low_noise_14B_fp8_scaled.safetensors",
+      "weight_dtype": "default"
+    }
+  },
+  "6": {
+    "class_type": "LoraLoaderModelOnly",
+    "inputs": {
+      "model": [
+        "4",
+        0
+      ],
+      "lora_name": "Wan2.2_LightX2V_low_n54vv.safetensors",
+      "strength_model": 1.0
+    }
+  },
+  "8": {
+    "class_type": "ModelSamplingSD3",
+    "inputs": {
+      "model": [
+        "6",
+        0
+      ],
+      "shift": 5.0
+    }
+  },
+  "9": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": [
+        "1",
+        0
+      ],
+      "text": "a cinematic shot"
+    }
+  },
+  "10": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": [
+        "1",
+        0
+      ],
+      "text": "blurry, low quality, distorted, watermark, text, static, frozen frame"
+    }
+  },
+  "20": {
+    "class_type": "LoadVideo",
+    "inputs": {
+      "file": "gx-in/placeholder.mp4"
+    }
+  },
+  "21": {
+    "class_type": "Video Slice",
+    "inputs": {
+      "video": [
+        "20",
+        0
+      ],
+      "start_time": 0.0,
+      "duration": 6.0,
+      "strict_duration": false
+    }
+  },
+  "22": {
+    "class_type": "GetVideoComponents",
+    "inputs": {
+      "video": [
+        "21",
+        0
+      ]
+    }
+  },
+  "23": {
+    "class_type": "ImageFromBatch",
+    "inputs": {
+      "image": [
+        "22",
+        0
+      ],
+      "batch_index": 0,
+      "length": 49
+    }
+  },
+  "24": {
+    "class_type": "ImageScale",
+    "inputs": {
+      "image": [
+        "23",
+        0
+      ],
+      "upscale_method": "lanczos",
+      "width": 640,
+      "height": 640,
+      "crop": "center"
+    }
+  },
+  "25": {
+    "class_type": "VAEEncode",
+    "inputs": {
+      "pixels": [
+        "24",
+        0
+      ],
+      "vae": [
+        "2",
+        0
+      ]
+    }
+  },
+  "13": {
+    "class_type": "KSamplerAdvanced",
+    "inputs": {
+      "model": [
+        "8",
+        0
+      ],
+      "positive": [
+        "9",
+        0
+      ],
+      "negative": [
+        "10",
+        0
+      ],
+      "latent_image": [
+        "25",
+        0
+      ],
+      "add_noise": "enable",
+      "noise_seed": 42,
+      "steps": 4,
+      "cfg": 1.0,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "start_at_step": 2,
+      "end_at_step": 4,
+      "return_with_leftover_noise": "disable"
+    }
+  },
+  "14": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": [
+        "13",
+        0
+      ],
+      "vae": [
+        "2",
+        0
+      ]
+    }
+  },
+  "15": {
+    "class_type": "CreateVideo",
+    "inputs": {
+      "images": [
+        "14",
+        0
+      ],
+      "fps": [
+        "22",
+        2
+      ]
+    }
+  },
+  "16": {
+    "class_type": "SaveVideo",
+    "inputs": {
+      "video": [
+        "15",
+        0
+      ],
+      "filename_prefix": "gx-video/wan22",
+      "format": "mp4",
+      "codec": "h264"
+    }
+  },
+  "17": {
+    "class_type": "ImageFromBatch",
+    "inputs": {
+      "image": [
+        "14",
+        0
+      ],
+      "batch_index": 0,
+      "length": 1
+    }
+  },
+  "18": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": [
+        "17",
+        0
+      ],
+      "filename_prefix": "gx-video/wan22-thumb"
+    }
+  }
+}

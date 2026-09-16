@@ -77,4 +77,6 @@ class Config:
             image_timeout_seconds=_int("GX_MEDIA_IMAGE_TIMEOUT", 1800, 30, 7200),
             video_timeout_seconds=_int("GX_MEDIA_VIDEO_TIMEOUT", 3600, 30, 28800),
             default_image_size=os.environ.get("GX_MEDIA_DEFAULT_SIZE", "1328x1328"),
+            input_dir=Path(os.environ.get("GX_MEDIA_INPUT_DIR", "/srv/comfy-input")),
+            max_video_upload_bytes=_int("GX_MEDIA_MAX_VIDEO_UPLOAD", 150 * 1024 * 1024, 1024, 1 << 31),
         )

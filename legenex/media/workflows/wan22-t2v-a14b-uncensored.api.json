@@ -1,0 +1,250 @@
+{
+  "_gx": {
+    "kind": "video",
+    "operation": "generate",
+    "title": "Wan 2.2 T2V-A14B fp8 + rzgar uncensored 4-step LoRAs",
+    "note": "Default gx-video text-to-video (D-031). rzgar/Wan2.2_LightX2V_4Step_Uncensored @adc4ca9 (uncensored, LightX2V 4-step distill merged; keep strength 1.0). length must satisfy (length-1) % 4 == 0.",
+    "output_node": "16",
+    "thumbnail_node": "18",
+    "models": [
+      "wan2.2_t2v_high_noise_14B_fp8_scaled.safetensors",
+      "wan2.2_t2v_low_noise_14B_fp8_scaled.safetensors",
+      "Wan2.2_LightX2V_high_n54vv.safetensors",
+      "Wan2.2_LightX2V_low_n54vv.safetensors"
+    ],
+    "bindings": {
+      "prompt": "9.text",
+      "negative_prompt": "10.text",
+      "seed": "12.noise_seed",
+      "seed_low": "13.noise_seed",
+      "fps": "15.fps",
+      "filename_prefix": "16.filename_prefix",
+      "thumb_prefix": "18.filename_prefix",
+      "width": "11.width",
+      "height": "11.height",
+      "length": "11.length"
+    },
+    "defaults": {
+      "width": 640,
+      "height": 640,
+      "length": 49,
+      "fps": 16.0,
+      "negative_prompt": "blurry, low quality, distorted, watermark, text, static, frozen frame"
+    }
+  },
+  "1": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+      "type": "wan",
+      "device": "default"
+    }
+  },
+  "2": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "wan_2.1_vae.safetensors"
+    }
+  },
+  "3": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "wan2.2_t2v_high_noise_14B_fp8_scaled.safetensors",
+      "weight_dtype": "default"
+    }
+  },
+  "4": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "wan2.2_t2v_low_noise_14B_fp8_scaled.safetensors",
+      "weight_dtype": "default"
+    }
+  },
+  "5": {
+    "class_type": "LoraLoaderModelOnly",
+    "inputs": {
+      "model": [
+        "3",
+        0
+      ],
+      "lora_name": "Wan2.2_LightX2V_high_n54vv.safetensors",
+      "strength_model": 1.0
+    }
+  },
+  "6": {
+    "class_type": "LoraLoaderModelOnly",
+    "inputs": {
+      "model": [
+        "4",
+        0
+      ],
+      "lora_name": "Wan2.2_LightX2V_low_n54vv.safetensors",
+      "strength_model": 1.0
+    }
+  },
+  "7": {
+    "class_type": "ModelSamplingSD3",
+    "inputs": {
+      "model": [
+        "5",
+        0
+      ],
+      "shift": 5.0
+    }
+  },
+  "8": {
+    "class_type": "ModelSamplingSD3",
+    "inputs": {
+      "model": [
+        "6",
+        0
+      ],
+      "shift": 5.0
+    }
+  },
+  "9": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": [
+        "1",
+        0
+      ],
+      "text": "a cinematic shot"
+    }
+  },
+  "10": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": [
+        "1",
+        0
+      ],
+      "text": "blurry, low quality, distorted, watermark, text, static, frozen frame"
+    }
+  },
+  "11": {
+    "class_type": "EmptyHunyuanLatentVideo",
+    "inputs": {
+      "width": 640,
+      "height": 640,
+      "length": 49,
+      "batch_size": 1
+    }
+  },
+  "12": {
+    "class_type": "KSamplerAdvanced",
+    "inputs": {
+      "model": [
+        "7",
+        0
+      ],
+      "positive": [
+        "9",
+        0
+      ],
+      "negative": [
+        "10",
+        0
+      ],
+      "latent_image": [
+        "11",
+        0
+      ],
+      "add_noise": "enable",
+      "noise_seed": 42,
+      "steps": 4,
+      "cfg": 1.0,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "start_at_step": 0,
+      "end_at_step": 2,
+      "return_with_leftover_noise": "enable"
+    }
+  },
+  "13": {
+    "class_type": "KSamplerAdvanced",
+    "inputs": {
+      "model": [
+        "8",
+        0
+      ],
+      "positive": [
+        "9",
+        0
+      ],
+      "negative": [
+        "10",
+        0
+      ],
+      "latent_image": [
+        "12",
+        0
+      ],
+      "add_noise": "disable",
+      "noise_seed": 42,
+      "steps": 4,
+      "cfg": 1.0,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "start_at_step": 2,
+      "end_at_step": 4,
+      "return_with_leftover_noise": "disable"
+    }
+  },
+  "14": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": [
+        "13",
+        0
+      ],
+      "vae": [
+        "2",
+        0
+      ]
+    }
+  },
+  "15": {
+    "class_type": "CreateVideo",
+    "inputs": {
+      "images": [
+        "14",
+        0
+      ],
+      "fps": 16.0
+    }
+  },
+  "16": {
+    "class_type": "SaveVideo",
+    "inputs": {
+      "video": [
+        "15",
+        0
+      ],
+      "filename_prefix": "gx-video/wan22",
+      "format": "mp4",
+      "codec": "h264"
+    }
+  },
+  "17": {
+    "class_type": "ImageFromBatch",
+    "inputs": {
+      "image": [
+        "14",
+        0
+      ],
+      "batch_index": 0,
+      "length": 1
+    }
+  },
+  "18": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": [
+        "17",
+        0
+      ],
+      "filename_prefix": "gx-video/wan22-thumb"
+    }
+  }
+}

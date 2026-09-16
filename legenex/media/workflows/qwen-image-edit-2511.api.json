@@ -1,0 +1,209 @@
+{
+  "_gx": {
+    "kind": "image",
+    "operation": "edit",
+    "title": "Qwen-Image-Edit-2511 fp8mixed + Lightning 4-step (+ optional NSFW adapter)",
+    "note": "Instruction edit of one source image (D-031). The source is VAE-encoded as the starting latent and passed as the reference image; `strength` is the denoise fraction. Adapter ScottzillaSystems/qwen-image-edit-plus-nsfw-lora @66e89e9 is a Qwen-Image-family LoRA (byte-identical to Daverrrr75 MCNL v1, trained on Qwen-Image), NOT an exact 2511 match; applied only when adapter_strength > 0.",
+    "output_node": "10",
+    "inputs": {
+      "image": "input_image"
+    },
+    "models": [
+      "qwen_image_edit_2511_fp8mixed.safetensors",
+      "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
+      "qwen-image-edit-plus-nsfw-lora.safetensors"
+    ],
+    "bindings": {
+      "prompt": "5.prompt",
+      "negative_prompt": "6.prompt",
+      "input_image": "20.image",
+      "width": "21.width",
+      "height": "21.height",
+      "seed": "8.seed",
+      "steps": "8.steps",
+      "cfg": "8.cfg",
+      "strength": "8.denoise",
+      "shift": "4.shift",
+      "adapter_strength": "12.strength_model",
+      "filename_prefix": "10.filename_prefix"
+    },
+    "defaults": {
+      "steps": 4,
+      "cfg": 1.0,
+      "strength": 1.0,
+      "negative_prompt": "",
+      "adapter_strength": 0.0
+    }
+  },
+  "1": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "qwen_image_edit_2511_fp8mixed.safetensors",
+      "weight_dtype": "default"
+    }
+  },
+  "2": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+      "type": "qwen_image",
+      "device": "default"
+    }
+  },
+  "3": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "qwen_image_vae.safetensors"
+    }
+  },
+  "11": {
+    "class_type": "LoraLoaderModelOnly",
+    "inputs": {
+      "model": [
+        "1",
+        0
+      ],
+      "lora_name": "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
+      "strength_model": 1.0
+    }
+  },
+  "12": {
+    "class_type": "LoraLoaderModelOnly",
+    "inputs": {
+      "model": [
+        "11",
+        0
+      ],
+      "lora_name": "qwen-image-edit-plus-nsfw-lora.safetensors",
+      "strength_model": 0.0
+    }
+  },
+  "4": {
+    "class_type": "ModelSamplingAuraFlow",
+    "inputs": {
+      "model": [
+        "12",
+        0
+      ],
+      "shift": 3.1
+    }
+  },
+  "20": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "gx-in/placeholder.png"
+    }
+  },
+  "21": {
+    "class_type": "ImageScale",
+    "inputs": {
+      "image": [
+        "20",
+        0
+      ],
+      "upscale_method": "lanczos",
+      "width": 1024,
+      "height": 1024,
+      "crop": "disabled"
+    }
+  },
+  "5": {
+    "class_type": "TextEncodeQwenImageEditPlus",
+    "inputs": {
+      "clip": [
+        "2",
+        0
+      ],
+      "prompt": "edit",
+      "vae": [
+        "3",
+        0
+      ],
+      "image1": [
+        "21",
+        0
+      ]
+    }
+  },
+  "6": {
+    "class_type": "TextEncodeQwenImageEditPlus",
+    "inputs": {
+      "clip": [
+        "2",
+        0
+      ],
+      "prompt": "",
+      "vae": [
+        "3",
+        0
+      ],
+      "image1": [
+        "21",
+        0
+      ]
+    }
+  },
+  "7": {
+    "class_type": "VAEEncode",
+    "inputs": {
+      "pixels": [
+        "21",
+        0
+      ],
+      "vae": [
+        "3",
+        0
+      ]
+    }
+  },
+  "8": {
+    "class_type": "KSampler",
+    "inputs": {
+      "model": [
+        "4",
+        0
+      ],
+      "positive": [
+        "5",
+        0
+      ],
+      "negative": [
+        "6",
+        0
+      ],
+      "latent_image": [
+        "7",
+        0
+      ],
+      "seed": 0,
+      "steps": 4,
+      "cfg": 1.0,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 1.0
+    }
+  },
+  "9": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": [
+        "8",
+        0
+      ],
+      "vae": [
+        "3",
+        0
+      ]
+    }
+  },
+  "10": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": [
+        "9",
+        0
+      ],
+      "filename_prefix": "gx-image/qwen-edit-2511"
+    }
+  }
+}

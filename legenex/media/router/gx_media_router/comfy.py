@@ -33,6 +33,8 @@ class Artefact:
     subfolder: str
     type: str
     kind: str  # "images" | "videos" | ...
+    #: produced by the workflow's declared thumbnail node
+    thumbnail: bool = False
 
     @property
     def media_type(self) -> str:
@@ -112,6 +114,7 @@ class ComfyClient:
         timeout: float,
         poll_interval: float = 1.0,
         cancelled: Callable[[], bool] | None = None,
+        thumbnail_node: str | None = None,
     ) -> Result:
         """Block until ``prompt_id`` completes, fails, or ``timeout`` elapses."""
         started = time.monotonic()
@@ -130,7 +133,7 @@ class ComfyClient:
                         "ComfyUI execution failed: " + _summarise_failure(status)
                     )
                 if completed or status_str == "success":
-                    artefacts = _collect_artefacts(entry.get("outputs") or {})
+                    artefacts = _collect_artefacts(entry.get("outputs") or {}, thumbnail_node)
                     if not artefacts:
                         raise UpstreamError(
                             f"ComfyUI prompt {prompt_id} completed but produced no output file"
@@ -161,9 +164,9 @@ class ComfyClient:
             log.warning("free() failed: %s", exc)
 
 
-def _collect_artefacts(outputs: dict) -> list[Artefact]:
+def _collect_artefacts(outputs: dict, thumbnail_node: str | None = None) -> list[Artefact]:
     artefacts: list[Artefact] = []
-    for node_output in outputs.values():
+    for node_id, node_output in outputs.items():
         for key in _ARTEFACT_KEYS:
             for item in node_output.get(key) or []:
                 filename = item.get("filename")
@@ -175,6 +178,7 @@ def _collect_artefacts(outputs: dict) -> list[Artefact]:
                         subfolder=str(item.get("subfolder", "")),
                         type=str(item.get("type", "output")),
                         kind=key,
+                        thumbnail=thumbnail_node is not None and str(node_id) == str(thumbnail_node),
                     )
                 )
     # ComfyUI writes intermediate previews with type "temp"; keep real outputs.

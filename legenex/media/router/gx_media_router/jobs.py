@@ -89,27 +89,66 @@ class Job:
     prompt_id: str | None = None
     artefacts: tuple[Artefact, ...] = ()
     error: str | None = None
+    operation: str = "generate"
+    #: staged ComfyUI input names, removed when the job ends
+    staged: tuple[str, ...] = ()
+    #: id of the router job this one edits (remix / edit-by-id)
+    source_job: str | None = None
+
+    #: OpenAI video-object status vocabulary (LiteLLM validates it).
+    _OPENAI_STATUS = {"queued": "queued", "running": "in_progress", "completed": "completed", "failed": "failed"}
+
+    def primary(self) -> Artefact | None:
+        want = "video/" if self.kind == "video" else "image/"
+        for artefact in self.artefacts:
+            if artefact.media_type.startswith(want) and not artefact.thumbnail:
+                return artefact
+        return None
+
+    def thumbnail(self) -> Artefact | None:
+        for artefact in self.artefacts:
+            if artefact.thumbnail:
+                return artefact
+        return None
 
     def public(self) -> dict:
-        body = {
+        params = self.params or {}
+        width, height = params.get("width"), params.get("height")
+        fps = params.get("fps")
+        length = params.get("length")
+        body: dict = {
             "id": self.id,
-            "object": f"{self.kind}.generation",
-            "status": self.status,
+            "object": "video" if self.kind == "video" else "image.generation",
+            "status": self._OPENAI_STATUS[self.status] if self.kind == "video" else self.status,
             "model": f"gx-{self.kind}",
-            "workflow": self.workflow,
             "created_at": int(self.created_at),
-            "progress": {"queued": 0.0, "running": 0.1, "completed": 1.0, "failed": 0.0}[self.status],
+            "progress": {"queued": 0, "running": 50, "completed": 100, "failed": 0}[self.status],
+            "workflow": self.workflow,
+            "operation": self.operation,
+            "gx_status": self.status,
         }
+        if width and height:
+            body["size"] = f"{width}x{height}"
+        if self.kind == "video" and isinstance(length, int) and isinstance(fps, (int, float)) and fps:
+            body["seconds"] = f"{length / float(fps):.2f}".rstrip("0").rstrip(".")
+            body["frames"] = length
+            body["fps"] = fps
+        if params.get("seed") is not None:
+            body["seed"] = params["seed"]
+        if self.source_job:
+            body["remixed_from_video_id"] = self.source_job
         if self.started_at is not None:
             body["started_at"] = int(self.started_at)
         if self.finished_at is not None:
+            body["completed_at"] = int(self.finished_at)
             body["finished_at"] = int(self.finished_at)
             body["elapsed_seconds"] = round(self.finished_at - (self.started_at or self.created_at), 2)
         if self.status == "completed":
             body["outputs"] = [a.filename for a in self.artefacts]
             body["content_url"] = f"/v1/{self.kind}s/{self.id}/content"
-        if self.error:
-            body["error"] = {"message": self.error}
+            if self.thumbnail() is not None:
+                body["thumbnail_url"] = f"/v1/{self.kind}s/{self.id}/content?variant=thumbnail"
+        body["error"] = {"code": "generation_failed", "message": self.error} if self.error else None
         return body
 
 
@@ -121,9 +160,12 @@ class JobStore:
         self._jobs: "OrderedDict[str, Job]" = OrderedDict()
         self._lock = threading.Lock()
 
-    def create(self, kind: str, workflow: str, prompt: str, params: dict) -> Job:
+    def create(self, kind: str, workflow: str, prompt: str, params: dict, *,
+               operation: str = "generate", staged: tuple[str, ...] = (),
+               source_job: str | None = None) -> Job:
         job = Job(id=f"{kind}-{uuid.uuid4().hex[:16]}", kind=kind, workflow=workflow,
-                  prompt=prompt, params=params)
+                  prompt=prompt, params=params, operation=operation, staged=staged,
+                  source_job=source_job)
         with self._lock:
             self._jobs[job.id] = job
             while len(self._jobs) > self._capacity:
