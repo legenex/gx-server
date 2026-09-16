@@ -127,7 +127,7 @@ def check_video(path: Path) -> dict:
     total, distinct = distinct_frames(path)
     frames = int(stream.get("nb_read_frames") or 0)
     ok = (stream.get("codec_name") == "h264" and frames >= 9 and distinct >= max(5, int(frames * 0.6)))
-    return {"ok": ok, "codec": stream.get("codec_name"), "width": stream.get("width"),
+    return {"video_ok": ok, "codec": stream.get("codec_name"), "width": stream.get("width"),
             "height": stream.get("height"), "frames": frames, "fps": stream.get("r_frame_rate"),
             "duration": (probe.get("format") or {}).get("duration"), "bytes": path.stat().st_size,
             "framemd5_total": total, "framemd5_distinct": distinct}
@@ -245,7 +245,7 @@ def main() -> int:
         dest.write_bytes(content)
         check = check_video(dest)
         info.update(check)
-        record(name, check["ok"], **info)
+        record(name, check["video_ok"], **info)
         return info
 
     if "t2v" in steps:

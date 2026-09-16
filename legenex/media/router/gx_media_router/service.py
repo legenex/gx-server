@@ -121,7 +121,7 @@ class MediaService:
                 self._video_queue.task_done()
 
     # -- shared execution --------------------------------------------------
-    def _switch_models(self, workflow_name: str) -> None:
+    def _switch_models(self, workflow_name: str) -> bool:
         """Free ComfyUI's cached models before a job that needs different weights.
 
         ComfyUI keeps every model it has loaded. On this 121 GiB unified-memory
@@ -129,11 +129,11 @@ class MediaService:
         are ~110 GiB, so letting them stack would starve the host (B-012/B-018).
         Called with the generation slot held, so nothing is running.
         """
-        if not self.cfg.free_on_model_switch:
-            return
         models = frozenset(self.workflows.get(workflow_name).models)
-        if not models:
-            return
+        cold = not models <= self._resident_models
+        if not self.cfg.free_on_model_switch or not models:
+            self._resident_models = self._resident_models | models
+            return cold
         if self._resident_models and not models <= self._resident_models:
             log.info("model set changes (%s -> %s): freeing ComfyUI models first",
                      sorted(self._resident_models), sorted(models))
@@ -141,9 +141,10 @@ class MediaService:
             self._resident_models = frozenset()
         # A subset of what is already loaded reuses it; the loaded set is unchanged.
         self._resident_models = self._resident_models | models
+        return cold
 
     def _run(self, job: Job, graph: dict, timeout: float, thumbnail_node: str | None) -> None:
-        self._switch_models(job.workflow)
+        job.cold_start = self._switch_models(job.workflow)
         job.status = "running"
         job.started_at = time.time()
         try:

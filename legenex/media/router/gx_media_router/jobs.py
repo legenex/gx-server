@@ -94,6 +94,8 @@ class Job:
     staged: tuple[str, ...] = ()
     #: id of the router job this one edits (remix / edit-by-id)
     source_job: str | None = None
+    #: True when this job had to load its model weights (first job or a switch)
+    cold_start: bool = False
 
     #: OpenAI video-object status vocabulary (LiteLLM validates it).
     _OPENAI_STATUS = {"queued": "queued", "running": "in_progress", "completed": "completed", "failed": "failed"}
@@ -126,6 +128,9 @@ class Job:
             "workflow": self.workflow,
             "operation": self.operation,
             "gx_status": self.status,
+            "phase": {"queued": "queued", "completed": "ready", "failed": "failed"}.get(
+                self.status, "loading" if self.cold_start else "generating"),
+            "cold_start": self.cold_start,
         }
         if width and height:
             body["size"] = f"{width}x{height}"
