@@ -165,6 +165,7 @@ function route() {
   document.body.classList.remove('nav-open');
   $('nav-toggle').setAttribute('aria-expanded', 'false');
 
+  const firstRoute = !state.pageName;
   const main = clear($('main'));
   const page = PAGES[pageName];
   state.page = page;
@@ -177,7 +178,9 @@ function route() {
   Promise.resolve(page.mount(root, { params: rest, ctx: pageContext() }))
     .then(() => refresh())
     .catch((err) => { clear(root).append(errorBox(err)); });
-  if (!location.hash.includes('#d-')) main.focus({ preventScroll: true });
+  // Move focus to the new content on navigation (screen readers announce it),
+  // but not on first load, so the skip link stays the first Tab stop.
+  if (!firstRoute) main.focus({ preventScroll: true });
 }
 
 function pageContext() {

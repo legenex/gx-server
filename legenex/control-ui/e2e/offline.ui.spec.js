@@ -223,8 +223,12 @@ test('theme toggle, keyboard skip link and logout', async ({ page }) => {
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
   await axeCheck(page, 'dashboard light theme');
   await page.click('#theme-btn');
+  await page.reload();
+  await expect(page.locator('.page-title')).toHaveText('Dashboard');
   await page.keyboard.press('Tab');
   await expect(page.locator('.skip-link')).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(page.locator('#main')).toBeFocused();
   await page.click('#logout-btn');
   await expect(page.locator('#login-view')).toBeVisible();
   const status = await page.evaluate(async () => (await fetch('/api/overview')).status);
