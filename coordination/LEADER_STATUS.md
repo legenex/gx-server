@@ -3,7 +3,30 @@
 Agent role: LEAD. Owns the canonical git repo at
 `/home/legenex/Documents/Projects/Server/gx-cluster`, branch `legenex-dual-gx10`.
 
-Last updated: 2026-09-15 10:50 CEST.
+Last updated: 2026-09-16 ~11:30 CEST.
+
+---
+
+## Headline (2026-09-16, gx-max memory investigation + media completion)
+
+Six of the seven public tiers serve real, verified output. The seventh —
+`gx-max` — does not fit on this hardware, and that is now measured across
+**eight instrumented two-node runs** rather than suspected. Loading one TP=2
+rank takes a 121.63 GiB node from ~110 GiB MemAvailable to between 437 MiB and
+0 MiB on *both* nodes and ends in a kernel global OOM kill. Every tuning lever
+was tested; `--mem-fraction-static` was measured at 0.50 and 0.70 with an
+identical trough, because the trough is the model weights (a 163.48 GiB
+checkpoint puts ~82 GiB on each rank) and not the KV/static pool.
+
+`coordination/BLOCKERS.md` **B-022** carries the numbers and the three options.
+It is the one thing that needs a human, alongside the unrelated kernel
+`apt-mark hold` (one sudo command per node).
+
+Also done this session: the B-020 orphan-rank failure mode is fixed and proven
+on the real workload (a node-2-resident deadman, a dedicated unwind with
+verification, and an EXIT trap no failure path can miss); real `gx-image` and
+`gx-video` generations, inspected as files; `gx-auto` no longer acquires
+gx-max; and gx-max's health no longer reports a fake `usable: true`.
 
 ---
 

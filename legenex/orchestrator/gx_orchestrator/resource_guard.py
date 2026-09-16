@@ -129,15 +129,35 @@ WORKLOAD_SIZING: dict[str, WorkloadSpec] = {
         "workload.",
     ),
     "gx-max-rank0": WorkloadSpec(
-        "gx-max-rank0", "node1", WorkloadClass.EXCLUSIVE, 95.0,
+        "gx-max-rank0", "node1", WorkloadClass.EXCLUSIVE, 117.0,
         "SGLang TP=2 rank0, DeepSeek V4 Flash NVFP4. Takes over node1. "
-        "Raised 90->95 GiB 2026-09-15 after a real OOM-kill during weight "
-        "loading at 90 GiB estimated + 20 GiB nominal slack (B-020) -- see "
-        "gx-max-start.sh's matching GXMAX_RANK_ESTIMATED_GIB comment.",
+        "90 -> 95 (2026-09-15, after a real OOM-kill during weight loading, "
+        "B-020) -> 92 (2026-09-16, MEASURED across four real two-node runs). "
+        "117 GiB is the measured LOAD-PHASE PEAK, not the steady state, and that "
+        "is deliberate: a launch has to survive its peak, and sizing admission "
+        "from the steady state is exactly how the 2026-09-15 attempt was "
+        "admitted with '20 GiB of nominal slack' and then OOM-killed anyway "
+        "(B-020). Eight instrumented two-node runs on 2026-09-16 measured "
+        "loading one rank taking a 121.63 GiB node from ~110 GiB MemAvailable "
+        "down to between 437 MiB and 0 MiB, on BOTH nodes, ending in a kernel "
+        "global OOM kill of the SGLang scheduler. Nothing moved it: "
+        "--mem-fraction-static (0.50/0.70), --context-length, "
+        "--chunked-prefill-size, --cuda-graph-max-bs-decode, "
+        "--max-running-requests, the container --memory cap (106g down to 28g) "
+        "and --load-format (auto/layered/runai_streamer) were each tested. "
+        "The consequence is intended: 117 + any reserve exceeds the node, so "
+        "this guard REFUSES gx-max rather than starting a launch measurement "
+        "says will be OOM-killed. Lifting it is a human decision about a "
+        "LOCKED constraint -- see B-022 and D-022.",
     ),
     "gx-max-rank1": WorkloadSpec(
-        "gx-max-rank1", "node2", WorkloadClass.EXCLUSIVE, 95.0,
-        "SGLang TP=2 rank1. Takes over node2. See gx-max-rank0's note (B-020).",
+        "gx-max-rank1", "node2", WorkloadClass.EXCLUSIVE, 117.0,
+        "SGLang TP=2 rank1. Takes over node2. See gx-max-rank0's note "
+        "(B-020/B-021/B-022). Node 2 measures WORSE than node 1 during the "
+        "load transient (1 GiB vs 8-12 GiB MemAvailable) despite a smaller "
+        "baseline, and a node-2 wedge is the B-012 signature -- which is why "
+        "rank1, not rank0, is the one with a resident self-termination "
+        "watchdog (legenex/lifecycle/rank1-deadman.sh).",
     ),
     "comfyui": WorkloadSpec(
         "comfyui", "node2", WorkloadClass.MEDIUM, 44.0,

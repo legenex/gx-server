@@ -109,20 +109,45 @@ Concurrency is serialised by a condition variable in `GxMaxLifecycle`: five
 simultaneous callers produce exactly one invocation of the start script
 (covered by `tests/test_lifecycle.py::test_concurrent_acquire_starts_script_once`).
 
-**Resolved 2026-09-15 (`coordination/BLOCKERS.md` B-017,
-`coordination/DECISIONS.md` D-020):** step 1's admission check used to
-enforce the same uniform 30 GiB reserve floor on gx-max as every other
-`exclusive`-class workload, which gx-max's own locked ~90-95 GiB/rank
-footprint could never satisfy on a 121 GiB node — a permanent, structural
-refusal. gx-max's own admission check now uses a smaller, explicit reserve
-(5 GiB, `GXMAX_GUARD_RESERVE_GIB`) instead, on the reasoning that gx-max's
-active state is documented above (§8) as an intentional, non-"normal-
-operation" takeover of the node, not the steady-state §9 was written for.
-Every other tier keeps the 30 GiB floor unchanged. Verified live: gx-max
-passed admission on both nodes for the first time ever through the real
-orchestrator. **This did not fully validate gx-max end to end** — see
-`coordination/BLOCKERS.md` B-020 for a real OOM-kill this same run
-surfaced and the node2 hardware incident that followed from it.
+**Superseded 2026-09-16 (`coordination/BLOCKERS.md` B-022,
+`coordination/DECISIONS.md` D-022).** The 2026-09-15 resolution of B-017 gave
+gx-max its own 5 GiB admission reserve so it could pass the guard. Eight
+instrumented two-node runs on 2026-09-16 showed that the reserve was never the
+binding constraint:
+
+> Loading one TP=2 rank takes a 121.63 GiB node from ~110 GiB MemAvailable to
+> **between 437 MiB and 0 MiB, on both nodes**, and ends in a kernel global OOM
+> kill of the SGLang scheduler. `--mem-fraction-static` was measured at 0.50 and
+> at 0.70 with an *identical* trough — it moves only the steady state, never the
+> peak. `--context-length`, `--chunked-prefill-size`,
+> `--cuda-graph-max-bs-decode`, `--max-running-requests`, the container
+> `--memory` cap (106g down to 28g) and `--load-format`
+> (`layered` / `runai_streamer`) were each tested and changed nothing.
+
+The cause is arithmetic under the locked decisions: the checkpoint is 163.48
+GiB, so at `--tp 2` each rank holds ~82 GiB of weights — two thirds of a node —
+before any KV cache, and the loader adds ~26 GiB of pinned host memory on top.
+
+So the admission estimate is now the **measured load peak (117 GiB)** rather
+than a steady-state figure, and `GXMAX_GUARD_RESERVE_GIB` is back to the same
+**30 GiB** every other tier gets. The consequence is intended and visible:
+**the guard refuses gx-max**, before launching anything, and says exactly why.
+That is the honest state of the tier. Lifting it is a human decision about a
+LOCKED constraint — the model, the quantisation, or the node count — not a
+smaller reserve; B-022 has the three options and the measurements behind them.
+
+Two structural fixes from the same investigation are in place and do not depend
+on that decision:
+
+* **Failure unwind.** Any failure after a rank has been launched runs
+  `gx-max-unwind.sh` on both nodes from an EXIT trap that no path can miss
+  (rank died, readiness timeout, `set -e`, SIGINT/SIGTERM). A launch that is
+  *refused* — which now means every gx-max launch — restores the workloads its
+  drain stopped, instead of leaving the cluster with no service.
+* **Node-2 deadman.** `rank1-deadman.sh` runs on node 2, is armed before rank0
+  starts, and force-removes rank1 when rank0 disappears. It needs nothing from
+  outside the host, which is the whole point: every previous cleanup path
+  required ssh to node 2 at exactly the moment node 2 was starved (B-020).
 
 **Never-downgrade rule.** A request that explicitly names `gx-max` and cannot be
 served returns HTTP 503 with an explicit message. It is never answered by a

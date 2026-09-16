@@ -5,8 +5,9 @@ already been done — completed work is described in `CURRENT_STATE.md`,
 `TEST_RESULTS.md` and `CHANGELOG.md`, not repeated here. Checked items are
 kept only long enough to show recent motion before being removed.
 
-Last reviewed: 2026-09-15, during integration of the ChatGPT project-seed
-files, cross-checked against live system state (see `CURRENT_STATE.md`).
+Last reviewed: 2026-09-16 (second session), after eight instrumented gx-max
+runs, the gx-max failure-unwind rebuild, and real gx-image/gx-video
+generations. Cross-checked against live system state (see `CURRENT_STATE.md`).
 
 ---
 
@@ -27,13 +28,25 @@ files, cross-checked against live system state (see `CURRENT_STATE.md`).
   passed: the original B-011 repro prompt now answers " Paris.", and a
   multi-step reasoning question is answered correctly through the real
   gateway. Numbers in `TEST_RESULTS.md`.
-- [ ] Re-run `legenex/tests/gx-max-validate.sh` — **now unblocked; node 2
-  has been back and healthy since 2026-09-16 07:34** — to see
-  whether the `GXMAX_RANK_ESTIMATED_GIB` 90->95 GiB change
-  (`coordination/DECISIONS.md` D-020) is enough to avoid a repeat OOM, or
-  whether gx-max needs a genuinely new human decision (e.g. a smaller
-  `--mem-fraction-static`, which touches the LOCKED SGLang argument vector
-  and needs explicit sign-off, not a unilateral change).
+- [x] ~~Re-run gx-max and find out whether tuning is enough~~ — **done,
+  2026-09-16, eight instrumented two-node runs. The answer is no.** Loading
+  one TP=2 rank takes a 121.63 GiB node to between 437 MiB and 0 MiB
+  MemAvailable on BOTH nodes. `--mem-fraction-static` was measured at 0.50
+  and 0.70 with an *identical* trough, so it does not touch the peak at all;
+  `--context-length`, `--chunked-prefill-size`, `--cuda-graph-max-bs-decode`,
+  `--max-running-requests`, the container `--memory` cap (106g→28g) and
+  `--load-format` (layered / runai_streamer) were all tested too. Numbers in
+  `TEST_RESULTS.md` §15.1.
+- [ ] **HUMAN DECISION REQUIRED — B-022: what reserve, or what locked change?**
+  This is the single thing standing between the cluster and a complete
+  seven-tier platform. gx-max's measured per-rank peak is ~117 GiB of a
+  121.63 GiB node, so the admission guard refuses it whatever the reserve is
+  set to. The three options (accept a ~20 GiB steady-state reserve with a
+  documented load excursion; keep 30 GiB and retire gx-max; or reopen L-6 for
+  a smaller model / heavier quantisation / more nodes) are written up with
+  the supporting measurements in `coordination/BLOCKERS.md` B-022. Do not
+  resolve it by editing `GXMAX_GUARD_RESERVE_GIB` — that was tested and does
+  not make gx-max fit.
 - [x] ~~Deploy the resource-ownership/admission-control layer to node 2~~ —
   **done and verified 2026-09-15.** `legenex/lifecycle/` +
   `legenex/orchestrator/` are now on node 2 too; a normal launch is admitted
@@ -43,7 +56,18 @@ files, cross-checked against live system state (see `CURRENT_STATE.md`).
 - [ ] Rewrite `gx-max-start.sh`'s rank1 launch to call through the
   now-deployed node-2 resource-guard module directly, instead of its
   original real remote `flock` convention. Small consistency cleanup, not a
-  safety gap (the `flock` convention is real and correct).
+  safety gap (the `flock` convention is real and correct). Lower priority
+  than it was: while B-022 is open, that launch path never executes.
+- [x] ~~Make an orphaned rank impossible after a failed gx-max launch~~ —
+  **done and proven on the real workload 2026-09-16.** `rank1-deadman.sh`
+  (resident on node 2, needs no ssh), `gx-max-unwind.sh` (bounded retries,
+  confirms both ranks gone, verifies memory/swap/locks/ledgers/SSH/fabric)
+  and an EXIT trap in `gx-max-start.sh` that no failure path can miss.
+  Regression suite: `legenex/tests/unwind-tests.sh`.
+- [x] ~~Real gx-image and gx-video generations~~ — **done 2026-09-16.**
+  1024x1024 PNG in 26.5 s and a 33-frame 640x640 h264 MP4 (Wan 2.2) in
+  48.1 s, both visually verified, both well above the 30 GiB memory floor,
+  clean unload afterwards. `TEST_RESULTS.md` §15.3-15.5.
 - [ ] Arm the hardware watchdog on both nodes (`coordination/BLOCKERS.md`
   B-014) — needs a human with sudo, and a conscious decision on the timeout
   given gx-max's long cold start. Not done unilaterally.

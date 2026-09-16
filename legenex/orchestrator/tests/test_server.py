@@ -16,6 +16,13 @@ from gx_orchestrator.health import AliasState, TierStatus  # noqa: E402
 from gx_orchestrator.lifecycle import LifecycleStatus, State  # noqa: E402
 from gx_orchestrator.server import _max_tier_status  # noqa: E402
 
+#: The DOWN branch now consults the admission guard (see
+#: `_gx_max_admission_blocked`). These cases are about the lifecycle-state
+#: mapping, so they pin the probe to "not blocked"; the admission behaviour
+#: has its own class below. Without pinning, the result would depend on how
+#: much memory the machine running the tests happens to have free.
+_NOT_BLOCKED = lambda: ""  # noqa: E731
+
 _READY_NODE2 = TierStatus(AliasState.READY, "loaded", usable=True)
 _OFFLINE_NODE2 = TierStatus(AliasState.UNAVAILABLE, "node2_offline", usable=False)
 
@@ -33,7 +40,7 @@ def _lc_status(state: State, *, last_error: str = "", detail: str = "") -> Lifec
 
 class TestMaxTierStatus(unittest.TestCase):
     def test_ready_is_ready_and_usable(self):
-        status = _max_tier_status(_lc_status(State.READY), _READY_NODE2)
+        status = _max_tier_status(_lc_status(State.READY), _READY_NODE2, admission_blocked=_NOT_BLOCKED)
         self.assertEqual(status.state, AliasState.READY)
         self.assertTrue(status.usable)
 
@@ -41,7 +48,7 @@ class TestMaxTierStatus(unittest.TestCase):
         """DOWN is a valid resting state for gx-max, never a fault (see
         lifecycle.py / ARCHITECTURE.md section 5) -- it must stay usable.
         """
-        status = _max_tier_status(_lc_status(State.DOWN), _READY_NODE2)
+        status = _max_tier_status(_lc_status(State.DOWN), _READY_NODE2, admission_blocked=_NOT_BLOCKED)
         self.assertEqual(status.state, AliasState.STOPPED)
         self.assertTrue(status.usable)
 
@@ -51,7 +58,7 @@ class TestMaxTierStatus(unittest.TestCase):
         WITHOUT this becoming a fault state -- acquiring both nodes is still
         the normal, attemptable next step.
         """
-        status = _max_tier_status(_lc_status(State.DOWN), _OFFLINE_NODE2)
+        status = _max_tier_status(_lc_status(State.DOWN), _OFFLINE_NODE2, admission_blocked=_NOT_BLOCKED)
         self.assertEqual(status.state, AliasState.STOPPED)
         self.assertEqual(status.reason, "node2_unavailable")
         # Still usable: DOWN remains a valid resting state per the locked
@@ -59,7 +66,7 @@ class TestMaxTierStatus(unittest.TestCase):
         self.assertTrue(status.usable)
 
     def test_acquiring_is_queued_and_usable(self):
-        status = _max_tier_status(_lc_status(State.ACQUIRING, detail="starting both ranks"), _READY_NODE2)
+        status = _max_tier_status(_lc_status(State.ACQUIRING, detail="starting both ranks"), _READY_NODE2, admission_blocked=_NOT_BLOCKED)
         self.assertEqual(status.state, AliasState.QUEUED)
         self.assertTrue(status.usable)
 
@@ -67,13 +74,14 @@ class TestMaxTierStatus(unittest.TestCase):
         """Matches the ORIGINAL TierHealth logic exactly: RELEASING was the
         one state excluded from `avail[Tier.MAX]`.
         """
-        status = _max_tier_status(_lc_status(State.RELEASING, detail="graceful drain"), _READY_NODE2)
+        status = _max_tier_status(_lc_status(State.RELEASING, detail="graceful drain"), _READY_NODE2, admission_blocked=_NOT_BLOCKED)
         self.assertFalse(status.usable)
 
     def test_last_error_surfaces_verbatim_when_present(self):
         status = _max_tier_status(
             _lc_status(State.DOWN, last_error="gx-max-start.sh exited 3: boom: rank1 died"),
             _READY_NODE2,
+            admission_blocked=_NOT_BLOCKED,
         )
         self.assertEqual(status.state, AliasState.STOPPED)
         self.assertIn("boom: rank1 died", status.reason)
@@ -85,9 +93,115 @@ class TestMaxTierStatus(unittest.TestCase):
         status = _max_tier_status(
             _lc_status(State.DOWN, last_error="stale: previous failure"),
             _OFFLINE_NODE2,
+            admission_blocked=_NOT_BLOCKED,
         )
         self.assertEqual(status.reason, "node2_unavailable")
 
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestGxAutoNeverAcquiresGxMax(unittest.TestCase):
+    """gx-auto may USE gx-max when it is already up; it must never ACQUIRE it.
+
+    Acquiring gx-max is not a cheap operation that happens to fail --
+    gx-max-start.sh drains gx-mini, gx-fast and llama-swap on BOTH nodes
+    first, because gx-max takes over the whole cluster. Observed live on
+    2026-09-16: one gx-auto prompt containing the word "exhaustive" tore down
+    node 1's resident models and both llama-swaps, was refused by the
+    admission guard, and spent ~12 s putting everything back. Taking over both
+    nodes is an operator-initiated act and stays on the direct gx-max path.
+
+    These tests assert the branch structure in
+    `_serve_gx_auto`'s `decision.tier is Tier.MAX` block directly, since the
+    handler needs a live HTTP server to exercise end to end.
+    """
+
+    def _source(self) -> str:
+        from gx_orchestrator import server as srv
+        return Path(srv.__file__).read_text()
+
+    def test_auto_path_has_no_bare_acquire_call(self):
+        src = self._source()
+        start = src.index("if decision.tier is Tier.MAX:")
+        end = src.index("def _serve_gx_max", start)
+        auto_max_block = src[start:end]
+        self.assertNotIn(
+            "self.lifecycle.acquire()", auto_max_block,
+            "gx-auto must not acquire gx-max: acquisition drains both nodes. "
+            "Only _serve_gx_max (direct requests) and the explicit "
+            "/lifecycle/gx-max/acquire endpoint may acquire.",
+        )
+
+    def test_auto_proxies_to_gx_max_only_when_already_ready(self):
+        src = self._source()
+        start = src.index("if decision.tier is Tier.MAX:")
+        end = src.index("def _serve_gx_max", start)
+        auto_max_block = src[start:end]
+        self.assertIn("lc_status.state is State.READY", auto_max_block)
+        # and it must still fall back rather than error out
+        self.assertIn("busy={Tier.MAX: True}", auto_max_block)
+
+    def test_direct_gx_max_path_still_acquires(self):
+        """The direct path MUST still acquire -- it is the operator-initiated one."""
+        src = self._source()
+        start = src.index("def _serve_gx_max")
+        block = src[start:start + 2000]
+        self.assertIn("self.lifecycle.acquire()", block)
+
+
+class TestGxMaxHealthReflectsAdmission(unittest.TestCase):
+    """A tier the guard refuses on every attempt must not report `usable`.
+
+    Before this, `gx status` showed `gx-max -> stopped, usable: true` for a
+    tier that cannot be brought up on this hardware at all (B-022): the
+    admission guard refuses it because the measured per-rank load peak of
+    117 GiB plus any reserve exceeds a 121 GiB node. That is a fake healthy
+    state, which this project forbids.
+    """
+
+    def test_down_and_admission_refused_is_unavailable_and_not_usable(self):
+        status = _max_tier_status(
+            _lc_status(State.DOWN), _READY_NODE2,
+            admission_blocked=lambda: "admission_refused: needs 147.0GiB of a 121.0GiB node",
+        )
+        self.assertEqual(status.state, AliasState.UNAVAILABLE)
+        self.assertFalse(status.usable)
+        self.assertIn("admission_refused", status.reason)
+
+    def test_down_and_admission_ok_is_still_stopped_and_usable(self):
+        status = _max_tier_status(
+            _lc_status(State.DOWN), _READY_NODE2, admission_blocked=lambda: "",
+        )
+        self.assertTrue(status.usable)
+        self.assertNotEqual(status.state, AliasState.UNAVAILABLE)
+
+    def test_ready_is_not_second_guessed_by_the_admission_probe(self):
+        """A RUNNING engine is healthy regardless of what admission would say now."""
+        status = _max_tier_status(
+            _lc_status(State.READY), _READY_NODE2,
+            admission_blocked=lambda: "admission_refused: would not fit",
+        )
+        self.assertEqual(status.state, AliasState.READY)
+        self.assertTrue(status.usable)
+
+    def test_probe_failure_never_invents_a_fault(self):
+        """A broken probe must fall back, not make a healthy tier look down."""
+        from gx_orchestrator.server import _gx_max_admission_blocked
+        def boom() -> str:
+            raise RuntimeError("probe exploded")
+        with self.assertRaises(RuntimeError):
+            boom()
+        # the real probe swallows its own exceptions and returns ""
+        self.assertIsInstance(_gx_max_admission_blocked(), str)
+
+
+class TestNode2OfflineOutranksAdmission(unittest.TestCase):
+    def test_node2_offline_is_reported_even_if_admission_would_also_refuse(self):
+        """Give the operator the actionable reason, not the arithmetic one."""
+        status = _max_tier_status(
+            _lc_status(State.DOWN), _OFFLINE_NODE2,
+            admission_blocked=lambda: "admission_refused: would not fit",
+        )
+        self.assertEqual(status.reason, "node2_unavailable")

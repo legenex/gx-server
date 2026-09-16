@@ -267,3 +267,84 @@ with.
 - Change MTU, Netplan, RDMA config or routing without evidence of a fault.
 - Route model traffic over Tailscale.
 - Start gx-max at boot.
+
+---
+
+## gx-max is currently REFUSED — what that looks like and why (2026-09-16)
+
+If you ask for `gx-max` you will get **HTTP 503** with a message that says the
+tier could not be brought up and **will not be substituted** with another
+model. That is correct behaviour, not a fault to debug.
+
+```
+$ curl -sS $GATEWAY/v1/chat/completions -H "Authorization: Bearer $KEY" \
+    -d '{"model":"gx-max","messages":[{"role":"user","content":"Say READY."}]}'
+HTTP 503
+"gx-max could not be brought up and will NOT be substituted with another model:
+ ... node1 admission guard REFUSED gx-max-rank0: refused: ledger residency
+ 0.0GiB + new 117.0GiB + reserve 30.0GiB = 147.0GiB exceeds node total
+ 121.0GiB -- hard refusal, cannot be bypassed"
+```
+
+**Do not respond to this by lowering the reserve.** It was measured: gx-max's
+per-rank load peak is ~117 GiB of a 121.63 GiB node, so no reserve value makes
+it fit. `coordination/BLOCKERS.md` B-022 has the numbers and the three options;
+it needs a human decision about a LOCKED constraint.
+
+A refused acquisition is safe: the guard runs before any container is started,
+and the drain it performed first is automatically undone (gx-mini, gx-fast and
+both llama-swaps come back). Verify with `docker ps` on both nodes if in doubt.
+
+## gx-max failure unwind — what happens when a launch fails
+
+Three layers, all exercised on the real workload:
+
+| Layer | Where it runs | What it does |
+|---|---|---|
+| EXIT trap in `gx-max-start.sh` | node 1 | Runs the unwind on **every** non-zero exit after a rank was launched — rank died, readiness timeout, `set -e`, SIGINT/SIGTERM. |
+| `gx-max-unwind.sh` | node 1 | Stops and **confirms gone** both ranks (bounded node-2 retries with backoff), reconciles both ledgers, proves both locks free, restores services, then verifies memory return, swap, SSH/Tailscale and both ConnectX rails. Prints `UNWIND COMPLETE — cluster verified clean` or names every FAIL. |
+| `rank1-deadman.sh` | **node 2** | Armed before rank0 starts. Watches rank0's bootstrap socket over the fabric and force-removes rank1 when rank0 goes away. Needs no ssh, no network from node 1 — which is the point, because node 2 is unreachable exactly when it matters. |
+
+Regression suite: `legenex/tests/unwind-tests.sh` (placeholder containers, ~1
+minute, costs no memory).
+
+**Manual unwind**, if you ever need it:
+
+```bash
+legenex/lifecycle/gx-max-unwind.sh --reason "manual"
+```
+
+## Memory floors: two, not one
+
+`GXMAX_ABORT_FLOOR_GIB` (20 GiB) is the **steady-state** floor and is only
+enforced once the engine answers `/health`. `GXMAX_LOAD_FLOOR_GIB` (2 GiB) is a
+last-resort tripwire for the **load phase**.
+
+They are split because weight loading unavoidably takes both nodes to near
+zero MemAvailable for a minute or two, and no engine setting changes that.
+Enforcing the steady floor during load is not conservative — it aborts every
+launch, which is exactly what happened before this was measured.
+
+## Media stack — start, generate, stop
+
+```bash
+# node 2
+ssh legenex-02@gx10-02 'cd ~/gx-media && docker compose -f docker-compose.media.yml up -d'
+
+# verify from node 1 (router is the ONLY ingress; ComfyUI must be unreachable)
+curl -fsS http://192.168.100.11:18800/health | python3 -m json.tool
+curl -fsS -m 5 http://192.168.100.11:8188/system_stats   # must fail, exit 7
+
+# generate (image is synchronous, video is async)
+curl -sS -X POST $GATEWAY/v1/images/generations -H "Authorization: Bearer $KEY" \
+  -d '{"model":"gx-image","prompt":"...","size":"1024x1024","n":1}'
+
+# free the engine's cached weights, then stop
+ssh legenex-02@gx10-02 'curl -sS -X POST http://127.0.0.1:8188/free \
+  -H "Content-Type: application/json" -d "{\"unload_models\":true,\"free_memory\":true}"'
+ssh legenex-02@gx10-02 'cd ~/gx-media && docker compose -f docker-compose.media.yml down'
+```
+
+ComfyUI keeps model weights warm between requests on purpose. Measured
+2026-09-16: after one image and one video, `/free` returned node 2 from 47 GiB
+to 114 GiB MemAvailable, and `compose down` to 117 GiB.

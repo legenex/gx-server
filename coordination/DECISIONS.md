@@ -481,3 +481,123 @@ passed — including the original B-011 repro prompt, which now answers
    rather than assumed**: a generated image of three blue circles, sent
    through the gateway, was described correctly as "3 blue"
    (`TEST_RESULTS.md` §14.4).
+
+## D-022 — gx-max memory: the 30 GiB reserve is not reachable by tuning; the engine was retuned anyway and the real floor measured
+
+**Date:** 2026-09-16
+**Status:** ACCEPTED for the tuning; the reserve value itself is ESCALATED to
+the human (see `coordination/BLOCKERS.md` B-022).
+
+**Context.** The operator explicitly delegated gx-max *runtime* tuning
+(`--mem-fraction-static`, KV/context/CUDA-graph sizing, startup sequencing,
+memory estimates, lifecycle timeouts, failure-unwind logic) while keeping the
+architecture locked (SGLang, `nvidia/DeepSeek-V4-Flash-0731-NVFP4`, TP=2,
+rank0 on gx10-01, rank1 on gx10-02, no silent fallback), and required
+`MemAvailable >= 30 GiB` on both nodes with no use of swap as capacity.
+
+**What was measured (four real two-node runs, 2026-09-16).**
+
+| Fact | Evidence |
+|---|---|
+| Node total as the engine sees it | `124546 MiB = 121.63 GiB` (rank0 log, `torch.cuda.mem_get_info`) |
+| Checkpoint on disk | 163.48 GiB over 48 shards; 155.77 GiB of that is MoE expert weights |
+| Per-rank weight residency | ~82–94 GiB — i.e. roughly two thirds of a node, before any KV cache |
+| Load-phase trough, node1 | 8–12 GiB MemAvailable |
+| Load-phase trough, node2 | **1 GiB** MemAvailable |
+| Effect of `--mem-fraction-static` on the trough | **None.** Measured identical troughs at 0.50 and at 0.70 |
+| Where the memory goes | ~94 GiB held by the NVIDIA driver, invisible to every `/proc/meminfo` LRU counter (B-021). At the trough: `MemFree 725 MiB`, `Cached 15.5 GiB`, `AnonPages 13.1 GiB` — ~31 GiB visible out of 121.63 GiB |
+
+**Decision 1 — the tuning is applied.** `--mem-fraction-static` 0.80 -> 0.70,
+`--context-length` 327680 -> 32768, `--chunked-prefill-size` 8192 -> 4096
+(with `SGLANG_B12X_MAX_TOKENS` kept in step), `--cuda-graph-max-bs-decode`
+32 -> 8, `--max-running-requests` 32 -> 8. These are real improvements to the
+*steady state*: the 2026-09-14 run at 0.80 ended with `available_gpu_mem=14.93
+GB`, and 0.70 releases a further 12.2 GiB of static pool. They do **not**
+change the load transient, because the transient is the model weights.
+
+**Decision 2 — the memory guards are phase-aware.** A single floor is wrong,
+because the two phases have genuinely different physics:
+
+* **Load phase** (engine not yet answering `/health`): only a last-resort
+  `GXMAX_LOAD_FLOOR_GIB` (2 GiB) tripwire, so *this tooling* tears the cluster
+  down deliberately rather than leaving it to the kernel OOM killer. The real
+  protection here is rank-liveness (`rank1-deadman.sh`) plus
+  `--oom-score-adj 950`, which is verified to make SGLang the kernel's chosen
+  victim rather than sshd/tailscaled.
+* **Steady state** (engine healthy): `GXMAX_ABORT_FLOOR_GIB` — the real
+  reserve.
+
+Enforcing the steady floor during load is not conservative, it is simply
+broken: it aborted two otherwise-healthy launches before the trough was
+measured.
+
+**Decision 3 — the 30 GiB number is escalated, not silently redefined.**
+`GXMAX_GUARD_RESERVE_GIB` stays at 30 in the committed config. The consequence
+is honest and visible: the admission guard refuses gx-max, because 92 GiB
+(estimated rank footprint) + 30 GiB (reserve) = 122 GiB on a 121.63 GiB node.
+Lowering the floor to make the arithmetic work would be exactly the silent
+downgrade this project forbids, and the floor is a human-set policy. B-022
+carries the numbers and the options.
+
+**What was explicitly NOT done.** No engine change, no model change, no
+topology change, no swap increase, no use of swap as capacity, no silent
+fallback, and no quiet edit of the reserve to whatever value happened to fit.
+
+## D-023 — gx-auto may use gx-max, but never acquire it
+
+**Date:** 2026-09-16. **Status:** ACCEPTED (implements an explicit human
+requirement).
+
+**Decision.** `gx-auto` routes to `gx-max` only when gx-max is already
+`READY`. If it is not, gx-auto routes to the best available tier and logs
+`downgraded_from: gx-max`. It never triggers an acquisition.
+
+**Why.** Acquiring gx-max is not an ordinary operation that might fail — it is
+a cluster-wide takeover. `gx-max-start.sh` drains gx-mini, gx-fast, gx-reason,
+ComfyUI, the media router and both llama-swaps *before* it does anything else,
+because gx-max needs both whole nodes. Letting a routed request trigger that is
+wrong even in the success case: a user asking a hard question has not asked to
+evict every other tier.
+
+Observed live on 2026-09-16, which is what made this concrete: a single
+`gx-auto` prompt containing the word "exhaustive" tore down node 1's resident
+models and both llama-swaps, was refused by the admission guard, and spent
+~12 s restoring everything — all invisible to the caller, who just saw a slow
+answer from gx-reason.
+
+**What did not change.** A DIRECT `gx-max` request still acquires, and still
+fails loudly with 503 rather than being served by a smaller model
+(ARCHITECTURE.md §5's never-downgrade rule). The explicit
+`/lifecycle/gx-max/acquire` endpoint still acquires. Both are
+operator-initiated, which is the distinction that matters.
+
+Covered by three regression tests in `tests/test_server.py`
+(`TestGxAutoNeverAcquiresGxMax`), including one asserting the direct path
+*still* acquires, so this is not "fixed" later by removing acquisition
+everywhere.
+
+## D-024 — gx-max's health reflects admission, not just process state
+
+**Date:** 2026-09-16. **Status:** ACCEPTED.
+
+**Decision.** `GET /health/detailed` runs the same read-only
+`compute_admission` arithmetic the launch paths use, and reports gx-max as
+`unavailable`/`usable: false` with the refusal reason when the guard would
+refuse it.
+
+**Why.** Every other tier's health is a question of whether its process is
+running. gx-max's is not: it is a question of whether it is *allowed to start*.
+Reporting `stopped, usable: true` for a tier the guard refuses on every single
+attempt is a fake healthy state, which this project forbids — and it is exactly
+what `gx status` showed before this.
+
+**Guard-rails that are part of the decision**, not incidental:
+
+* The probe is **read-only** and takes no lock. Health must not be able to
+  perturb the thing it reports on.
+* A probe failure returns `""` and falls back to the old behaviour. A broken
+  probe must never invent a fault on a healthy tier.
+* `READY` is never second-guessed. A running engine is healthy regardless of
+  what admission would say about starting a *new* one.
+* node-2-offline still outranks admission in the reported reason: it is the
+  more actionable answer, and the arithmetic is moot if the node is gone.

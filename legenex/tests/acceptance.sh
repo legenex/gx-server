@@ -77,6 +77,27 @@ t_mini(){
   elif [ ${#c} -lt 20 ]; then fail "gx-mini text" "empty/short response: '${c}'"
   else pass "gx-mini text inference"; fi
 
+  # Generate the fixture rather than hoping one is lying around in /tmp. It
+  # used to be `if [ -f ... ]` with no else-branch that created it, so on any
+  # machine without that file the vision check silently SKIPped -- a test that
+  # never runs is not a passing test. (And when a file WAS present, it had a
+  # 120x100 *rectangle* in it while the assertion below looks for "square":
+  # gx-mini described it correctly as a rectangle and was marked FAIL. The
+  # model was right and the fixture was wrong.)
+  python3 - <<'PYFIX' || true
+from PIL import Image, ImageDraw, ImageFont
+im = Image.new('RGB', (320, 240), (255, 255, 255))
+d = ImageDraw.Draw(im)
+d.ellipse((30, 60, 130, 160), fill=(220, 20, 20))      # red circle   100x100
+d.rectangle((180, 60, 280, 160), fill=(20, 20, 220))   # blue SQUARE  100x100
+try:
+    f = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 56)
+except Exception:
+    f = ImageFont.load_default()
+d.text((145, 175), "7", fill=(0, 0, 0), font=f)
+im.save('/tmp/gxacc_vision.png')
+PYFIX
+
   if [ -f /tmp/gxacc_vision.png ]; then
     python3 - <<'PY' > /tmp/gxacc_body.json
 import base64,json
@@ -125,7 +146,15 @@ sys.exit(0 if tc and tc[0]['function']['name']=='get_weather' else 1)" 2>/dev/nu
 # ---------------------------------------------------------------- 3. reason
 t_reason(){
   echo "[3] gx-reason"
-  body gx-reason "A train leaves at 14:05 travelling 80 km/h. A second leaves the same station at 14:35 at 120 km/h on the same track. At what clock time does the second catch the first? Show the calculation." 400
+  # max_tokens 400 -> 4096. gx-reason is a REASONING tier: its <think> content
+  # is spent out of the same completion budget as the answer. Measured
+  # 2026-09-16: a one-line question used 385 of 396 completion tokens on
+  # reasoning. At 400 the model ran out of budget mid-thought and returned an
+  # empty `content`, which this suite reported as "gx-reason inference:
+  # empty/short" -- a real FAIL against a tier that was working perfectly.
+  # The gateway's own gx-reason budget was raised to 16384 for exactly this
+  # reason (see CURRENT_STATE.md); this test had not been updated to match.
+  body gx-reason "A train leaves at 14:05 travelling 80 km/h. A second leaves the same station at 14:35 at 120 km/h on the same track. At what clock time does the second catch the first? Show the calculation." 4096
   GX_TIMEOUT=1800 chat /tmp/gxacc_body.json > /tmp/gxacc_reason.json
   local c; c=$(content /tmp/gxacc_reason.json)
   if [[ "$c" == __ERROR__* ]]; then fail "gx-reason inference" "${c:9:250}"
@@ -156,8 +185,84 @@ t_reason(){
 }
 
 # ------------------------------------------------------------------- 4. max
+# Is gx-max blocked by its own admission guard right now? Asked live, never
+# hardcoded: the moment gx-max becomes admissible again these tests run by
+# themselves. See coordination/BLOCKERS.md B-022.
+gx_max_blocked(){
+  curl -fsS -m 10 "${ORCH}/health/detailed" 2>/dev/null | python3 -c "
+import json,sys
+try: d=json.load(sys.stdin)
+except Exception: print(''); raise SystemExit
+t=d.get('tiers',{}).get('gx-max',{})
+print(t.get('reason','') if not t.get('usable', True) else '')
+" 2>/dev/null
+}
+
+# ------------------------------------------------------- 4b. gx-max refusal
+# This runs ALWAYS, slow or not. While gx-max cannot be brought up, the
+# thing that must be true is not "gx-max serves" but "gx-max refuses
+# correctly and safely" -- and that deserves a real test rather than a
+# silent gap.
+t_max_refusal(){
+  echo "[4b] gx-max refusal correctness"
+  local blocked; blocked="$(gx_max_blocked)"
+  if [ -z "${blocked}" ]; then
+    skip "gx-max refusal correctness" "gx-max is admissible right now; t_max covers the serving path"
+    return
+  fi
+
+  local before_n1 before_n2
+  before_n1=$(docker ps --format '{{.Names}}' | sort | tr '\n' ' ')
+  before_n2=$(ssh -o BatchMode=yes -o ConnectTimeout=8 legenex-02@gx10-02 \
+                "docker ps --format '{{.Names}}' | sort | tr '\n' ' '" 2>/dev/null)
+
+  body gx-max "Say READY." 20
+  local code
+  code=$(curl -s -o /tmp/gxacc_maxref.json -w '%{http_code}' -m 600 \
+    "${GATEWAY}/v1/chat/completions" -H "Authorization: Bearer ${KEY}" \
+    -H 'Content-Type: application/json' --data-binary @/tmp/gxacc_body.json)
+  [ "${code}" = "503" ] \
+    && pass "gx-max direct request refused with 503 (never downgraded)" \
+    || fail "gx-max refusal" "expected HTTP 503, got ${code}"
+
+  grep -q "will NOT be substituted" /tmp/gxacc_maxref.json \
+    && pass "gx-max refusal says explicitly it was not substituted" \
+    || fail "gx-max refusal message" "no never-substitute statement in the error body"
+
+  # A refusal must leave no rank behind on either node...
+  local r0 r1
+  r0=$(docker inspect -f '{{.State.Running}}' gx-max-rank0 2>/dev/null | tr -d '[:space:]')
+  r1=$(ssh -o BatchMode=yes -o ConnectTimeout=8 legenex-02@gx10-02 \
+        "docker inspect -f '{{.State.Running}}' gx-max-rank1 2>/dev/null" 2>/dev/null | tr -d '[:space:]')
+  { [ -z "${r0}" ] || [ "${r0}" = false ]; } && { [ -z "${r1}" ] || [ "${r1}" = false ]; } \
+    && pass "gx-max refusal left no rank running on either node" \
+    || fail "gx-max orphan rank" "rank0='${r0:-absent}' rank1='${r1:-absent}'"
+
+  # ...and must put back every workload its drain stopped (the drain runs
+  # BEFORE the admission guard, so a refusal used to silently gut the cluster).
+  sleep 10
+  local after_n1 after_n2
+  after_n1=$(docker ps --format '{{.Names}}' | sort | tr '\n' ' ')
+  after_n2=$(ssh -o BatchMode=yes -o ConnectTimeout=8 legenex-02@gx10-02 \
+               "docker ps --format '{{.Names}}' | sort | tr '\n' ' '" 2>/dev/null)
+  for svc in gx-litellm gx-llama-swap-node01; do
+    case "${after_n1}" in *"${svc}"*) ;; *) fail "gx-max refusal restore" "${svc} did not come back on node1"; return;; esac
+  done
+  case "${after_n2}" in
+    *gx-llama-swap-node02*) pass "gx-max refusal restored the control plane on both nodes" ;;
+    *) fail "gx-max refusal restore" "node2 llama-swap did not come back (before='${before_n2}' after='${after_n2}')" ;;
+  esac
+}
+
 t_max(){
   echo "[4] gx-max (two-node, SLOW)"
+  local blocked; blocked="$(gx_max_blocked)"
+  if [ -n "${blocked}" ]; then
+    skip "gx-max inference" "BLOCKED by its own admission guard -- ${blocked:0:120} (see BLOCKERS.md B-022; t_max_refusal verifies the refusal is correct)"
+    skip "gx-max both ranks running" "BLOCKED -- see B-022"
+    skip "gx-max NCCL over ConnectX" "BLOCKED -- see B-022"
+    return
+  fi
   body gx-max "Explain in three sentences why MoE decode is memory-bandwidth bound." 250
   GX_TIMEOUT=2400 chat /tmp/gxacc_body.json > /tmp/gxacc_max.json
   local c; c=$(content /tmp/gxacc_max.json)
@@ -210,6 +315,11 @@ t_auto(){
 # -------------------------------------------------------------- 6. lifecycle
 t_lifecycle(){
   echo "[6] gx-max lifecycle (SLOW)"
+  local blocked; blocked="$(gx_max_blocked)"
+  if [ -n "${blocked}" ]; then
+    skip "gx-max acquire/serve/release cycle" "BLOCKED by its own admission guard -- see BLOCKERS.md B-022"
+    return
+  fi
   "${repo}/legenex/lifecycle/gx-max-start.sh" >/tmp/gxacc_start.log 2>&1
   if [ $? -ne 0 ]; then fail "gx-max acquire" "$(tail -3 /tmp/gxacc_start.log | tr '\n' ' ')"; return; fi
   pass "gx-max acquired both nodes"
@@ -350,7 +460,11 @@ t_restart(){
 }
 
 # -------------------------------------------------------------------- driver
-ALL=(gateway mini fast reason auto media restart)
+# max_refusal runs AFTER media on purpose: it triggers a real gx-max
+# acquisition attempt, whose drain stops ComfyUI and the media router on node 2
+# (they are in gx-max-start.sh's CONFLICTS_N2). restore-normal.sh brings them
+# back, but there is no reason to make the media tests race that restore.
+ALL=(gateway mini fast reason auto media max_refusal restart)
 SLOW=(max lifecycle)
 if [ $# -gt 0 ]; then
   SELECTED=("$@")

@@ -472,7 +472,17 @@ been disabled (`AutomaticLoginEnable = false` in the GDM config) — see
 `OPERATIONS.md` for the recovery procedure if a stale session recurs. This
 does not affect SSH.
 
-## B-017 (S1) — gx-max cannot acquire through the real orchestrator: the 30 GiB admission-guard reserve floor and gx-max's own ~90 GiB/rank footprint are structurally incompatible
+## B-017 (S1) — SUPERSEDED 2026-09-16 by B-022 — gx-max cannot acquire through the real orchestrator: the 30 GiB admission-guard reserve floor and gx-max's own ~90 GiB/rank footprint are structurally incompatible
+
+> **Superseded.** B-017 correctly identified the collision but was closed
+> (D-020) by picking a gx-max-only reserve of 5 GiB with no measurements
+> behind it. The measurements now exist — four real two-node runs on
+> 2026-09-16 — and they change the picture: the collision is real, it cannot
+> be tuned away, and the right reserve is a human decision, not a number an
+> agent picks to make an admission check pass. See **B-022** and
+> `coordination/DECISIONS.md` **D-022**. The deadlock B-017 described (the
+> guard refusing every launch) is still the current behaviour, and it is now
+> deliberate rather than accidental.
 **Status, 2026-09-15: RESOLVED — option 1 applied (D-020).** gx-max's own
 admission check now uses a smaller, explicit `GXMAX_GUARD_RESERVE_GIB`
 (5 GiB) instead of the generic 30 GiB floor, scoped to only its own two
@@ -679,7 +689,76 @@ consequence of, B-017.
   wide enough — works today, but is incidental rather than guaranteed.
   Consider an explicit `StartLimitIntervalSec=0` for a hard guarantee.
 
-## B-020 (S1) — RESOLVED: node 2 wedged by an orphaned gx-max-rank1 after rank0 OOM-killed mid-acquisition; the node recovered ITSELF, no power cycle was needed
+## B-020 (S1) — RESOLVED, and the orphan-rank failure mode is now FIXED AND TESTED (2026-09-16)
+
+> **Update 2026-09-16 — the fix, and what it is verified against.**
+>
+> B-020's root cause was structural, not incidental: *every* cleanup path for
+> a failed gx-max launch had to reach node 2 over ssh, and node 2 is exactly
+> the host being starved at that moment. The unwind's single ssh timed out,
+> the orphan held ~90 GiB for 80 minutes, and the kernel eventually reclaimed
+> it. Three things now close that hole:
+>
+> 1. **`legenex/lifecycle/rank1-deadman.sh`** — a watchdog that runs ON
+>    node 2, armed before rank0 is even started, already resident (a few
+>    hundred KiB of bash, no allocation in its loop) before any pressure
+>    appears. It watches rank0's liveness by TCP-connecting to the
+>    torch-distributed bootstrap store on the RoCE fabric — the one socket
+>    only rank0 binds, for the engine's whole life — and force-removes rank1
+>    itself when rank0 is gone. It needs nothing from outside the host.
+> 2. **`legenex/lifecycle/gx-max-unwind.sh`** — a dedicated failure path,
+>    separate from the graceful `gx-max-stop.sh`. It never drains, retries
+>    node 2 with bounded backoff instead of giving up on one timed-out ssh,
+>    *confirms* both ranks are gone rather than trusting a stop that returned
+>    0, reconciles both ledgers, proves both locks are free, and verifies
+>    memory return, swap behaviour and SSH/Tailscale/fabric health per node.
+> 3. **An EXIT trap in `gx-max-start.sh`** so the unwind cannot be missed: not
+>    by the rank-died path, not by the readiness timeout, not by `set -e`, not
+>    by SIGINT/SIGTERM.
+>
+> **Verified, not asserted.** Deadman: fires when rank0 never appears
+> (20 s startup grace, container removed, node-2 llama-swap restored); fires
+> 10 s after a rank0 that *had* been seen disappears; fires on its own memory
+> floor. Unwind: exercised on a synthetic two-rank failure and on **two real
+> DeepSeek launches**, reporting `UNWIND COMPLETE — cluster verified clean`
+> with all 11 checks green, both ranks confirmed gone, and MemAvailable back
+> to 115 GiB / 117 GiB. In one of those real runs the deadman fired first, on
+> node 2, at 1 GiB MemAvailable — the exact B-020 trigger condition — and the
+> node came straight back to 117 GiB instead of being held for 80 minutes.
+>
+> **Two bugs this testing found in the tooling itself**, both now fixed:
+> `pkill -f rank1-deadman.sh` matched the *ssh remote command line* that was
+> starting the deadman, so the remote shell killed itself before arming
+> anything (now a pid file); and `docker inspect` on a missing container
+> writes a blank line to stdout before failing, so `... || echo absent`
+> yielded `"\nabsent"` and the unwind reported a still-running rank0 that did
+> not exist (now normalised).
+>
+> **Corrected recovery guidance for this failure class** — do NOT open with
+> "a human must go to the machine":
+>
+> 1. Record the time. Do not dispatch anyone yet.
+> 2. Re-probe SSH and Tailscale periodically (every ~30 s is plenty).
+> 3. Also probe the **ConnectX fabric** (`192.168.100.11`,
+>    `192.168.101.11`). Measured 2026-09-16: during a node-2 wedge the
+>    fabric answers ICMP *and* accepts TCP on port 22 while Tailscale is
+>    completely dark — so the fabric is the better liveness signal. SSH over
+>    it still fails at "timed out during banner exchange", which is the
+>    B-012 signature (kernel alive, userspace starved) and is itself
+>    diagnostic.
+> 4. Give the kernel/OOM path time. The documented escalation window is
+>    **90 minutes** from the start of the wedge; B-020 itself resolved in 80.
+> 5. When SSH answers, run `legenex/scripts/recover-node2.sh`.
+> 6. Restart node 2's control plane if the drain left it down
+>    (`RECOVERY.md` §4).
+> 7. Only if the host has not recovered inside the escalation window is
+>    physical intervention warranted.
+>
+> **B-016 is unchanged**: there is still no BMC/IPMI/Redfish remote power
+> path on either node. Nothing here claims a remote power-cycle capability.
+
+### Original record (2026-09-15/16)
+
 **Status, 2026-09-16 07:34-07:47 CEST: RESOLVED, and the original
 prescription was WRONG.** Node 2 is healthy and back in service. No human
 ever power-cycled it, and none needed to.
@@ -888,3 +967,74 @@ the measurements support, or (b) investigate whether the NVIDIA container
 stack on this platform can charge device allocations to the cgroup at all —
 research, not a config change, and not worth doing unless a real incident
 demands it.
+
+## B-022 (S1) — gx-max cannot hold a 30 GiB MemAvailable reserve on 128 GB nodes; the floor and the locked model are arithmetically incompatible
+
+**Opened:** 2026-09-16. **Status:** OPEN — needs a human decision on the
+reserve value. Everything else about gx-max is fixed and proven; this is the
+one remaining item, and it is a policy number, not a bug.
+
+**This supersedes B-017's "option 1" (D-020), which set a gx-max-only reserve
+of 5 GiB.** That was the right shape of answer with the wrong number and no
+measurements behind it. The numbers now exist.
+
+### The arithmetic
+
+One node is 121.63 GiB usable (`124546 MiB`, as `torch.cuda.mem_get_info`
+reports it to SGLang — the whole unified pool). The locked checkpoint is
+163.48 GiB on disk, 155.77 GiB of which is MoE expert weights. At the locked
+`--tp 2`, each rank holds roughly half:
+
+```
+per-rank weights            ~82 GiB          (67% of the node)
++ CUDA context / NCCL       ~2 GiB
++ host-side SGLang procs    ~6 GiB
++ node baseline             ~5-9 GiB
+------------------------------------------------
+steady-state footprint      ~95-99 GiB
+node total                  121.63 GiB
+=> maximum achievable MemAvailable   ~23-27 GiB
+```
+
+There is no 30 GiB left to reserve. And during weight loading it is far
+worse: measured troughs of **8-12 GiB on node 1 and 1 GiB on node 2**.
+
+### Why tuning cannot fix it
+
+`--mem-fraction-static` was the obvious lever and it does not work. Measured
+directly, at 0.50 and at 0.70, the load-phase trough is **identical** —
+because the trough is the model weights landing in NVIDIA-driver-held unified
+memory, not the KV/static pool. The fraction only moves the *steady state*
+(0.80 -> 0.70 buys back 12.2 GiB). Every other lever tried — context length,
+chunked prefill size, CUDA-graph batch tier, max running requests — moves the
+steady state by single GiB and the transient by nothing.
+
+The only things that would move the weight term are a different model, a
+different quantisation, or more than 2 nodes. All three are LOCKED (L-6).
+
+### What is already done and proven
+
+* Engine retuned (D-022): steady-state MemAvailable improves from ~15 GiB
+  (the 2026-09-14 verified-working configuration) to ~26 GiB.
+* Memory guards made phase-aware, so the unavoidable load transient is no
+  longer mistaken for a steady-state breach.
+* The orphan-rank failure that made B-020 an 80-minute outage is fixed and
+  tested on the real workload — see B-020's update.
+
+### The decision the human needs to make
+
+1. **Set a gx-max-specific steady-state reserve of ~20 GiB** and accept a
+   documented load-phase excursion to ~1-8 GiB. This is what the hardware
+   actually permits, it is what the 2026-09-14 verified-working run already
+   did (it ended at 14.93 GiB free), and it keeps gx-max in the product.
+2. **Keep 30 GiB as an absolute floor** and accept that gx-max is
+   permanently un-runnable on this hardware — the admission guard refuses it,
+   correctly, and `gx-max` becomes a tier the gateway exposes but never
+   serves. This is a coherent choice; it just needs to be a chosen one.
+3. **Change a locked decision** (smaller model, heavier quantisation, or
+   more nodes) so the weights fit with 30 GiB to spare. Requires L-6 to be
+   reopened.
+
+Until this is decided, `GXMAX_GUARD_RESERVE_GIB` stays at **30** and the
+admission guard refuses gx-max rather than quietly admitting it under a
+number nobody approved.

@@ -239,3 +239,66 @@ See `coordination/BLOCKERS.md`. The ones that matter most:
 - ~~Physical: node 2 needs a power cycle~~ — **done.** Node 2 was
   power-cycled and re-verified clean 2026-09-15 (`recover-node2.sh`, 16/16
   pass). See `CURRENT_STATE.md`.
+
+---
+
+## Node 2 unresponsive after a heavy workload — DO NOT dispatch a human first
+
+**Updated 2026-09-16 with a second measured occurrence.** This failure shape —
+node 2's kernel alive, its userspace starved — has now happened twice and
+**resolved itself both times**. B-020 took 80 minutes; the 2026-09-16
+recurrence took **17 minutes**. Neither needed a power cycle. Opening with
+"someone has to go to the machine" has been wrong every time so far.
+
+### Symptoms
+
+* `ssh legenex-02@gx10-02` hangs, or fails at **"Connection timed out during
+  banner exchange"** (that specific message is diagnostic: the TCP handshake
+  completed, so the kernel is fine; sshd could not fork/complete, so userspace
+  is starved).
+* Tailscale may go completely dark — no ICMP, no TCP.
+* **The ConnectX fabric usually still answers.** Measured 2026-09-16 during a
+  live wedge: `192.168.100.11` and `192.168.101.11` replied to ICMP *and*
+  accepted TCP on port 22 while Tailscale was dead. Probe the fabric before
+  concluding the host is gone.
+
+### Procedure
+
+1. **Record the time.** Do not dispatch anyone.
+2. Probe both paths every ~30 s:
+   ```bash
+   ping -c1 -W2 100.73.238.4                 # Tailscale
+   ping -c1 -W2 192.168.100.11               # fabric rail A
+   timeout 4 bash -c 'exec 3<>/dev/tcp/192.168.100.11/22'   # fabric TCP
+   timeout 10 ssh -o BatchMode=yes -o ConnectTimeout=8 legenex-02@gx10-02 true
+   ```
+   `legenex/scripts/recover-node2.sh` is *not* the tool for this stage — it
+   needs a reachable host. A simple probe loop is; one is left at
+   `/srv/logs/node2-recovery-probe.log` from the 2026-09-16 incident as a
+   worked example.
+3. **Wait.** The kernel's OOM killer resolves this on its own. `--oom-score-adj
+   950` on the rank containers is verified to make SGLang the chosen victim
+   rather than sshd/tailscaled/dockerd — in both recorded events the kernel
+   log shows `Out of memory: Killed process ... (sglang::schedul)`.
+4. When SSH answers, run `legenex/scripts/recover-node2.sh` (report-only) and
+   read its PASS/FAIL table.
+5. Restart node 2's control plane if the drain left it down (§4 below), and the
+   media stack if it was in use.
+6. **Escalation window: 90 minutes** from the start of the wedge. Only if the
+   host has not recovered by then is physical intervention warranted.
+
+### What is NOT available
+
+`coordination/BLOCKERS.md` **B-016 is unchanged**: there is no BMC / IPMI /
+Redfish / MCTP remote power path on either node. Nothing in this procedure
+claims a remote power-cycle capability, and none exists.
+
+### What now prevents this rather than recovering from it
+
+`legenex/lifecycle/rank1-deadman.sh` runs **on node 2**, is armed before rank0
+starts, and force-removes rank1 when rank0 disappears — without needing ssh,
+which every previous cleanup path did. On 2026-09-16 it fired at 1 GiB
+MemAvailable on a real run and node 2 returned to 117 GiB immediately, with no
+wedge at all. It is not a complete guarantee: a watchdog is still userspace,
+and in the one run that did wedge, the deadman was itself too starved to act
+until the kernel got there first.

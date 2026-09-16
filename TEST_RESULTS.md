@@ -706,3 +706,236 @@ neither of which appears on text-only requests.
 and restart: correct answer, sub-second, no regression. `gx-fast` was not
 re-cold-started this session (it was verified live the previous session and
 nothing in its configuration changed).
+
+## 15. 2026-09-16 (later session) — gx-max memory investigation, unwind fix, media E2E
+
+All figures below are from live runs on both real nodes on 2026-09-16. Nothing
+here is carried over from a previous session's notes.
+
+### 15.1 gx-max — EIGHT instrumented two-node runs; the tier does not fit
+
+The task was to tune gx-max so it holds a 30 GiB MemAvailable reserve. It
+cannot, and the reason is now measured rather than argued.
+
+**Baseline the engine sees:** `124546 MiB = 121.63 GiB` per node
+(`torch.cuda.mem_get_info`, rank0 log). Checkpoint: 163.48 GiB over 48 shards,
+155.77 GiB of it MoE expert weights; byte-identical shard manifests on both
+nodes (`md5sum` of the name+size listing matches).
+
+| # | Configuration changed | node1 min MemAvailable | node2 min MemAvailable | Outcome |
+|---|---|---|---|---|
+| 1 | `mem-fraction-static 0.70`, ctx 65536 | 17 GiB | 20 GiB | aborted by an 18 GiB tripwire |
+| 2 | same, tripwire 12 GiB | 11 GiB | 19 GiB | aborted by the tripwire |
+| 3 | same, tripwire 5 GiB, ctx 32768 | 8 GiB | **1 GiB** | node2 deadman fired |
+| 4 | **`mem-fraction-static 0.50`** | 8.5 GiB | ~1 GiB | rank1 died; **trough identical to 0.70** |
+| 5 | phase-aware floors, load floor 2 GiB | 11.9 GiB | **102 MiB** | node2 wedged 17 min; kernel `global_oom` killed `sglang::schedul` |
+| 6 | `--memory 28g` cgroup cap | 3.3 GiB | 0 GiB | cap did NOT bind; host still starved |
+| 7 | tripwires off, `--memory 106g` | **22 MiB** | 0 GiB | kernel `global_oom` killed the scheduler |
+| 8 | `--load-format layered` | 112.8 GiB | — | `NotImplementedError: Cannot copy out of meta tensor` — unsupported for this NVFP4/DSV4 path |
+| 9 | `--load-format runai_streamer` | 437 MiB | 0 GiB | loads, but **peak unchanged** |
+
+**The conclusion, stated precisely.** Loading one TP=2 rank takes a 121.63 GiB
+node from ~110 GiB MemAvailable to between 437 MiB and 0 MiB, on **both**
+nodes. Every lever available was tested and none moved that peak:
+`--mem-fraction-static` (0.50 / 0.70), `--context-length` (327680 / 65536 /
+32768), `--chunked-prefill-size` (8192 / 4096), `--cuda-graph-max-bs-decode`
+(32 / 8), `--max-running-requests` (32 / 8), the container `--memory` cap
+(106g / 98g / 32g / 28g) and `--load-format` (auto / layered /
+runai_streamer).
+
+`--mem-fraction-static` moves only the **steady state** — which is real and
+worth having (0.80 → 0.70 buys back 12.2 GiB, and the 2026-09-14 run at 0.80
+ended with `available_gpu_mem=14.93 GB`) — but the load-phase peak is the
+model weights landing in NVIDIA-driver-held unified memory, and no engine
+setting reaches it.
+
+**Where the memory is, measured at node 2's 102 MiB trough:**
+
+```
+MemFree     983 MiB     Cached    2008 MiB     Mapped   1955 MiB
+AnonPages 26798 MiB     Shmem     1390 MiB     SwapFree 64453 MiB
+--------------------------------------------------------------
+visible total ~31 GiB of 121.63 GiB  ->  ~90 GiB held by the driver,
+invisible to every /proc/meminfo LRU counter (B-021)
+```
+
+Note `SwapFree 64453 MiB`: the node sat at 102 MiB MemAvailable with **63 GiB
+of swap untouched**. The loader's pages are pinned (`CAP_IPC_LOCK`,
+`memlock=-1`) and cannot be swapped, so swap is not a relief valve here even
+if policy allowed it.
+
+`--oom-score-adj 950` is confirmed working: in both kernel OOM events the
+victim chosen was `sglang::schedul`, not sshd/tailscaled/dockerd.
+
+**Result: gx-max = NOT SERVING.** The admission guard refuses it, on the real
+measured numbers, before anything is launched. See B-022 for the decision the
+human needs to make and D-022 for what was changed.
+
+### 15.2 Failure unwind — built, and proven on the real workload
+
+| Test | Result |
+|---|---|
+| E1 deadman fires when rank0 never appears | **PASS** — orphan removed at the 20 s startup grace, node-2 llama-swap restored |
+| E2 deadman arms on rank0, fires when rank0 vanishes | **PASS** — armed at +5 s, fired 10 s after rank0 went away |
+| E3 deadman fires on its own memory floor | **PASS** |
+| E4 phase latch: steady floor only after `/health` answers | **PASS** — held during load, fired once the engine answered |
+| E5 `gx-max-start.sh` unwinds both nodes on a failed launch | **PASS** — `UNWIND COMPLETE — cluster verified clean`, all 11 checks |
+| **Real workload, run 3** | deadman fired on node 2 at 1 GiB; node returned to 117 GiB immediately, **no orphan** |
+| **Real workload, runs 5/7/9** | unwind reported verified-clean; both ranks confirmed gone; node1 115 GiB / node2 117 GiB restored |
+
+Three tooling bugs were found by actually running these, all fixed:
+`pkill -f rank1-deadman.sh` matched the ssh command line that was starting the
+deadman (self-kill; now a pid file); `docker inspect` on a missing container
+emits a blank line so `|| echo absent` produced `"\nabsent"` and the unwind
+reported a phantom running rank0; and the unwind's ConnectX probe piped into
+`grep`, swallowing the exit status and reporting both healthy rails as
+unreachable.
+
+A fourth, separate bug was found the same way: a **refused** launch had
+already drained gx-mini and both llama-swaps and never put them back. Fixed —
+a launch that starts no rank now restores exactly what it stopped, verified.
+
+### 15.3 gx-image — real generation through the gateway
+
+`POST /v1/images/generations` with `model: gx-image`, via LiteLLM on :4000.
+
+| Item | Value |
+|---|---|
+| HTTP | **200** |
+| Generation time | **26.5 s** |
+| File | 1,274,968 B PNG, `\x89PNG` magic, **1024 x 1024**, 8-bit RGB, non-interlaced |
+| Content check | mean RGB 124.9/99.3/87.6, stdev 61.9/70.9/71.5, **1043 distinct colours** in a 1052-pixel sample — not blank, not flat |
+| Visual check | a single red apple on a wooden table in soft daylight — matches the prompt |
+| node2 min MemAvailable | **59.7 GiB** (floor 30 GiB) |
+| Swap | unchanged (64500 MiB free throughout) |
+| Output | `/srv/logs/media-evidence/gx-image-20260916.png` |
+
+### 15.4 gx-video — real generation, Wan 2.2
+
+Submitted to the router's async `/v1/videos`, polled to completion, content
+fetched.
+
+| Item | Value |
+|---|---|
+| Workflow used | **`wan22-t2v-a14b-lightning`** (Wan 2.2 — LTX is neither enabled nor downloaded) |
+| Generation time | **48.14 s** |
+| File | 100,023 B, ISO MP4, **h264, 640 x 640, yuv420p** |
+| Frames / rate / duration | **33 frames @ 16 fps = 2.0625 s** |
+| Distinct frames | **33 of 33** frame hashes unique — genuinely moving, not a still |
+| Non-black | darkest frame mean luminance 82.8, per-frame stdev ~66 |
+| Visual check | lit candle flames, matches the prompt |
+| node2 min MemAvailable | **42.8 GiB** (floor 30 GiB) |
+| Swap | unchanged |
+| Output | `/srv/logs/media-evidence/gx-video-20260916.mp4` (+ extracted frames) |
+
+### 15.5 Media unload
+
+`POST /free {unload_models, free_memory}` then `compose down`:
+**47 GiB → 114 GiB → 117 GiB** MemAvailable on node 2, swap unchanged.
+
+### 15.6 ComfyUI ingress boundary
+
+`curl http://192.168.100.11:8188/system_stats` from node 1 → **exit 7**
+(cannot connect). The router on :18800 is the only routable ingress. Boundary
+holds.
+
+### 15.7 Public alias acceptance — all seven, through the gateway
+
+| Alias | Result |
+|---|---|
+| `gx-mini` | **PASS** — correct one-sentence answer on RoCE; vision identified red circle, blue square and the digit 7 |
+| `gx-fast` | **PASS** — `17*23 = 391`; tool calling parsed `get_weather` |
+| `gx-reason` | **PASS** — bat-and-ball answered `ANSWER: $0.05` (the `$0.10` trap avoided), `reasoning_content` separated from `content` (385 of 396 completion tokens were reasoning); vision correctly listed red circle, blue square, number 7 |
+| `gx-max` | **REFUSED, correctly** — HTTP 503, message states explicitly it "will NOT be substituted with another model". No rank left running on either node; the control plane the attempt drained came back on both nodes |
+| `gx-auto` | **PASS** — `hi there` -> gx-mini, a ticket-classification -> gx-mini, a stack-trace/complexity/refactor prompt -> gx-reason. An "exhaustive analysis" prompt selects gx-max, finds it not running and falls back to gx-reason with `downgraded_from: gx-max` logged — **without attempting an acquisition** |
+| `gx-image` | **PASS** — real 1024x1024 PNG, see §15.3 |
+| `gx-video` | **PASS** — real 33-frame h264 MP4, see §15.4 |
+
+### 15.8 Boot / persistence / no-auto-start invariants — verified live
+
+| Invariant | Result |
+|---|---|
+| Gateway persists | `gx-litellm`, `gx-litellm-db` restart policy `unless-stopped` |
+| llama-swap control plane persists | `gx-llama-swap-node01` / `-node02` `unless-stopped` |
+| Orchestrator persists | `gx-orchestrator.service` **enabled** + active (systemd --user) |
+| Hostwatch persists | `gx-hostwatch.timer` **enabled** + active on **both** nodes |
+| Heavy models do NOT auto-start | `gx-mini`, `gx-fast` restart policy `no`; llama-swap loads on demand |
+| gx-max does NOT auto-start | both ranks launched `--restart no`; **no systemd unit exists for gx-max at all** |
+| gx-reason does not reserve at boot | container absent at rest; spawned per request |
+| Media does not auto-reserve | ComfyUI idle **695 MiB**, router **20 MiB** — node 2 sits at 116-117 GiB MemAvailable with the media stack up |
+| Stale rank cleanup | `gx-max-start.sh` force-removes stale rank containers in preflight; the unwind confirms removal rather than assuming it |
+| Stale ledger/lock reconcile | both ledgers read `{}` and both lock files are free after every run, including the aborted ones |
+| node 2 disappearance/reappearance | exercised for real: node 2 wedged, the orchestrator kept serving node-1 tiers, the ledger reconciled the dead rank away, and normal service resumed on reappearance |
+
+### 15.9 No fake healthy state
+
+Before this session `GET /health/detailed` reported `gx-max -> stopped,
+usable: true` for a tier that cannot be brought up at all. It now consults the
+same admission arithmetic every launch path uses and reports:
+
+```
+gx-mini    ready        usable=True   loaded
+gx-fast    ready        usable=True   loaded
+gx-reason  ready        usable=True   loaded
+gx-max     unavailable  usable=False  admission_refused: refused: ledger residency
+                                      0.0GiB + new 117.0GiB + reserve 30.0GiB =
+                                      147.0GiB exceeds node total 121.0GiB
+```
+
+The probe is read-only, takes no lock, and swallows its own errors — a broken
+probe must never invent a fault. Covered by four new tests, including
+"node 2 offline outranks admission" (give the operator the actionable reason)
+and "a RUNNING engine is not second-guessed by the probe".
+
+### 15.10 Kernel hold — verified blocked on sudo, everything else ready
+
+`sudo -n true` returns "a password is required" on **both** nodes, so this is
+genuinely the interactive-authentication stop condition, not an oversight.
+
+Both nodes: `uname -r` = `6.17.0-1032-nvidia` (correct), GRUB pinned to it, the
+locked image installed, `apt-get upgrade` would touch no kernel packages, and
+autoremove would delete none. The verifier reports **8 passed, 3 failed** per
+node; all three failures are the missing `apt-mark hold` itself:
+
+```
+[FAIL] only 0/5 HWE meta-packages held
+[FAIL] only 0/8 locked 6.17 packages held
+[FAIL] apt-get dist-upgrade WOULD touch kernel packages
+```
+
+The dry run confirms the exact plan on each node: 5 `*-nvidia-hwe-24.04`
+meta-packages (currently at `7.0.0-1019.19`, i.e. the kernel L-4 forbids) plus
+8 installed `6.17.0-1032` packages. Applying the holds is one command per node
+and is the only remaining human action.
+
+### 15.11 Full automated suites — final state
+
+Run on a clean cluster with nothing else executing. (An earlier attempt had
+the unwind suite and the acceptance suite running at once; the unwind suite's
+E5 test invokes the real `gx-max-start.sh`, whose drain SIGKILLed a gx-reason
+that the acceptance run was mid-way through loading. That is now called out in
+the unwind suite's header — the two must not overlap.)
+
+```
+GX_RUN_SLOW=1 legenex/tests/acceptance.sh      PASS=19  FAIL=0  SKIP=4
+legenex/tests/unwind-tests.sh                  PASS=10  FAIL=0
+legenex/orchestrator  unittest                 124 tests  OK
+legenex/lifecycle     unittest                   9 tests  OK
+legenex/media/router  unittest                  43 tests  OK
+```
+
+All four SKIPs are the gx-max tests, and they are not hardcoded: the suite
+asks the orchestrator live whether gx-max is admissible and skips with the
+real refusal reason. They will start running again by themselves the moment
+B-022 is resolved. The refusal itself is not skipped — `t_max_refusal` runs
+always and asserts the 503, the never-substituted message, that no rank was
+left running on either node, and that the control plane the attempt drained
+came back.
+
+**Three test bugs were found and fixed rather than worked around:**
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `gx-mini vision: did not identify all elements` | The fixture drew a 120x100 **rectangle** and the assertion looked for "square". gx-mini said "blue rectangle" — correctly. | The suite now generates the fixture itself, with an actual square. It also no longer silently SKIPs the vision check when no file happens to exist in `/tmp`. |
+| `gx-reason inference: empty/short` | `max_tokens 400` on a **reasoning** tier: `<think>` content is spent from the same budget, and a one-line question measured 385 of 396 completion tokens as reasoning. The model ran out mid-thought and returned empty `content`. | Raised to 4096, matching the gateway's own budget increase for this tier. |
+| `resource_guard` CLI roundtrip | The test registered a ledger entry named **`gx-fast`** — a real production container — and asserted it would reconcile away as "not running". It passed only while gx-fast happened to be unloaded. | Uses a name that cannot exist. |

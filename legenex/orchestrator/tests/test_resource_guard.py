@@ -428,15 +428,24 @@ class TestCli(unittest.TestCase):
             capture_output=True, text=True, env=self.env, timeout=15,
         )
 
+    #: A container name that cannot collide with anything real on these hosts.
+    #: The previous version of this test used "gx-fast", which is a REAL
+    #: production container -- so the test passed only while gx-fast happened
+    #: to be unloaded, and failed the moment anything (an acceptance run, a
+    #: user request) had it resident. Found 2026-09-16. Tests must not depend
+    #: on which models are currently loaded on the machine running them.
+    ABSENT_CONTAINER = "gx-test-absent-container-do-not-create"
+
     def test_check_register_status_release_roundtrip(self) -> None:
+        name = self.ABSENT_CONTAINER
         chk = self._run(
-            "check", "--node", "node1", "--name", "gx-fast", "--class", "medium",
+            "check", "--node", "node1", "--name", name, "--class", "medium",
             "--estimated-gib", "25", "--meminfo-path", str(self.meminfo),
         )
         self.assertEqual(chk.returncode, 0, chk.stderr)
         self.assertTrue(json.loads(chk.stdout)["allowed"])
 
-        reg = self._run("register", "--node", "node1", "--name", "gx-fast", "--class", "medium", "--estimated-gib", "25")
+        reg = self._run("register", "--node", "node1", "--name", name, "--class", "medium", "--estimated-gib", "25")
         self.assertEqual(reg.returncode, 0, reg.stderr)
 
         status = self._run("status", "--node", "node1")
@@ -449,7 +458,7 @@ class TestCli(unittest.TestCase):
         # reconciliation really shells out rather than trusting the file.
         self.assertEqual(data, {})
 
-        rel = self._run("release", "--node", "node1", "--name", "gx-fast")
+        rel = self._run("release", "--node", "node1", "--name", name)
         self.assertEqual(rel.returncode, 0, rel.stderr)
 
     def test_check_exit_code_2_on_refusal(self) -> None:

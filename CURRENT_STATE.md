@@ -3,7 +3,87 @@
 **This file must always reflect reality.** If you are a new agent resuming this
 work, read this first, then ARCHITECTURE.md (what is locked), then BLOCKERS.md.
 
-## LATEST UPDATE — 2026-09-16 ~07:30-08:15 CEST — read this section first
+## LATEST UPDATE — 2026-09-16 ~09:00-11:00 CEST — read this section first
+
+**Six of the seven public tiers serve real output. The seventh, `gx-max`, does
+not fit on this hardware, and that is now measured rather than suspected.**
+
+| Tier | State | Evidence |
+|---|---|---|
+| `gx-mini` | **SERVING** | real answer through the gateway |
+| `gx-fast` | **SERVING** | real answer through the gateway |
+| `gx-reason` | **SERVING** | bat-and-ball answered correctly, `reasoning_content` separated |
+| `gx-max` | **REFUSED, not serving** | admission guard refuses on measured numbers; see below |
+| `gx-auto` | **SERVING** | routes correctly and never escalates to gx-max |
+| `gx-image` | **SERVING** | real 1024x1024 PNG, 26.5 s, visually correct |
+| `gx-video` | **SERVING** | real 33-frame h264 MP4, Wan 2.2, 48.1 s, visually correct |
+
+### gx-max: the 30 GiB reserve is not achievable, and neither is gx-max
+
+Eight instrumented two-node runs today. Loading one TP=2 rank takes a
+121.63 GiB node from ~110 GiB MemAvailable down to **between 437 MiB and 0
+MiB — on both nodes** — and ends in a kernel global OOM kill of the SGLang
+scheduler. Every tuning lever was tried and **none of them moves that peak**:
+`--mem-fraction-static` (measured identical troughs at 0.50 and 0.70),
+`--context-length`, `--chunked-prefill-size`, `--cuda-graph-max-bs-decode`,
+`--max-running-requests`, the container `--memory` cap (106g down to 28g), and
+`--load-format` (`layered` is unsupported for this NVFP4 path;
+`runai_streamer` loads but changes nothing).
+
+The reason is arithmetic, not configuration: the checkpoint is 163.48 GiB, so
+at the locked `--tp 2` each rank holds ~82 GiB of weights — two thirds of a
+node — before any KV cache, and the loader adds ~26 GiB of host-side pinned
+memory on top. `--mem-fraction-static` only ever moves the *steady state*.
+
+**What this means in practice:** `gx-max` is exposed by the gateway but the
+admission guard refuses every acquisition, before launching anything, because
+117 GiB (the measured peak) plus any reserve exceeds a 121.63 GiB node. That
+refusal is deliberate and correct. Making gx-max runnable needs a human
+decision about a LOCKED constraint — the model, the quantisation, or the node
+count. **The numbers and the three options are in `coordination/BLOCKERS.md`
+B-022; what was changed and why is in `coordination/DECISIONS.md` D-022.**
+
+Do not "fix" this by lowering `GXMAX_GUARD_RESERVE_GIB`. It was tested: even a
+5 GiB reserve does not make gx-max fit, because the peak is the whole node.
+
+### The orphan-rank failure from B-020 is fixed and proven on the real workload
+
+This was the other half of the task and it is done. Three layers now:
+`rank1-deadman.sh` (a watchdog resident **on node 2**, armed before rank0
+starts, that force-removes rank1 when rank0 disappears — no ssh required),
+`gx-max-unwind.sh` (a dedicated failure path with bounded node-2 retries that
+*confirms* both ranks are gone and verifies memory, swap, locks, ledgers and
+SSH/Tailscale/fabric health), and an EXIT trap in `gx-max-start.sh` that no
+failure path can miss.
+
+Proven, not asserted: five synthetic tests pass, and on the real DeepSeek
+workload the deadman fired on node 2 at 1 GiB MemAvailable and the node came
+straight back to 117 GiB — the exact condition that cost 80 minutes in B-020.
+Three unwind runs reported `UNWIND COMPLETE — cluster verified clean`.
+
+One node-2 wedge did still occur (run 5) and took **17 minutes** to clear
+itself, against 80 minutes for B-020. During it, node 2 answered ICMP **and
+TCP:22 on the ConnectX fabric** while Tailscale was completely dark — so the
+fabric is the better liveness probe during a wedge. See B-020 for the
+corrected, no-physical-intervention-first recovery procedure.
+
+### Measured today
+
+| Item | Value |
+|---|---|
+| gx-image | 1,274,968 B PNG, 1024x1024, 26.5 s, 1043 distinct colours sampled |
+| gx-video | 100,023 B h264 MP4, 640x640, 33 frames @16 fps, all 33 frames distinct, 48.1 s |
+| Media unload | node2 47 → 114 → 117 GiB, swap unchanged |
+| gx-image / gx-video min MemAvailable | 59.7 GiB / 42.8 GiB — both well above the 30 GiB floor |
+| gx-max per-rank load peak | ~117 GiB of a 121.63 GiB node |
+| gx-max steady state (if it could load) | ~26 GiB free at `--mem-fraction-static 0.70` |
+| Checkpoint integrity | node1 and node2 shard manifests byte-identical |
+
+Full numbers: `TEST_RESULTS.md` §15.
+
+---
+
+## EARLIER UPDATE — 2026-09-16 ~07:30-08:15 CEST
 
 **Both nodes are healthy and gx-reason works for the first time.** The two
 things that were blocking this project are both closed:

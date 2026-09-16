@@ -185,3 +185,44 @@ endpoint rather than a batch job.
 | Media models (staged) | node 2 | ~147 GB |
 
 Node 1 had 337 GB free, node 2 had 571 GB free before these downloads.
+
+
+---
+
+## Memory reality check — measured 2026-09-16
+
+Sizing any tier from a container's `docker stats` or `--memory` cap is wrong on
+this hardware (`coordination/BLOCKERS.md` B-021). The CUDA/unified-memory pool
+is not charged to the container cgroup on DGX Spark/GB10, so:
+
+* `gx-reason` measures 44 GiB of real node footprint while its cgroup reports
+  10.92 GiB;
+* a deliberate test capped a `gx-max` rank at `--memory 28g` — below its
+  measured working set — and the container was **not** killed by its cgroup;
+  the node still ran to 0 MiB MemAvailable and the *global* OOM killer fired.
+
+**Always size from the node's own `/proc/meminfo` MemAvailable**, which is what
+the admission guard reads.
+
+| Tier | Engine | Node | Real node footprint | How measured |
+|---|---|---|---|---|
+| `gx-mini` | llama.cpp | node 1 | ~10 GiB | resident tier, cgroup 6.5 GiB |
+| `gx-fast` | vLLM | node 1 | ~25 GiB | `--gpu-memory-utilization` bounded |
+| `gx-reason` | vLLM | node 2 | **~44 GiB** | MemAvailable 114 → 70 GiB, loaded |
+| `gx-image` / `gx-video` | ComfyUI | node 2 | ~57-73 GiB peak | MemAvailable min 59.7 GiB (image) / 42.8 GiB (video) |
+| `gx-max` rank0/rank1 | SGLang TP=2 | both | **~117 GiB peak per rank** | eight runs; nodes driven to 437 MiB–0 MiB |
+
+### Why gx-max does not fit
+
+The checkpoint is **163.48 GiB** on disk over 48 shards, of which **155.77 GiB
+is MoE expert weights**. At the locked `--tp 2` each rank holds roughly half —
+**~82 GiB, two thirds of a 121.63 GiB node** — before any KV cache, and the
+loader adds ~26 GiB of pinned host memory during weight placement.
+
+`--mem-fraction-static` does not help: measured at 0.50 and at 0.70 the
+load-phase trough is *identical*, because the trough is weights landing in
+driver-held memory, not the KV/static pool. It moves only the steady state
+(0.80 → 0.70 buys back 12.2 GiB of a hypothetical steady state).
+
+See `coordination/BLOCKERS.md` B-022 for the decision this forces, and
+`TEST_RESULTS.md` §15.1 for the full run table.

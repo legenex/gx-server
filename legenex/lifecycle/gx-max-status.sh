@@ -5,8 +5,9 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=/dev/null
 source "${here}/lib.sh"
 
-r0=$(docker inspect -f '{{.State.Status}}' "${GXMAX_RANK0_NAME}" 2>/dev/null | head -1)
-r1=$(n2 "docker inspect -f '{{.State.Status}}' ${GXMAX_RANK1_NAME} 2>/dev/null" 2>/dev/null | head -1)
+# tr -d: docker inspect emits a blank line on stdout for a missing container
+r0=$(docker inspect -f '{{.State.Status}}' "${GXMAX_RANK0_NAME}" 2>/dev/null | tr -d '[:space:]')
+r1=$(n2 "docker inspect -f '{{.State.Status}}' ${GXMAX_RANK1_NAME} 2>/dev/null" 2>/dev/null | tr -d '[:space:]')
 
 echo "=== gx-max status ==="
 printf 'rank0 (node1)   : %s\n' "${r0:-absent}"

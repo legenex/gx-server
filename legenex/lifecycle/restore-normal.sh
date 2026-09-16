@@ -62,4 +62,31 @@ else
   log "node-2 gateway compose not present yet; skipping"
 fi
 
+# ------------------------------------------------------------ node 2 media --
+# gx-max-start.sh's drain stops gx-comfyui AND gx-media-router (they are in
+# CONFLICTS_N2), but nothing used to start them again -- so every gx-max
+# attempt, successful or refused, silently left gx-image and gx-video dead
+# until someone noticed. Found 2026-09-16 when an acceptance run reported
+# "media router/ComfyUI not reachable" immediately after a gx-max test.
+#
+# Same principle as the rest of this script: start the CONTROL plane, not the
+# models. An idle ComfyUI is ~0.7 GiB (measured); it loads weights only when a
+# generation request actually arrives.
+if ssh -o BatchMode=yes -o ConnectTimeout=10 legenex-02@gx10-02 \
+     'test -f ~/gx-media/docker-compose.media.yml' 2>/dev/null; then
+  log "starting node-2 media stack"
+  ssh -o BatchMode=yes -o ConnectTimeout=15 legenex-02@gx10-02 \
+    'cd ~/gx-media && docker compose -f docker-compose.media.yml up -d' >/dev/null 2>&1 \
+    || log "WARN: node-2 media compose returned non-zero"
+  for _ in $(seq 1 30); do
+    if curl -fsS -m 3 http://192.168.100.11:18800/health >/dev/null 2>&1; then
+      log "media router is live on 192.168.100.11:18800"
+      break
+    fi
+    sleep 2
+  done
+else
+  log "node-2 media compose not present; skipping"
+fi
+
 log "normal operating state restored"

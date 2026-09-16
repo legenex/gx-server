@@ -20,7 +20,7 @@ import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any
+from typing import Any, Callable
 
 from .classifier import route
 from .config import CONFIG, Config
@@ -45,7 +45,50 @@ _MAX_STATE_MAP: dict[State, AliasState] = {
 }
 
 
-def _max_tier_status(st: LifecycleStatus, node2_status: TierStatus) -> TierStatus:
+def _gx_max_admission_blocked() -> str:
+    """Return a reason string if the admission guard would refuse gx-max, else "".
+
+    gx-max is the one tier whose availability is not a question of whether its
+    process is running -- it is a question of whether the guard will let it
+    start at all. Reporting `usable: true` for a tier that the guard refuses on
+    every single attempt is a fake healthy state, which this project forbids,
+    and it is exactly what `gx status` showed before this existed: `gx-max ->
+    stopped, usable`, for a tier that cannot be brought up on this hardware
+    (coordination/BLOCKERS.md B-022).
+
+    Deliberately read-only and best-effort: it runs the same
+    `compute_admission` arithmetic every launch path uses, against live
+    /proc/meminfo, and takes no lock. If anything about the probe fails we
+    return "" and fall back to the old behaviour rather than inventing a
+    fault -- a broken probe must not make a healthy tier look down.
+    """
+    try:
+        from . import resource_guard as rg
+
+        spec = rg.WORKLOAD_SIZING.get("gx-max-rank0")
+        if spec is None:
+            return ""
+        result = rg.compute_admission(
+            "node1",
+            spec.estimated_gib,
+            current_residency_gib=0.0,
+            mem_available_gib=rg.read_mem_available_gib(),
+            reserve_gib=rg.DEFAULT_RESERVE_GIB,
+            node_total_gib=rg.DEFAULT_NODE_TOTAL_GIB,
+        )
+        return "" if result.allowed else f"admission_refused: {result.reason}"
+    except Exception:  # noqa: BLE001 - never let a probe failure fake a fault
+        log.debug("gx-max admission probe failed; reporting the lifecycle state as-is",
+                  exc_info=True)
+        return ""
+
+
+def _max_tier_status(
+    st: LifecycleStatus,
+    node2_status: TierStatus,
+    *,
+    admission_blocked: "Callable[[], str] | None" = None,
+) -> TierStatus:
     """Derive gx-max's TierStatus from its lifecycle state.
 
     This does NOT change gx-max's lifecycle semantics (DOWN stays a valid
@@ -62,8 +105,17 @@ def _max_tier_status(st: LifecycleStatus, node2_status: TierStatus) -> TierStatu
     if st.state is State.DOWN and node2_status.state is AliasState.UNAVAILABLE:
         # gx-max needs BOTH nodes (ARCHITECTURE.md L-2/L-6). DOWN is still a
         # valid resting state, but a human asking why it would fail right now
-        # deserves the real reason, not a bare boolean.
+        # deserves the real reason, not a bare boolean. Checked BEFORE
+        # admission: if node 2 is confirmed offline, that is the more
+        # actionable answer, and the admission arithmetic is moot anyway.
         return TierStatus(alias_state, "node2_unavailable", usable=usable)
+
+    if st.state is State.DOWN:
+        # A DOWN gx-max still has to pass the admission guard to become READY.
+        # If it cannot, say so, and do not call it usable.
+        blocked = (admission_blocked or _gx_max_admission_blocked)()
+        if blocked:
+            return TierStatus(AliasState.UNAVAILABLE, blocked, usable=False)
     if st.last_error:
         return TierStatus(alias_state, st.last_error, usable=usable)
     return TierStatus(alias_state, st.detail or alias_state.value, usable=usable)
@@ -216,18 +268,23 @@ class Handler(BaseHTTPRequestHandler):
         logging.getLogger(ROUTING_LOG).info(json.dumps(decision.as_log_dict()))
 
         if decision.tier is Tier.MAX:
-            # gx-auto chose gx-max. Acquisition is allowed, but if it fails we
-            # degrade (unlike a DIRECT gx-max request, which must not).
-            try:
-                self.lifecycle.acquire()
-            except AcquisitionError as exc:
-                log.warning("gx-auto wanted gx-max but acquisition failed: %s", exc)
-                fallback = route(payload, available=avail, busy={Tier.MAX: True})
-                logging.getLogger(ROUTING_LOG).info(
-                    json.dumps({**fallback.as_log_dict(), "note": "gx-max acquisition failed"})
-                )
-                decision = fallback
-            else:
+            # gx-auto may USE gx-max when it is already up. It must never
+            # ACQUIRE it (human requirement, 2026-09-16).
+            #
+            # Acquiring gx-max is not a cheap operation that happens to fail:
+            # gx-max-start.sh drains gx-mini, gx-fast and llama-swap on BOTH
+            # nodes before it does anything else, because gx-max takes over the
+            # whole cluster. Letting an ordinary gx-auto request trigger that is
+            # wrong even when it succeeds, and measurably disruptive when it
+            # does not -- observed live on 2026-09-16: a single gx-auto prompt
+            # containing the word "exhaustive" tore down node 1's resident
+            # models and both llama-swaps, was refused by the admission guard,
+            # and spent ~12 s putting everything back.
+            #
+            # Taking over both nodes is a deliberate, operator-initiated act. It
+            # stays on the DIRECT gx-max path (_serve_gx_max) and the explicit
+            # /lifecycle/gx-max/acquire endpoint, where a human asked for it.
+            if lc_status.state is State.READY:
                 self._proxy(
                     f"{self.cfg.gxmax_base.rstrip('/')}/chat/completions",
                     {**payload, "model": self.cfg.gxmax_model_id},
@@ -235,6 +292,20 @@ class Handler(BaseHTTPRequestHandler):
                 )
                 self.lifecycle.mark_used()
                 return
+            log.info(
+                "gx-auto selected gx-max but it is %s; routing to the best available "
+                "tier instead (gx-auto never acquires gx-max)",
+                lc_status.state.value,
+            )
+            fallback = route(payload, available=avail, busy={Tier.MAX: True})
+            logging.getLogger(ROUTING_LOG).info(
+                json.dumps({
+                    **fallback.as_log_dict(),
+                    "note": f"gx-max not running ({lc_status.state.value}); "
+                            "gx-auto does not acquire it",
+                })
+            )
+            decision = fallback
 
         upstream = f"{self.cfg.gateway_base.rstrip('/')}{path[len('/v1'):]}"
         self._proxy(

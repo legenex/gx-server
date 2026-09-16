@@ -9,6 +9,87 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (2026-09-16, second session)
+- **gx-max failure unwind — an orphaned rank is now structurally prevented,
+  and it is proven on the real workload.** Three new layers:
+  `legenex/lifecycle/rank1-deadman.sh` (a watchdog that runs ON node 2, armed
+  before rank0 starts, that force-removes rank1 when rank0's bootstrap socket
+  goes away — it needs no ssh, which is the whole point, because every
+  previous cleanup path needed to reach node 2 at exactly the moment node 2
+  was starved); `legenex/lifecycle/gx-max-unwind.sh` (a dedicated failure path
+  with bounded node-2 retries that *confirms* both ranks are gone, reconciles
+  both ledgers, proves both locks free, restores services and then verifies
+  memory return, swap, SSH/Tailscale and both ConnectX rails); and an EXIT
+  trap in `gx-max-start.sh` that no failure path can miss — rank died,
+  readiness timeout, `set -e`, SIGINT/SIGTERM.
+  Verified live: the deadman fired on node 2 at 1 GiB MemAvailable during a
+  real DeepSeek launch and the node returned to 117 GiB immediately — the
+  exact condition that cost 80 minutes in B-020. Three unwind runs reported
+  `UNWIND COMPLETE — cluster verified clean`.
+- **`legenex/tests/unwind-tests.sh`** — a regression suite for the above,
+  using placeholder containers so it runs in about a minute and costs no
+  memory.
+- **Phase-aware memory guards.** `GXMAX_LOAD_FLOOR_GIB` (load phase) and
+  `GXMAX_ABORT_FLOOR_GIB` (steady state, enforced only once the engine answers
+  `/health`). A single floor is wrong: weight loading unavoidably takes both
+  nodes to near zero MemAvailable, so enforcing the steady-state reserve
+  during load aborted two otherwise-healthy launches before this was measured.
+- **Real `gx-image` and `gx-video` generations, verified as files.** A
+  1,274,968 B PNG (1024x1024, 1043 distinct colours sampled, visually a red
+  apple on a wooden table) in 26.5 s, and a 100,023 B h264 MP4 (640x640, 33
+  frames @16 fps, all 33 frame hashes distinct, visually lit candle flames)
+  via Wan 2.2 in 48.1 s. Node 2 stayed at 59.7 GiB / 42.8 GiB minimum
+  MemAvailable respectively, swap untouched, and unload returned it to
+  117 GiB. `TEST_RESULTS.md` §15.3-15.5.
+
+### Changed (2026-09-16, second session)
+- **gx-max is retuned, and the 30 GiB reserve is restored — with the honest
+  consequence that the guard now refuses gx-max.** `--mem-fraction-static`
+  0.80 -> 0.70, `--context-length` 327680 -> 32768, `--chunked-prefill-size`
+  8192 -> 4096, `--cuda-graph-max-bs-decode` 32 -> 8, `--max-running-requests`
+  32 -> 8. `GXMAX_GUARD_RESERVE_GIB` back to 30 (reverting D-020's 5), and the
+  admission estimate set to the measured **load peak of 117 GiB** rather than
+  a steady-state figure. See D-022 / B-022.
+- **gx-auto no longer acquires gx-max.** It may use gx-max when it is already
+  `READY`; it may not start it. Acquisition drains gx-mini, gx-fast and
+  llama-swap on *both* nodes before doing anything else, and letting an
+  ordinary routed request trigger that is wrong even when it succeeds.
+  Observed live: one gx-auto prompt containing the word "exhaustive" tore down
+  node 1's resident models and both llama-swaps, was refused, and spent ~12 s
+  putting everything back. Covered by three new regression tests.
+- **Documentation corrected for B-021 throughout.** `--memory` is described
+  everywhere as a backstop on the container's *charged* memory, never as the
+  bound on a model's footprint. A deliberate test made this sharper than
+  B-021 had it: capping a gx-max rank at `--memory 28g` — below its measured
+  26.1 GiB working set — did **not** get the container killed by its cgroup;
+  the node still ran to 0 MiB MemAvailable and the *global* OOM killer fired.
+
+### Fixed (2026-09-16, second session)
+- **A refused gx-max launch used to leave the cluster with no service.** The
+  drain runs before the admission guard, so every refusal silently took
+  gx-mini and both llama-swaps down and never put them back. A launch that
+  starts no rank now restores exactly what it stopped.
+- **`CONFLICTS_N1` had the same dead-name bug the node-2 list was fixed for a
+  day earlier.** `vllm` and `llama-swap-node01` match no container on node 1;
+  the real names are `gx-fast` and `gx-llama-swap-node01`. Node 1's llama-swap
+  was therefore never drained before a gx-max run — it stayed up and free to
+  spawn a model into the memory gx-max was about to claim.
+- **`pkill -f rank1-deadman.sh` matched the ssh command line that was starting
+  the deadman**, so the remote shell killed itself before arming anything. Now
+  a pid file.
+- **`docker inspect` on a missing container writes a blank line to stdout**
+  before failing, so `... || echo absent` produced `"\nabsent"` and the unwind
+  reported a still-running rank0 that did not exist. Normalised here and in
+  `gx-max-status.sh`.
+- **The unwind's ConnectX probe piped into `grep`**, swallowing the exit
+  status and reporting both healthy rails as unreachable.
+- **The acceptance suite's vision fixture was wrong**, not the model: it drew
+  a 120x100 *rectangle* and then asserted the model would say "square".
+  gx-mini described it correctly as a rectangle and was marked FAIL. The
+  fixture is now an actual square, and the suite generates it itself rather
+  than depending on a stray file in `/tmp` whose absence silently skipped the
+  vision check entirely.
+
 ### Added (2026-09-16 session)
 - **gx-reason is live for the first time; B-011 is CLOSED.**
   `nvidia/Qwen3.6-27B-NVFP4` (20.42 GiB, verified against the live HF API

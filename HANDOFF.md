@@ -6,8 +6,36 @@ format for future recurring updates lives in
 file always holds the *latest* handoff, not a history (see `CHANGELOG.md`,
 `coordination/LEADER_STATUS.md` and `TEST_RESULTS.md` for history).
 
-Last updated: 2026-09-15 ~12:55 CEST, by the lead agent on gx10-01, at the
-end of a full two-node completion pass following node 2's recovery.
+Last updated: 2026-09-16 ~11:15 CEST, by the lead agent on gx10-01, after a
+gx-max memory investigation (eight instrumented two-node runs), the gx-max
+failure-unwind rebuild, and real gx-image/gx-video generations.
+
+## READ THIS FIRST — the one thing that needs a human
+
+**`coordination/BLOCKERS.md` B-022.** gx-max cannot run on this hardware and
+no amount of tuning changes that. Measured across eight real two-node runs:
+loading one TP=2 rank takes a 121.63 GiB node from ~110 GiB MemAvailable to
+between 437 MiB and 0 MiB — on both nodes — and ends in a kernel global OOM
+kill. `--mem-fraction-static` was measured at 0.50 and 0.70 with an identical
+trough; it moves only the steady state, never the peak. The peak is the model
+weights: a 163.48 GiB checkpoint at `--tp 2` puts ~82 GiB on each rank before
+any KV cache.
+
+The decision is yours, and it is about a LOCKED constraint, not a config
+value:
+
+1. Accept a gx-max-specific steady-state reserve of ~20 GiB and a documented
+   load-phase excursion to near zero — what the hardware actually permits, and
+   what the 2026-09-14 verified-working run already did.
+2. Keep the 30 GiB floor absolute and retire gx-max as un-runnable here.
+3. Reopen L-6: smaller model, heavier quantisation, or more nodes.
+
+Until then the admission guard refuses gx-max, deliberately, and says why.
+**Do not resolve this by editing `GXMAX_GUARD_RESERVE_GIB`** — that was
+tested; even a 5 GiB reserve does not make gx-max fit.
+
+The second thing needing a human is unchanged and unrelated: the kernel
+`apt-mark hold` (one sudo command, shown at the end of this file).
 
 ## Current objective
 
@@ -22,10 +50,19 @@ the complete, detailed list — this file is the short version.
 
 - gx10-01 GPU owner: none (idle; gx-mini/gx-fast on demand only)
 - gx10-02 GPU owner: none (idle; gx-reason on demand; gx-comfyui +
-  gx-media-router running but idle — built and started this session for
-  the first time, low footprint at idle, on-demand generation only)
-- Active model runtimes: none on either node
-- Active media runtimes: gx-comfyui + gx-media-router (idle, healthy)
+  gx-media-router running but idle — ~0.7 GiB total at idle, on-demand
+  generation only, verified 2026-09-16)
+- Active model runtimes: none on either node at rest
+- gx-max: **never runs** — refused by the admission guard (B-022)
+
+## Tier status, 2026-09-16
+
+| Tier | State |
+|---|---|
+| gx-mini, gx-fast, gx-reason | serving, verified through the gateway |
+| gx-image, gx-video | serving, real files produced and inspected |
+| gx-auto | serving; routes correctly and **never acquires gx-max** |
+| gx-max | refused by its own admission guard — B-022 |
 
 ## Last verified good state (this session, live-checked, real inference)
 

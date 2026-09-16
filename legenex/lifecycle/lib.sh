@@ -14,7 +14,13 @@ die() { log "FATAL: $*"; exit 1; }
 
 n2() { ssh -o BatchMode=yes -o ConnectTimeout=10 "${GXMAX_NODE2_SSH}" "$@"; }
 
-# The exact SGLang argument vector, shared by both ranks. Only --node-rank differs.
+# The SGLang argument vector, shared by both ranks. Only --node-rank differs.
+#
+# The LOCKED parts (engine, --model-path, --tp 2, --nnodes 2, the DSV4/b12x
+# backend selection) are literals here and must stay literals. The memory
+# sizing values are read from gx-max.conf's GXMAX_* tuning block, which the
+# operator has explicitly delegated -- see that block for the measured
+# rationale behind each number (coordination/DECISIONS.md D-022).
 gxmax_args() {
   local rank="$1"
   printf '%s\n' \
@@ -29,19 +35,33 @@ gxmax_args() {
     --speculative-moe-runner-backend b12x \
     --disable-shared-experts-fusion \
     --speculative-algorithm DSPARK \
-    --model-loader-extra-config '{"enable_multithread_load":false}' \
     --weight-loader-drop-cache-after-load \
     --startup-weight-load-mode serial \
-    --chunked-prefill-size 8192 \
-    --context-length 327680 \
-    --mem-fraction-static 0.80 \
+    --chunked-prefill-size "${GXMAX_CHUNKED_PREFILL_SIZE}" \
+    --context-length "${GXMAX_CONTEXT_LENGTH}" \
+    --mem-fraction-static "${GXMAX_MEM_FRACTION_STATIC}" \
     --swa-full-tokens-ratio 0.2 \
-    --cuda-graph-max-bs-decode 32 \
-    --max-running-requests 32 \
+    --cuda-graph-max-bs-decode "${GXMAX_CUDA_GRAPH_MAX_BS_DECODE}" \
+    --max-running-requests "${GXMAX_MAX_RUNNING_REQUESTS}" \
     --host 0.0.0.0 \
     --port "${GXMAX_PORT}"
   if [ "${GXMAX_ENABLE_METRICS:-0}" = "1" ]; then
     printf '%s\n' --enable-metrics
+  fi
+  if [ "${GXMAX_DISABLE_WEIGHT_MMAP:-0}" = "1" ]; then
+    printf '%s\n' --weight-loader-disable-mmap
+  fi
+  if [ -n "${GXMAX_LOAD_FORMAT:-}" ]; then
+    printf '%s\n' --load-format "${GXMAX_LOAD_FORMAT}"
+  fi
+  # --model-loader-extra-config is LOADER config, and each --load-format
+  # accepts a different set of keys: runai_streamer rejects
+  # {"enable_multithread_load":false} outright ("Unexpected extra config keys
+  # for load format LoadFormat.RUNAI_STREAMER"). Emitting it only when it is
+  # non-empty keeps the default loader's verified-working setting while
+  # letting an alternative loader be selected without a contradictory flag.
+  if [ -n "${GXMAX_LOADER_EXTRA_CONFIG:-}" ]; then
+    printf '%s\n' --model-loader-extra-config "${GXMAX_LOADER_EXTRA_CONFIG}"
   fi
 }
 
@@ -65,18 +85,20 @@ gxmax_env_flags() {
     -e SGLANG_OPT_FUSE_MHC_POST_PRE=1 \
     -e SGLANG_OPT_FP8_WO_A_GEMM=1 \
     -e SGLANG_SKIP_SGL_KERNEL_VERSION_CHECK=1 \
-    -e SGLANG_B12X_MAX_TOKENS=8192 \
+    -e "SGLANG_B12X_MAX_TOKENS=${GXMAX_CHUNKED_PREFILL_SIZE}" \
     -e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 }
 
 # Docker flags common to both ranks. GPU access is via CDI (nvidia.com/gpu=all);
 # /dev/infiniband + CAP_IPC_LOCK + unlimited memlock are required for RoCE.
 #
-# --memory / --oom-score-adj: host-resilience hardening, see gx-max.conf for
-# the full rationale on why the cap is a generous ceiling above gx-max's
-# documented working set rather than an attempt to enforce the 30 GiB
-# host-reserve policy during a gx-max run (that policy applies to normal
-# operation; gx-max monopolising the node is a documented, locked exception).
+# --memory / --oom-score-adj: host-resilience hardening. The cap does NOT
+# bound the model -- on this unified-memory hardware the CUDA pool is not
+# charged to the container cgroup at all (coordination/BLOCKERS.md B-021).
+# It bounds the part that IS charged (the loader's page cache and anonymous
+# working set), which measurement showed to be the difference between a
+# survivable load transient and a starved host. See gx-max.conf's
+# GXMAX_MEM_LIMIT block for the measured numbers.
 gxmax_docker_flags() {
   printf '%s\n' \
     --network host \
@@ -86,9 +108,9 @@ gxmax_docker_flags() {
     --device /dev/infiniband \
     --cap-add IPC_LOCK \
     --ulimit memlock=-1:-1 \
-    --memory "${GXMAX_MEM_LIMIT:-106g}" \
-    --memory-swap "${GXMAX_MEM_LIMIT:-106g}" \
-    --oom-score-adj "${GXMAX_OOM_SCORE_ADJ:-950}" \
+    --memory "${GXMAX_MEM_LIMIT}" \
+    --memory-swap "${GXMAX_MEM_LIMIT}" \
+    --oom-score-adj "${GXMAX_OOM_SCORE_ADJ}" \
     -v "${GXMAX_MODEL_DIR}:/model:ro" \
     -v "${GXMAX_CACHE_DIR}:/root/.cache"
 }
