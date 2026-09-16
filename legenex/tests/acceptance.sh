@@ -313,8 +313,16 @@ t_auto(){
       fail "gx-auto routing" "'${prompt:0:38}...' never reached the orchestrator (no new routing decision logged)"
       continue
     fi
-    got=$(grep 'gx.routing' "$log" 2>/dev/null | tail -1 \
-      | python3 -c "import sys,json;print(json.loads(sys.stdin.read().split('gx.routing ',1)[-1])['tier'])" 2>/dev/null)
+    # Take the first decision logged after this request with its unique
+    # shape (max_tokens 40), not the last line: real gx-auto traffic from
+    # other clients lands in the same log while gx-reason cold-loads for
+    # minutes -- found 2026-09-16 (a 9k-token agent request logged as gx-fast).
+    got=$(grep 'gx.routing' "$log" 2>/dev/null | tail -n +"$((before + 1))" \
+      | python3 -c "
+import sys,json
+for line in sys.stdin:
+    d=json.loads(line.split('gx.routing ',1)[-1])
+    if d.get('max_tokens')==40: print(d['tier']); break" 2>/dev/null)
     [ "$got" = "$expect" ] \
       && pass "gx-auto: '${prompt:0:38}...' -> ${got}" \
       || fail "gx-auto routing" "'${prompt:0:38}...' expected ${expect}, got ${got:-<none>}"
