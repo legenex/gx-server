@@ -128,9 +128,10 @@ class SniffTests(unittest.TestCase):
         self.assertLessEqual(max(w, h), 2048)
 
     def test_edit_strength_mapping(self):
-        self.assertEqual(edit_start_step(1.0), ("wan22-v2v-keyframe-edit", 1))
+        self.assertEqual(edit_start_step(1.0), ("wan22-v2v-keyframe-edit", 0))
+        self.assertEqual(edit_start_step(0.85), ("wan22-v2v-keyframe-edit", 0))
         self.assertEqual(edit_start_step(0.6), ("wan22-v2v-keyframe-edit", 1))
-        self.assertEqual(edit_start_step(0.5), ("wan22-v2v-a14b-light", 2))
+        self.assertEqual(edit_start_step(0.4), ("wan22-v2v-a14b-light", 2))
         self.assertEqual(edit_start_step(0.2), ("wan22-v2v-a14b-light", 3))
 
 
@@ -300,7 +301,8 @@ class MediaApiTests(unittest.TestCase):
 
     def test_video_edit_from_upload_light_and_strong(self):
         for strength, workflow, start_node, start in ((0.2, "wan22-v2v-a14b-light", "13", 3),
-                                                      (0.9, "wan22-v2v-keyframe-edit", "12", 1)):
+                                                      (0.9, "wan22-v2v-keyframe-edit", "12", 0),
+                                                      (0.6, "wan22-v2v-keyframe-edit", "12", 1)):
             with self.subTest(strength=strength):
                 ctype, body = multipart({"prompt": "make it night", "strength": str(strength)},
                                         [("video", "clip.mp4", "video/mp4", MP4_STUB)])

@@ -74,18 +74,23 @@ EDIT_ADAPTER_DEFAULT = 0.0
 def edit_start_step(strength: float) -> tuple[str, int]:
     """Map a 0..1 edit strength onto a v2v template and its start step.
 
-    Measured 2026-09-17: partial denoise alone keeps the source's global
-    lighting and colour even from step 1 of 4 ("make it night" stayed day), so
-    instruction-level edits use keyframe propagation (the first frame is
-    edited with Qwen-Image-Edit, then the I2V experts carry it through the
-    noised source). Light edits keep the cheaper low-noise-only pass.
-      strength >= 0.6  -> keyframe propagation from step 1   (instruction edit)
-      0.3 - 0.6        -> low-noise expert from step 2          (medium restyle)
-      < 0.3            -> low-noise expert from step 3          (light touch)
+    Measured 2026-09-17 on "make this scene take place at night":
+      * partial denoise of the source alone kept daylight even from step 1;
+      * keyframe propagation from step 1 turned frame 0 to night, later
+        frames drifted back to day (the noised source still carries its
+        lighting);
+      * keyframe propagation from step 0 gave a consistent night clip of the
+        same scene (layout from the edited keyframe, motion re-synthesised).
+      strength >= 0.75 -> keyframe edit from step 0    (instruction edits; default 0.85)
+      0.5 - 0.75       -> keyframe edit from step 1    (keeps more source structure)
+      0.25 - 0.5       -> low-noise expert from step 2 (restyle)
+      < 0.25           -> low-noise expert from step 3 (light touch)
     """
-    if strength >= 0.6:
+    if strength >= 0.75:
+        return V2V_KEYFRAME_WORKFLOW, 0
+    if strength >= 0.5:
         return V2V_KEYFRAME_WORKFLOW, 1
-    if strength >= 0.3:
+    if strength >= 0.25:
         return V2V_LIGHT_WORKFLOW, 2
     return V2V_LIGHT_WORKFLOW, 3
 
