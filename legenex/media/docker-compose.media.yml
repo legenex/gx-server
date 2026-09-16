@@ -71,7 +71,7 @@ services:
       options: {max-size: "20m", max-file: "5"}
 
   router:
-    image: gx-media-router:1.0.0
+    image: gx-media-router:2.0.0
     build:
       context: ./router
       dockerfile: Dockerfile
@@ -86,14 +86,20 @@ services:
     # cross Tailscale, and this must never bind 0.0.0.0.
     ports:
       - "${GX_MEDIA_BIND_ADDR:-192.168.100.11}:${GX_MEDIA_PORT:-18800}:18800"
+    # Runs as the owner of ComfyUI's input directory so it can stage and remove
+    # source media for edits (D-031). Still unprivileged, read-only root fs.
+    user: "${GX_MEDIA_UID:-1000}:${GX_MEDIA_GID:-1000}"
     volumes:
       - ./workflows:/opt/router/workflows:ro
+      # The ONLY writable path: server-named files under gx-in/ (uploads.py).
+      - ${GX_MODELS_ROOT:-/srv/models}/comfy-input:/srv/comfy-input
     environment:
       GX_MEDIA_BIND: "0.0.0.0"          # inside the container only
       GX_MEDIA_PORT: "18800"
       GX_COMFY_URL: "http://comfyui:8188"
       GX_MEDIA_API_KEY: ${GX_MEDIA_API_KEY:?GX_MEDIA_API_KEY must be set - refusing to run unauthenticated}
       GX_MEDIA_WORKFLOW_DIR: /opt/router/workflows
+      GX_MEDIA_INPUT_DIR: /srv/comfy-input
       GX_MEDIA_QUEUE_WAIT: "${GX_MEDIA_QUEUE_WAIT:-900}"
       GX_MEDIA_IMAGE_TIMEOUT: "${GX_MEDIA_IMAGE_TIMEOUT:-1800}"
       GX_MEDIA_VIDEO_TIMEOUT: "${GX_MEDIA_VIDEO_TIMEOUT:-3600}"
