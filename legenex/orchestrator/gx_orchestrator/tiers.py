@@ -77,7 +77,7 @@ TIERS: dict[Tier, TierSpec] = {
         vision=True,
         tools=True,
         cost_rank=3,
-        notes="et0dev/Qwen3.5-122B-A10B-NVFP4-FP8Dense-GB10 on stock vLLM. Owns node 2 exclusively.",
+        notes="nvidia/Qwen3.6-27B-NVFP4 on vLLM (D-021). Owns node 2's heavy slot.",
     ),
     Tier.MAX: TierSpec(
         alias=Tier.MAX,

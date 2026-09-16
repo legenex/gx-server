@@ -17,9 +17,12 @@ the condition rather than polling, and every waiter is woken on a state change.
 
 from __future__ import annotations
 
+import collections
 import enum
 import json
 import logging
+import os
+import re
 import subprocess
 import threading
 import time
@@ -42,6 +45,48 @@ class AcquisitionError(RuntimeError):
     """gx-max could not be brought up. Never downgrade silently -- raise."""
 
 
+#: Fine-grained, READ-ONLY progress within ACQUIRING / RELEASING. It is derived
+#: from the section markers gx-max-start.sh / gx-max-stop.sh already print, so
+#: it never influences a transition -- `State` above stays the only thing the
+#: state machine acts on. Exposed for operators (control UI Jobs page).
+PHASE_IDLE = "idle"
+PHASE_SERVING = "serving"
+PHASE_FAILED = "failed"
+
+#: (compiled pattern, phase) in the order the scripts print them. First match
+#: on a line wins.
+_START_MARKERS: tuple[tuple["re.Pattern[str]", str], ...] = tuple(
+    (re.compile(p), ph)
+    for p, ph in (
+        (r"=== gx-max preflight ===", "preflight"),
+        (r"=== draining conflicting GPU work ===", "draining"),
+        (r"=== cluster-takeover admission", "admission"),
+        (r"=== starting rank1 on node2 ===", "loading_rank1"),
+        (r"=== starting rank0 on node1 ===", "loading_rank0"),
+        (r"=== waiting for gx-max to become healthy", "warming"),
+        (r"=== gx-max READY", "ready"),
+        (r"gx-max start failed .* running the two-node unwind", "unwinding"),
+        (r"start aborted before any rank was launched", "restoring"),
+    )
+)
+_STOP_MARKERS: tuple[tuple["re.Pattern[str]", str], ...] = tuple(
+    (re.compile(p), ph)
+    for p, ph in (
+        (r"draining: waiting", "draining_requests"),
+        (r"stopping rank0 on node1", "stopping_ranks"),
+        (r"MemAvailable after release", "memory_recovery"),
+        (r"restoring normal single-node workloads", "restoring"),
+        (r"gx-max released; both nodes are back", "released"),
+    )
+)
+_STARTUP_SECONDS_RE = re.compile(r"gx-max READY on \S+ after (\d+)s")
+
+#: Lines kept in memory for /lifecycle/gx-max/events.
+_EVENT_BUFFER = 400
+#: Job records kept (memory and the optional history file).
+_HISTORY_KEEP = 25
+
+
 @dataclass
 class LifecycleStatus:
     state: State
@@ -50,6 +95,10 @@ class LifecycleStatus:
     waiters: int
     detail: str = ""
     last_error: str = ""
+    phase: str = PHASE_IDLE
+    phase_since: float = 0.0
+    last_startup_seconds: int | None = None
+    idle_ttl: int = 0
 
     def as_dict(self) -> dict:
         now = time.time()
@@ -60,6 +109,11 @@ class LifecycleStatus:
             "waiters": self.waiters,
             "detail": self.detail,
             "last_error": self.last_error,
+            # Additive, read-only progress detail (never drives a transition).
+            "phase": self.phase,
+            "phase_seconds": round(now - self.phase_since, 1) if self.phase_since else None,
+            "last_startup_seconds": self.last_startup_seconds,
+            "idle_ttl": self.idle_ttl,
         }
 
 
@@ -73,8 +127,20 @@ class GxMaxLifecycle:
         *,
         idle_ttl: int = 1800,
         acquire_timeout: int = 1800,
+        events_log: Path | None = None,
+        history_path: Path | None = None,
     ) -> None:
         self._dir = Path(lifecycle_dir)
+        # Observability only: a plain append-only log of every script line and
+        # a small JSON job history. Both optional (None in the unit tests).
+        self._events_log = Path(events_log) if events_log else None
+        self._history_path = Path(history_path) if history_path else None
+        self._events: collections.deque[dict] = collections.deque(maxlen=_EVENT_BUFFER)
+        self._event_seq = 0
+        self._phase = PHASE_IDLE
+        self._phase_since = 0.0
+        self._job: dict | None = None
+        self._history: list[dict] = self._load_history()
         self._health_url = health_url
         self._idle_ttl = idle_ttl
         self._acquire_timeout = acquire_timeout
@@ -95,6 +161,7 @@ class GxMaxLifecycle:
             self._state = State.READY
             self._last_used = time.time()
             self._detail = "adopted an already-running engine at startup"
+            self._phase, self._phase_since = PHASE_SERVING, time.time()
             log.info("gx-max: adopted already-running engine")
 
         self._reaper = threading.Thread(target=self._idle_reaper, name="gxmax-ttl", daemon=True)
@@ -159,10 +226,14 @@ class GxMaxLifecycle:
                 log.warning("gx-max disappeared while marked READY; marking DOWN")
                 self._last_used = None
                 self._set_state(State.DOWN, "engine vanished (torn down externally)")
+                self._set_phase(PHASE_IDLE)
+                self._event("reconcile", "engine vanished while READY; marked DOWN")
             elif observed is State.DOWN and healthy:
                 log.info("gx-max: adopted an engine started outside the orchestrator")
                 self._last_used = time.time()
                 self._set_state(State.READY, "adopted an externally started engine")
+                self._set_phase(PHASE_SERVING)
+                self._event("reconcile", "adopted an engine started outside the orchestrator")
 
     # ----------------------------------------------------------------- status
     def status(self) -> LifecycleStatus:
@@ -175,6 +246,10 @@ class GxMaxLifecycle:
                 waiters=self._waiters,
                 detail=self._detail,
                 last_error=self._last_error,
+                phase=self._phase,
+                phase_since=self._phase_since,
+                last_startup_seconds=self._last_startup_seconds(),
+                idle_ttl=self._idle_ttl,
             )
 
     def is_ready(self) -> bool:
@@ -221,6 +296,7 @@ class GxMaxLifecycle:
                         # We are the one who starts it.
                         self._last_error = ""
                         self._set_state(State.ACQUIRING, "starting both ranks")
+                        self._begin_job("acquire")
                         self._worker = threading.Thread(
                             target=self._do_acquire, name="gxmax-acquire", daemon=True
                         )
@@ -246,11 +322,8 @@ class GxMaxLifecycle:
         script = self._dir / "gx-max-start.sh"
         try:
             log.info("gx-max: running %s", script)
-            proc = subprocess.run(
-                ["bash", str(script)],
-                capture_output=True,
-                text=True,
-                timeout=self._acquire_timeout,
+            proc = self._run_streaming(
+                ["bash", str(script)], self._acquire_timeout, _START_MARKERS, "acquire"
             )
             if proc.returncode == 0:
                 # The start script already waits for health, but the engine can
@@ -261,13 +334,15 @@ class GxMaxLifecycle:
                     with self._cv:
                         self._last_used = time.time()
                     self._set_state(State.READY, "engine healthy")
+                    self._set_phase(PHASE_SERVING)
+                    self._end_job("ready")
                     return
                 err = (
                     f"gx-max-start.sh exited 0 but the engine did not answer "
                     f"/health within {self._SETTLE_SECONDS}s"
                 )
             else:
-                tail = (proc.stderr or proc.stdout or "").strip().splitlines()[-15:]
+                tail = (proc.stdout or "").strip().splitlines()[-15:]
                 err = f"gx-max-start.sh exited {proc.returncode}: " + " | ".join(tail)
         except subprocess.TimeoutExpired:
             err = f"gx-max-start.sh exceeded {self._acquire_timeout}s"
@@ -288,6 +363,8 @@ class GxMaxLifecycle:
         with self._cv:
             self._last_error = err
         self._set_state(State.DOWN, "acquisition failed")
+        self._set_phase(PHASE_FAILED)
+        self._end_job("failed", error=err)
 
     def _cleanup_after_failed_acquire(self, original_err: str) -> str:
         """Best-effort unwind of any rank a failed acquire left running.
@@ -315,6 +392,7 @@ class GxMaxLifecycle:
                     "`docker ps` on both nodes]"
                 )
             log.info("gx-max post-failure cleanup: both ranks stopped, ledger released")
+            self._event("cleanup", "post-failure cleanup: gx-max-stop.sh --force completed")
         except Exception as exc:  # noqa: BLE001
             log.error("gx-max post-failure cleanup raised: %r", exc)
             return (
@@ -330,22 +408,167 @@ class GxMaxLifecycle:
             if self._state in (State.DOWN, State.RELEASING):
                 return
             self._set_state(State.RELEASING, "forced" if force else "graceful drain")
+            self._begin_job("release_forced" if force else "release")
 
         args = ["bash", str(self._dir / "gx-max-stop.sh")]
         if force:
             args.append("--force")
         if not restore:
             args.append("--no-restore")
+        outcome, rel_err = "released", ""
         try:
-            proc = subprocess.run(args, capture_output=True, text=True, timeout=900)
+            proc = self._run_streaming(args, 900, _STOP_MARKERS, "release")
             if proc.returncode != 0:
-                log.warning("gx-max-stop.sh exited %s: %s", proc.returncode, proc.stderr[-500:])
+                log.warning("gx-max-stop.sh exited %s: %s", proc.returncode, (proc.stdout or "")[-500:])
+                outcome, rel_err = "release_warning", f"gx-max-stop.sh exited {proc.returncode}"
         except Exception as exc:  # noqa: BLE001
             log.error("gx-max release failed: %r", exc)
+            outcome, rel_err = "release_error", repr(exc)
         finally:
             with self._cv:
                 self._last_used = None
             self._set_state(State.DOWN, "released")
+            self._set_phase(PHASE_IDLE)
+            self._end_job(outcome, error=rel_err)
+
+
+    # ------------------------------------------------------- observability
+    def _set_phase(self, phase: str) -> None:
+        with self._cv:
+            if phase != self._phase:
+                self._phase = phase
+                self._phase_since = time.time()
+                if self._job is not None:
+                    self._job.setdefault("phases", []).append(
+                        {"phase": phase, "at": round(self._phase_since, 1)}
+                    )
+
+    def _event(self, source: str, line: str) -> None:
+        now = time.time()
+        with self._cv:
+            self._event_seq += 1
+            self._events.append({"seq": self._event_seq, "ts": round(now, 3),
+                                 "source": source, "line": line[:2000]})
+        if self._events_log is not None:
+            try:
+                with self._events_log.open("a", encoding="utf-8") as fh:
+                    stamp = time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(now))
+                    fh.write(f"{stamp} [{source}] {line}\n")
+            except OSError:
+                log.debug("could not append to %s", self._events_log, exc_info=True)
+
+    def _begin_job(self, kind: str) -> None:
+        with self._cv:
+            self._job = {"kind": kind, "started": round(time.time(), 1), "phases": []}
+        self._event("orchestrator", f"--- {kind} started ---")
+
+    def _end_job(self, outcome: str, error: str = "") -> None:
+        with self._cv:
+            job, self._job = self._job, None
+            if job is None:
+                return
+            job["ended"] = round(time.time(), 1)
+            job["elapsed_seconds"] = round(job["ended"] - job["started"], 1)
+            job["outcome"] = outcome
+            if error:
+                job["error"] = error[:1000]
+            self._history.append(job)
+            del self._history[:-_HISTORY_KEEP]
+            snapshot = list(self._history)
+        self._event("orchestrator", f"--- {job['kind']} finished: {outcome} ---")
+        self._save_history(snapshot)
+
+    def _load_history(self) -> list[dict]:
+        if self._history_path is None:
+            return []
+        try:
+            data = json.loads(self._history_path.read_text(encoding="utf-8"))
+            return [j for j in data if isinstance(j, dict)][-_HISTORY_KEEP:]
+        except (OSError, ValueError, TypeError):
+            return []
+
+    def _save_history(self, history: list[dict]) -> None:
+        if self._history_path is None:
+            return
+        try:
+            self._history_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self._history_path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(history, indent=1), encoding="utf-8")
+            os.replace(tmp, self._history_path)
+        except OSError:
+            log.warning("could not persist gx-max job history to %s", self._history_path)
+
+    def _last_startup_seconds(self) -> int | None:
+        with self._cv:
+            for job in reversed(self._history):
+                if job.get("kind") == "acquire" and job.get("startup_seconds"):
+                    return int(job["startup_seconds"])
+        return None
+
+    def events(self, after: int = 0, limit: int = 200) -> dict:
+        """Read-only view for operators: recent script lines, the job in
+        progress, and finished jobs (newest last)."""
+        limit = max(1, min(int(limit), _EVENT_BUFFER))
+        with self._cv:
+            lines = [e for e in self._events if e["seq"] > after][-limit:]
+            job = dict(self._job) if self._job else None
+            history = [dict(j) for j in self._history]
+            seq = self._event_seq
+        if job is not None:
+            job["elapsed_seconds"] = round(time.time() - job["started"], 1)
+        return {"seq": seq, "events": lines, "active_job": job, "history": history}
+
+    def _run_streaming(
+        self,
+        args: list[str],
+        timeout: float,
+        markers: "tuple[tuple[re.Pattern[str], str], ...]",
+        source: str,
+    ) -> subprocess.CompletedProcess:
+        """Run a lifecycle script, publishing each output line as it appears.
+
+        Same contract as the subprocess.run(..., timeout) call it replaces:
+        the child is killed and TimeoutExpired raised when `timeout` elapses,
+        and stdout (stderr merged in) is returned for the error tail.
+        """
+        proc = subprocess.Popen(
+            args,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL,
+            text=True,
+            bufsize=1,
+        )
+        captured: list[str] = []
+
+        def pump() -> None:
+            assert proc.stdout is not None
+            for raw in proc.stdout:
+                line = raw.rstrip("\n")
+                captured.append(line)
+                del captured[:-400]
+                for pattern, phase in markers:
+                    if pattern.search(line):
+                        self._set_phase(phase)
+                        break
+                m = _STARTUP_SECONDS_RE.search(line)
+                if m:
+                    with self._cv:
+                        if self._job is not None:
+                            self._job["startup_seconds"] = int(m.group(1))
+                self._event(source, line)
+
+        reader = threading.Thread(target=pump, name=f"gxmax-{source}-out", daemon=True)
+        reader.start()
+        try:
+            proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+            reader.join(timeout=5)
+            raise
+        reader.join(timeout=5)
+        return subprocess.CompletedProcess(args, proc.returncode, "\n".join(captured), "")
 
     # ------------------------------------------------------------ idle reaper
     def _idle_reaper(self) -> None:

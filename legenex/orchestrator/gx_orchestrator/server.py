@@ -19,6 +19,7 @@ import logging
 import sys
 import threading
 import time
+import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable
 
@@ -198,6 +199,19 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/lifecycle/gx-max/status":
             self._send_json(200, self.lifecycle.status().as_dict())
+            return
+
+        if path == "/lifecycle/gx-max/events":
+            # Read-only: recent lifecycle script output, the job in progress
+            # and finished jobs. Changes nothing, starts nothing.
+            query = urllib.parse.parse_qs(self.path.partition("?")[2])
+            try:
+                after = int((query.get("after") or ["0"])[0])
+                limit = int((query.get("limit") or ["200"])[0])
+            except ValueError:
+                self._send_error_json(400, "after and limit must be integers", "invalid_request")
+                return
+            self._send_json(200, self.lifecycle.events(after=after, limit=limit))
             return
 
         self._send_error_json(404, f"no such path: {path}", "not_found")
@@ -394,6 +408,8 @@ def build_servers(cfg: Config | None = None) -> tuple[list[ThreadingHTTPServer],
         health_url=f"{cfg.gxmax_base.rstrip('/').removesuffix('/v1')}/health",
         idle_ttl=cfg.gxmax_idle_ttl,
         acquire_timeout=cfg.gxmax_acquire_timeout,
+        events_log=cfg.log_dir / "gx-max-lifecycle.log",
+        history_path=cfg.state_dir / "orchestrator" / "gx-max-history.json",
     )
     handler = type(
         "BoundHandler",

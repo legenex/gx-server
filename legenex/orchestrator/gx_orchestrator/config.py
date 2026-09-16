@@ -68,6 +68,12 @@ class Config:
         default_factory=lambda: Path(_env("GX_LIFECYCLE_DIR", str(_REPO_DEFAULT / "legenex" / "lifecycle")))
     )
     log_dir: Path = field(default_factory=lambda: Path(_env("GX_LOG_DIR", "/srv/logs")))
+    #: Mutable runtime state root, outside the Git checkout (D-026). The
+    #: orchestrator keeps its small gx-max job history under
+    #: <state_dir>/orchestrator/.
+    state_dir: Path = field(
+        default_factory=lambda: Path(_env("GX_STATE_ROOT", "/srv/projects/gx-cluster/state"))
+    )
 
     #: Idle seconds before gx-max releases both nodes. 0 disables auto-release.
     gxmax_idle_ttl: int = field(default_factory=lambda: _env_int("GX_MAX_IDLE_TTL", 1800))
