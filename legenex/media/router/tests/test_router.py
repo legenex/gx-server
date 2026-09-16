@@ -93,7 +93,7 @@ class WorkflowTests(unittest.TestCase):
                      "wan22-i2v-a14b-uncensored", "wan22-v2v-a14b-uncensored", "wan22-v2v-a14b-light"):
             self.assertIn(name, registry.names())
         self.assertEqual(len(registry.of_kind("image")), 4)
-        self.assertEqual(len(registry.of_kind("video")), 5)
+        self.assertEqual(len(registry.of_kind("video")), 6)
 
     def test_bindings_reach_the_intended_nodes(self):
         wf = WorkflowRegistry(WORKFLOW_DIR).get("qwen-image-2512-lightning")

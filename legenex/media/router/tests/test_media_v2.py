@@ -128,8 +128,9 @@ class SniffTests(unittest.TestCase):
         self.assertLessEqual(max(w, h), 2048)
 
     def test_edit_strength_mapping(self):
-        self.assertEqual(edit_start_step(1.0), ("wan22-v2v-a14b-uncensored", 1))
-        self.assertEqual(edit_start_step(0.6), ("wan22-v2v-a14b-light", 2))
+        self.assertEqual(edit_start_step(1.0), ("wan22-v2v-keyframe-edit", 1))
+        self.assertEqual(edit_start_step(0.6), ("wan22-v2v-keyframe-edit", 1))
+        self.assertEqual(edit_start_step(0.5), ("wan22-v2v-a14b-light", 2))
         self.assertEqual(edit_start_step(0.2), ("wan22-v2v-a14b-light", 3))
 
 
@@ -298,8 +299,8 @@ class MediaApiTests(unittest.TestCase):
         self.assertEqual(done["seconds"], "2.06")
 
     def test_video_edit_from_upload_light_and_strong(self):
-        for strength, workflow, start_node, start in ((0.3, "wan22-v2v-a14b-light", "13", 3),
-                                                      (0.9, "wan22-v2v-a14b-uncensored", "12", 1)):
+        for strength, workflow, start_node, start in ((0.2, "wan22-v2v-a14b-light", "13", 3),
+                                                      (0.9, "wan22-v2v-keyframe-edit", "12", 1)):
             with self.subTest(strength=strength):
                 ctype, body = multipart({"prompt": "make it night", "strength": str(strength)},
                                         [("video", "clip.mp4", "video/mp4", MP4_STUB)])
@@ -312,6 +313,10 @@ class MediaApiTests(unittest.TestCase):
                 self.assertEqual(graph[start_node]["inputs"]["start_at_step"], start)
                 self.assertRegex(graph["20"]["inputs"]["file"], r"^gx-in/[0-9a-f]{32}\.mp4$")
                 self.assertEqual(graph["15"]["inputs"]["fps"], ["22", 2], "the source frame rate must be kept")
+                if workflow == "wan22-v2v-keyframe-edit":
+                    self.assertEqual(graph["37"]["inputs"]["prompt"], "make it night")
+                    self.assertEqual(graph["11"]["inputs"]["length"], graph["23"]["inputs"]["length"])
+                    self.assertEqual(graph["12"]["inputs"]["latent_image"], ["25", 0])
         self.assertEqual(self.staged_files(), [])
 
     def test_video_edit_rejects_an_image(self):

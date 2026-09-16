@@ -60,6 +60,7 @@ IMAGE_WORKFLOWS = {
 EDIT_WORKFLOW = "qwen-image-edit-2511"
 T2V_WORKFLOW = "wan22-t2v-a14b-uncensored"
 I2V_WORKFLOW = "wan22-i2v-a14b-uncensored"
+V2V_KEYFRAME_WORKFLOW = "wan22-v2v-keyframe-edit"
 V2V_STRONG_WORKFLOW = "wan22-v2v-a14b-uncensored"
 V2V_LIGHT_WORKFLOW = "wan22-v2v-a14b-light"
 VARIATION_PROMPT = ("Create a variation of this image: keep the subject, composition and style, "
@@ -73,14 +74,18 @@ EDIT_ADAPTER_DEFAULT = 0.0
 def edit_start_step(strength: float) -> tuple[str, int]:
     """Map a 0..1 edit strength onto a v2v template and its start step.
 
-    The Wan 4-step schedule is split high-noise 0-2 / low-noise 2-4.
-      strength >= 0.8  -> both experts from step 1   (strong change)
-      0.45 - 0.8       -> low-noise expert from step 2 (medium)
-      < 0.45           -> low-noise expert from step 3 (light)
+    Measured 2026-09-17: partial denoise alone keeps the source's global
+    lighting and colour even from step 1 of 4 ("make it night" stayed day), so
+    instruction-level edits use keyframe propagation (the first frame is
+    edited with Qwen-Image-Edit, then the I2V experts carry it through the
+    noised source). Light edits keep the cheaper low-noise-only pass.
+      strength >= 0.6  -> keyframe propagation from step 1   (instruction edit)
+      0.3 - 0.6        -> low-noise expert from step 2          (medium restyle)
+      < 0.3            -> low-noise expert from step 3          (light touch)
     """
-    if strength >= 0.8:
-        return V2V_STRONG_WORKFLOW, 1
-    if strength >= 0.45:
+    if strength >= 0.6:
+        return V2V_KEYFRAME_WORKFLOW, 1
+    if strength >= 0.3:
         return V2V_LIGHT_WORKFLOW, 2
     return V2V_LIGHT_WORKFLOW, 3
 
@@ -471,6 +476,14 @@ class Handler(BaseHTTPRequestHandler):
         if body.get("length") is None and body.get("seconds") is None:
             params["length"] = v.video_length({"length": 49}, cfg, 16.0)
         params.update({"start_step": start_step, "max_seconds": max_seconds, "strength": strength})
+        if workflow == V2V_KEYFRAME_WORKFLOW:
+            kw, kh = uploads.fit_to_pixels(params["width"], params["height"], cfg.edit_target_pixels,
+                                           cfg.dimension_multiple, cfg.max_dimension)
+            params.update({"edit_prompt": params["prompt"], "key_seed": params["seed"],
+                           "key_width": kw, "key_height": kh,
+                           "key_out_width": params["width"], "key_out_height": params["height"],
+                           "i2v_width": params["width"], "i2v_height": params["height"],
+                           "i2v_length": params["length"]})
 
         source_job = None
         if data is not None:
