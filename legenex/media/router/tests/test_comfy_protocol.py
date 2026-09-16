@@ -36,6 +36,7 @@ WORKFLOW_DIR = Path(__file__).resolve().parents[2] / "workflows"
 PNG_1x1 = base64.b64decode(
     b"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
 )
+MP4_STUB = b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom" + b"\x00" * 64
 
 
 class ComfyStubHandler(BaseHTTPRequestHandler):
@@ -83,6 +84,17 @@ class ComfyStubHandler(BaseHTTPRequestHandler):
                 self._reply(200, {prompt_id: {"status": {"status_str": "success", "completed": True},
                                               "outputs": {}}})
                 return
+            graph = (srv.submissions[-1] or {}).get("prompt", {}) if srv.submissions else {}
+            if any(n.get("class_type") == "SaveVideo" for n in graph.values()):
+                # ComfyUI's SaveVideo reports its file under "images" (animated).
+                self._reply(200, {prompt_id: {
+                    "status": {"status_str": "success", "completed": True, "messages": []},
+                    "outputs": {
+                        "16": {"images": [{"filename": "wan22_00001_.mp4", "subfolder": "gx-video",
+                                           "type": "output"}], "animated": [True]},
+                        "18": {"images": [{"filename": "wan22-thumb_00001_.png", "subfolder": "gx-video",
+                                           "type": "output"}]}}}})
+                return
             self._reply(200, {prompt_id: {
                 "status": {"status_str": "success", "completed": True, "messages": []},
                 "outputs": {srv.output_node: {"images": [
@@ -91,7 +103,11 @@ class ComfyStubHandler(BaseHTTPRequestHandler):
         elif parsed.path == "/view":
             query = urllib.parse.parse_qs(parsed.query)
             srv.view_requests.append(query)
-            if query.get("filename", [""])[0] != "qwen2512-lightning_00001_.png":
+            name = query.get("filename", [""])[0]
+            if name == "wan22_00001_.mp4":
+                self._reply(200, MP4_STUB, "video/mp4")
+                return
+            if name not in ("qwen2512-lightning_00001_.png", "wan22-thumb_00001_.png"):
                 self._reply(404, {"error": "not found"})
                 return
             self._reply(200, PNG_1x1, "image/png")
@@ -305,9 +321,15 @@ class FullStackTests(unittest.TestCase):
         graph = self.stub.submissions[-1]["prompt"]
         self.assertEqual(graph["11"]["inputs"]["length"], 33)   # 32 frames -> nearest 4k+1
         self.assertEqual(graph["12"]["inputs"]["noise_seed"], graph["13"]["inputs"]["noise_seed"])
+        self.assertEqual(payload["object"], "video")
+        self.assertEqual(payload["progress"], 100)
+        self.assertEqual(graph["16"]["inputs"]["filename_prefix"], f"gx-video/{job_id}")
         status, content = self.call("GET", f"/v1/videos/{job_id}/content")
         self.assertEqual(status, 200)
-        self.assertEqual(content, PNG_1x1)   # the stub's artefact bytes
+        self.assertEqual(content, MP4_STUB)   # the primary output is the mp4, not the thumbnail
+        status, content = self.call("GET", f"/v1/videos/{job_id}/content?variant=thumbnail")
+        self.assertEqual(status, 200)
+        self.assertEqual(content, PNG_1x1)
 
 
 if __name__ == "__main__":

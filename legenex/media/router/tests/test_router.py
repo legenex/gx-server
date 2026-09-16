@@ -29,6 +29,7 @@ WORKFLOW_DIR = Path(__file__).resolve().parents[2] / "workflows"
 PNG_1x1 = base64.b64decode(
     b"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
 )
+MP4_STUB = b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom" + b"\x00" * 64
 
 
 class FakeComfy:
@@ -48,7 +49,7 @@ class FakeComfy:
         self.submitted.append(graph)
         return f"prompt-{len(self.submitted)}"
 
-    def wait(self, prompt_id, *, timeout, poll_interval=1.0, cancelled=None):
+    def wait(self, prompt_id, *, timeout, poll_interval=1.0, cancelled=None, thumbnail_node=None):
         with self._lock:
             self.concurrent += 1
             self.max_concurrent = max(self.max_concurrent, self.concurrent)
@@ -56,13 +57,19 @@ class FakeComfy:
             if self.delay:
                 import time
                 time.sleep(self.delay)
+            graph = self.submitted[-1] if self.submitted else {}
+            if any(n.get("class_type") == "SaveVideo" for n in graph.values()):
+                return Result(prompt_id, (
+                    Artefact("out_00001_.mp4", "gx-video", "output", "images"),
+                    Artefact("thumb_00001_.png", "gx-video", "output", "images", thumbnail=True),
+                ), 0.5)
             return Result(prompt_id, (Artefact("out_00001_.png", "gx-image", "output", "images"),), 0.5)
         finally:
             with self._lock:
                 self.concurrent -= 1
 
     def fetch(self, artefact, *, timeout=120.0):
-        return PNG_1x1
+        return MP4_STUB if artefact.filename.endswith(".mp4") else PNG_1x1
 
     def system_stats(self):
         return {"system": {"comfyui_version": "test", "pytorch_version": "2.14.0+cu130"},
@@ -77,8 +84,11 @@ class WorkflowTests(unittest.TestCase):
         registry = WorkflowRegistry(WORKFLOW_DIR)
         self.assertIn("qwen-image-2512-lightning", registry.names())
         self.assertIn("wan22-t2v-a14b-lightning", registry.names())
-        self.assertEqual(len(registry.of_kind("image")), 2)
-        self.assertEqual(len(registry.of_kind("video")), 1)
+        for name in ("qwen-image-2512-uncensored", "qwen-image-edit-2511", "wan22-t2v-a14b-uncensored",
+                     "wan22-i2v-a14b-uncensored", "wan22-v2v-a14b-uncensored", "wan22-v2v-a14b-light"):
+            self.assertIn(name, registry.names())
+        self.assertEqual(len(registry.of_kind("image")), 4)
+        self.assertEqual(len(registry.of_kind("video")), 5)
 
     def test_bindings_reach_the_intended_nodes(self):
         wf = WorkflowRegistry(WORKFLOW_DIR).get("qwen-image-2512-lightning")
@@ -263,6 +273,15 @@ class HttpTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(body)["gx"]["workflow"], "qwen-image-2512-quality")
 
+    def test_default_generation_is_the_uncensored_template(self):
+        status, body, _ = self.call("POST", "/v1/images/generations", {"prompt": "a fox"})
+        self.assertEqual(status, 200)
+        gx = json.loads(body)["gx"]
+        self.assertEqual(gx["workflow"], "qwen-image-2512-uncensored")
+        self.assertEqual(self.comfy.submitted[-1]["12"]["inputs"]["strength_model"], 0.6)
+        status, body, _ = self.call("POST", "/v1/images/generations", {"prompt": "a fox", "uncensored": False})
+        self.assertEqual(self.comfy.submitted[-1]["12"]["inputs"]["strength_model"], 0.0)
+
     def test_invalid_requests_are_rejected_with_400(self):
         for body in ({}, {"prompt": ""}, {"prompt": "x", "size": "3x3"},
                      {"prompt": "x", "n": 99}, {"prompt": "x", "response_format": "zip"},
@@ -279,6 +298,7 @@ class HttpTests(unittest.TestCase):
     def test_video_is_accepted_asynchronously_and_polls_to_completion(self):
         status, body, headers = self.call("POST", "/v1/videos", {"prompt": "rain", "seconds": 2})
         self.assertEqual(status, 202)
+        self.assertEqual(json.loads(body)["object"], "video")
         job = json.loads(body)
         self.assertIn(job["status"], ("queued", "running", "completed"))
         self.assertTrue(headers["Location"].endswith(job["id"]))

@@ -55,6 +55,19 @@ class Config:
 
     default_image_size: str = "1328x1328"
 
+    # Source media for edits / image-to-video / video-to-video (D-031).
+    #: ComfyUI's input directory, bind-mounted read-write into the router.
+    input_dir: Path = field(default_factory=lambda: Path("/srv/comfy-input"))
+    input_ttl_seconds: int = 24 * 3600
+    max_upload_body_bytes: int = 160 * 1024 * 1024
+    max_image_upload_bytes: int = 25 * 1024 * 1024
+    max_video_upload_bytes: int = 150 * 1024 * 1024
+    max_source_side: int = 4096
+    max_source_pixels: int = 16_777_216
+    #: Qwen-Image-Edit works at about one megapixel.
+    edit_target_pixels: int = 1024 * 1024
+    max_edit_seconds: float = 10.0
+
     @classmethod
     def from_env(cls) -> "Config":
         # NOTE: there is deliberately no "magic string" (e.g. "not-required",
