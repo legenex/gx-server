@@ -1127,6 +1127,14 @@ No stale deployment copy was found.
 | `legenex/lifecycle` shell-rule tests | **22 passed** |
 | `legenex/media/router/qa.sh` | **43 passed**, QA PASSED |
 | `ops/git-sync/tests/sync-regression.sh` (new) | **19 passed**. It found and fixed the no-op conflict-marker gate in `node1-autosync.sh`. |
+| `legenex/tests/unwind-tests.sh E1 E2 E3 E4 E6` (non-destructive: deadman startup grace, rank0 death, sustained exhaustion, phase latch, transient dip) | **8 passed** |
+| `legenex/tests/acceptance.sh` (CLI, after the gx-max cycle) | **PASS=15 FAIL=0 SKIP=1**. The skip is "gx-max refusal", which applies only when gx-max is inadmissible. It also covered: gx-auto routing to mini/reason/mini, the ComfyUI ingress boundary, gx-video 224,771 B, and gateway restart recovery. |
+
+Destructive rank-kill tests (rank1 killed, rank0 killed, failure during load)
+were proven live on 2026-09-16 (§16). The lifecycle scripts they exercise
+were not changed in this run; only the orchestrator's way of reading their
+output changed, and that is unit-tested. So they were not repeated.
+
 
 ### 17.3 Control UI, live (Playwright + Google Chrome against `http://127.0.0.1:8088`)
 
