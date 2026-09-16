@@ -1,9 +1,9 @@
 import { api, runAction, waitJob } from '../api.js';
 import {
-  h, kv, gib, num, meter, levelBadge, stateBadge, duration, short, confirmDialog, toast, ago, table,
+  h, kv, num, meter, levelBadge, stateBadge, duration, short, confirmDialog, toast, ago, table,
 } from '../dom.js';
 
-export function nodeCard(n, { detailed = false } = {}) {
+export function nodeCard(n) {
   const body = [];
   if (!n.reachable) {
     body.push(h('p', { class: 'callout callout-danger' }, (n.problems || []).join('; ') || 'unreachable'));
@@ -11,7 +11,6 @@ export function nodeCard(n, { detailed = false } = {}) {
       body.push(kv(Object.entries(n.fabric_probe).map(([ip, st]) => [`fabric ${ip}:22`, st])));
     }
   } else {
-    const swapPct = n.swap_total_gib ? (n.swap_used_gib / n.swap_total_gib) * 100 : 0;
     body.push(
       h('div', { class: 'metric' },
         h('div', { class: 'metric-head' }, h('span', {}, 'MemAvailable'),
@@ -46,8 +45,7 @@ export function nodeCard(n, { detailed = false } = {}) {
       h('h2', { class: 'card-title' }, n.name),
       levelBadge(n.level)),
     h('p', { class: 'muted small' }, n.role),
-    ...body,
-    detailed ? null : null);
+    ...body);
 }
 
 export function modelTile(m) {

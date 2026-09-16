@@ -1,6 +1,6 @@
 import { api } from '../api.js';
 import {
-  h, clear, kv, stateBadge, levelBadge, ago, duration, gib, table, errorBox, num,
+  h, clear, kv, stateBadge, ago, duration, gib, table, errorBox, num,
 } from '../dom.js';
 import { operate } from './common.js';
 
