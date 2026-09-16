@@ -1074,3 +1074,133 @@ sent while gx-max was down, produced this result:
   * gateway restart recovery.
 * **Skipped:** "gx-max refusal correctness", correctly, because gx-max is now
   admissible. The serving path is covered above.
+
+## 17. 2026-09-16 (fourth session): management web UI and final cluster acceptance
+
+Everything below was observed live on 2026-09-16 between 18:29 and 20:30
+SAST. Evidence files:
+
+* `/tmp/gx-ui-gxmax-evidence.json` and `/tmp/gx-ui-gxmax-release.json`
+  (gx10-01);
+* `/srv/logs/gx-max-inference-20260916T180520Z.json` (direct) and
+  `…T180539Z.json` (through the gateway);
+* `/srv/logs/gx-max-safety-node1-*.tsv` (the latest run's SUMMARY line);
+* `/srv/logs/gx-max-lifecycle.log`;
+* `/srv/logs/gx-control-ui/audit.log`.
+
+### 17.1 Baseline (Phase 1)
+
+| Check | gx10-01 | gx10-02 |
+|---|---|---|
+| Kernel | 6.17.0-1032-nvidia | 6.17.0-1032-nvidia |
+| Kernel-lock verifier (CLI, and again from the UI) | 13 passed, 0 warnings, 0 failed | 13 passed, 0 warnings, 0 failed |
+| Swap | `/swapfile-sglang` 48 G + `/swap.img` 16 G | same |
+| RoCE (`rocep1s0f0`, `roceP2p1s0f0`) | ACTIVE / LinkUp, 200 Gb/s | ACTIVE / LinkUp, 200 Gb/s |
+| Fabric reachability | 192.168.100.11 and 192.168.101.11: RTT 0.6 ms | — |
+| Tailscale | Running | Running, peer online |
+| Hostwatch | ok=5 warn=0 crit=0 | ok |
+| Guard | node1.lock free, ledgers `{}` | node2.lock free |
+| Git | HEAD 3e476e9 == GitHub == gx10-02; push URL disabled on gx10-02 | — |
+| Integrity audit | PASS=15 WARN=0 FAIL=0 | — |
+
+**Drift (Phase 2).**
+
+* gx10-02's `~/gx-gateway` and `~/gx-media` configs are byte-identical to
+  the repo.
+* The deployed `gx-media-router:1.0.0` image's Python sources are
+  hash-identical to `legenex/media/router`.
+* The installed unit files differ only by the installer's `@REPO@`
+  substitution.
+
+No stale deployment copy was found.
+
+### 17.2 Automated tests
+
+| Suite | Result |
+|---|---|
+| `legenex/control-ui` unit + API + auth + performance (`unittest`) | **133 passed** |
+| Control UI ruff / mypy / build check | clean / 0 issues / 13 modules, 119 KiB |
+| Control UI Playwright, offline fixture (incl. axe WCAG 2.2 AA on 9 pages + light theme, 390×844 mobile layout) | **11 passed**; 0 axe violations of any impact |
+| Control UI gitleaks + npm audit | 0 findings / 0 vulnerabilities |
+| `npm run qa` (all of the above) | **QA PASSED** |
+| `legenex/orchestrator` (`unittest`, incl. 9 new lifecycle-event tests) | **147 passed** |
+| `legenex/lifecycle` shell-rule tests | **22 passed** |
+| `legenex/media/router/qa.sh` | **43 passed**, QA PASSED |
+| `ops/git-sync/tests/sync-regression.sh` (new) | **19 passed**. It found and fixed the no-op conflict-marker gate in `node1-autosync.sh`. |
+
+### 17.3 Control UI, live (Playwright + Google Chrome against `http://127.0.0.1:8088`)
+
+| Spec | Result |
+|---|---|
+| `live.pages` | **6 passed** |
+| `live.models` | **8 passed** (7 in the first run; after the Range fix the video and media-unload tests were re-run and passed) |
+| `live.gxmax-1-load` | **2 passed** |
+| `live.gxmax-2-release` | **2 passed** |
+
+**What `live.pages` covered:**
+
+* unauthenticated calls return 401;
+* all 9 pages render real data with no console errors and no axe
+  violations;
+* both nodes, both rails, Tailscale and the Git HEADs are shown;
+* 14 log streams from both nodes load and are redacted;
+* the kernel verifier ran from the UI: 13/0/0 on both nodes;
+* the integrity audit ran from the UI: gx10-01 PASS=15 WARN=1 (an autosync
+  commit was pending) FAIL=0, gx10-02 PASS=17 FAIL=0;
+* a node-2 reconcile ran from the UI: HEAD == origin/main.
+
+**Real model calls made through the UI playground**
+
+| Alias | Result |
+|---|---|
+| gx-mini | `17×23` → `391` (0.9 s); vision named the red circle, blue square and digit 7; streaming "One, two, three, four, five." |
+| gx-fast | Tool call `get_weather(city="Cape Town")` parsed. Cold start plus answer 319 s. "Tokyo". |
+| gx-fast via UI controls | UNLOAD succeeded (3.4 s). LOAD succeeded (318.6 s, admission preview passed). State returned to loaded. |
+| gx-reason | Bat-and-ball → "The ball costs **5** cents", with `reasoning_content`. 432.6 s including the cold load. |
+| gx-auto | "Say hello in French" → "Bonjour", routed to **gx-mini**. Proof that √2 is irrational → answered, routed to **gx-reason** (orchestrator `gx.routing` log). |
+| gx-reason via UI control | UNLOAD before media succeeded. |
+| gx-image | Real 1024×1024 PNG in 25.0 s; 630 distinct colours in a 64 px thumbnail. |
+| gx-video | Real 640×640 MP4, 2.06 s: `video-3663237c583c4874` in 48.1 s (33 frames, all 33 distinct on disk, mean difference from frame 0 rising to 42 grey levels), and a second job in 28.4 s. In-browser check: 6 distinct of 6 sampled frames. |
+| gx-image/gx-video via UI control | ComfyUI `/free` succeeded. |
+
+**Defect found and fixed by this run.** The first gx-video browser frame
+check saw 1 distinct frame. The video was fine: the content endpoint did not
+support HTTP Range, so Chrome could not seek. Range and 206 support, plus a
+small per-job cache, were added, with tests.
+
+### 17.4 gx-max through the UI (sanctioned orchestrator lifecycle)
+
+| Item | Observed |
+|---|---|
+| Direct playground request without takeover confirmation | HTTP 409, nothing started |
+| LOAD (typed `gx-max`) → orchestrator acquire | job succeeded; HTTP 200 after 648 s wall |
+| Orchestrator phases (new events API) | preflight → draining → admission → **loading_rank1 → loading_rank0** → warming → ready → serving |
+| Startup | **537 s** (`gx-max READY … after 537s`) |
+| Load transient (safety SUMMARY) | node 1 min MemAvailable **2573 MiB**, max swap **65535 MiB**; node 2 min **8275 MiB**, max swap **53586 MiB** |
+| Steady state | node 1 **14.7 GiB**, node 2 **16.1 GiB** MemAvailable |
+| Live engine (`/get_server_info`) | **tp_size 2, nnodes 2**, node_rank 0, dist_init_addr 192.168.100.10:5000, context 327680, mem_fraction_static 0.8, speculative DSPARK; served model `/model` (`nvidia/DeepSeek-V4-Flash-0731-NVFP4` mounted) |
+| Ranks | gx-max-rank0 on gx10-01 and gx-max-rank1 on gx10-02 running; rank0 watcher and rank1 deadman alive; ledgers held rank0/rank1 (exclusive, 105 GiB) |
+| Drain | gx-mini, gx-fast, gx-reason, gx-image and gx-video reported unavailable while gx-max owned the cluster |
+| UI inference | factual "Canberra"; reasoning "$0.05"; coding `is_prime` executed, correct for 0..39; long 1200 tokens in 27.96 s = **42.9 tok/s**; streaming answer received |
+| RDMA during UI inference (MiB per port) | node1 `rocep1s0f0` 4755, `roceP2p1s0f0` 4617; node2 `rocep1s0f0` 4852, `roceP2p1s0f0` 4714 |
+| RDMA since before load (GiB per port) | 9.5 / 9.2 / 9.6 / 9.3: **both rails, both nodes** |
+| CLI `gx-max-inference.sh`, direct | **8/8**: health, models, factual, reasoning, coding, 700 tok at 44.96 tok/s, RDMA 5192 MiB, TTFT 0.143 s |
+| CLI `gx-max-inference.sh`, gateway (`gx-max`) | **8/8**: 45.1 tok/s, RDMA 5257 MiB, TTFT 1.284 s |
+| UNLOAD (graceful) → orchestrator release | succeeded. Phases: draining_requests → stopping_ranks → memory_recovery → restoring → released |
+| After release | no rank container on either node; no watcher or deadman process; both locks free; both ledgers `{}`; SGLang down |
+| Memory return | node 1 **114.4 GiB**, node 2 **114.9 GiB** MemAvailable; swap 5.0 / 3.1 GiB |
+| Normal service | LiteLLM, orchestrator, both llama-swaps, media router and ComfyUI up; gx-mini "42", gx-auto "Jupiter" |
+
+### 17.5 Security checks
+
+* The control UI binds `127.0.0.1:8088` and `100.105.214.61:8088` only; a
+  connection to `192.168.100.10:8088` is refused.
+* Unauthenticated calls return 401; a bad or missing CSRF token or a foreign
+  Origin returns 403.
+* Five failed logins return 429.
+* Password change → all sessions 401 (API test).
+* Secrets directory 0700, `auth.json` 0600, audit log 0640.
+* The service runs with `MemoryMax=512M` (about 15 MB resident).
+* **B-024 opened:** the media router key is the public placeholder. It was
+  not rotated in this run, because the permission policy blocked writes to
+  the secret stores.

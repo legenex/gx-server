@@ -37,7 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   * no shell, upgrade or firmware operation;
   * upstream keys never reach the browser.
 - **Control UI QA** (`npm run qa`):
-  * ruff, mypy, 132 unit/API/auth/performance tests and the build check;
+  * ruff, mypy, 133 unit/API/auth/performance tests and the build check;
   * 11 Playwright tests including axe-core WCAG 2.2 AA and a mobile
     layout check;
   * gitleaks and npm audit.

@@ -3,7 +3,59 @@
 **This file must always reflect reality.** If you are a new agent resuming this
 work, read this first, then ARCHITECTURE.md (what is locked), then BLOCKERS.md.
 
-## LATEST UPDATE — 2026-09-16 ~12:50-14:30 CEST — read this section first
+## LATEST UPDATE — 2026-09-16 ~18:30-20:40 SAST — read this section first
+
+**The cluster passed a full live acceptance, and it now has a management web
+UI.** All seven aliases served real output. gx-max completed a full
+load → inference → release cycle **through the new UI**. Evidence is in
+`TEST_RESULTS.md` §17.
+
+### Control UI — `http://100.105.214.61:8088/` (Tailscale) or `http://127.0.0.1:8088/`
+
+| | |
+|---|---|
+| Service | `gx-control-ui.service`: user unit on gx10-01, enabled at boot, `MemoryMax=512M` |
+| Code | `legenex/control-ui/` (D-028): stdlib Python backend, ES-module frontend, 7 docs pages |
+| Auth | user `admin`; scrypt hash in `/srv/projects/gx-cluster/secrets/control-ui/auth.json` (0600). The initial random password is in `…/control-ui/initial-admin-password` (0600). Set your own with `legenex/control-ui/scripts/gx-ui-passwd`; that deletes the file. |
+| Logs | `/srv/logs/gx-control-ui/control-ui.log` (JSON), `audit.log` |
+| Health | `curl -sS http://127.0.0.1:8088/api/ready` |
+| Restart | `systemctl --user restart gx-control-ui` |
+| QA | `cd legenex/control-ui && npm run qa` (hermetic); `npm run test:live` (real cluster) |
+
+Pages: Dashboard, Models (sanctioned LOAD / UNLOAD / RESTART), Runtime,
+Cluster, Jobs / Queue, Logs, API Playground, Docs, Settings / System.
+
+### What changed in the running system
+
+* **Orchestrator** (restarted 18:37, gx-max down): read-only
+  `GET /lifecycle/gx-max/events`, and phase fields on `/status` (D-029). The
+  launch vector and scripts are unchanged.
+* **Autosync:** the conflict-marker gate was a no-op under `pipefail` and is
+  fixed. The pre-commit hook had been covering it. There is a new
+  `ops/git-sync/tests/sync-regression.sh` (19/19).
+* **Integrity audit** also checks the control-UI unit.
+
+### Verified this session
+
+| | |
+|---|---|
+| gx-mini / gx-fast / gx-reason / gx-auto / gx-image / gx-video | real output through the UI (§17.3) |
+| gx-max | UI LOAD → 537 s → TP=2 / nnodes=2 live → 8/8 direct + 8/8 gateway + UI checks, 42.9–45.1 tok/s → UI graceful release → 114 GiB free on both nodes |
+| RDMA | 9.2–9.6 GiB per port on both rails of both nodes during the gx-max cycle |
+| Kernel lock | 13/0/0 on both nodes |
+| Git | three HEADs converge; gx10-02 push disabled; audits FAIL=0 |
+
+### Open
+
+* **B-024:** media router key is the placeholder `not-required`. Rotation
+  steps are in BLOCKERS.md; they need a human.
+* **B-023:** the thin node-1 swap margin during a gx-max load is unchanged.
+  This run measured 2.5 GiB MemAvailable and 64/64 GiB swap. Whether the
+  drain should also stop Open WebUI and AgentOS remains a human decision.
+
+---
+
+## LATEST UPDATE — 2026-09-16 ~12:50-14:30 CEST — previous update
 
 **All seven public tiers serve real output, gx-max included. Source control
 moved to GitHub `legenex/gx-server`, with automatic, gated sync across both

@@ -97,7 +97,7 @@ legenex/tests/acceptance.sh                          # live tiers
 legenex/tests/gx-max-inference.sh                    # against a running gx-max
 ops/git-sync/integrity-audit.sh
 ops/git-sync/tests/sync-regression.sh                # hermetic Git-sync failure paths (19 checks)
-(cd legenex/control-ui && npm run qa)                # UI: lint, types, 132 tests, build, E2E + axe, security
+(cd legenex/control-ui && npm run qa)                # UI: lint, types, 133 tests, build, E2E + axe, security
 (cd legenex/control-ui && npm run test:live)         # UI against the real cluster (real model calls)
 ```
 
