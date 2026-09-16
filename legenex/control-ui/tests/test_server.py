@@ -339,6 +339,20 @@ class TestKeepAlive(ServerBase):
         conn.close()
 
 
+class TestRangeParsing(unittest.TestCase):
+    def test_parse_range(self):
+        pr = srv.parse_range
+        self.assertIsNone(pr(None, 100))
+        self.assertIsNone(pr("bytes=0-1,5-6", 100))
+        self.assertEqual(pr("bytes=0-", 100), (0, 99))
+        self.assertEqual(pr("bytes=10-19", 100), (10, 19))
+        self.assertEqual(pr("bytes=90-500", 100), (90, 99))
+        self.assertEqual(pr("bytes=-10", 100), (90, 99))
+        self.assertEqual(pr("bytes=100-", 100), "invalid")
+        self.assertEqual(pr("bytes=5-2", 100), "invalid")
+        self.assertIsNone(pr("bytes=a-b", 100))
+
+
 class TestBindSafety(unittest.TestCase):
     def test_wildcard_bind_refused(self):
         from gx_control_ui.config import _resolve_hosts

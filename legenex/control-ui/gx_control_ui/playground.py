@@ -9,6 +9,7 @@ the model that answered and token usage.
 from __future__ import annotations
 
 import base64
+import collections
 import json
 import re
 import threading
@@ -168,6 +169,8 @@ class Playground:
         self.cluster = cluster
         self.results = results
         self._slots = threading.BoundedSemaphore(self.MAX_CONCURRENT)
+        self._video_lock = threading.Lock()
+        self._video_cache: collections.OrderedDict[str, tuple[bytes, str]] = collections.OrderedDict()
 
     def _acquire(self) -> None:
         if not self._slots.acquire(blocking=False):
@@ -378,6 +381,19 @@ class Playground:
     def video_content(self, job_id: str) -> tuple[bytes, str]:
         if not _JOB_ID.match(job_id or ""):
             raise PlaygroundError("invalid job id")
+        # Media elements issue many range requests; keep a few finished videos.
+        with self._video_lock:
+            if job_id in self._video_cache:
+                self._video_cache.move_to_end(job_id)
+                return self._video_cache[job_id]
+        data, ctype = self._fetch_video(job_id)
+        with self._video_lock:
+            self._video_cache[job_id] = (data, ctype)
+            while len(self._video_cache) > 6:
+                self._video_cache.popitem(last=False)
+        return data, ctype
+
+    def _fetch_video(self, job_id: str) -> tuple[bytes, str]:
         try:
             res = http("GET", f"{self.cfg.media_base}/v1/videos/{urllib.parse.quote(job_id)}/content",
                        headers=self.cluster.media_headers(), timeout=60)

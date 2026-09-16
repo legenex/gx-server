@@ -158,6 +158,9 @@ class TestPlaygroundCalls(unittest.TestCase):
         self.assertEqual(self.pg.video_status("abc-123")["job"]["status"], "completed")
         data, ctype = self.pg.video_content("abc-123")
         self.assertTrue(data.startswith(b"\x00\x00\x00\x18ftyp"))
+        calls = len(self.stub.calls)
+        self.pg.video_content("abc-123")  # served from the cache
+        self.assertEqual(len(self.stub.calls), calls)
         for bad in ("../x", "a/b", "x" * 65, ""):
             with self.assertRaises(PlaygroundError):
                 self.pg.video_status(bad)

@@ -610,8 +610,38 @@ def api_pg_video_status(h: Handler, job_id: str) -> None:
 @route("GET", r"/api/playground/video/(?P<job_id>[A-Za-z0-9\-]{1,64})/content")
 def api_pg_video_content(h: Handler, job_id: str) -> None:
     data, ctype = h.app.playground.video_content(job_id)
-    h._send(200, data, ctype, {"Cache-Control": "private, max-age=3600",
-                               "Content-Disposition": f'inline; filename="gx-video-{job_id}.mp4"'})
+    headers = {"Cache-Control": "private, max-age=3600", "Accept-Ranges": "bytes",
+               "Content-Disposition": f'inline; filename="gx-video-{job_id}.mp4"'}
+    # Browsers only allow seeking in media served with byte-range support.
+    rng = parse_range(h.headers.get("Range"), len(data))
+    if rng is None:
+        h._send(200, data, ctype, headers)
+    elif rng == "invalid":
+        h._send(416, b"", "text/plain", {**headers, "Content-Range": f"bytes */{len(data)}"})
+    else:
+        start, end = rng
+        h._send(206, data[start:end + 1], ctype, {**headers, "Content-Range": f"bytes {start}-{end}/{len(data)}"})
+
+
+def parse_range(header: str | None, size: int):
+    """Single `bytes=` range -> (start, end) inclusive; None = whole body;
+    "invalid" = unsatisfiable. Multi-range requests get the whole body."""
+    if not header or not header.startswith("bytes=") or "," in header or size == 0:
+        return None
+    first, _, last = header[6:].strip().partition("-")
+    try:
+        if first == "":
+            n = int(last)
+            if n <= 0:
+                return "invalid"
+            return max(0, size - n), size - 1
+        start = int(first)
+        end = int(last) if last else size - 1
+    except ValueError:
+        return None
+    if start >= size or end < start:
+        return "invalid"
+    return start, min(end, size - 1)
 
 
 # ============================================================ bootstrap
