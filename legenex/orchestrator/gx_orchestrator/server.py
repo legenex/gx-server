@@ -402,7 +402,19 @@ class Handler(BaseHTTPRequestHandler):
         forwarded = clamp_output_budget(payload, decision.tier)
         status = 0
         try:
-            if decision.tier is Tier.MAX:
+            if decision.tier is Tier.MAX and lc_status.state is not State.READY:
+                # Only reachable when nothing smaller can hold the context.
+                # gx-auto still never acquires: say so instead of proxying to
+                # an engine that is not running.
+                status = 503
+                self._send_error_json(
+                    503,
+                    "gx-auto: this request needs gx-max's context window, gx-max is "
+                    f"{lc_status.state.value}, and gx-auto never acquires the cluster. "
+                    "Send it with model=gx-max to start the two-node tier explicitly.",
+                    "gx_max_not_running",
+                )
+            elif decision.tier is Tier.MAX and lc_status.state is State.READY:
                 status = self._proxy(
                     f"{self.cfg.gxmax_base.rstrip('/')}/chat/completions",
                     {**forwarded, "model": self.cfg.gxmax_model_id},
