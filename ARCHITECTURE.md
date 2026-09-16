@@ -109,32 +109,36 @@ Concurrency is serialised by a condition variable in `GxMaxLifecycle`: five
 simultaneous callers produce exactly one invocation of the start script
 (covered by `tests/test_lifecycle.py::test_concurrent_acquire_starts_script_once`).
 
-**Superseded 2026-09-16 (`coordination/BLOCKERS.md` B-022,
-`coordination/DECISIONS.md` D-022).** The 2026-09-15 resolution of B-017 gave
-gx-max its own 5 GiB admission reserve so it could pass the guard. Eight
-instrumented two-node runs on 2026-09-16 showed that the reserve was never the
-binding constraint:
+**Memory policy (2026-09-16, `coordination/DECISIONS.md` D-025, supersedes
+D-022 and B-022).** gx-max serves on this hardware with the verified `4b96e49`
+launch vector, which matches the official SGLang DGX Spark NVFP4 cell. Two
+things make that work, and both are architectural:
 
-> Loading one TP=2 rank takes a 121.63 GiB node from ~110 GiB MemAvailable to
-> **between 437 MiB and 0 MiB, on both nodes**, and ends in a kernel global OOM
-> kill of the SGLang scheduler. `--mem-fraction-static` was measured at 0.50 and
-> at 0.70 with an *identical* trough — it moves only the steady state, never the
-> peak. `--context-length`, `--chunked-prefill-size`,
-> `--cuda-graph-max-bs-decode`, `--max-running-requests`, the container
-> `--memory` cap (106g down to 28g) and `--load-format`
-> (`layered` / `runai_streamer`) were each tested and changed nothing.
+* **No cgroup memory cap on the rank containers.** `--memory X --memory-swap X`
+  gives the container zero swap. The load transient (weights staged in host
+  memory while the ~84 GiB parameter store is already resident) must be able
+  to spill into `/swapfile-sglang` (L-8), and then it drains. Measured peaks:
+  64 GiB of swap on node 1 and 53 GiB on node 2. Steady state is about 15 and
+  17 GiB MemAvailable, with swap flat.
+* **gx-max is admitted as a cluster takeover, not as a workload.** The
+  ordinary `estimate + 30 GiB reserve <= node` check still governs every
+  single-node tier. gx-max separates three phases:
 
-The cause is arithmetic under the locked decisions: the checkpoint is 163.48
-GiB, so at `--tp 2` each rank holds ~82 GiB of weights — two thirds of a node —
-before any KV cache, and the loader adds ~26 GiB of pinned host memory on top.
+  | Phase | How it is handled |
+  |---|---|
+  | Pre-launch clean state (admission, per node, under the node lock) | drained; no other large or exclusive resident; swapfile active; ≥ 40 GiB swap free; ≥ 100 GiB MemAvailable; no PSI pressure; management plane healthy |
+  | Startup transient (~117 GiB) | policed live, never admitted against |
+  | Steady-state residency | 105 GiB per rank in the ledger |
 
-So the admission estimate is now the **measured load peak (117 GiB)** rather
-than a steady-state figure, and `GXMAX_GUARD_RESERVE_GIB` is back to the same
-**30 GiB** every other tier gets. The consequence is intended and visible:
-**the guard refuses gx-max**, before launching anything, and says exactly why.
-That is the honest state of the tier. Lifting it is a human decision about a
-LOCKED constraint — the model, the quantisation, or the node count — not a
-smaller reserve; B-022 has the three options and the measurements behind them.
+**Live safety is node-local on both nodes** (`gx-max-safety.sh`):
+
+* **Abort immediately** on a kernel OOM kill or a hard `NV_ERR_NO_MEMORY`.
+* **Abort only when sustained:** memory and swap both exhausted, swap
+  thrashing, or fork/exec starvation.
+* **Steady phase only:** a sustained MemAvailable floor.
+
+A single deep MemAvailable sample is expected during a healthy load and is
+not an abort.
 
 Two structural fixes from the same investigation are in place and do not depend
 on that decision:
@@ -148,6 +152,10 @@ on that decision:
   starts, and force-removes rank1 when rank0 disappears. It needs nothing from
   outside the host, which is the whole point: every previous cleanup path
   required ssh to node 2 at exactly the moment node 2 was starved (B-020).
+* **Node-1 watcher.** `rank0-watch.sh` is armed when the engine becomes READY.
+  It unwinds both nodes if either rank disappears, if node 2 is unreachable
+  for 180 s, or if `/health` fails for 180 s. Graceful stop and unwind disarm
+  it first.
 
 **Never-downgrade rule.** A request that explicitly names `gx-max` and cannot be
 served returns HTTP 503 with an explicit message. It is never answered by a
@@ -274,8 +282,9 @@ place per language, not left as a convention:
   an ~80-90 GiB resident rank with no lease on it.
 
 **Host-level backstop, independent of the admission guard above:** every
-model container also carries a static Docker `--memory`/`--memory-swap` cap
-and a positive `--oom-score-adj` (700-950; the gateway/db/llama-swap get 100)
+single-node model container also carries a static Docker `--memory` cap
+(gx-max ranks deliberately do not; see §5 and D-025) and a positive
+`--oom-score-adj` (700-950; the gateway/db/llama-swap get 100)
 so the kernel's OOM killer sacrifices these before host daemons, even if a
 container is ever started outside the guarded path. `legenex/host/
 gx-hostwatch.sh` is a dependency-free watchdog (systemd `--user` timer)
@@ -301,3 +310,30 @@ alerts, it does not remediate.
 - It cannot stop a human or agent from still typing `docker run` directly.
   `gx-safe-run.sh` is a documented, one-line-longer sanctioned alternative,
   not a kernel-enforced prohibition.
+
+
+## 10. Source control and configuration distribution (D-026)
+
+| Node or service | Role |
+|---|---|
+| gx10-01 | **Sole Git writer.** `ops/git-sync/node1-autosync.sh` commits after 45 quiet seconds, behind a secret-scan and path gate. |
+| GitHub `legenex/gx-server` `main` | Canonical remote and off-machine backup. **Public.** |
+| gx10-02 | **Pull-only mirror.** Reconciled to `origin/main` immediately after every push (SSH trigger) and every minute (timer). Drift is saved as evidence, then reset. Its push URL is disabled. |
+
+A daily integrity audit on both nodes checks HEAD equality across all three,
+byte-identical critical files, and that no secrets, weights or large binaries
+are tracked.
+
+**Boundaries.** Git carries code, configuration templates and documentation
+only. Everything else lives outside the checkout:
+
+| What | Where |
+|---|---|
+| Weights | `/srv/models` |
+| Logs | `/srv/logs` |
+| Locks, ledgers and the sync role | `/srv/projects/gx-cluster/state` |
+| Secrets | `/srv/projects/gx-cluster/secrets`, or ignored `.env` files |
+
+Live service copies outside the checkout (`~/gx-gateway`, `~/gx-media`,
+`~/.gx-guard` on node 2) are compared against the repo by the audit, but
+deploying them stays a deliberate operator step.
