@@ -309,10 +309,14 @@ routing:
             - gx-fast
 
 # ==============================================================================
-# NO STARTUP PRELOAD — DELIBERATE
+# STARTUP PRELOAD (D-030, 2026-09-17)
 # ==============================================================================
-# `hooks.on_startup.preload` is intentionally absent. Starting llama-swap must
-# never allocate GPU memory. Models load on the first request that needs them.
-# Do not add a preload list without re-checking the memory budget above and
-# confirming no distributed job (gx-max) owns the node.
-# ==============================================================================
+# The resident tiers are loaded when llama-swap starts, so the first Kilo
+# prompt after a boot or a gx-max release does not wait for a cold start.
+# Safe because llama-swap-node01 is itself stopped by gx-max-start.sh's drain
+# and only restarted by restore-normal.sh after gx-max has released node 1,
+# and gx-max is never started at boot.
+hooks:
+  on_startup:
+    preload:
+      - gx-mini
