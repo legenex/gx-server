@@ -113,6 +113,27 @@ journalctl --user -u gx-git-reconcile -n 50  # gx10-02
 git -C <checkout> rev-parse HEAD; git ls-remote https://github.com/legenex/gx-server.git main
 ```
 
+## Containers that bind-mount the checkout
+
+`gx-litellm` and `gx-llama-swap-node01` on gx10-01 bind-mount files and
+directories from `legenex/gateway/`. When Git **replaces** a path, running
+containers keep the old, deleted inode. This happens on a branch switch,
+`git checkout` of a file, `reset --hard` or `stash`. The containers then
+silently keep old content, or see an empty directory.
+
+**Observed 2026-09-16:** a `git checkout main` during the migration left
+`/app/env` empty inside llama-swap, and `gx-mini` failed with exit 125.
+
+After any such operation on gx10-01, restart them:
+
+```bash
+docker restart gx-llama-swap-node01 gx-litellm
+```
+
+Plain edits and autosync commits do not replace files, so they are
+unaffected. gx10-02's containers mount `~/gx-gateway` and `~/gx-media`,
+not the checkout, so its reconciler cannot trigger this.
+
 ## Stopping it
 
 ```bash

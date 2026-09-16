@@ -939,3 +939,84 @@ came back.
 | `gx-mini vision: did not identify all elements` | The fixture drew a 120x100 **rectangle** and the assertion looked for "square". gx-mini said "blue rectangle" — correctly. | The suite now generates the fixture itself, with an actual square. It also no longer silently SKIPs the vision check when no file happens to exist in `/tmp`. |
 | `gx-reason inference: empty/short` | `max_tokens 400` on a **reasoning** tier: `<think>` content is spent from the same budget, and a one-line question measured 385 of 396 completion tokens as reasoning. The model ran out mid-thought and returned empty `content`. | Raised to 4096, matching the gateway's own budget increase for this tier. |
 | `resource_guard` CLI roundtrip | The test registered a ledger entry named **`gx-fast`** — a real production container — and asserted it would reconcile away as "not running". It passed only while gx-fast happened to be unloaded. | Uses a name that cannot exist. |
+
+## 16. 2026-09-16 (third session) — gx-max restored, failure paths, Git sync
+
+Every figure below comes from live runs on both nodes. Raw evidence is in
+`/srv/logs/gx-max-baseline-20260916T105343Z/` and in
+`/srv/logs/gx-max-safety-node1-*.tsv`.
+
+### 16.1 gx-max launches (verified `4b96e49` vector, no cgroup cap, D-025)
+
+| | Attempt 1 | Attempt 2 (direct) | Attempt 3 (orchestrator `POST /lifecycle/gx-max/acquire`) |
+|---|---|---|---|
+| Admission | both admitted (113.7 / 114.0 GiB free) | both admitted | both admitted |
+| Outcome | **aborted by our own rule:** soft `nvCheckOkFailedNoLog NV_ERR_NO_MEMORY` at "Load weight begin"; unwind verified clean | **READY in 539 s** | **READY**, HTTP 200 after 616 s (508 s load + drain) |
+| node 1 min MemAvailable | — | 2,653 MiB | 3,289 MiB |
+| node 2 min MemAvailable | — | 7,434 MiB | 8,545 MiB |
+| node 1 peak swap | — | 65,535 MiB (100%, one 5 s sample) | 65,535 MiB |
+| node 2 peak swap | — | 51,584 MiB | 54,693 MiB |
+| Steady MemAvailable (node 1 / node 2) | — | 15.0 / 16.3 GiB | 15.9 / 17.7 GiB |
+| Steady swap (node 1 / node 2) | — | 8.1 / 5.4 GiB, flat over minutes | — |
+
+Load-phase health on node 1:
+
+* PSI full peaked at 22%.
+* fork+exec never exceeded 6 ms.
+* Swap-out was one-way (up to ~91k pages/s) and drained once the weights
+  were loaded.
+
+This was a controlled transient, not thrashing. The engine reported
+`available_gpu_mem=14.93 GB` and `max_total_num_tokens=293120`, the same
+figures as 2026-09-14.
+
+### 16.2 gx-max real inference (`legenex/tests/gx-max-inference.sh`)
+
+| Check | Direct (`:30000`) | Gateway alias `gx-max` (`:4000`) |
+|---|---|---|
+| /health, /v1/models | PASS | PASS (lists exactly the 7 aliases) |
+| Factual: capital of Australia | "Canberra" | "Canberra" |
+| Reasoning: bat and ball | $0.05 | $0.05 |
+| Coding: `is_prime`, executed and checked against 0..29 | PASS | PASS |
+| Long generation (700 tokens) | 15.92 s, 43.97 tok/s wall | 15.6 s, 44.87 tok/s wall |
+| Streaming TTFT (short prompt) | 0.13 s | 1.36 s |
+| RDMA during the 700-token generation | 5,413 MiB | 5,411 MiB |
+
+Per-rail breakdown for a 302-token generation:
+
+| Interface | Traffic |
+|---|---|
+| `rocep1s0f0` (192.168.100.x) | 554 MB each way |
+| `roceP2p1s0f0` (192.168.101.x) | 540 MB each way |
+| `tailscale0` | 0.08 MB |
+
+The bootstrap store is `192.168.100.10:5000` ↔ `192.168.100.11`. L-3 holds.
+Also answered correctly: "17*23" → `119`.
+
+### 16.3 Failure paths on the real workload
+
+| Test | What happened | Result |
+|---|---|---|
+| Failure during load (attempt 1) | node 1 sentinel abort at +43 s, node 2 deadman fired at the same moment | unwind: both ranks confirmed gone, ledgers and locks clean, 113 GiB back on both nodes, services restored — **PASS** |
+| rank1 killed while serving | rank0 exited on its own at about +20 s; `rank0-watch` fired at +21 s | unwind verified clean at +69 s, 114 GiB on both nodes — **PASS** |
+| rank0 killed while serving, node 1 watcher deliberately stopped | node 2 deadman: "rank0 unreachable", 90 s grace, FIRING, rank1 removed at +95 s, node 2 at 116 GiB, node 2 llama-swap restored by the deadman | operator unwind verified clean — **PASS** |
+| Orchestrator reconcile | noticed the vanished engine (`ready -> down`), and re-acquired on request | **PASS** |
+
+### 16.4 Automated suites
+
+| Suite | Result |
+|---|---|
+| orchestrator unit tests | 138 passed |
+| lifecycle unit tests (bash guard + safety rules) | 22 passed |
+| media router unit tests | 43 passed |
+| `unwind-tests.sh` E1–E6 (E5 destructive) | 12/12 PASS |
+| kernel-lock verifier | gx10-01 13/0/0, gx10-02 13/0/0 |
+
+### 16.5 Git sync (D-026)
+
+| Test | Result |
+|---|---|
+| 1. Doc change on gx10-01 → commit → GitHub → gx10-02 | committed 54 s after the edit (45 s quiet), pushed 2 s later, gx10-02 reconciled 2 s after that. All three HEADs = `f3197b1` — **PASS** |
+| 2. Push blocked (push URL pointed at a closed port) | commit kept locally, failure logged; 18 s after unblocking, all three = `09ea38c` — **PASS** |
+| 3. Drift on gx10-02 (untracked file, plus a tracked edit containing a fake token) | caught within 44 s; evidence saved at mode 0700 with the token masked; file removed; edit reverted; no commit made on gx10-02 — **PASS** |
+| 4. Integrity audit | gx10-01 15 PASS / 0 FAIL; gx10-02 17 PASS / 0 FAIL — **PASS** (after fixing a placeholder false positive and redeploying stale copies) |
