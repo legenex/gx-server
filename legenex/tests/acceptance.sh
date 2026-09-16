@@ -303,7 +303,16 @@ t_auto(){
     local before; before=$(grep -c 'gx.routing' "$log" 2>/dev/null || echo 0)
     body gx-auto "$prompt" 40
     GX_TIMEOUT=1800 chat /tmp/gxacc_body.json > /dev/null
-    local got
+    local got after
+    # Only trust a routing decision logged by THIS request. If the request
+    # never reached the orchestrator (e.g. LiteLLM put gx-auto in cooldown
+    # after an upstream 500), reading the last line would report a previous
+    # request's tier as this one's -- found 2026-09-16.
+    after=$(grep -c 'gx.routing' "$log" 2>/dev/null || echo 0)
+    if [ "${after}" -le "${before}" ]; then
+      fail "gx-auto routing" "'${prompt:0:38}...' never reached the orchestrator (no new routing decision logged)"
+      continue
+    fi
     got=$(grep 'gx.routing' "$log" 2>/dev/null | tail -1 \
       | python3 -c "import sys,json;print(json.loads(sys.stdin.read().split('gx.routing ',1)[-1])['tier'])" 2>/dev/null)
     [ "$got" = "$expect" ] \
