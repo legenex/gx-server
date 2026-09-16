@@ -231,10 +231,15 @@ class Playground:
         followed by one gx-meta event with timing."""
         req = build_chat({**body, "stream": True})
         self._gxmax_guard(req, body)
-        self._acquire()
         import urllib.request
 
         def gen() -> Iterator[bytes]:
+            # The slot is taken inside the generator so that a generator that
+            # is never started cannot leak it.
+            if not self._slots.acquire(blocking=False):
+                msg = "too many playground requests in flight; try again shortly"
+                yield f"event: gx-error\ndata: {json.dumps({'error': msg})}\n\n".encode()
+                return
             t0 = time.time()
             first = None
             chunks = 0
