@@ -5,6 +5,9 @@
     python3 -m gx_control_ui.passwd --generate      # random password, written
                                                     # to a 0600 file, not printed
     python3 -m gx_control_ui.passwd --status        # is a password configured?
+    python3 -m gx_control_ui.passwd --acceptance    # (re)create the loopback-only
+                                                    # 'acceptance' test account
+    python3 -m gx_control_ui.passwd --remove-acceptance
 
 Every change bumps the store's generation, which logs out every session on
 the running server within one request. The password is never printed to a
@@ -42,10 +45,31 @@ def main(argv: list[str] | None = None) -> int:
     mode.add_argument("--generate", action="store_true",
                       help="generate a random password into <secret_dir>/initial-admin-password (0600)")
     mode.add_argument("--status", action="store_true")
+    mode.add_argument("--acceptance", action="store_true",
+                      help="create/rotate the 'acceptance' account (loopback-only sign-in; password in "
+                           "<secret_dir>/acceptance-password, 0600)")
+    mode.add_argument("--remove-acceptance", action="store_true")
     args = parser.parse_args(argv)
 
     cfg = UIConfig(hosts=("127.0.0.1",))
     store = PasswordStore(cfg.password_file)
+
+    if args.acceptance:
+        acc = PasswordStore(cfg.acceptance_file)
+        password = generate_password(32)
+        record = acc.set_password(cfg.ACCEPTANCE_USER, password)
+        write_private_file(cfg.acceptance_password_file, password + "\n")
+        print(f"acceptance account ready (generation {record['generation']}); password in "
+              f"{cfg.acceptance_password_file} (0600). It can only sign in from 127.0.0.1.")
+        return 0
+    if args.remove_acceptance:
+        for path in (cfg.acceptance_file, cfg.acceptance_password_file):
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                pass
+        print("acceptance account removed")
+        return 0
 
     if args.status:
         try:
@@ -61,6 +85,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"store: {cfg.password_file} (mode 0600)")
         if cfg.initial_password_file.exists():
             print(f"initial password file still present: {cfg.initial_password_file}")
+        print(f"acceptance account: {'present (loopback-only)' if cfg.acceptance_file.exists() else 'absent'}")
         return 0
 
     if args.generate:

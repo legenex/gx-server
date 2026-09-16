@@ -33,10 +33,10 @@ export function watchPage(page) {
   return problems;
 }
 
-export async function login(page, password) {
+export async function login(page, password, username = process.env.GX_UI_USER || 'admin') {
   await page.goto('/');
   await expect(page.locator('#login-view')).toBeVisible();
-  await page.fill('#login-user', 'admin');
+  await page.fill('#login-user', username);
   await page.fill('#login-pass', password);
   await page.click('#login-submit');
   await expect(page.locator('#app-view')).toBeVisible();

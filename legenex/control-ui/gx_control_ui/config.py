@@ -157,6 +157,18 @@ class UIConfig:
     def initial_password_file(self) -> Path:
         return self.secret_dir / "initial-admin-password"
 
+    #: Optional second account for automated acceptance runs (D-035). It can
+    #: only sign in from 127.0.0.1 (gx10-01 itself), never over Tailscale.
+    ACCEPTANCE_USER = "acceptance"
+
+    @property
+    def acceptance_file(self) -> Path:
+        return self.secret_dir / "acceptance.json"
+
+    @property
+    def acceptance_password_file(self) -> Path:
+        return self.secret_dir / "acceptance-password"
+
     def secret(self, name: str) -> str | None:
         value = os.environ.get(name)
         return value if value else None

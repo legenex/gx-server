@@ -5,7 +5,9 @@ import { expect } from '@playwright/test';
 
 export function livePassword() {
   if (process.env.GX_UI_PASSWORD) return process.env.GX_UI_PASSWORD;
-  const file = process.env.GX_UI_PASSWORD_FILE || '/srv/projects/gx-cluster/secrets/control-ui/initial-admin-password';
+  const file = process.env.GX_UI_PASSWORD_FILE || (process.env.GX_UI_USER === 'acceptance'
+    ? '/srv/projects/gx-cluster/secrets/control-ui/acceptance-password'
+    : '/srv/projects/gx-cluster/secrets/control-ui/initial-admin-password');
   return readFileSync(file, 'utf8').trim();
 }
 

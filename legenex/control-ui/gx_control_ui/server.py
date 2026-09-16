@@ -112,6 +112,7 @@ class App:
         self.cfg = cfg
         self.started = time.time()
         self.store = PasswordStore(cfg.password_file)
+        self.acceptance = PasswordStore(cfg.acceptance_file)
         self.sessions = SessionManager(cfg.session_idle_seconds, cfg.session_max_seconds)
         self.throttle = LoginThrottle()
         self.cluster = Cluster(cfg)
@@ -422,7 +423,14 @@ def api_login(h: Handler) -> None:
     if not h.app.store.configured():
         h._error(503, "no admin password is configured; run gx-ui-passwd on gx10-01", "not_configured")
         return
-    if not h.app.store.check(username, password):
+    is_acceptance = username.strip().lower() == h.app.cfg.ACCEPTANCE_USER
+    if is_acceptance:
+        # The acceptance account exists for automated live tests on gx10-01
+        # and is refused from anywhere but the loopback interface (D-035).
+        ok = ip in ("127.0.0.1", "::1") and h.app.acceptance.check(username, password)
+    else:
+        ok = h.app.store.check(username, password)
+    if not ok:
         h.app.throttle.failure(ip)
         h.app.actions.audit(user=username[:32], ip=ip, action="login", outcome="failed")
         h._error(401, "invalid username or password", "bad_credentials")
