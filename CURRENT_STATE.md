@@ -3,7 +3,102 @@
 **This file must always reflect reality.** If you are a new agent resuming this
 work, read this first, then ARCHITECTURE.md (what is locked), then BLOCKERS.md.
 
-## LATEST UPDATE — 2026-09-16 ~09:00-11:00 CEST — read this section first
+## LATEST UPDATE — 2026-09-16 ~12:50-14:30 CEST — read this section first
+
+**All seven public tiers serve real output, gx-max included. Source control
+moved to GitHub `legenex/gx-server`, with automatic, gated sync across both
+nodes.**
+
+| Tier | State | Evidence (TEST_RESULTS.md §16) |
+|---|---|---|
+| `gx-mini` | **SERVING** | text answer; vision identified red circle, blue square and digit 7 |
+| `gx-fast` | **SERVING** | correct arithmetic; tool call parsed |
+| `gx-reason` | **SERVING** | hard reasoning correct (15:35) |
+| `gx-max` | **SERVING on demand** | TP=2 on both nodes, loads in 508–539 s; 8/8 real checks directly and through the gateway; RDMA on both rails |
+| `gx-auto` | **SERVING** | routes to mini and reason correctly; a gx-max-worthy prompt is downgraded, never acquires |
+| `gx-image` | **SERVING** | real generation through the gateway |
+| `gx-video` | **SERVING** | real generation, 120,975-byte MP4 |
+
+### gx-max: the earlier "does not fit" conclusion was wrong (B-022 resolved, D-025)
+
+The failing runs did not use the verified `4b96e49` launch:
+
+* `--memory 106g --memory-swap 106g` gave the ranks zero swap;
+* `--mem-fraction-static` was 0.70 or 0.50, below the ~0.731 a TP=2 shard
+  needs.
+
+Restored now:
+
+* the exact verified vector (it also matches the current official SGLang
+  DGX Spark NVFP4 cell);
+* no cgroup cap on the ranks;
+* a gx-max-specific **cluster-takeover admission** (clean start,
+  `/swapfile-sglang` active, at least 40 GiB swap free, at least 100 GiB
+  MemAvailable, no pressure, healthy management plane) instead of
+  `peak + 30 GiB`. Single-node tiers keep the 30 GiB reserve.
+
+**Load behaviour is a controlled transient:**
+
+* node 1 goes to 2.6–3.3 GiB MemAvailable and fills 64 GiB of swap for a few
+  seconds;
+* node 2 peaks at 52–55 GiB of swap;
+* both drain once the weights are loaded.
+
+**Steady state:** about 15 GiB (node 1) and 17 GiB (node 2) MemAvailable,
+swap flat. Node 1's load-time swap headroom is the thinnest margin in the
+system; see **B-023**.
+
+**Protection, node-local on both nodes:**
+
+* `gx-max-safety.sh`, phase-aware:
+  * aborts immediately on a kernel OOM kill or a hard NV OOM;
+  * aborts on exhaustion, thrashing or starvation only when sustained;
+  * counts soft `NoLog` driver messages without aborting.
+* `rank1-deadman.sh` on node 2. It now probes rank0 health over the fabric.
+* New `rank0-watch.sh` on node 1.
+
+Proven live:
+
+| Failure | Result |
+|---|---|
+| Failure during load | verified clean |
+| rank1 killed | clean at +69 s |
+| rank0 killed (deadman only) | rank1 removed at +95 s |
+
+### Kernel lock verifier fixed (D-027)
+
+* A held, installed kernel reports dpkg status `hi`, which the verifier
+  treated as MISSING.
+* Unrelated older-ABI 6.8 kernel proposals from `dist-upgrade` are now
+  INFO, not FAIL.
+
+Both nodes: 13 passed, 0 failed. Nothing was installed or removed, and GRUB
+was not touched.
+
+### Source control (D-026) — see `ops/git-sync/README.md`
+
+* **gx10-01** is the only writer: autosync after 45 quiet seconds, behind
+  path and gitleaks gates, pushing `origin/main`.
+* **gx10-02** is a pull-only clone at
+  `/home/legenex-02/Documents/Projects/Server/gx-cluster`. It reconciles
+  immediately after each push and every minute, and saves drift evidence
+  before each reset.
+* **Daily integrity audit** on both nodes.
+* **Old remote** renamed `community-upstream`, with push disabled.
+* **Rollback:** the pre-migration bundle is at
+  `/srv/projects/gx-cluster/backups/gx-server/`; the tag is
+  `pre-github-migration-20260916`.
+* **Runtime state** (guard locks and ledgers) moved to
+  `/srv/projects/gx-cluster/state/guard`.
+
+**Operator gotcha:** after any Git operation that *replaces* files on
+gx10-01 (branch switch, reset), run
+`docker restart gx-llama-swap-node01 gx-litellm`. Their bind mounts pin the
+old inodes. This bit gx-mini once during the migration.
+
+---
+
+## PREVIOUS UPDATE — 2026-09-16 ~09:00-11:00 CEST (gx-max "does not fit" — SUPERSEDED above)
 
 **Six of the seven public tiers serve real output. The seventh, `gx-max`, does
 not fit on this hardware, and that is now measured rather than suspected.**

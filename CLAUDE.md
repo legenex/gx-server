@@ -60,6 +60,21 @@
   using one. Note `Alibaba/Qwen3.5-35B-A3B-Uncensored-HauhauCS-*` in the older
   recipes is a *local folder path*, not an upstream repo — it returns HTTP 401.
 
+## Source control (D-026)
+
+* **gx10-01 is the ONLY Git writer.** Its checkout auto-commits after 45
+  quiet seconds and pushes to `https://github.com/legenex/gx-server`
+  (**PUBLIC**, `main`).
+* **gx10-02 is a pull-only mirror.** Never edit, commit or push there. Its
+  local changes are treated as drift and reset.
+* **Never put secrets in tracked files.** Use the ignored `.env` files or
+  `/srv/projects/gx-cluster/secrets`.
+* **Runtime state lives outside the checkout,** in
+  `/srv/projects/gx-cluster/state`.
+* **After a branch switch or reset on gx10-01,** run
+  `docker restart gx-llama-swap-node01 gx-litellm`. Their bind mounts pin old
+  inodes.
+
 ## Forbidden operations
 
 Do not run, on either node, without a specific proven reason and human sign-off:
