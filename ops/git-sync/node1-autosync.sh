@@ -166,9 +166,18 @@ case "${MODE}" in
   watch)
     gxs_require_role writer
     gxs_log "watcher started (poll ${GX_SYNC_POLL_S}s, quiet ${GX_SYNC_QUIET_S}s) on ${GX_SYNC_REPO}"
+    self="$(readlink -f "${BASH_SOURCE[0]}")"
+    self_sig() { stat -c '%Y %s' "${self}" "${here}/common.sh" 2>/dev/null; }
+    sig="$(self_sig)"
     while :; do
       ( pass ) || true
       sleep "${GX_SYNC_POLL_S}"
+      # The sync tooling is itself synced: pick up a new version of this
+      # script (or common.sh) instead of running stale code indefinitely.
+      if [ "$(self_sig)" != "${sig}" ] && bash -n "${self}" 2>/dev/null; then
+        gxs_log "sync tooling changed on disk; re-executing watcher"
+        exec "${self}" watch
+      fi
     done ;;
   *) echo "usage: $0 {watch|once|push}" >&2; exit 64 ;;
 esac
