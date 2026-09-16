@@ -14,7 +14,8 @@ import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 
 from .redact import redact
 
@@ -67,7 +68,7 @@ def http(
         payload = exc.read() if exc.fp else b""
         return HTTPResult(exc.code, payload, dict(exc.headers.items()) if exc.headers else {},
                           (time.monotonic() - t0) * 1000)
-    except (urllib.error.URLError, OSError, socket.timeout, ValueError) as exc:
+    except (TimeoutError, urllib.error.URLError, OSError, ValueError) as exc:
         reason = getattr(exc, "reason", exc)
         raise HTTPError(0, f"{method} {url.split('?')[0]} unreachable: {reason}") from None
 
@@ -91,7 +92,7 @@ def tcp_state(host: str, port: int, timeout: float = 2.0) -> str:
             return "open"
     except ConnectionRefusedError:
         return "refused"
-    except (socket.timeout, TimeoutError):
+    except TimeoutError:
         return "timeout"
     except OSError:
         return "unreachable"

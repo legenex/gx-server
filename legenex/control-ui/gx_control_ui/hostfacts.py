@@ -120,13 +120,15 @@ def uptime_seconds() -> float | None:
 
 
 def temperatures() -> dict:
-    zones = []
+    zones: list[dict] = []
+    temps: list[float] = []
     for z in sorted(glob.glob("/sys/class/thermal/thermal_zone*")):
         t = _read(os.path.join(z, "temp")).strip()
         if t.lstrip("-").isdigit():
+            temps.append(int(t) / 1000.0)
             zones.append({"zone": os.path.basename(z), "type": _read(os.path.join(z, "type")).strip(),
-                          "celsius": int(t) / 1000.0})
-    gpu = {}
+                          "celsius": temps[-1]})
+    gpu: dict = {}
     rc, out = _cmd(["nvidia-smi", "--query-gpu=name,temperature.gpu,utilization.gpu,power.draw",
                     "--format=csv,noheader,nounits"], timeout=6)
     if rc == 0 and out.strip():
@@ -138,17 +140,17 @@ def temperatures() -> dict:
                 return None
         if len(f) >= 4:
             gpu = {"name": f[0], "celsius": num(f[1]), "util_pct": num(f[2]), "power_w": num(f[3])}
-    return {"zones": zones, "cpu_max_c": max((z["celsius"] for z in zones), default=None), "gpu": gpu}
+    return {"zones": zones, "cpu_max_c": max(temps, default=None), "gpu": gpu}
 
 
 def rdma() -> list[dict]:
-    rows = []
+    rows: list[dict] = []
     for dev in sorted(glob.glob("/sys/class/infiniband/*")):
         name = os.path.basename(dev)
         port = os.path.join(dev, "ports/1")
         nets = sorted(os.listdir(os.path.join(dev, "device/net"))) if os.path.isdir(
             os.path.join(dev, "device/net")) else []
-        def cnt(n):
+        def cnt(n: str, port: str = port) -> int | None:
             v = _read(os.path.join(port, "counters", n)).strip()
             return int(v) if v.isdigit() else None
         xmit, rcv = cnt("port_xmit_data"), cnt("port_rcv_data")
@@ -170,7 +172,7 @@ def rdma() -> list[dict]:
 
 def interfaces() -> list[dict]:
     rc, out = _cmd(["ip", "-j", "addr"])
-    rows = []
+    rows: list[dict] = []
     if rc != 0:
         return rows
     try:
@@ -252,7 +254,8 @@ def user_units(role: str) -> list[dict]:
     rc, out = _cmd(["systemctl", "--user", "show", *units, "-p",
                     "Id,ActiveState,SubState,UnitFileState,Result,ActiveEnterTimestamp,"
                     "NextElapseUSecRealtime,LastTriggerUSec,ExecMainStatus"], timeout=6)
-    rows, cur = [], {}
+    rows: list[dict] = []
+    cur: dict[str, str] = {}
     for line in out.splitlines() + [""]:
         if not line.strip():
             if cur:
@@ -291,7 +294,8 @@ def hostwatch(path: str) -> dict:
             lines = fh.read().decode("utf-8", "replace").splitlines()
     except OSError:
         return {"ok": False, "error": "no hostwatch log"}
-    last_ts, summary, checks = None, None, {}
+    last_ts, summary = None, None
+    checks: dict[str, dict] = {}
     for line in reversed(lines):
         fields = {}
         for tok in line.replace("\\ ", "\x00").split(" "):

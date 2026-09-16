@@ -28,10 +28,10 @@ import sys
 import threading
 import time
 import urllib.parse
-from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 
 from . import __version__
 from . import logs as logstreams
@@ -50,7 +50,9 @@ log = logging.getLogger("gx.ui")
 MAX_BODY = 64 * 1024
 #: Client-side routes that fall back to index.html. Anything else that is not
 #: a known asset is a plain 404.
-_SPA_ROUTE = re.compile(r"/(dashboard|models|runtime|cluster|jobs|logs|playground|docs|settings)(/[a-z0-9\-]{0,64}){0,2}")
+_SPA_ROUTE = re.compile(
+    r"/(dashboard|models|runtime|cluster|jobs|logs|playground|docs|settings)(/[a-z0-9\-]{0,64}){0,2}"
+)
 ACCESS_LOG = os.environ.get("GX_UI_ACCESS_LOG", "1") != "0"
 MAX_BODY_PLAYGROUND = 12 * 1024 * 1024
 
@@ -303,12 +305,12 @@ class Handler(BaseHTTPRequestHandler):
     def _finish(self, path: str | None) -> None:
         entry = {
             "ts": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "kind": "access",
-            "method": self.command, "path": path, "status": getattr(self, "_status", 0),
+            "method": self.command, "path": path, "status": int(getattr(self, "_status", 0) or 0),
             "ms": round((time.time() - getattr(self, "_t0", time.time())) * 1000),
             "ip": self._client_ip(),
             "user": getattr(getattr(self, "session", None), "username", None),
         }
-        if ACCESS_LOG and path and (path.startswith("/api/") or entry["status"] >= 400):
+        if ACCESS_LOG and path and (path.startswith("/api/") or int(entry["status"] or 0) >= 400):
             print(json.dumps(entry), flush=True)
 
     # --------------------------------------------------------------- static
@@ -407,6 +409,7 @@ def api_login(h: Handler) -> None:
 
 @route("POST", r"/api/logout")
 def api_logout(h: Handler) -> None:
+    assert h.session is not None  # noqa: S101 - guaranteed by _dispatch for session routes
     h.app.sessions.destroy(h._cookie_token())
     h.app.actions.audit(user=h.session.username, ip=h._client_ip(), action="logout", outcome="ok")
     h._json(200, {"authenticated": False}, {"Set-Cookie": h._cookie("", 0)})
@@ -459,6 +462,7 @@ def api_action_job(h: Handler, job_id: str) -> None:
 
 @route("POST", r"/api/actions/(?P<name>[a-z0-9_.\-]{3,64})")
 def api_action_run(h: Handler, name: str) -> None:
+    assert h.session is not None  # noqa: S101
     body = h._body(MAX_BODY)
     job = h.app.actions.submit(name, user=h.session.username, ip=h._client_ip(),
                                confirm=body.get("confirm"))
@@ -467,6 +471,7 @@ def api_action_run(h: Handler, name: str) -> None:
 
 @route("POST", r"/api/models/(?P<alias>gx-[a-z]{3,6})/(?P<op>load|unload|restart|force_release)")
 def api_model_op(h: Handler, alias: str, op: str) -> None:
+    assert h.session is not None  # noqa: S101
     body = h._body(MAX_BODY)
     job = h.app.actions.submit(f"model.{alias}.{op}", user=h.session.username, ip=h._client_ip(),
                                confirm=body.get("confirm"))
@@ -482,7 +487,7 @@ def api_logs(h: Handler) -> None:
 
 @route("GET", r"/api/logs/(?P<stream_id>[a-z0-9\-]{2,40})")
 def api_log(h: Handler, stream_id: str) -> None:
-    lines = (h.query.get("lines") or [logstreams.DEFAULT_LINES])[0]
+    lines = (h.query.get("lines") or [str(logstreams.DEFAULT_LINES)])[0]
     q = (h.query.get("q") or [""])[0]
     try:
         data = logstreams.read_stream(h.app.cfg, stream_id, lines, q)
@@ -619,7 +624,7 @@ def main() -> int:
         log.warning("no admin password configured; run legenex/control-ui/scripts/gx-ui-passwd")
     threads = []
     for srv in servers:
-        host, port = srv.server_address[:2]
+        host, port = str(srv.server_address[0]), srv.server_address[1]
         log.info("gx-control-ui %s listening on http://%s:%s", __version__, host, port)
         t = threading.Thread(target=srv.serve_forever, daemon=True, name=f"http-{host}")
         t.start()

@@ -10,7 +10,6 @@ from __future__ import annotations
 import json
 import os
 import time
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from . import __version__
@@ -44,10 +43,11 @@ def worst(*levels: str) -> str:
     return max(levels or ("ok",), key=lambda s: _ORDER.get(s, 1))
 
 
-def _gxmax(app: "App") -> dict:
+def _gxmax(app: App) -> dict:
     lc = app.cluster.lifecycle.get() or {}
     st = (lc.get("status") or {})
-    return st.get("body") if st.get("ok") and isinstance(st.get("body"), dict) else {"state": "unknown"}
+    body = st.get("body")
+    return body if st.get("ok") and isinstance(body, dict) else {"state": "unknown"}
 
 
 def _rail_state(facts: dict, rail: dict) -> dict:
@@ -69,19 +69,19 @@ def _iface(facts: dict, name: str) -> dict:
     return {}
 
 
-def fabric_probe(app: "App") -> dict:
+def fabric_probe(app: App) -> dict:
     """TCP reachability of node 2's fabric addresses from node 1. 'refused'
     means the far kernel answered -- the link is alive."""
     cache = getattr(app, "_fabric_cache", None)
     if cache and time.time() - cache["at"] < 10:
         return cache
-    res = {"at": time.time()}
+    res: dict[str, Any] = {"at": time.time()}
     for rail in RAILS:
         if app.cfg.offline:
             res[rail["node2_ip"]] = "unknown"
         else:
             res[rail["node2_ip"]] = tcp_state(rail["node2_ip"], 22, 1.5)
-    app._fabric_cache = res
+    setattr(app, "_fabric_cache", res)  # noqa: B010 - per-process probe cache
     return res
 
 
@@ -107,7 +107,7 @@ def node_summary(key: str, facts: dict, gxmax_state: str) -> dict:
     if not facts.get("kernel_ok"):
         problems.append(f"kernel {facts.get('kernel')} is not the pinned 6.17.0-1032-nvidia")
         level = worst(level, "crit")
-    if avail < 4 and not gxmax_state == "acquiring":
+    if avail < 4 and gxmax_state != "acquiring":
         problems.append(f"MemAvailable {avail:.1f} GiB is critically low")
         level = worst(level, "crit")
     elif avail < 30 and not gx_busy:
@@ -137,8 +137,11 @@ def node_summary(key: str, facts: dict, gxmax_state: str) -> dict:
     if not ts.get("ok"):
         problems.append("Tailscale is not running")
         level = worst(level, "warn")
-    failed_units = [u["unit"] for u in facts.get("units") or []
-                    if u.get("active") == "failed" or (u.get("unit", "").endswith(".timer") and u.get("active") != "active")]
+    failed_units = [
+        u["unit"] for u in facts.get("units") or []
+        if u.get("active") == "failed"
+        or (u.get("unit", "").endswith(".timer") and u.get("active") != "active")
+    ]
     if failed_units:
         problems.append(f"units not healthy: {', '.join(failed_units)}")
         level = worst(level, "warn")
@@ -204,7 +207,7 @@ def _service_levels(svc: dict, gxmax_state: str) -> list[dict]:
     return rows
 
 
-def git_view(app: "App", n1: dict, n2: dict) -> dict:
+def git_view(app: App, n1: dict, n2: dict) -> dict:
     remote = app.cluster.remote_git.get() or {}
     h1 = (n1.get("git") or {}).get("head")
     h2 = (n2.get("git") or {}).get("head")
@@ -242,7 +245,7 @@ def git_view(app: "App", n1: dict, n2: dict) -> dict:
     }
 
 
-def _recent_problems(app: "App", nodes: list[dict], services: list[dict], gx: dict) -> list[dict]:
+def _recent_problems(app: App, nodes: list[dict], services: list[dict], gx: dict) -> list[dict]:
     items = []
     for n in nodes:
         for p in n.get("problems", []):
@@ -270,7 +273,7 @@ def _recent_problems(app: "App", nodes: list[dict], services: list[dict], gx: di
     return items
 
 
-def overview(app: "App") -> dict:
+def overview(app: App) -> dict:
     n1 = app.cluster.node1.get() or {}
     n2 = app.cluster.node2.get() or {}
     svc = app.cluster.services.get() or {}
@@ -323,7 +326,7 @@ def overview(app: "App") -> dict:
     }
 
 
-def nodes(app: "App") -> dict:
+def nodes(app: App) -> dict:
     n1 = app.cluster.node1.get() or {}
     n2 = app.cluster.node2.get() or {}
     gx = _gxmax(app)
@@ -358,7 +361,7 @@ def nodes(app: "App") -> dict:
     }
 
 
-def cluster(app: "App") -> dict:
+def cluster(app: App) -> dict:
     ov = overview(app)
     n1 = app.cluster.node1.get() or {}
     n2 = app.cluster.node2.get() or {}
@@ -384,13 +387,14 @@ def cluster(app: "App") -> dict:
     }
 
 
-def _orchestrator_events(app: "App") -> dict:
+def _orchestrator_events(app: App) -> dict:
     lc = app.cluster.lifecycle.get() or {}
     ev = (lc.get("events") or {})
-    return ev.get("body") if ev.get("ok") and isinstance(ev.get("body"), dict) else {}
+    body = ev.get("body")
+    return body if ev.get("ok") and isinstance(body, dict) else {}
 
 
-def jobs(app: "App") -> dict:
+def jobs(app: App) -> dict:
     gx = _gxmax(app)
     ev = _orchestrator_events(app)
     svc = app.cluster.services.get() or {}
@@ -409,7 +413,7 @@ def jobs(app: "App") -> dict:
     }
 
 
-def system(app: "App") -> dict:
+def system(app: App) -> dict:
     cfg = app.cfg
     n1 = app.cluster.node1.get() or {}
     n2 = app.cluster.node2.get() or {}

@@ -44,7 +44,8 @@ class Base(unittest.TestCase):
             return 200, {"status": "released", "state": "down"}
 
         self.stub = StubUpstream({
-            ("GET", "/lifecycle/gx-max/status"): lambda h, b: (200, {"state": state["value"], "waiters": 0}),
+            ("GET", "/lifecycle/gx-max/status"): lambda h, b: (
+                200, {"state": state["value"], "waiters": 0}),
             ("GET", "/lifecycle/gx-max/events"): (200, {"seq": 0, "events": [], "history": [], "active_job": None}),
             ("POST", "/lifecycle/gx-max/acquire"): acquire,
             ("POST", "/lifecycle/gx-max/release"): release,
@@ -83,7 +84,8 @@ class TestRegistry(Base):
                           "system.kernel_update", "system.firmware"):
             self.assertNotIn(forbidden, names)
         for n in names:
-            self.assertRegex(n, r"^(model\.gx-[a-z]+\.(load|unload|restart|force_release)|system\.[a-z_0-9]+|infra\.[a-z_0-9]+)$")
+            self.assertRegex(n, r"^(model\.gx-[a-z]+\.(load|unload|restart|force_release)"
+                                r"|system\.[a-z_0-9]+|infra\.[a-z_0-9]+)$")
 
     def test_gxmax_has_no_docker_path(self):
         import inspect
@@ -211,7 +213,10 @@ class TestSwapAndInfra(Base):
 
     def test_media_unload_uses_fixed_ssh_command(self):
         seen = []
-        with mock.patch.object(actions_mod, "run", lambda args, timeout=0, **k: (seen.append(args), CmdResult(0, "freed", 1))[1]):
+        def fake_run(args, timeout=0, **k):
+            seen.append(args)
+            return CmdResult(0, "freed", 1)
+        with mock.patch.object(actions_mod, "run", fake_run):
             job = self.runner.submit("model.gx-image.unload", user="a", ip="t", confirm=True)
             self.assertEqual(wait_done(self.runner, job.id)["state"], "succeeded")
         self.assertIn("http://127.0.0.1:8188/free", seen[0][-1])
@@ -219,10 +224,13 @@ class TestSwapAndInfra(Base):
 
     def test_infra_restart_litellm_command(self):
         seen = []
-        with mock.patch.object(actions_mod, "run", lambda args, timeout=0, **k: (seen.append(args), CmdResult(0, "gx-litellm", 1))[1]):
-            with mock.patch.object(ActionRunner, "wait_http", lambda self, url, s, h=None: True):
-                job = self.runner.submit("infra.restart_litellm", user="a", ip="t", confirm=True)
-                self.assertEqual(wait_done(self.runner, job.id)["state"], "succeeded")
+        def fake_run(args, timeout=0, **k):
+            seen.append(args)
+            return CmdResult(0, "gx-litellm", 1)
+        with mock.patch.object(actions_mod, "run", fake_run), \
+                mock.patch.object(ActionRunner, "wait_http", lambda self, url, s, h=None: True):
+            job = self.runner.submit("infra.restart_litellm", user="a", ip="t", confirm=True)
+            self.assertEqual(wait_done(self.runner, job.id)["state"], "succeeded")
         self.assertEqual(seen[0], ["docker", "restart", "-t", "30", "gx-litellm"])
 
 

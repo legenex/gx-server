@@ -170,7 +170,8 @@ def live_state(cluster: Cluster, results: ResultLog) -> list[dict]:
     tiers = ((orch.get("body") or {}).get("tiers") or {}) if orch.get("ok") else {}
     c1, c2 = _containers(n1), _containers(n2)
     media = svc.get("media") or {}
-    media_body = media.get("body") if media.get("ok") else {}
+    raw_media = media.get("body")
+    media_body: dict = raw_media if media.get("ok") and isinstance(raw_media, dict) else {}
     out = []
 
     for alias in ALL_ALIASES:

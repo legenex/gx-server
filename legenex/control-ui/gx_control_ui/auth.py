@@ -282,7 +282,9 @@ class SessionManager:
 
 
 def csrf_ok(session: Session, supplied: str | None) -> bool:
-    return bool(supplied) and hmac.compare_digest(session.csrf.encode(), supplied.encode())
+    if not supplied:
+        return False
+    return hmac.compare_digest(session.csrf.encode(), supplied.encode())
 
 
 class LoginThrottle:

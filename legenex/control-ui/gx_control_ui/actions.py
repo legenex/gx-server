@@ -24,8 +24,7 @@ import shlex
 import threading
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Callable
+from collections.abc import Callable
 
 from .config import UIConfig
 from .models import ResultLog
@@ -303,10 +302,9 @@ def build_registry(r: ActionRunner) -> dict[str, ActionSpec]:
         return inner
 
     def gxmax_restart(job: Job) -> bool:
-        if r.gxmax_state() == "ready":
-            if not gxmax_release(False)(job):
-                job.log("release failed; not re-acquiring")
-                return False
+        if r.gxmax_state() == "ready" and not gxmax_release(False)(job):
+            job.log("release failed; not re-acquiring")
+            return False
         return gxmax_acquire(job)
 
     def pre_gxmax_load() -> str | None:

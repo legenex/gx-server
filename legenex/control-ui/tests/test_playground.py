@@ -84,7 +84,8 @@ class TestValidation(unittest.TestCase):
 
 class TestPlaygroundCalls(unittest.TestCase):
     def setUp(self):
-        self.completion = {"id": "x", "model": "gx-mini", "usage": {"prompt_tokens": 3, "completion_tokens": 2, "total_tokens": 5},
+        self.completion = {"id": "x", "model": "gx-mini",
+                           "usage": {"prompt_tokens": 3, "completion_tokens": 2, "total_tokens": 5},
                            "choices": [{"message": {"role": "assistant", "content": "391"}}]}
         self.stub = StubUpstream({
             ("POST", "/v1/chat/completions"): (200, self.completion),

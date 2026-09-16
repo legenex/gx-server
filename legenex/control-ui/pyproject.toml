@@ -1,0 +1,24 @@
+# Tooling configuration only. The control UI has no Python runtime
+# dependencies (stdlib only); ruff and mypy run from a local, ignored .venv
+# created by scripts/qa.sh.
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B", "S", "UP", "SIM"]
+ignore = [
+  "S603", "S607",  # subprocess with fixed argument lists is the design (see actions.py)
+  "S310",          # urllib to fixed internal URLs
+  "S104",          # bind address is validated in config._resolve_hosts
+  "SIM105", "SIM108", "B008",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101", "S105", "S106", "S108", "B011", "E731"]
+
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
+check_untyped_defs = true
+warn_unused_ignores = false

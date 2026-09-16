@@ -14,7 +14,8 @@ import re
 import threading
 import time
 import urllib.parse
-from typing import Any, Iterator
+from collections.abc import Generator
+from typing import Any
 
 from .config import UIConfig
 from .models import ResultLog
@@ -226,14 +227,14 @@ class Playground:
         finally:
             self._slots.release()
 
-    def chat_stream(self, body: dict) -> Iterator[bytes]:
+    def chat_stream(self, body: dict) -> Generator[bytes, None, None]:
         """Yield the upstream SSE stream unchanged (it carries no credential),
         followed by one gx-meta event with timing."""
         req = build_chat({**body, "stream": True})
         self._gxmax_guard(req, body)
         import urllib.request
 
-        def gen() -> Iterator[bytes]:
+        def gen() -> Generator[bytes, None, None]:
             # The slot is taken inside the generator so that a generator that
             # is never started cannot leak it.
             if not self._slots.acquire(blocking=False):
@@ -256,8 +257,8 @@ class Playground:
                     if hasattr(exc, "read"):
                         try:
                             body_txt = exc.read().decode("utf-8", "replace")[:1000]
-                        except Exception:  # noqa: BLE001
-                            pass
+                        except Exception:  # noqa: BLE001 - the error body is optional detail
+                            body_txt = ""
                     msg = redact(f"{exc} {body_txt}".strip())
                     yield f"event: gx-error\ndata: {json.dumps({'error': msg})}\n\n".encode()
                     self.results.record(req["model"], "inference", False, msg)
@@ -368,8 +369,10 @@ class Playground:
             raise PlaygroundError("unknown video job", 404)
         if isinstance(data, dict) and data.get("status") in ("completed", "failed"):
             ok = data.get("status") == "completed"
+            raw_gx = data.get("gx")
+            gx: dict = raw_gx if isinstance(raw_gx, dict) else {}
             self.results.record("gx-video", "inference", ok, f"job {job_id} {data.get('status')}",
-                                seconds=data.get("gx", {}).get("elapsed_seconds") if isinstance(data.get("gx"), dict) else None)
+                                seconds=gx.get("elapsed_seconds"))
         return {"status": status, "job": redact_obj(data)}
 
     def video_content(self, job_id: str) -> tuple[bytes, str]:
