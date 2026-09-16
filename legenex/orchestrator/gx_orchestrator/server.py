@@ -16,14 +16,18 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import re
 import sys
 import threading
 import time
 import urllib.parse
+import uuid
+from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable
 
-from .classifier import route
+from .classifier import request_fingerprint, route
 from .config import CONFIG, Config
 from .health import AliasState, TierHealth, TierStatus
 from .lifecycle import AcquisitionError, GxMaxLifecycle, LifecycleStatus, State
@@ -33,6 +37,74 @@ from .upstream import UpstreamError, post_json, stream_post
 log = logging.getLogger("gx.server")
 
 ROUTING_LOG = "gx.routing"
+
+_REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,96}$")
+
+
+class RoutingJournal:
+    """Append-only JSONL record of gx-auto decisions (no prompt text).
+
+    One `decision` record when a tier is chosen and one `completed` record
+    when the response has been relayed, both carrying the request id and the
+    messages fingerprint so a caller can find ITS decision, not "the last
+    line". Size-bounded: the file rotates to `.1` past `max_bytes`.
+    """
+
+    def __init__(self, path: Path, max_bytes: int = 20 * 1024 * 1024) -> None:
+        self.path = path
+        self.max_bytes = max_bytes
+        self._lock = threading.Lock()
+
+    def write(self, record: dict[str, Any]) -> None:
+        line = json.dumps(record, separators=(",", ":"), default=str) + "\n"
+        with self._lock:
+            try:
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+                if self.path.exists() and self.path.stat().st_size > self.max_bytes:
+                    os.replace(self.path, self.path.with_suffix(self.path.suffix + ".1"))
+                with self.path.open("a", encoding="utf-8") as fh:
+                    fh.write(line)
+            except OSError:
+                log.warning("routing journal write failed", exc_info=True)
+
+    def find(self, *, request_id: str = "", fingerprint: str = "", limit: int = 50) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        with self._lock:
+            try:
+                lines = self.path.read_text(encoding="utf-8").splitlines()[-5000:]
+            except OSError:
+                return out
+        for line in reversed(lines):
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if request_id and rec.get("request_id") != request_id:
+                continue
+            if fingerprint and rec.get("fingerprint") != fingerprint:
+                continue
+            out.append(rec)
+            if len(out) >= limit:
+                break
+        return out
+
+
+def clamp_output_budget(payload: dict[str, Any], tier: Tier) -> dict[str, Any]:
+    """Return a copy of `payload` whose output budget fits `tier`.
+
+    Agent clients request their whole advertised output window on every turn;
+    forwarding that unchanged makes vLLM reject the request when prompt +
+    max_tokens exceeds the served context.
+    """
+    limit = TIERS[tier].max_output if tier in TIERS else None
+    out = dict(payload)
+    if not limit:
+        return out
+    for key in ("max_tokens", "max_completion_tokens"):
+        value = out.get(key)
+        if isinstance(value, int) and value > limit:
+            out[key] = limit
+    return out
 
 #: How lifecycle.State maps onto the shared AliasState vocabulary (see
 #: health.py). RELEASING has no exact match in that six-word vocabulary; it is
@@ -127,6 +199,7 @@ class Handler(BaseHTTPRequestHandler):
     cfg: Config
     lifecycle: GxMaxLifecycle
     health: TierHealth
+    journal: RoutingJournal
 
     # ---------------------------------------------------------------- helpers
     def log_message(self, fmt: str, *args: Any) -> None:  # noqa: A003
@@ -197,6 +270,20 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
 
+        if path == "/routing/decisions":
+            # Read-only lookup of gx-auto decisions by request id or
+            # fingerprint. Contains features and reasons, never prompt text.
+            query = urllib.parse.parse_qs(self.path.partition("?")[2])
+            rid = (query.get("request_id") or [""])[0]
+            fp = (query.get("fingerprint") or [""])[0]
+            try:
+                limit = max(1, min(200, int((query.get("limit") or ["50"])[0])))
+            except ValueError:
+                self._send_error_json(400, "limit must be an integer", "invalid_request")
+                return
+            self._send_json(200, {"data": self.journal.find(request_id=rid, fingerprint=fp, limit=limit)})
+            return
+
         if path == "/lifecycle/gx-max/status":
             self._send_json(200, self.lifecycle.status().as_dict())
             return
@@ -263,7 +350,17 @@ class Handler(BaseHTTPRequestHandler):
                 "invalid_model",
             )
 
+    def _request_id(self) -> str:
+        for name in ("X-GX-Request-Id", "X-Request-Id", "X-LiteLLM-Call-Id"):
+            value = (self.headers.get(name) or "").strip()
+            if value and _REQUEST_ID_RE.match(value):
+                return value
+        return uuid.uuid4().hex
+
     def _serve_auto(self, path: str, payload: dict[str, Any]) -> None:
+        started = time.monotonic()
+        request_id = self._request_id()
+        fingerprint = request_fingerprint(payload)
         tiers = self.health.snapshot()
         lc_status = self.lifecycle.status()
         max_status = _max_tier_status(lc_status, tiers[Tier.REASON])
@@ -275,59 +372,67 @@ class Handler(BaseHTTPRequestHandler):
         avail[Tier.MAX] = max_status.usable
         gxmax_busy = lc_status.state is State.ACQUIRING
         decision = route(payload, available=avail, busy={Tier.MAX: gxmax_busy})
+        note = ""
 
-        # Every routing decision is logged, as required by the spec.
-        logging.getLogger(ROUTING_LOG).info(json.dumps(decision.as_log_dict()))
-
-        if decision.tier is Tier.MAX:
+        if decision.tier is Tier.MAX and lc_status.state is not State.READY:
             # gx-auto may USE gx-max when it is already up. It must never
-            # ACQUIRE it (human requirement, 2026-09-16).
-            #
-            # Acquiring gx-max is not a cheap operation that happens to fail:
-            # gx-max-start.sh drains gx-mini, gx-fast and llama-swap on BOTH
-            # nodes before it does anything else, because gx-max takes over the
-            # whole cluster. Letting an ordinary gx-auto request trigger that is
-            # wrong even when it succeeds, and measurably disruptive when it
-            # does not -- observed live on 2026-09-16: a single gx-auto prompt
-            # containing the word "exhaustive" tore down node 1's resident
-            # models and both llama-swaps, was refused by the admission guard,
-            # and spent ~12 s putting everything back.
-            #
-            # Taking over both nodes is a deliberate, operator-initiated act. It
-            # stays on the DIRECT gx-max path (_serve_gx_max) and the explicit
-            # /lifecycle/gx-max/acquire endpoint, where a human asked for it.
-            if lc_status.state is State.READY:
-                self._proxy(
+            # ACQUIRE it (human requirement, 2026-09-16): acquisition drains
+            # both nodes, and a single gx-auto prompt once tore down node 1's
+            # resident models doing exactly that. Taking over the cluster is
+            # a deliberate act on the DIRECT gx-max path only.
+            note = f"gx-max not running ({lc_status.state.value}); gx-auto does not acquire it"
+            log.info("gx-auto selected gx-max but it is %s; routing to the best available "
+                     "tier instead", lc_status.state.value)
+            decision = route(payload, available=avail, busy={Tier.MAX: True})
+
+        record = {
+            "event": "decision",
+            "ts": time.time(),
+            "request_id": request_id,
+            "fingerprint": fingerprint,
+            "stream": bool(payload.get("stream")),
+            **decision.as_log_dict(),
+        }
+        if note:
+            record["note"] = note
+        # Every routing decision is logged, as required by the spec.
+        logging.getLogger(ROUTING_LOG).info(json.dumps(record))
+        self.journal.write(record)
+
+        forwarded = clamp_output_budget(payload, decision.tier)
+        status = 0
+        try:
+            if decision.tier is Tier.MAX:
+                status = self._proxy(
                     f"{self.cfg.gxmax_base.rstrip('/')}/chat/completions",
-                    {**payload, "model": self.cfg.gxmax_model_id},
+                    {**forwarded, "model": self.cfg.gxmax_model_id},
                     routed_as=Tier.MAX,
+                    request_id=request_id,
                 )
                 self.lifecycle.mark_used()
-                return
-            log.info(
-                "gx-auto selected gx-max but it is %s; routing to the best available "
-                "tier instead (gx-auto never acquires gx-max)",
-                lc_status.state.value,
-            )
-            fallback = route(payload, available=avail, busy={Tier.MAX: True})
-            logging.getLogger(ROUTING_LOG).info(
-                json.dumps({
-                    **fallback.as_log_dict(),
-                    "note": f"gx-max not running ({lc_status.state.value}); "
-                            "gx-auto does not acquire it",
-                })
-            )
-            decision = fallback
-
-        upstream = f"{self.cfg.gateway_base.rstrip('/')}{path[len('/v1'):]}"
-        self._proxy(
-            f"{self.cfg.gateway_base.rstrip('/')}/chat/completions"
-            if path == "/v1/chat/completions"
-            else upstream,
-            {**payload, "model": decision.tier.value},
-            routed_as=decision.tier,
-            headers=self._auth_headers(),
-        )
+            else:
+                url = (
+                    f"{self.cfg.gateway_base.rstrip('/')}/chat/completions"
+                    if path == "/v1/chat/completions"
+                    else f"{self.cfg.gateway_base.rstrip('/')}{path[len('/v1'):]}"
+                )
+                status = self._proxy(
+                    url,
+                    {**forwarded, "model": decision.tier.value},
+                    routed_as=decision.tier,
+                    headers=self._auth_headers(),
+                    request_id=request_id,
+                )
+        finally:
+            self.journal.write({
+                "event": "completed",
+                "ts": time.time(),
+                "request_id": request_id,
+                "fingerprint": fingerprint,
+                "tier": decision.tier.value,
+                "status": status,
+                "elapsed_ms": round((time.monotonic() - started) * 1000, 1),
+            })
 
     def _serve_gx_max(self, path: str, payload: dict[str, Any], *, direct: bool) -> None:
         """Serve a DIRECT gx-max request. Never downgrades -- fails loudly instead."""
@@ -359,7 +464,9 @@ class Handler(BaseHTTPRequestHandler):
         *,
         routed_as: Tier,
         headers: dict[str, str] | None = None,
-    ) -> None:
+        request_id: str = "",
+    ) -> int:
+        """Relay one request; returns the HTTP status sent to the client."""
         streaming = bool(payload.get("stream"))
         try:
             if streaming:
@@ -367,6 +474,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_header("Content-Type", "text/event-stream")
                 self.send_header("Cache-Control", "no-cache")
                 self.send_header("X-GX-Routed-To", routed_as.value)
+                if request_id:
+                    self.send_header("X-GX-Request-Id", request_id)
                 self.send_header("Transfer-Encoding", "chunked")
                 self.end_headers()
                 for chunk in stream_post(
@@ -378,7 +487,7 @@ class Handler(BaseHTTPRequestHandler):
                     self.wfile.flush()
                 self.wfile.write(b"0\r\n\r\n")
                 self.wfile.flush()
-                return
+                return 200
 
             resp = post_json(url, payload, headers=headers, timeout=self.cfg.upstream_timeout)
             body = resp.body
@@ -386,14 +495,19 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
             self.send_header("X-GX-Routed-To", routed_as.value)
+            if request_id:
+                self.send_header("X-GX-Request-Id", request_id)
             self.end_headers()
             self.wfile.write(body)
+            return resp.status
         except UpstreamError as exc:
             log.error("upstream %s failed: %s", url, exc)
             self._send_error_json(exc.status, exc.body, "upstream_error")
+            return exc.status
         except Exception as exc:  # noqa: BLE001
             log.exception("proxy to %s failed", url)
             self._send_error_json(502, f"proxy failure: {exc!r}", "bad_gateway")
+            return 502
 
 
 def build_servers(cfg: Config | None = None) -> tuple[list[ThreadingHTTPServer], GxMaxLifecycle]:
@@ -414,7 +528,12 @@ def build_servers(cfg: Config | None = None) -> tuple[list[ThreadingHTTPServer],
     handler = type(
         "BoundHandler",
         (Handler,),
-        {"cfg": cfg, "lifecycle": lifecycle, "health": TierHealth(cfg)},
+        {
+            "cfg": cfg,
+            "lifecycle": lifecycle,
+            "health": TierHealth(cfg),
+            "journal": RoutingJournal(cfg.log_dir / "gx-auto-routing.jsonl"),
+        },
     )
     servers: list[ThreadingHTTPServer] = []
     for host in cfg.hosts:
