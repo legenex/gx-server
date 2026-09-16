@@ -180,6 +180,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         for k, v in (extra or {}).items():
             self.send_header(k, v)
+        if self.close_connection:
+            self.send_header("Connection", "close")
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(body)
@@ -197,19 +199,41 @@ class Handler(BaseHTTPRequestHandler):
     def _error(self, status: int, message: str, code: str = "error") -> None:
         self._json(status, {"error": {"message": redact(message), "code": code}})
 
-    def _body(self, limit: int) -> dict:
+    def _consume_body(self, path: str) -> None:
+        """Read the whole request body up front (bounded).
+
+        Every POST body is consumed before anything is answered, otherwise an
+        unread body stays in a keep-alive socket and is parsed as the start of
+        the next request. An over-limit body is not read; the connection is
+        closed after the error instead.
+        """
+        self._raw = b""
+        self._body_error: Exception | None = None
         try:
             length = int(self.headers.get("Content-Length") or 0)
         except ValueError:
-            raise ValueError("invalid Content-Length") from None
-        if length > limit:
+            self.close_connection = True
+            self._body_error = ValueError("invalid Content-Length")
+            return
+        limit = MAX_BODY_PLAYGROUND if path == "/api/playground/chat" else MAX_BODY
+        if length < 0 or length > limit:
+            self.close_connection = True
+            self._body_error = OverflowError(f"request body exceeds {limit} bytes")
+            return
+        if length:
+            self._raw = self.rfile.read(length)
+
+    def _body(self, limit: int) -> dict:
+        if self._body_error is not None:
+            raise self._body_error
+        if len(self._raw) > limit:
             raise OverflowError(f"request body exceeds {limit} bytes")
-        if length == 0:
+        if not self._raw:
             return {}
         ctype = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
         if ctype != "application/json":
             raise ValueError("Content-Type must be application/json")
-        data = json.loads(self.rfile.read(length).decode("utf-8"))
+        data = json.loads(self._raw.decode("utf-8"))
         if not isinstance(data, dict):
             raise ValueError("JSON body must be an object")
         return data
@@ -244,6 +268,7 @@ class Handler(BaseHTTPRequestHandler):
         self._reject_method()
 
     def _reject_method(self) -> None:
+        self.close_connection = True
         self._t0 = time.time()
         self._status = 405
         self._error(405, "method not allowed", "method_not_allowed")
@@ -256,6 +281,9 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urllib.parse.urlsplit(self.path)
         path = parsed.path
         self.query = urllib.parse.parse_qs(parsed.query, max_num_fields=20)
+        self._raw, self._body_error = b"", None
+        if method == "POST":
+            self._consume_body(path)
         try:
             if not path.startswith("/api/"):
                 self._static(path)

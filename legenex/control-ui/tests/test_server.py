@@ -307,6 +307,38 @@ class TestAuthenticatedApi(ServerBase):
         self.assertFalse([n for n in names if "upgrade" in n or "firmware" in n or "kernel_update" in n])
 
 
+class TestKeepAlive(ServerBase):
+    """Regression: an unread POST body used to poison the next request on a
+    keep-alive connection ("{}GET ..." -> 501)."""
+
+    def test_body_consumed_on_every_post(self):
+        self.login()
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+        base = {"Host": f"127.0.0.1:{self.port}", "Cookie": self.cookie, "Content-Type": "application/json"}
+        # rejected before the handler runs (no CSRF), then an accepted logout
+        for headers in ({}, {"X-CSRF-Token": self.csrf}):
+            conn.request("POST", "/api/logout", body=b'{"x": 1}', headers={**base, **headers})
+            resp = conn.getresponse()
+            resp.read()
+        self.assertEqual(resp.status, 200)
+        conn.request("GET", "/api/overview", headers=base)
+        resp = conn.getresponse()
+        resp.read()
+        self.assertEqual(resp.status, 401)
+        conn.close()
+
+    def test_oversized_body_closes_connection(self):
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+        conn.putrequest("POST", "/api/login")
+        conn.putheader("Content-Type", "application/json")
+        conn.putheader("Content-Length", str(srv.MAX_BODY + 1))
+        conn.endheaders()
+        resp = conn.getresponse()
+        self.assertEqual(resp.status, 413)
+        self.assertEqual(resp.getheader("Connection"), "close")
+        conn.close()
+
+
 class TestBindSafety(unittest.TestCase):
     def test_wildcard_bind_refused(self):
         from gx_control_ui.config import _resolve_hosts
