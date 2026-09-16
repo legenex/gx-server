@@ -129,35 +129,24 @@ WORKLOAD_SIZING: dict[str, WorkloadSpec] = {
         "workload.",
     ),
     "gx-max-rank0": WorkloadSpec(
-        "gx-max-rank0", "node1", WorkloadClass.EXCLUSIVE, 117.0,
+        "gx-max-rank0", "node1", WorkloadClass.EXCLUSIVE, 105.0,
         "SGLang TP=2 rank0, DeepSeek V4 Flash NVFP4. Takes over node1. "
-        "90 -> 95 (2026-09-15, after a real OOM-kill during weight loading, "
-        "B-020) -> 92 (2026-09-16, MEASURED across four real two-node runs). "
-        "117 GiB is the measured LOAD-PHASE PEAK, not the steady state, and that "
-        "is deliberate: a launch has to survive its peak, and sizing admission "
-        "from the steady state is exactly how the 2026-09-15 attempt was "
-        "admitted with '20 GiB of nominal slack' and then OOM-killed anyway "
-        "(B-020). Eight instrumented two-node runs on 2026-09-16 measured "
-        "loading one rank taking a 121.63 GiB node from ~110 GiB MemAvailable "
-        "down to between 437 MiB and 0 MiB, on BOTH nodes, ending in a kernel "
-        "global OOM kill of the SGLang scheduler. Nothing moved it: "
-        "--mem-fraction-static (0.50/0.70), --context-length, "
-        "--chunked-prefill-size, --cuda-graph-max-bs-decode, "
-        "--max-running-requests, the container --memory cap (106g down to 28g) "
-        "and --load-format (auto/layered/runai_streamer) were each tested. "
-        "The consequence is intended: 117 + any reserve exceeds the node, so "
-        "this guard REFUSES gx-max rather than starting a launch measurement "
-        "says will be OOM-killed. Lifting it is a human decision about a "
-        "LOCKED constraint -- see B-022 and D-022.",
+        "This is the STEADY-STATE residency the ledger records once serving "
+        "(--mem-fraction-static 0.80 x 121.63 GiB = 97.3 GiB static pool plus "
+        "process/driver overhead). It is NOT admitted with the ordinary "
+        "estimate+reserve formula: gx-max uses compute_takeover_admission() "
+        "(D-025). The ~117 GiB load-phase peak is a transient absorbed by "
+        "/swapfile-sglang (the 2026-09-14 verified run went to 63/63 GB swap "
+        "and recovered) and is policed live by gx-max-safety.sh, not by "
+        "admission arithmetic. History: 90 -> 95 -> 117 (peak, which made "
+        "gx-max mathematically unlaunchable, B-022) -> 105 (steady, D-025).",
     ),
     "gx-max-rank1": WorkloadSpec(
-        "gx-max-rank1", "node2", WorkloadClass.EXCLUSIVE, 117.0,
-        "SGLang TP=2 rank1. Takes over node2. See gx-max-rank0's note "
-        "(B-020/B-021/B-022). Node 2 measures WORSE than node 1 during the "
-        "load transient (1 GiB vs 8-12 GiB MemAvailable) despite a smaller "
-        "baseline, and a node-2 wedge is the B-012 signature -- which is why "
-        "rank1, not rank0, is the one with a resident self-termination "
-        "watchdog (legenex/lifecycle/rank1-deadman.sh).",
+        "gx-max-rank1", "node2", WorkloadClass.EXCLUSIVE, 105.0,
+        "SGLang TP=2 rank1. Takes over node2. See gx-max-rank0's note. rank1 "
+        "carries a node-local watchdog (legenex/lifecycle/rank1-deadman.sh) "
+        "that applies the same gx-max-safety.sh rules on node 2 and removes "
+        "rank1 if rank0 disappears (B-020).",
     ),
     "comfyui": WorkloadSpec(
         "comfyui", "node2", WorkloadClass.MEDIUM, 44.0,
@@ -297,6 +286,156 @@ def compute_admission(
         node,
         numbers,
     )
+
+
+# ---------------------------------------------------------------------------
+# gx-max cluster-takeover admission (D-025)
+# ---------------------------------------------------------------------------
+#
+# gx-max is not "one more workload on a node". It is an exclusive takeover of
+# BOTH nodes whose memory has three distinct phases, and the ordinary
+# `estimated + reserve <= node` formula above conflates them:
+#
+#   1. PRE-LAUNCH CLEAN STATE  -- what must be true before rank1 starts.
+#   2. STARTUP TRANSIENT       -- ~117 GiB per node while weights stage;
+#                                 absorbed by /swapfile-sglang and released.
+#                                 Monitored live (gx-max-safety.sh), NOT
+#                                 admitted against: 117 + 30 > 121.63 always.
+#   3. STEADY-STATE RESIDENCY  -- what the ledger records once serving.
+#
+# The 30 GiB reserve still applies to every ordinary single-node tier via
+# compute_admission(); only this takeover path uses the policy below.
+
+
+@dataclasses.dataclass(frozen=True)
+class TakeoverPolicy:
+    clean_start_min_avail_gib: float = 100.0
+    min_swap_free_gib: float = 40.0
+    max_psi_full_avg10: float = 5.0
+    require_swapfile: bool = True
+    #: Documentation only: the measured load envelope. Never an admission term.
+    startup_transient_gib: float = 117.0
+
+
+@dataclasses.dataclass(frozen=True)
+class NodeFacts:
+    """A clean-start snapshot of one node (gx-max-safety.sh gxs_clean_start_facts)."""
+
+    avail_mib: int
+    swap_free_mib: int
+    swap_total_mib: int
+    swapfile_active: bool
+    psi_full10: float
+
+    @classmethod
+    def parse(cls, line: str) -> "NodeFacts":
+        kv = dict(part.split("=", 1) for part in line.split() if "=" in part)
+        try:
+            return cls(
+                avail_mib=int(kv["avail_mib"]),
+                swap_free_mib=int(kv["swap_free_mib"]),
+                swap_total_mib=int(kv["swap_total_mib"]),
+                swapfile_active=kv["swapfile_active"] == "1",
+                psi_full10=float(kv["psi_full10"]),
+            )
+        except (KeyError, ValueError) as exc:
+            raise ValueError(f"malformed node facts {line!r}: {exc}") from exc
+
+
+def read_node_facts(
+    swapfile: str = "/swapfile-sglang",
+    *,
+    meminfo_path: "str | os.PathLike[str]" = "/proc/meminfo",
+    swaps_path: "str | os.PathLike[str]" = "/proc/swaps",
+    psi_path: "str | os.PathLike[str]" = "/proc/pressure/memory",
+) -> NodeFacts:
+    """Python twin of gx-max-safety.sh's gxs_clean_start_facts, for this host."""
+    mem = {}
+    with open(meminfo_path, encoding="ascii") as fh:
+        for line in fh:
+            key, _, rest = line.partition(":")
+            if key in ("MemAvailable", "SwapFree", "SwapTotal"):
+                mem[key] = int(rest.split()[0]) // 1024
+    active = False
+    try:
+        with open(swaps_path, encoding="ascii") as fh:
+            active = any(line.split()[:1] == [swapfile] for line in list(fh)[1:])
+    except OSError:
+        pass
+    psi_full = 0.0
+    try:
+        with open(psi_path, encoding="ascii") as fh:
+            for line in fh:
+                if line.startswith("full"):
+                    psi_full = float(line.split()[1].split("=")[1])
+    except (OSError, IndexError, ValueError):
+        pass
+    return NodeFacts(mem["MemAvailable"], mem["SwapFree"], mem["SwapTotal"], active, psi_full)
+
+
+def compute_takeover_admission(
+    node: str,
+    facts: NodeFacts,
+    *,
+    other_exclusive_residents: "list[str]",
+    policy: TakeoverPolicy = TakeoverPolicy(),
+) -> AdmissionResult:
+    """Pure decision: may gx-max take over `node` right now?
+
+    Every refusal names the one condition that failed, so an operator never
+    has to guess which half of a two-node launch said no.
+    """
+    avail_gib = facts.avail_mib / 1024.0
+    swap_free_gib = facts.swap_free_mib / 1024.0
+    numbers = {
+        "policy": "gx-max-takeover",
+        "mem_available_gib": round(avail_gib, 1),
+        "clean_start_min_avail_gib": policy.clean_start_min_avail_gib,
+        "swap_free_gib": round(swap_free_gib, 1),
+        "min_swap_free_gib": policy.min_swap_free_gib,
+        "swapfile_active": facts.swapfile_active,
+        "psi_full_avg10": facts.psi_full10,
+        "startup_transient_gib": policy.startup_transient_gib,
+    }
+    checks = [
+        (not other_exclusive_residents,
+         f"refused: {node} still hosts large/exclusive resident(s) {other_exclusive_residents}; drain first"),
+        (facts.swapfile_active or not policy.require_swapfile,
+         f"refused: /swapfile-sglang is not active on {node} (L-8); the load transient needs it"),
+        (swap_free_gib >= policy.min_swap_free_gib,
+         f"refused: {node} swap free {swap_free_gib:.1f}GiB < {policy.min_swap_free_gib:.1f}GiB needed to absorb the load transient"),
+        (avail_gib >= policy.clean_start_min_avail_gib,
+         f"refused: {node} MemAvailable {avail_gib:.1f}GiB < clean-start minimum {policy.clean_start_min_avail_gib:.1f}GiB; something is still resident"),
+        (facts.psi_full10 <= policy.max_psi_full_avg10,
+         f"refused: {node} is already under memory pressure (PSI full avg10 {facts.psi_full10} > {policy.max_psi_full_avg10})"),
+    ]
+    for ok, reason in checks:
+        if not ok:
+            return AdmissionResult(False, reason, node, numbers)
+    return AdmissionResult(
+        True,
+        f"admitted: {node} clean ({avail_gib:.1f}GiB available, {swap_free_gib:.1f}GiB swap free, swapfile active)",
+        node,
+        numbers,
+    )
+
+
+def check_takeover_admission(
+    node: str,
+    name: str,
+    facts: NodeFacts,
+    *,
+    state_dir: Path,
+    policy: TakeoverPolicy = TakeoverPolicy(),
+    is_running: "Callable[[str], bool] | None" = None,
+) -> AdmissionResult:
+    """Reconcile the ledger, then apply the takeover policy. No locking."""
+    ledger = ResidencyLedger(Path(state_dir) / f"{node}-residency.json", is_running=is_running)
+    others = ledger.exclusive_residents(node, exclude=name)
+    result = compute_takeover_admission(node, facts, other_exclusive_residents=others, policy=policy)
+    level = log.info if result.allowed else log.warning
+    level("gx.guard: %s", json.dumps({"name": name, **result.as_log_dict()}))
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -667,6 +806,16 @@ def _build_parser() -> argparse.ArgumentParser:
     check.add_argument("--node-total-gib", type=float, default=DEFAULT_NODE_TOTAL_GIB)
     check.add_argument("--meminfo-path", default="/proc/meminfo")
 
+    tk = sub.add_parser(
+        "takeover-check",
+        help="gx-max cluster-takeover admission for one node (D-025); no locking",
+    )
+    common(tk)
+    tk.add_argument("--facts", required=True, help="key=value line from gx-max-safety.sh gxs_clean_start_facts")
+    tk.add_argument("--min-avail-gib", type=float, default=TakeoverPolicy.clean_start_min_avail_gib)
+    tk.add_argument("--min-swap-free-gib", type=float, default=TakeoverPolicy.min_swap_free_gib)
+    tk.add_argument("--max-psi-full", type=float, default=TakeoverPolicy.max_psi_full_avg10)
+
     register = sub.add_parser("register", help="Record a workload as resident (call after a successful launch)")
     common(register)
     register.add_argument("--class", dest="workload_class", required=True, choices=[c.value for c in WorkloadClass])
@@ -698,6 +847,21 @@ def _cli(argv: "list[str] | None" = None) -> int:
             node_total_gib=args.node_total_gib,
             meminfo_path=args.meminfo_path,
         )
+        print(json.dumps(result.as_log_dict()))
+        return 0 if result.allowed else 2
+
+    if args.cmd == "takeover-check":
+        try:
+            facts = NodeFacts.parse(args.facts)
+        except ValueError as exc:
+            print(json.dumps({"allowed": False, "reason": f"refused: {exc}", "node": args.node}))
+            return 2
+        policy = TakeoverPolicy(
+            clean_start_min_avail_gib=args.min_avail_gib,
+            min_swap_free_gib=args.min_swap_free_gib,
+            max_psi_full_avg10=args.max_psi_full,
+        )
+        result = check_takeover_admission(args.node, args.name, facts, state_dir=state_dir, policy=policy)
         print(json.dumps(result.as_log_dict()))
         return 0 if result.allowed else 2
 

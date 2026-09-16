@@ -46,35 +46,33 @@ _MAX_STATE_MAP: dict[State, AliasState] = {
 
 
 def _gx_max_admission_blocked() -> str:
-    """Return a reason string if the admission guard would refuse gx-max, else "".
+    """Return a reason string if gx-max could not be admitted from here, else "".
 
-    gx-max is the one tier whose availability is not a question of whether its
-    process is running -- it is a question of whether the guard will let it
-    start at all. Reporting `usable: true` for a tier that the guard refuses on
-    every single attempt is a fake healthy state, which this project forbids,
-    and it is exactly what `gx status` showed before this existed: `gx-max ->
-    stopped, usable`, for a tier that cannot be brought up on this hardware
-    (coordination/BLOCKERS.md B-022).
+    gx-max is the one tier whose availability is not only a question of
+    whether its process is running -- it is also whether it is allowed to
+    start. Reporting `usable: true` for a tier that would be refused is a fake
+    healthy state, which this project forbids (D-024).
 
-    Deliberately read-only and best-effort: it runs the same
-    `compute_admission` arithmetic every launch path uses, against live
-    /proc/meminfo, and takes no lock. If anything about the probe fails we
-    return "" and fall back to the old behaviour rather than inventing a
-    fault -- a broken probe must not make a healthy tier look down.
+    Since D-025 gx-max uses the cluster-takeover policy, not
+    estimate+reserve. This probe checks the preconditions that DRAINING
+    CANNOT FIX on node 1 -- /swapfile-sglang active, swap headroom for the
+    load transient, no pre-existing memory pressure. It deliberately does not
+    demand the drained-state MemAvailable: while gx-mini/gx-fast are loaded
+    the node is not drained, and gx-max-start.sh drains before it judges
+    that. The full two-node check runs, under both locks, at launch.
+
+    Read-only, takes no lock, and a probe failure returns "" rather than
+    inventing a fault.
     """
     try:
         from . import resource_guard as rg
 
-        spec = rg.WORKLOAD_SIZING.get("gx-max-rank0")
-        if spec is None:
-            return ""
-        result = rg.compute_admission(
+        facts = rg.read_node_facts()
+        result = rg.compute_takeover_admission(
             "node1",
-            spec.estimated_gib,
-            current_residency_gib=0.0,
-            mem_available_gib=rg.read_mem_available_gib(),
-            reserve_gib=rg.DEFAULT_RESERVE_GIB,
-            node_total_gib=rg.DEFAULT_NODE_TOTAL_GIB,
+            facts,
+            other_exclusive_residents=[],
+            policy=rg.TakeoverPolicy(clean_start_min_avail_gib=0.0),
         )
         return "" if result.allowed else f"admission_refused: {result.reason}"
     except Exception:  # noqa: BLE001 - never let a probe failure fake a fault

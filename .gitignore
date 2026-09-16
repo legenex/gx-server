@@ -53,3 +53,80 @@ TODO.md
 
 # Status written by the gx10-02 worker agent (not canonical)
 coordination/node2/
+
+# ============================================================================
+# Public-repository hardening (D-026, 2026-09-16). This checkout is synced
+# automatically to a PUBLIC GitHub repository. Git holds code, config
+# templates and documentation only. Mutable runtime state lives under
+# /srv/projects/gx-cluster/{state,runtime,secrets}; logs under /srv/logs.
+# ============================================================================
+# --- secrets / credentials ---
+*.env
+!*.env.sample
+!*.env.example
+!*.env.template
+!legenex/gateway/llama-swap/env/*.env
+.env.*
+!.env.sample
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.keystore
+id_rsa*
+id_ed25519*
+id_ecdsa*
+*.kubeconfig
+secrets/
+.secrets/
+*.token
+credentials*.json
+.netrc
+.git-credentials
+# --- model weights / checkpoints (never in Git; manifests only) ---
+*.gguf
+*.safetensors
+*.ckpt
+*.pt
+*.pth
+*.onnx
+*.bin
+*.h5
+*.tflite
+models/
+/srv/
+# --- generated media / ComfyUI output ---
+output/
+outputs/
+*.mp4
+*.webm
+*.mov
+comfyui-output/
+# --- archives / swap / dumps ---
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+*.7z
+*.zst
+*.bundle
+swapfile*
+*.swap
+core
+core.*
+# --- runtime state / caches ---
+.state/
+.cache/
+cache/
+node_modules/
+.venv/
+venv/
+*.lock
+!**/package-lock.json
+*-residency.json
+*.tsv
+tmp/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/

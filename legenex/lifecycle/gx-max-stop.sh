@@ -49,6 +49,12 @@ if [ "${FORCE}" -eq 0 ] && gxmax_healthy; then
 fi
 
 # ------------------------------------------------------------------ teardown --
+# A deliberate release is not a failure: stop node 1's steady-state watcher
+# first so it cannot mistake this teardown for a dead rank and start an unwind.
+wpid="${GX_STATE_ROOT:-/srv/projects/gx-cluster/state}/gx-max-rank0-watch.pid"
+[ -f "${wpid}" ] && kill "$(cat "${wpid}")" >/dev/null 2>&1 || true
+rm -f "${wpid}"
+
 # rank0 first (it owns the HTTP server and the bootstrap store), then rank1.
 log "stopping rank0 on node1"
 docker stop -t 30 "${GXMAX_RANK0_NAME}" >/dev/null 2>&1 || true

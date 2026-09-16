@@ -10,9 +10,11 @@
 # Coverage:
 #   E1  deadman fires when rank0 never appears           (startup grace)
 #   E2  deadman arms on rank0, fires when rank0 vanishes (death grace)
-#   E3  deadman fires on its own memory floor
+#   E3  deadman fires on SUSTAINED local memory+swap exhaustion
 #   E4  deadman does NOT apply the steady floor before the engine is ready,
 #       and DOES apply it after                          (phase latch)
+#   E6  deadman does NOT fire on a distress condition that has not yet been
+#       sustained (the verified load touched ~1 GiB and must survive)
 #   E5  gx-max-start.sh unwinds both nodes on a failed launch, and the
 #       unwind reports a verified-clean cluster
 #
@@ -22,7 +24,7 @@
 # concurrently with the acceptance suite or with live traffic: doing so on
 # 2026-09-16 SIGKILLed a gx-reason that an acceptance run was mid-way through
 # loading, and the resulting "gx-reason inference failed" looked like a
-# product bug for several minutes. Run `unwind-tests.sh E1 E2 E3 E4` for the
+# product bug for several minutes. Run `unwind-tests.sh E1 E2 E3 E4 E6` for the
 # non-destructive subset.
 #
 # Usage: legenex/tests/unwind-tests.sh [E1 E2 ...]
@@ -63,13 +65,16 @@ cleanup_all(){ cleanup_dm; kill_helpers; }
 trap cleanup_all EXIT
 kill_helpers   # clear anything a previous, interrupted run left behind
 
-arm(){ # arm <dist_addr> <startup_grace> <death_grace> <steady_floor> <load_floor> <health_url>
+arm(){ # arm <dist_addr> <startup_grace> <death_grace> <health_url> [VAR=value ...]
+  local dist="$1" sg="$2" dg="$3" url="$4"; shift 4
   cleanup_dm; rm -f "${DM_LOG}"
   docker run -d --name dm-test "${IMAGE}" sleep 300 >/dev/null
-  setsid nohup "${LC}/rank1-deadman.sh" "$1" dm-test "$2" "$3" 2 "$4" /tmp/dmtest.tsv "$5" "$6" \
+  env "$@" setsid nohup "${LC}/rank1-deadman.sh" "${dist}" dm-test "${sg}" "${dg}" 2 "${url}" /tmp/dmtest.tsv \
     >/dev/null 2>&1 </dev/null &
   sleep 3
 }
+# Conditions that are always true on a live host, used to force a rule.
+FORCE_EXHAUST=(GXMAX_CRIT_AVAIL_MIB=99999999 GXMAX_CRIT_SWAPFREE_MIB=99999999)
 gone(){ [ -z "$(docker inspect -f '{{.State.Running}}' dm-test 2>/dev/null | tr -d '[:space:]')" ]; }
 wait_gone(){ local n="${1:-20}"; for _ in $(seq 1 "$n"); do gone && return 0; sleep 1; done; return 1; }
 
@@ -93,14 +98,14 @@ s.close()" >/dev/null 2>&1 & echo $!; }
 t_E1(){
   echo "[E1] deadman fires when rank0 never appears"
   kill_helpers
-  arm 127.0.0.1:39998 8 60 0 0 http://127.0.0.1:1/health
+  arm 127.0.0.1:39998 8 60 http://127.0.0.1:1/health
   wait_gone 30 && pass "E1 orphan removed after the startup grace" \
                 || fail "E1" "container still running after startup grace"
 }
 t_E2(){
   echo "[E2] deadman arms on rank0, fires when rank0 vanishes"
   local pid; pid=$(fake_rank0 39997 10)
-  arm 127.0.0.1:39997 600 6 0 0 http://127.0.0.1:1/health
+  arm 127.0.0.1:39997 600 6 http://127.0.0.1:1/health
   grep -q "now armed" "${DM_LOG}" 2>/dev/null \
     && pass "E2 armed while rank0 was alive" || fail "E2 arm" "never saw rank0"
   wait_gone 40 && pass "E2 orphan removed after rank0 vanished" \
@@ -108,11 +113,21 @@ t_E2(){
   kill "${pid}" 2>/dev/null || true
 }
 t_E3(){
-  echo "[E3] deadman fires on its own load-phase memory floor"
+  echo "[E3] deadman fires on sustained local memory+swap exhaustion"
   kill_helpers
-  arm 127.0.0.1:39996 600 60 0 999 http://127.0.0.1:1/health
-  wait_gone 20 && pass "E3 removed on the load-phase floor" \
-                || fail "E3" "memory floor did not fire"
+  arm 127.0.0.1:39996 600 60 http://127.0.0.1:1/health "${FORCE_EXHAUST[@]}" GXMAX_EXHAUST_SUSTAIN_S=4
+  wait_gone 25 && pass "E3 removed after the exhaustion condition was sustained" \
+                || fail "E3" "sustained exhaustion did not fire"
+  grep -q "FIRING (local safety): memory AND swap exhausted" "${DM_LOG}" 2>/dev/null \
+    && pass "E3 fired for the right reason" || fail "E3 reason" "$(tail -2 "${DM_LOG}" 2>/dev/null)"
+}
+t_E6(){
+  echo "[E6] deadman rides out distress that has not been sustained"
+  kill_helpers
+  arm 127.0.0.1:39994 600 60 http://127.0.0.1:1/health "${FORCE_EXHAUST[@]}" GXMAX_EXHAUST_SUSTAIN_S=3600
+  sleep 12
+  gone && fail "E6" "fired on an unsustained condition" \
+       || pass "E6 held: a transient deep dip is not an abort"
 }
 t_E4(){
   echo "[E4] phase latch: steady floor applies only once the engine is ready"
@@ -124,7 +139,7 @@ t_E4(){
     fail "E4 precondition" "something is already listening on 127.0.0.1:39995"
     return
   fi
-  arm 127.0.0.1:39995 600 60 999 0 http://127.0.0.1:39995/health
+  arm 127.0.0.1:39995 600 60 http://127.0.0.1:39995/health GXMAX_STEADY_FLOOR_GIB=99999 GXMAX_STEADY_SUSTAIN_S=2
   sleep 6
   gone && { fail "E4 premature" "fired before the engine was ready"; return; }
   pass "E4 held during the load phase (steady floor not applied)"
@@ -143,10 +158,9 @@ t_E5(){
   echo "[E5] gx-max-start.sh unwinds both nodes on a failed launch"
   kill_helpers
   local log; log=$(mktemp)
-  GXMAX_IMAGE="${IMAGE}" GXMAX_RANK_ESTIMATED_GIB=2 GXMAX_READY_TIMEOUT=60 \
+  GXMAX_IMAGE="${IMAGE}" GXMAX_READY_TIMEOUT=60 \
   GXMAX_DEADMAN_STARTUP_GRACE=120 GXMAX_DEADMAN_DEATH_GRACE=20 GXMAX_DEADMAN_POLL=5 \
-  GXMAX_SENTINEL_POLL=5 GXMAX_SHM_BYTES=1073741824 GXMAX_MEM_LIMIT=2g \
-  GXMAX_LOAD_FLOOR_GIB=0 GXMAX_ABORT_FLOOR_GIB=0 \
+  GXMAX_SENTINEL_POLL=5 GXMAX_SHM_BYTES=1073741824 \
     bash "${LC}/gx-max-start.sh" >"${log}" 2>&1
   local rc=$?
   [ "${rc}" -ne 0 ] && pass "E5 failed launch reported a non-zero exit (${rc})" \
@@ -161,7 +175,7 @@ t_E5(){
   rm -f "${log}"
 }
 
-ALL=(E1 E2 E3 E4 E5)
+ALL=(E1 E2 E3 E4 E6 E5)
 SEL=("$@"); [ $# -eq 0 ] && SEL=("${ALL[@]}")
 echo "=== gx-max unwind regression tests  $(date -Is) ==="
 # if/else, not `A && B || C`: with the short-circuit form, a test function

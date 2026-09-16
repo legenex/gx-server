@@ -9,6 +9,75 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-09-16
+
+### Fixed
+- **gx-max serves again** (B-022 resolved, D-025). The failing runs differed
+  from the verified `4b96e49` launch in two ways, and both are reverted:
+  * `--memory 106g --memory-swap 106g` removed. Equal values disable the
+    container's swap, so the load transient could not spill into
+    `/swapfile-sglang`.
+  * Engine memory settings restored to the verified and official-cookbook
+    values (`--mem-fraction-static 0.80`, context 327680, chunked prefill
+    8192, CUDA-graph and running-request limits of 32). 0.70 and 0.50 are
+    below the ~0.731 a TP=2 shard needs.
+
+  Result: two-node TP=2 load in 539 s, 8/8 real inference checks passing
+  directly and through the gateway, and RDMA on both rails.
+- **gx-max admission can pass.** A new cluster-takeover policy replaces
+  `117 GiB peak + 30 GiB reserve <= node`, which could never pass. It checks
+  that the nodes are drained, the swapfile is active with headroom, there is
+  no existing memory pressure, and the management plane is healthy.
+  Single-node tiers keep the 30 GiB reserve.
+- **Node 2's deadman leaves the load phase.** It probed its own loopback for
+  `/health`, but only rank0 on node 1 serves HTTP. It now probes node 1
+  over the fabric.
+- **Kernel-lock verifier false failures** (D-027):
+  * A held, installed kernel (`hi`) was reported MISSING.
+  * Unrelated older-ABI kernel flavours proposed by `dist-upgrade` failed
+    the check.
+
+  Both nodes now pass 13/13.
+- **The orchestrator shows a gx-max started outside it** as `ready` instead
+  of `stopped` (DOWN→READY adoption in reconcile).
+- **The orchestrator health probe** judges gx-max by the takeover
+  preconditions (swapfile, swap headroom, pressure) instead of the old
+  arithmetic, which always refused it.
+
+### Added
+- **`legenex/lifecycle/gx-max-safety.sh`:** phase-aware, node-local safety
+  rules shared by both nodes. A kernel OOM kill or a hard `NV_ERR_NO_MEMORY`
+  aborts immediately; memory+swap exhaustion, swap thrashing and fork/exec
+  starvation abort only when sustained. Soft `NoLog` driver messages are
+  counted, not fatal. It replaces the instantaneous 2 GiB tripwire, which
+  would have killed the verified launch.
+- **`legenex/lifecycle/rank0-watch.sh`:** a steady-state watchdog on node 1.
+  It unwinds both nodes when a rank disappears, when node 2 is unreachable,
+  or when `/health` stays down. Verified live: after rank1 was killed, the
+  cluster was verified clean 69 s later.
+- **`legenex/tests/gx-max-inference.sh`:** real-output checks (factual,
+  reasoning, executed code, long generation, TTFT, RDMA traffic).
+- **`legenex/host/kernel-lock/`:** the kernel-lock tooling, now versioned.
+- **`ops/git-sync/`:** source control across both nodes (D-026).
+  * gx10-01 is the only writer: debounced autosync, a secret-scan gate,
+    push to `legenex/gx-server`.
+  * gx10-02 is a pull-only mirror: immediate and 1-minute reconcile, with
+    drift evidence saved before each reset.
+  * Both nodes run a daily integrity audit.
+  * Versioned hooks live in `.githooks/`.
+- Unit tests: 13 safety-rule tests, 12 takeover-admission and probe tests,
+  2 adoption tests, and a new unwind regression E6 (unsustained distress is
+  not an abort).
+
+### Changed
+- Guard locks and ledgers moved out of the checkout to
+  `/srv/projects/gx-cluster/state/guard`.
+- `.gitignore` hardened for a public repository: secrets, keys, weights,
+  archives, media and runtime state.
+- `resource_guard.WORKLOAD_SIZING` records gx-max's steady-state residency
+  (105 GiB per rank) rather than its load peak.
+
+
 ### Added (2026-09-16, second session)
 - **gx-max failure unwind — an orphaned rank is now structurally prevented,
   and it is proven on the real workload.** Three new layers:

@@ -10,8 +10,9 @@
 # rank0 bootstrap store at ${GXMAX_DIST_ADDR}. This mirrors the verified-working
 # run (rank1 came up 12s before rank0).
 #
-# Exit codes: 0 ready | 1 preflight failure | 2 startup timeout | 3 rank died
-#             4 memory tripwire | 130 interrupted.  Every non-zero exit AFTER a
+# Exit codes: 0 ready | 1 preflight/admission failure | 2 startup timeout
+#             3 rank died | 4 node1 safety abort | 5 node2 unreachable
+#             130 interrupted.  Every non-zero exit AFTER a
 #             rank has been launched runs gx-max-unwind.sh on both nodes.
 # ============================================================================
 set -euo pipefail
@@ -21,44 +22,15 @@ source "${here}/lib.sh"
 # shellcheck source=./resource-guard.sh
 source "${here}/resource-guard.sh"
 
-# gx-max uses the SAME 30 GiB reserve floor as every other tier. The
-# 2026-09-15 B-017 "option 1" exception (a 5 GiB gx-max-only reserve) was
-# revoked by the operator on 2026-09-16: the floor is a requirement, and the
-# way gx-max is made to fit inside it is ENGINE TUNING, not a smaller floor.
-# See gx-max.conf's reserve + runtime-tuning blocks and DECISIONS.md D-022.
-GX_GUARD_RESERVE_GIB="${GXMAX_GUARD_RESERVE_GIB}"
+# shellcheck source=./gx-max-safety.sh
+source "${here}/gx-max-safety.sh"
 
+# gx-max admission is the CLUSTER-TAKEOVER policy (D-025), not the ordinary
+# `estimate + 30 GiB reserve` formula. The old formula compared the measured
+# ~117 GiB load PEAK plus a 30 GiB reserve against a 121.63 GiB node, which
+# can never pass: gx-max was refused by arithmetic, not by the cluster state.
+# The ordinary formula is unchanged for every single-node tier.
 FORCE_DRAIN="${GXMAX_FORCE_DRAIN:-0}"
-# Estimated whole-node footprint of one SGLang rank, used by the hard
-# admission guard below. See gx_orchestrator.resource_guard.WORKLOAD_SIZING.
-#
-# History: 90 (initial) -> 95 (2026-09-15, after the B-020 OOM) -> the value
-# below (2026-09-16). The 95 GiB figure described the UNTUNED engine
-# (--mem-fraction-static 0.80). It is not an estimate that can ever be
-# admitted against a 30 GiB reserve: 95 + 30 = 125 GiB on a 121.63 GiB node.
-# That arithmetic is the whole reason the engine had to be retuned rather
-# than the floor lowered.
-#
-# The value below is the measured LOAD-PHASE PEAK, not the steady state, and
-# that choice is deliberate. A launch has to survive its peak; sizing
-# admission from the steady state is how the 2026-09-15 attempt got admitted
-# at "20 GiB of nominal slack" and was then OOM-killed anyway (B-020).
-#
-# 117 GiB is what eight instrumented two-node runs on 2026-09-16 measured:
-# loading one rank takes a 121.63 GiB node from ~110 GiB MemAvailable to
-# between 437 MiB and 0 MiB, on BOTH nodes, and nothing changes it --
-# --mem-fraction-static (0.50/0.70), --context-length (327680/65536/32768),
-# --chunked-prefill-size, --cuda-graph-max-bs-decode, --max-running-requests,
-# the container --memory cap (106g/98g/32g/28g) and --load-format
-# (auto/layered/runai_streamer) were each tested. See B-022 and D-022.
-#
-# The consequence is intended and is the correct behaviour: 117 + any reserve
-# exceeds a 121.63 GiB node, so this guard REFUSES gx-max instead of starting
-# a launch that measurement says will end in a kernel OOM kill. That refusal
-# is the honest state of the tier, and lifting it needs a human decision about
-# a LOCKED constraint (the model, the quantisation, or the node count), not a
-# smaller number here.
-GXMAX_RANK_ESTIMATED_GIB="${GXMAX_RANK_ESTIMATED_GIB:-117}"
 
 # Containers that must not hold GPU/unified memory while gx-max runs.
 # NOTE 2026-09-15: CONFLICTS_N2 previously listed "comfyui" and
@@ -110,7 +82,6 @@ DRAINED=0
 _unwind_done=0
 on_exit() {
   local rc=$?
-  rm -f "${guard_meminfo_n2:-}" 2>/dev/null || true
   if [ "${LAUNCHED}" -eq 0 ] && [ "${DRAINED}" -eq 1 ] && [ "${rc}" -ne 0 ]; then
     log "start aborted before any rank was launched (exit ${rc}); restoring the normal workloads that were drained"
     "${here}/restore-normal.sh" >/dev/null 2>&1 || log "WARN: restore-normal.sh reported a problem"
@@ -196,212 +167,201 @@ drain_node2
 docker rm -f "${GXMAX_RANK0_NAME}" >/dev/null 2>&1 || true
 n2 "docker rm -f ${GXMAX_RANK1_NAME} >/dev/null 2>&1 || true"
 
-# ------------------------------------------------------ hard admission guard --
-# One hard, non-bypassable safety check per node before ANY docker run is
-# attempted (2026-09-14 hardening -- see coordination/BLOCKERS.md B-012: node
-# 2 was wedged by a second ~77GB model landing on top of gx-reason). This
-# reuses the EXACT SAME arithmetic gx-safe-run.sh and the Python orchestrator
-# use (gx_orchestrator.resource_guard.compute_admission) -- there is one
-# formula, not a second one duplicated in bash.
-#
-# GXMAX_FORCE_DRAIN no longer has any effect on this check: a hard guard that
-# an env var can switch off is not a hard guard. It is read below only to
-# emit a note if someone still sets it, so existing callers do not silently
-# think they bypassed something.
-log "=== hard admission guard (node1 + node2, reserve=${GX_GUARD_RESERVE_GIB}GiB) ==="
-guard_meminfo_n2="$(mktemp)"
+# --------------------------------------------- cluster-takeover admission --
+# One hard, non-bypassable check per node before ANY docker run (D-025):
+#   * no other large/exclusive resident in the node's ledger
+#   * /swapfile-sglang active and >= GXMAX_MIN_SWAP_FREE_GIB swap free
+#   * MemAvailable >= GXMAX_CLEAN_START_MIN_AVAIL_GIB (i.e. really drained)
+#   * no pre-existing memory pressure (PSI)
+#   * management plane healthy on both nodes
+# The decision itself lives in gx_orchestrator.resource_guard (one formula,
+# used by bash and Python alike). It is re-evaluated under each node's lock
+# immediately before that node's rank is launched.
+log "=== cluster-takeover admission (node1 + node2) ==="
 
-n2 "cat /proc/meminfo" > "${guard_meminfo_n2}" || die "could not read node2 /proc/meminfo for the admission guard"
+mgmt_healthy_n1() {
+  systemctl is-active --quiet NetworkManager || return 1
+  tailscale status --peers=false >/dev/null 2>&1 || return 1
+  docker info >/dev/null 2>&1 || return 1
+}
+mgmt_healthy_n1 || die "node1 management plane unhealthy (NetworkManager/tailscale/docker)"
+n2 "systemctl is-active --quiet NetworkManager && tailscale status --peers=false >/dev/null 2>&1 && docker info >/dev/null 2>&1" \
+  || die "node2 management plane unhealthy (NetworkManager/tailscale/docker)"
+log "management plane healthy on both nodes"
 
-if guard_n1_result="$(gx_guard_check node1 gx-max-rank0 exclusive "${GXMAX_RANK_ESTIMATED_GIB}")"; then
+facts_n1="$(gxs_clean_start_facts "${GXMAX_REQUIRED_SWAPFILE}")"
+facts_n2="$(n2 "$(declare -f _gxs_read gxs_clean_start_facts); gxs_clean_start_facts '${GXMAX_REQUIRED_SWAPFILE}'")" \
+  || die "could not read node2 clean-start facts"
+log "node1 facts: ${facts_n1}"
+log "node2 facts: ${facts_n2}"
+
+if guard_n1_result="$(gx_guard_takeover_check node1 gx-max-rank0 "${facts_n1}")"; then
   log "node1 admission: ${guard_n1_result}"
 else
-  die "node1 admission guard REFUSED gx-max-rank0: ${guard_n1_result} -- hard refusal, cannot be bypassed"
+  die "node1 admission REFUSED gx-max-rank0: ${guard_n1_result} -- hard refusal, cannot be bypassed"
 fi
-if guard_n2_result="$(GX_GUARD_MEMINFO="${guard_meminfo_n2}" gx_guard_check node2 gx-max-rank1 exclusive "${GXMAX_RANK_ESTIMATED_GIB}")"; then
+if guard_n2_result="$(gx_guard_takeover_check node2 gx-max-rank1 "${facts_n2}")"; then
   log "node2 admission: ${guard_n2_result}"
 else
-  die "node2 admission guard REFUSED gx-max-rank1: ${guard_n2_result} -- hard refusal, cannot be bypassed"
+  die "node2 admission REFUSED gx-max-rank1: ${guard_n2_result} -- hard refusal, cannot be bypassed"
 fi
-log "admission guard: both nodes admitted gx-max"
+log "admission: both nodes admitted the gx-max takeover"
 
 if [ "${FORCE_DRAIN}" = "1" ]; then
-  log "NOTE: GXMAX_FORCE_DRAIN=1 is set but no longer bypasses the hard admission guard above. It has no effect in this script any more."
+  log "NOTE: GXMAX_FORCE_DRAIN=1 is set but does not bypass admission. It has no effect."
 fi
 
 # ------------------------------------------------------------------- start --
 mapfile -t DFLAGS < <(gxmax_docker_flags)
 mapfile -t EFLAGS < <(gxmax_env_flags)
 
+# Arm node 1's safety counters BEFORE anything is launched, so a kernel OOM
+# kill or driver allocation failure anywhere in the launch window is seen.
+gxs_arm
+
 log "=== starting rank1 on node2 ==="
-# Build the remote command as a single properly quoted string.
 r1_cmd=$(printf '%q ' docker run -d --name "${GXMAX_RANK1_NAME}" --restart no \
   "${DFLAGS[@]}" "${EFLAGS[@]}" "${GXMAX_IMAGE}" $(gxmax_args 1))
-# Wrap in a remote flock so a concurrent large-workload launch against node2
-# cannot race past this point. Lock path is a documented convention
-# (~/.gx-guard/node2.lock) that any future node2-side tooling should reuse --
-# node2 has no deployed copy of resource-guard.sh yet, so this is the one
-# piece of cross-process protection it gets: a real flock, not yet backed
-# by the full residency ledger.
-#
-# TOCTOU note (found 2026-09-15 by independent review, coordination/
-# BLOCKERS.md B-019): the admission check above and this launch are not
-# fully atomic -- the check runs unlocked, against a meminfo snapshot taken
-# moments earlier, and only the launch itself is lock-guarded. A full fix
-# means moving the admission arithmetic inside this same held lock, which
-# needs the ledger deployed to node2 (a bigger change, not done here). As a
-# narrower, low-risk mitigation: re-check raw MemAvailable one more time,
-# atomically with the lock, immediately before the docker run -- this
-# closes the most dangerous part of the window (something else consuming
-# node2's memory between the check above and the lock acquired here) even
-# though it re-validates raw headroom rather than the full ledger-aware
-# admission decision.
-# Threshold is computed HERE, on node1, into a literal number -- the
-# remote command below runs on node2's own shell, which has never heard of
-# $GXMAX_RANK_ESTIMATED_GIB/$GX_GUARD_RESERVE_GIB and would silently treat
-# them as 0 in arithmetic context (making the check always pass) if left
-# as variable references instead of an already-computed literal.
-r1_min_avail_gib=$((GXMAX_RANK_ESTIMATED_GIB + GX_GUARD_RESERVE_GIB))
-r1_final_check="avail=\$(awk '/MemAvailable/{print int(\$2/1048576)}' /proc/meminfo); if [ \"\${avail:-0}\" -lt ${r1_min_avail_gib} ]; then echo \"REFUSED: node2 MemAvailable=\${avail}GiB, need >= ${r1_min_avail_gib}GiB (re-checked atomically with the lock)\" >&2; exit 9; fi"
+# node 2 has its own flock (~/.gx-guard/node2.lock). The admission facts are
+# re-read and re-judged on node 2 atomically with that lock (B-019), using
+# thresholds rendered into literals here -- node 2's shell has none of our
+# variables. This is the clean-start check, not a peak+reserve check.
+r1_min_avail_mib=$(( GXMAX_CLEAN_START_MIN_AVAIL_GIB * 1024 ))
+r1_min_swap_mib=$(( GXMAX_MIN_SWAP_FREE_GIB * 1024 ))
+r1_final_check="$(declare -f _gxs_read gxs_clean_start_facts); f=\$(gxs_clean_start_facts '${GXMAX_REQUIRED_SWAPFILE}'); set -- \$f; a=\${1#*=}; sf=\${2#*=}; act=\${4#*=}; if [ \"\$act\" != 1 ] || [ \"\$a\" -lt ${r1_min_avail_mib} ] || [ \"\$sf\" -lt ${r1_min_swap_mib} ]; then echo \"REFUSED under node2 lock: \$f\" >&2; exit 9; fi"
 r1_locked_cmd="mkdir -p \$HOME/.gx-guard && exec 9>\$HOME/.gx-guard/node2.lock && flock -x -w ${GX_GUARD_LOCK_TIMEOUT} 9 && (${r1_final_check}) && ${r1_cmd}"
 LAUNCHED=1   # from here on, every failure path must unwind BOTH nodes
-n2 "${r1_locked_cmd}" >/dev/null || die "failed to start rank1 (node2 lock busy, final memory re-check failed, or launch failed)"
+n2 "${r1_locked_cmd}" >/dev/null || die "failed to start rank1 (node2 lock busy, clean-start re-check failed, or launch failed)"
 n2 "docker logs -f ${GXMAX_RANK1_NAME} > \$HOME/gx-max-rank1.log 2>&1 &" >/dev/null 2>&1 || true
 
 # ---------------------------------------------------- node-2-side deadman --
-# Copy and arm rank1-deadman.sh ON node 2. Every remote cleanup path needs a
-# healthy node 2 exactly when node 2 is least healthy (B-020: the unwind ssh
-# timed out because the orphan it was trying to kill had already starved the
-# host). A watchdog that is already resident on node 2 does not have that
-# dependency. This is armed BEFORE rank0 is started, so it also covers the
-# case where rank0 never comes up at all.
+# rank1-deadman.sh runs ON node 2 with the same gx-max-safety.sh rules, so
+# node 2 protects itself even when node 1 cannot reach it (B-020). Armed
+# BEFORE rank0 starts, so it also covers rank0 never coming up.
 n2 "mkdir -p ~/.gx-guard" >/dev/null 2>&1 || true
-if scp -q -o BatchMode=yes -o ConnectTimeout=10 "${here}/rank1-deadman.sh" \
-       "${GXMAX_NODE2_SSH}:.gx-guard/rank1-deadman.sh" >/dev/null 2>&1; then
+if scp -q -o BatchMode=yes -o ConnectTimeout=10 "${here}/rank1-deadman.sh" "${here}/gx-max-safety.sh" \
+       "${GXMAX_NODE2_SSH}:.gx-guard/" >/dev/null 2>&1; then
   n2 "chmod +x ~/.gx-guard/rank1-deadman.sh; \
+      $(for v in GXMAX_CRIT_AVAIL_MIB GXMAX_CRIT_SWAPFREE_MIB GXMAX_EXHAUST_SUSTAIN_S GXMAX_THRASH_PSI_FULL GXMAX_THRASH_SWAPIN_PPS GXMAX_THRASH_SUSTAIN_S GXMAX_FORK_MAX_MS GXMAX_MGMT_SUSTAIN_S GXMAX_STEADY_FLOOR_GIB GXMAX_STEADY_SUSTAIN_S; do printf '%s=%q ' "$v" "${!v}"; done) \
       setsid nohup ~/.gx-guard/rank1-deadman.sh '${GXMAX_DIST_ADDR}' '${GXMAX_RANK1_NAME}' \
         '${GXMAX_DEADMAN_STARTUP_GRACE}' '${GXMAX_DEADMAN_DEATH_GRACE}' '${GXMAX_DEADMAN_POLL}' \
-        '${GXMAX_ABORT_FLOOR_GIB}' '' '${GXMAX_LOAD_FLOOR_GIB}' \
-        'http://127.0.0.1:${GXMAX_PORT}/health' \
+        '${GXMAX_HEALTH_URL_FROM_N2}' \
         >/dev/null 2>&1 < /dev/null &" >/dev/null 2>&1 || true
   sleep 2
   if n2 "test -f ~/.gx-guard/rank1-deadman.pid && kill -0 \$(cat ~/.gx-guard/rank1-deadman.pid)" 2>/dev/null; then
     log "node2 rank1 deadman ARMED (startup grace ${GXMAX_DEADMAN_STARTUP_GRACE}s, death grace ${GXMAX_DEADMAN_DEATH_GRACE}s)"
+  elif ! gxmax_rank1_running; then
+    # The deadman exits by design when rank1 is gone, so a missing deadman
+    # here usually means rank1 itself died at startup.
+    log "rank1 exited immediately after launch. Last 40 log lines:"
+    n2 "docker logs --tail 40 ${GXMAX_RANK1_NAME} 2>&1 | tail -40" >&2 || true
+    exit 3
   else
-    log "WARN: node2 rank1 deadman did NOT start -- orphan protection falls back to the remote unwind only"
+    die "node2 rank1 deadman did NOT start -- refusing to continue without node-local protection on node2"
   fi
 else
-  log "WARN: could not deploy rank1-deadman.sh to node2 -- orphan protection falls back to the remote unwind only"
+  die "could not deploy rank1-deadman.sh to node2 -- refusing to continue without node-local protection on node2"
 fi
-# Best-effort local bookkeeping: node1 has no authoritative view of node2's
-# residency (no ledger runs there), but recording this here means a later
-# gx-max-stop.sh release, or a `resource-guard.sh status node2` check run
-# from node1, at least reflects what THIS script believes it started.
-gx_guard_register node2 gx-max-rank1 exclusive "${GXMAX_RANK_ESTIMATED_GIB}" "${GXMAX_RANK1_NAME}" || true
+gx_guard_register node2 gx-max-rank1 exclusive "${GXMAX_STEADY_RESIDENCY_GIB}" "${GXMAX_RANK1_NAME}" || true
 log "rank1 started"
 
 sleep 5
 
 log "=== starting rank0 on node1 ==="
-# Routed through gx_guard_run: this re-validates admission (holding node1's
-# lock for the whole launch) at the exact moment of the real docker run, and
-# registers residency on success -- the same sanctioned path gx-safe-run.sh
-# uses for any other large/exclusive container on this node.
-gx_guard_run node1 gx-max-rank0 exclusive "${GXMAX_RANK_ESTIMATED_GIB}" -- \
-  docker run -d --name "${GXMAX_RANK0_NAME}" --restart no \
-  "${DFLAGS[@]}" "${EFLAGS[@]}" "${GXMAX_IMAGE}" $(gxmax_args 0) \
-  || die "failed to start rank0 (admission refused, node1 lock busy, or launch failed)"
+# Under node 1's flock: re-read facts, re-judge, launch, register -- one
+# critical section, so no other sanctioned launch can race into node 1.
+exec {n1_lock_fd}>"${GX_GUARD_STATE_DIR}/node1.lock"
+flock -x -w "${GX_GUARD_LOCK_TIMEOUT}" "${n1_lock_fd}" || die "node1 lock busy (another launch in progress)"
+facts_n1="$(gxs_clean_start_facts "${GXMAX_REQUIRED_SWAPFILE}")"
+guard_n1_result="$(gx_guard_takeover_check node1 gx-max-rank0 "${facts_n1}")" \
+  || die "node1 admission REFUSED under lock: ${guard_n1_result}"
+docker run -d --name "${GXMAX_RANK0_NAME}" --restart no \
+  "${DFLAGS[@]}" "${EFLAGS[@]}" "${GXMAX_IMAGE}" $(gxmax_args 0) >/dev/null \
+  || die "failed to start rank0"
+gx_guard_register node1 gx-max-rank0 exclusive "${GXMAX_STEADY_RESIDENCY_GIB}" "${GXMAX_RANK0_NAME}" || true
+eval "exec ${n1_lock_fd}>&-"
 ( docker logs -f "${GXMAX_RANK0_NAME}" > "${GXMAX_LOG_DIR}/gx-max-rank0.log" 2>&1 & ) || true
 log "rank0 started"
 
 # ------------------------------------------------------------- wait healthy --
-# The wait loop is also the LIVE MEMORY SENTINEL. Three things can end a
-# startup badly and all three are handled here rather than being left to the
-# kernel:
-#   * a rank dies                 -> exit 3, EXIT trap unwinds both nodes
-#   * readiness never arrives     -> exit 2, EXIT trap unwinds both nodes
-#   * memory crosses the tripwire -> exit 4, EXIT trap unwinds both nodes
-#
-# The third is new (2026-09-16). On 2026-09-15 nothing watched memory during
-# startup: the node ran itself down to 855 MiB free and the kernel's global
-# OOM killer made the decision instead, at the worst possible moment (mid
-# weight-load, with a live rank on the other node). Aborting at a floor we
-# choose is strictly better than being killed at a floor the kernel chooses.
-#
-# Samples are written to a TSV so the real minima/peaks can be reported
-# afterwards instead of estimated. node 2 is sampled less often (it costs an
-# ssh); its own deadman enforces the same floor locally and continuously.
-MEMLOG="${GXMAX_LOG_DIR}/gx-max-mem-$(date -u +%Y%m%dT%H%M%SZ).tsv"
-printf 'epoch\tnode1_avail_gib\tnode1_swap_mib\tnode2_avail_gib\tnode2_swap_mib\tphase\n' > "${MEMLOG}"
-log "memory samples -> ${MEMLOG} (load floor ${GXMAX_LOAD_FLOOR_GIB}GiB, steady floor ${GXMAX_ABORT_FLOOR_GIB}GiB, guard reserve ${GX_GUARD_RESERVE_GIB}GiB)"
+# The wait loop is the node-1 LIVE SAFETY SENTINEL (gx-max-safety.sh):
+#   * a rank dies                        -> exit 3
+#   * readiness never arrives            -> exit 2
+#   * sustained distress / OOM / NV OOM  -> exit 4
+#   * node 2 unreachable for too long    -> exit 5
+# Each exit runs the two-node unwind via the EXIT trap. A single low
+# MemAvailable sample is NOT an abort: the verified launch touched ~1 GiB.
+STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+MEMLOG="${GXMAX_LOG_DIR}/gx-max-safety-node1-${STAMP}.tsv"
+N2LOG="${GXMAX_LOG_DIR}/gx-max-mem-node2-${STAMP}.tsv"
+gxs_header > "${MEMLOG}"
+printf 'epoch\tavail_mib\tswap_used_mib\tpsi_full10\n' > "${N2LOG}"
+log "node1 safety samples -> ${MEMLOG}; node2 samples -> ${N2LOG} (node2 also logs ~/gx-max-node2-mem.tsv locally)"
 
-n1_avail() { awk '/MemAvailable/{print int($2/1048576)}' /proc/meminfo; }
-n1_swap()  { awk '/SwapTotal/{t=$2} /SwapFree/{f=$2} END{print int((t-f)/1024)}' /proc/meminfo; }
-
-min_n1=999; min_n2=999; max_swap1=0; max_swap2=0
-n2_avail_cached=""; n2_swap_cached=""; n2_last_sample=0
+min_n2=999999; max_swap2=0; n2_last_sample=0; n2_last_ok=$(date +%s)
 N2_SAMPLE_EVERY="${GXMAX_N2_SAMPLE_EVERY:-15}"
+t_start=$(date +%s)
+
+n2_sample() {
+  ssh -o BatchMode=yes -o ConnectTimeout=8 "${GXMAX_NODE2_SSH}" \
+    "awk '/^MemAvailable:/{a=\$2} /^SwapFree:/{f=\$2} /^SwapTotal:/{t=\$2} END{printf \"%d %d\", a/1024, (t-f)/1024}' /proc/meminfo; awk '/^full/{split(\$2,x,\"=\"); printf \" %d\n\", x[2]}' /proc/pressure/memory" 2>/dev/null
+}
 
 log "=== waiting for gx-max to become healthy (timeout ${GXMAX_READY_TIMEOUT}s) ==="
 log "    cold start reference: ~630s to ready (~400s of it weight loading)"
-deadline=$(( $(date +%s) + GXMAX_READY_TIMEOUT ))
+deadline=$(( t_start + GXMAX_READY_TIMEOUT ))
 while :; do
   now=$(date +%s)
-  a1=$(n1_avail); s1=$(n1_swap)
-  [ "${a1}" -lt "${min_n1}" ] && min_n1="${a1}"
-  [ "${s1}" -gt "${max_swap1}" ] && max_swap1="${s1}"
+  gxs_tick load
+  printf '%s\n' "${GXS_SAMPLE}" >> "${MEMLOG}"
 
   if [ $(( now - n2_last_sample )) -ge "${N2_SAMPLE_EVERY}" ]; then
     n2_last_sample="${now}"
-    if sample=$(ssh -o BatchMode=yes -o ConnectTimeout=8 "${GXMAX_NODE2_SSH}" \
-          "awk '/MemAvailable/{print int(\$2/1048576)}' /proc/meminfo; awk '/SwapTotal/{t=\$2} /SwapFree/{f=\$2} END{print int((t-f)/1024)}' /proc/meminfo" 2>/dev/null); then
-      n2_avail_cached=$(printf '%s' "${sample}" | sed -n 1p)
-      n2_swap_cached=$(printf '%s' "${sample}" | sed -n 2p)
-      if [ -n "${n2_avail_cached}" ]; then
-        [ "${n2_avail_cached}" -lt "${min_n2}" ] && min_n2="${n2_avail_cached}"
-        [ "${n2_swap_cached:-0}" -gt "${max_swap2}" ] && max_swap2="${n2_swap_cached}"
-      fi
+    if read -r a2 s2 p2 < <(n2_sample) && [ -n "${a2:-}" ]; then
+      n2_last_ok="${now}"
+      printf '%s\t%s\t%s\t%s\n' "${now}" "${a2}" "${s2}" "${p2}" >> "${N2LOG}"
+      [ "${a2}" -lt "${min_n2}" ] && min_n2="${a2}"
+      [ "${s2}" -gt "${max_swap2}" ] && max_swap2="${s2}"
     fi
   fi
-  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "${now}" "${a1}" "${s1}" "${n2_avail_cached:-}" "${n2_swap_cached:-}" "starting" >> "${MEMLOG}"
 
   if gxmax_healthy; then
-    log "=== gx-max READY on http://127.0.0.1:${GXMAX_PORT}/v1 ==="
-    log "    LOAD-phase minima    : node1=${min_n1}GiB node2=${min_n2}GiB (load floor ${GXMAX_LOAD_FLOOR_GIB}GiB)"
-    log "    startup swap peaks   : node1=${max_swap1}MiB node2=${max_swap2}MiB"
-    sleep 20   # let the loader's staging memory be released before measuring steady state
-    steady1=$(n1_avail)
-    steady2=$(ssh -o BatchMode=yes -o ConnectTimeout=8 "${GXMAX_NODE2_SSH}" "awk '/MemAvailable/{print int(\$2/1048576)}' /proc/meminfo" 2>/dev/null || echo "?")
-    log "    STEADY-STATE          : node1=${steady1}GiB node2=${steady2}GiB (steady floor ${GXMAX_ABORT_FLOOR_GIB}GiB)"
-    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "${steady1}" "${max_swap1}" "${steady2}" "${max_swap2}" "STEADY" >> "${MEMLOG}"
-    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "${min_n1}" "${max_swap1}" "${min_n2}" "${max_swap2}" "MINIMA" >> "${MEMLOG}"
+    t_ready=$(date +%s)
+    log "=== gx-max READY on http://127.0.0.1:${GXMAX_PORT}/v1 after $(( t_ready - t_start ))s ==="
+    log "    LOAD-phase minima : node1=${GXS_MIN_AVAIL_MIB}MiB node2=${min_n2}MiB MemAvailable"
+    log "    LOAD-phase swap   : node1 peak=${GXS_MAX_SWAPUSED_MIB}MiB node2 peak=${max_swap2}MiB; node1 peak PSI full=${GXS_MAX_PSI_FULL10}%; node1 soft NV_ERR lines=${GXS_NV_SOFT:-0}"
+    sleep 30   # let loader staging be released before measuring steady state
+    gxs_tick steady
+    printf '%s\n' "${GXS_SAMPLE}" >> "${MEMLOG}"
+    read -r a2 s2 p2 < <(n2_sample) || true
+    log "    STEADY-STATE      : node1 avail=${GXS_AVAIL_MIB}MiB swap_used=$(( GXS_SWAPTOTAL_MIB - GXS_SWAPFREE_MIB ))MiB | node2 avail=${a2:-?}MiB swap_used=${s2:-?}MiB"
+    printf 'SUMMARY\tstartup_s=%s\tn1_min_avail_mib=%s\tn2_min_avail_mib=%s\tn1_max_swap_mib=%s\tn2_max_swap_mib=%s\tn1_steady_avail_mib=%s\tn2_steady_avail_mib=%s\n' \
+      "$(( t_ready - t_start ))" "${GXS_MIN_AVAIL_MIB}" "${min_n2}" "${GXS_MAX_SWAPUSED_MIB}" "${max_swap2}" "${GXS_AVAIL_MIB}" "${a2:-?}" >> "${MEMLOG}"
+    # Steady-state protection on node 1 for the rest of the engine's life
+    # (node 2 already has rank1-deadman.sh).
+    setsid nohup bash "${here}/rank0-watch.sh" >/dev/null 2>&1 < /dev/null &
+    log "    node1 rank0-watch armed (log: ${GXMAX_LOG_DIR}/gx-max-rank0-watch.log)"
     exit 0
   fi
 
-  # --- tripwire: abort ourselves rather than be OOM-killed ---
-  # LOAD-phase floor only. The steady-state reserve cannot be enforced here:
-  # weight loading itself takes both nodes to 1-8 GiB MemAvailable for
-  # ~60-120s and no engine setting changes that (see gx-max.conf's
-  # GXMAX_LOAD_FLOOR_GIB note). Enforcing the steady floor during load
-  # aborted two otherwise-healthy launches before this was measured.
-  if [ "${a1}" -lt "${GXMAX_LOAD_FLOOR_GIB}" ]; then
-    log "MEMORY ABORT: node1 MemAvailable ${a1}GiB fell below the ${GXMAX_LOAD_FLOOR_GIB}GiB load-phase tripwire"
+  if [ "${GXS_VERDICT}" = abort ]; then
+    log "SAFETY ABORT (node1): ${GXS_REASON}"
     exit 4
   fi
-  if [ -n "${n2_avail_cached}" ] && [ "${n2_avail_cached}" -lt "${GXMAX_LOAD_FLOOR_GIB}" ]; then
-    log "MEMORY ABORT: node2 MemAvailable ${n2_avail_cached}GiB fell below the ${GXMAX_LOAD_FLOOR_GIB}GiB load-phase tripwire"
-    exit 4
+  if [ $(( now - n2_last_ok )) -ge "${GXMAX_N2_UNREACHABLE_ABORT_S}" ]; then
+    log "SAFETY ABORT: node2 unreachable over SSH for $(( now - n2_last_ok ))s (node2 deadman acts locally regardless)"
+    exit 5
   fi
-
   if ! gxmax_rank0_running; then
     log "rank0 exited. Last 40 log lines:"; docker logs --tail 40 "${GXMAX_RANK0_NAME}" 2>&1 | tail -40 >&2
     exit 3
   fi
-  if ! gxmax_rank1_running; then
-    log "rank1 exited. Last 40 log lines:"; n2 "docker logs --tail 40 ${GXMAX_RANK1_NAME} 2>&1 | tail -40" >&2
+  # rank1 liveness costs an ssh; only check on node2 sample ticks.
+  if [ "${n2_last_sample}" -eq "${now}" ] && ! gxmax_rank1_running; then
+    log "rank1 exited. Last 40 log lines:"; n2 "docker logs --tail 40 ${GXMAX_RANK1_NAME} 2>&1 | tail -40; tail -5 ~/gx-max-rank1-deadman.log" >&2 || true
     exit 3
   fi
-  if [ "$(date +%s)" -ge "${deadline}" ]; then
+  if [ "${now}" -ge "${deadline}" ]; then
     log "TIMEOUT after ${GXMAX_READY_TIMEOUT}s; ranks still running but not healthy."
     exit 2
   fi

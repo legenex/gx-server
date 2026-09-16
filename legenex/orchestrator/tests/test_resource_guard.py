@@ -25,6 +25,7 @@ import tempfile
 import textwrap
 import time
 import unittest
+import unittest.mock
 from pathlib import Path
 
 _ORCH_DIR = Path(__file__).resolve().parents[1]
@@ -469,6 +470,108 @@ class TestCli(unittest.TestCase):
         )
         self.assertEqual(chk.returncode, 2)
         self.assertFalse(json.loads(chk.stdout)["allowed"])
+
+
+class TakeoverAdmissionTests(unittest.TestCase):
+    """gx-max cluster-takeover policy (D-025)."""
+
+    CLEAN = "avail_mib=113000 swap_free_mib=60000 swap_total_mib=65535 swapfile_active=1 psi_full10=0 oom_kill=4"
+
+    def setUp(self) -> None:
+        from gx_orchestrator.resource_guard import NodeFacts, TakeoverPolicy, compute_takeover_admission
+        self.NodeFacts, self.Policy, self.decide = NodeFacts, TakeoverPolicy, compute_takeover_admission
+        self.tmp = tempfile.TemporaryDirectory()
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def _facts(self, **over):
+        kv = dict(p.split("=") for p in self.CLEAN.split())
+        kv.update({k: str(v) for k, v in over.items()})
+        return self.NodeFacts.parse(" ".join(f"{k}={v}" for k, v in kv.items()))
+
+    def test_clean_node_is_admitted_even_though_peak_plus_reserve_exceeds_node(self):
+        # 117 + 30 > 121.63: the old formula refused this forever (B-022).
+        r = self.decide("node1", self._facts(), other_exclusive_residents=[])
+        self.assertTrue(r.allowed, r.reason)
+        self.assertEqual(r.numbers["startup_transient_gib"], 117.0)
+        old = compute_admission("node1", 117.0, current_residency_gib=0, mem_available_gib=113.0)
+        self.assertFalse(old.allowed)
+
+    def test_refuses_when_swapfile_inactive(self):
+        r = self.decide("node2", self._facts(swapfile_active=0), other_exclusive_residents=[])
+        self.assertFalse(r.allowed)
+        self.assertIn("swapfile-sglang", r.reason)
+
+    def test_refuses_without_swap_headroom(self):
+        r = self.decide("node1", self._facts(swap_free_mib=10000), other_exclusive_residents=[])
+        self.assertFalse(r.allowed)
+        self.assertIn("swap free", r.reason)
+
+    def test_refuses_when_not_drained(self):
+        r = self.decide("node2", self._facts(avail_mib=70000), other_exclusive_residents=[])
+        self.assertFalse(r.allowed)
+        self.assertIn("clean-start minimum", r.reason)
+
+    def test_refuses_with_other_exclusive_resident(self):
+        r = self.decide("node2", self._facts(), other_exclusive_residents=["gx-reason"])
+        self.assertFalse(r.allowed)
+        self.assertIn("gx-reason", r.reason)
+
+    def test_refuses_under_existing_pressure(self):
+        r = self.decide("node1", self._facts(psi_full10=30), other_exclusive_residents=[])
+        self.assertFalse(r.allowed)
+        self.assertIn("pressure", r.reason)
+
+    def test_malformed_facts_rejected(self):
+        with self.assertRaises(ValueError):
+            self.NodeFacts.parse("avail_mib=abc")
+
+    def test_ordinary_tiers_keep_the_30gib_reserve(self):
+        r = compute_admission("node2", 45.0, current_residency_gib=0, mem_available_gib=70.0)
+        self.assertFalse(r.allowed)
+        self.assertEqual(r.numbers["reserve_gib"], 30.0)
+
+    def test_cli_takeover_check_exit_codes(self):
+        base = [sys.executable, "-m", "gx_orchestrator.resource_guard", "--state-dir", self.tmp.name,
+                "takeover-check", "--node", "node1", "--name", "gx-max-rank0"]
+        ok = subprocess.run(base + ["--facts", self.CLEAN], cwd=_ORCH_DIR, capture_output=True, text=True)
+        self.assertEqual(ok.returncode, 0, ok.stderr)
+        self.assertTrue(json.loads(ok.stdout)["allowed"])
+        bad = subprocess.run(base + ["--facts", "garbage"], cwd=_ORCH_DIR, capture_output=True, text=True)
+        self.assertEqual(bad.returncode, 2)
+        low = subprocess.run(base + ["--facts", self.CLEAN, "--min-avail-gib", "200"], cwd=_ORCH_DIR,
+                             capture_output=True, text=True)
+        self.assertEqual(low.returncode, 2)
+
+    def test_read_node_facts_parses_proc_files(self):
+        from gx_orchestrator.resource_guard import read_node_facts
+        d = Path(self.tmp.name)
+        (d / "meminfo").write_text("MemTotal: 1 kB\nMemAvailable: 2097152 kB\nSwapTotal: 4194304 kB\nSwapFree: 3145728 kB\n")
+        (d / "swaps").write_text("Filename Type Size Used Priority\n/swapfile-sglang file 1 0 -3\n")
+        (d / "psi").write_text("some avg10=1.00 avg60=0 avg300=0 total=0\nfull avg10=2.50 avg60=0 avg300=0 total=0\n")
+        f = read_node_facts(meminfo_path=d / "meminfo", swaps_path=d / "swaps", psi_path=d / "psi")
+        self.assertEqual((f.avail_mib, f.swap_free_mib, f.swap_total_mib, f.swapfile_active, f.psi_full10),
+                         (2048, 3072, 4096, True, 2.5))
+
+    def test_health_probe_ignores_undrained_memory_but_not_missing_swapfile(self):
+        from gx_orchestrator import server
+        from gx_orchestrator import resource_guard as rg
+        busy = self._facts(avail_mib=40000)  # gx-mini/gx-fast loaded, not drained
+        with unittest.mock.patch.object(rg, "read_node_facts", return_value=busy):
+            self.assertEqual(server._gx_max_admission_blocked(), "")
+        noswap = self._facts(swapfile_active=0)
+        with unittest.mock.patch.object(rg, "read_node_facts", return_value=noswap):
+            self.assertIn("swapfile-sglang", server._gx_max_admission_blocked())
+
+    def test_ledger_exclusive_resident_blocks_cli(self):
+        ResidencyLedger(Path(self.tmp.name) / "node1-residency.json", is_running=lambda c: True).add(
+            "gx-fast-big", node="node1", workload_class=WorkloadClass.LARGE, estimated_gib=60)
+        from gx_orchestrator.resource_guard import check_takeover_admission
+        r = check_takeover_admission("node1", "gx-max-rank0", self._facts(), state_dir=Path(self.tmp.name),
+                                     is_running=lambda c: True)
+        self.assertFalse(r.allowed)
+        self.assertIn("gx-fast-big", r.reason)
 
 
 if __name__ == "__main__":

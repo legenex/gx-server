@@ -482,7 +482,7 @@ passed — including the original B-011 repro prompt, which now answers
    through the gateway, was described correctly as "3 blue"
    (`TEST_RESULTS.md` §14.4).
 
-## D-022 — gx-max memory: the 30 GiB reserve is not reachable by tuning; the engine was retuned anyway and the real floor measured
+## D-022 — SUPERSEDED 2026-09-16 by D-025 — gx-max memory: the 30 GiB reserve is not reachable by tuning; the engine was retuned anyway and the real floor measured
 
 **Date:** 2026-09-16
 **Status:** ACCEPTED for the tuning; the reserve value itself is ESCALATED to
@@ -601,3 +601,160 @@ what `gx status` showed before this.
   what admission would say about starting a *new* one.
 * node-2-offline still outranks admission in the reported reason: it is the
   more actionable answer, and the arithmetic is moot if the node is gone.
+
+## D-025 — gx-max restored: known-good launch, no cgroup cap, three-phase memory policy
+
+**Date:** 2026-09-16. **Status:** ACCEPTED, verified live. **Supersedes** the
+D-022 retuning and B-022's conclusion that "gx-max cannot fit".
+
+**What was wrong.** B-022 concluded that the locked model could not fit.
+That conclusion rested on runs that differed from the verified 2026-09-14
+launch (commit `4b96e49`) in two ways that matter:
+
+1. **`--memory 106g --memory-swap 106g`.** When the two values are equal,
+   Docker sets the container's `memory.swap.max` to 0. The loader's ~26 GiB
+   of anonymous staging pages then cannot be swapped out. Every failed run
+   shows the same pattern: 0 MiB MemAvailable with 63 GiB of swap untouched.
+   The verified run had no cap; it filled swap and then recovered.
+2. **`--mem-fraction-static 0.70` (and 0.50).** A TP=2 shard of this
+   checkpoint is about 73% of a GB10 node; SGLang's own figure is "minimum
+   viable = 0.731". Both values are below what can hold the weights plus any
+   KV cache.
+
+The admission formula then made gx-max unlaunchable by arithmetic:
+117 GiB (load peak) + 30 GiB (reserve) is more than a 121.63 GiB node.
+
+**Decision.**
+
+* **Launch vector.** Byte-for-byte the `4b96e49` vector. It also matches the
+  current official SGLang cookbook cell
+  `dgx-spark/flash-official/nvfp4/balanced/multi-2` (fetched 2026-09-16;
+  unchanged since 2026-09-03), plus the three loader flags that DGX Spark
+  needs for the load spike, `--enable-metrics` (D-002) and
+  `--oom-score-adj 950`.
+* **No `--memory` and no `--memory-swap`** on the rank containers.
+* **gx-max admission is a cluster-takeover policy.** The ordinary 30 GiB
+  reserve is unchanged for every single-node tier. The takeover policy
+  separates three phases:
+
+  | Phase | What applies |
+  |---|---|
+  | Pre-launch clean state (admission) | both nodes drained; no other large or exclusive resident; `/swapfile-sglang` active; at least 40 GiB swap free; at least 100 GiB MemAvailable; PSI full at most 5; management plane healthy. Re-checked under each node's lock. |
+  | Startup transient (~117 GiB) | Documented and monitored, never admitted against. |
+  | Steady-state residency | The ledger records 105 GiB per rank. |
+
+* **Phase-aware live safety** (`gx-max-safety.sh`) runs node-locally on both
+  nodes. It replaces the instantaneous 2 GiB tripwire, which would have
+  killed the verified launch.
+  * Immediate abort: a kernel OOM kill, or a hard `NV_ERR_NO_MEMORY`.
+  * Abort only when sustained: memory and swap both exhausted, swap
+    thrashing, or fork/exec starvation.
+  * Steady phase only: a sustained MemAvailable floor.
+  * The driver's `nvCheckOkFailedNoLog … NV_ERR_NO_MEMORY` lines are counted
+    but not fatal. Both nodes emit them at "Load weight begin" of a healthy
+    load. Treating them as fatal caused one false abort on the first
+    attempt, which also served as a real-workload unwind test.
+* **Steady-state watchdogs on both nodes.**
+  * `rank1-deadman.sh` now probes rank0's `/health` over the fabric. It used
+    to probe node 2's loopback, which never answers, so it never left the
+    load phase.
+  * New `rank0-watch.sh` unwinds both nodes if rank1 or rank0 disappears,
+    if node 2 is unreachable for 180 s, or if `/health` fails for 180 s.
+
+**Measured (2026-09-16, attempt 2).**
+
+| | node 1 | node 2 |
+|---|---|---|
+| Time to ready | 539 s | — |
+| Minimum MemAvailable during load | 2,653 MiB | 7,434 MiB |
+| Peak swap used | 65,535 MiB (all of it, for about 5 s) | 51,584 MiB |
+| Steady MemAvailable | 14.9 GiB | 16.5 GiB |
+| Steady swap used | 8.1 GiB, flat | 5.4 GiB, flat |
+
+Other measurements from the same run:
+
+* **Engine:** `available_gpu_mem=14.93 GB`, identical to 2026-09-14.
+* **Load pressure:** peak PSI full 22% on node 1; fork+exec at most 6 ms.
+* **Inference:** 8/8 checks pass, directly and through the gateway alias.
+* **Fabric:** about 1.1 GB of RDMA traffic across both active rails per
+  300-token generation, against 0.08 MB on Tailscale.
+
+**Residual risk, stated plainly.** Node 1 touched 100% swap for one 5 s
+sample during load. The same thing happened on 2026-09-14 ("63/63 GB"). Node
+1 also carries the gateway, Postgres, Open WebUI, AgentOS and a desktop
+session, so its load-time headroom is the smallest in the cluster. The
+exhaustion rule (MemAvailable under 512 MiB **and** swap free under 2 GiB,
+for 30 s) is what stands between that and a kernel OOM kill. Reducing node
+1's background residency before a gx-max launch is the lever. It needs no
+change to any locked value.
+
+## D-026 — Source control: gx10-01 is the only Git writer; GitHub `legenex/gx-server` is canonical; gx10-02 is a pull-only mirror
+
+**Date:** 2026-09-16. **Status:** ACCEPTED (implements an explicit human
+requirement).
+
+**Decision.**
+
+| Node | Role | Mechanism |
+|---|---|---|
+| gx10-01 | the **only** writer | `ops/git-sync/node1-autosync.sh` (watcher every 15 s, commit after a 45 s quiet period, 1-minute timer fallback), versioned hooks in `.githooks/` (`core.hooksPath`) |
+| GitHub `legenex/gx-server` `main` | canonical remote, off-machine backup | pushed by gx10-01 over HTTPS with the existing `gh` credential helper |
+| gx10-02 | pull-only production mirror | `ops/git-sync/node2-reconcile.sh`, triggered over SSH after every push and by a 1-minute timer; push URL set to `DISABLED-gx10-02-is-pull-only` |
+
+A daily `integrity-audit.sh` on both nodes checks that all three HEADs match,
+that critical files are byte-identical, and that no secrets, weights or large
+binaries are tracked.
+
+**Why a single writer.** Two machines auto-committing to one branch will
+eventually conflict, and a robot resolving merge conflicts in lifecycle
+scripts is worse than no sync at all. With one writer, gx10-02 can never
+diverge: anything unexpected there is configuration drift. The reconciler
+saves the evidence to `/srv/logs/gx-git-sync/drift/<ts>/` (mode 0700, with
+secret-like values masked) and resets to `origin/main`. It uses
+`git clean -fd`, not `-fdx`, so ignored machine-local files survive.
+
+**The repository is PUBLIC**, so every automatic commit is gated:
+
+* forbidden paths (secrets, keys, weights, archives, runtime state) and files
+  over 5 MiB are unstaged and logged by name only;
+* a gitleaks staged scan (fallback: a regex scan) must be clean. Otherwise
+  nothing is committed, and a broken scanner also blocks the commit;
+* staged conflict markers block the commit.
+
+**Runtime state moved out of the checkout.** Guard locks and ledgers now live
+in `/srv/projects/gx-cluster/state/guard`, previously
+`legenex/lifecycle/.state`. `/srv` itself is root-owned and there is no sudo,
+so `/srv/projects/gx-cluster/{state,runtime,secrets,backups}` is the
+user-owned substitute for the requested `/srv/gx-cluster/*` and
+`/srv/backups/*` paths.
+
+**History was not rewritten.** The pre-push audit (gitleaks 8.30.1, 128
+commits, all refs) found no credential of ours. The one live-looking key is
+an upstream author's, and it is already public in that upstream repository.
+The pre-migration bundle is at
+`/srv/projects/gx-cluster/backups/gx-server/pre-github-migration.bundle`.
+
+## D-027 — Kernel-lock verifier: check the installed state, and classify apt proposals
+
+**Date:** 2026-09-16. **Status:** ACCEPTED.
+
+`verify-kernel-lock.sh` (now versioned at
+`legenex/host/kernel-lock/verify-kernel-lock.sh`) reported the correctly held
+6.17 kernel as `MISSING` on both nodes. It also failed the lock on any
+simulated kernel install. Both were verifier bugs, not lock failures:
+
+1. It required dpkg's abbreviated status to start with `ii`. A held,
+   installed package reports `hi`. The verifier now checks
+   `db:Status-Status == installed` and reports the hold selection separately.
+   It also checks the modules package and the `/boot` image and initrd.
+2. `apt-get -s dist-upgrade` proposes installing eight **older-ABI**
+   `6.8.0-1062-nvidia*` flavours. These are new packages that touch no held
+   package, no part of the locked 6.17 set, and not the name-based
+   `GRUB_DEFAULT` pin. Proposals are now classified:
+   * **THREAT (FAIL):** any removal, or any change to a held, locked or
+     HWE-meta package.
+   * **NEWER (WARN):** a newer kernel ABI.
+   * **OTHER (INFO):** anything else.
+
+Result: both nodes report 13 passed, 0 warnings, 0 failed. Nothing was
+reinstalled, upgraded or removed, and GRUB was not touched (L-4).

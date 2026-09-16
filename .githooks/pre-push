@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Only the writer may push, and only to main. Force-pushes are refused.
+role="$(cat /srv/projects/gx-cluster/state/git-sync/role 2>/dev/null || echo unset)"
+if [ "${role}" != writer ]; then
+  echo "pre-push: this node (role=${role}) is a pull-only mirror; pushing is not allowed." >&2
+  exit 1
+fi
+zero=0000000000000000000000000000000000000000
+while read -r lref lsha rref rsha; do
+  [ "${rref}" = refs/heads/main ] || [[ "${rref}" == refs/tags/* ]] || { echo "pre-push: only main and tags are pushed (got ${rref})" >&2; exit 1; }
+  if [ "${rsha}" != "${zero}" ] && [ "${lsha}" != "${zero}" ] && [[ "${rref}" == refs/heads/* ]]; then
+    git merge-base --is-ancestor "${rsha}" "${lsha}" 2>/dev/null || { echo "pre-push: non-fast-forward push to ${rref} refused" >&2; exit 1; }
+  fi
+done
+exit 0

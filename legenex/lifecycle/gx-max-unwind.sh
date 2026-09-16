@@ -133,6 +133,10 @@ esac
 docker ps -a --filter "name=^/${GXMAX_RANK0_NAME}$" --format '{{.Names}}' | while read -r c; do
   [ -n "${c}" ] && { log "unwind: removing stale container ${c} on node1"; docker rm -f "${c}" >/dev/null 2>&1 || true; }
 done
+wpid="${GX_STATE_ROOT:-/srv/projects/gx-cluster/state}/gx-max-rank0-watch.pid"
+if [ -f "${wpid}" ] && [ "$(cat "${wpid}")" != "${PPID}" ] && [ "$(cat "${wpid}")" != "$$" ]; then
+  kill "$(cat "${wpid}")" >/dev/null 2>&1 || true
+fi
 n2_retry "docker ps -a --filter 'name=^/${GXMAX_RANK1_NAME}\$' --format '{{.Names}}' | xargs -r docker rm -f >/dev/null 2>&1; if [ -f \$HOME/.gx-guard/rank1-deadman.pid ]; then kill \$(cat \$HOME/.gx-guard/rank1-deadman.pid) >/dev/null 2>&1; rm -f \$HOME/.gx-guard/rank1-deadman.pid; fi; true" >/dev/null 2>&1 || true
 
 # --------------------------------------------- 5+6. reconcile both ledgers --

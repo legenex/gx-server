@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Versioned post-commit hook: a successful manual commit on the writer is
+# pushed immediately (and gx10-02 notified) instead of waiting for the timer.
+# Detached, so `git commit` returns at once; autosync's own commits set
+# GX_SYNC_IN_PROGRESS and push themselves.
+[ -n "${GX_SYNC_IN_PROGRESS:-}" ] && exit 0
+repo="$(git rev-parse --show-toplevel)"
+role="$(cat /srv/projects/gx-cluster/state/git-sync/role 2>/dev/null || echo unset)"
+[ "${role}" = writer ] || exit 0
+[ "$(git symbolic-ref --quiet --short HEAD 2>/dev/null)" = main ] || exit 0
+setsid nohup "${repo}/ops/git-sync/node1-autosync.sh" push >/dev/null 2>&1 < /dev/null &
+exit 0

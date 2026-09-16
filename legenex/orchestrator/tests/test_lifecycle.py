@@ -245,3 +245,26 @@ class TestReconcile(LifecycleTestBase):
         for _ in range(3):
             self.assertIs(lc.status().state, State.READY)
         lc.shutdown()
+
+    def test_down_is_promoted_when_engine_started_externally(self):
+        # gx-max-start.sh run by an operator, not through the orchestrator.
+        _StubHealth.healthy = False
+        self.write_start("#!/usr/bin/env bash\nexit 1\n")
+        self.write_stop()
+        lc = GxMaxLifecycle(self.dir, self.health_url, idle_ttl=0)
+        lc._RECONCILE_INTERVAL = 0.0
+        self.assertIs(lc.status().state, State.DOWN)
+        _StubHealth.healthy = True
+        self.assertIs(lc.status().state, State.READY)
+        self.assertTrue(lc.is_ready())
+        lc.shutdown()
+
+    def test_down_stays_down_while_engine_absent(self):
+        _StubHealth.healthy = False
+        self.write_start("#!/usr/bin/env bash\nexit 1\n")
+        self.write_stop()
+        lc = GxMaxLifecycle(self.dir, self.health_url, idle_ttl=0)
+        lc._RECONCILE_INTERVAL = 0.0
+        for _ in range(3):
+            self.assertIs(lc.status().state, State.DOWN)
+        lc.shutdown()

@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Versioned pre-commit hook (core.hooksPath=.githooks). Active only on the
+# writer node (gx10-01). Refuses commits that stage secrets, model weights,
+# archives, runtime state or oversized files -- this checkout is published to
+# a PUBLIC repository. Findings are reported by file/rule only, never by value.
+repo="$(git rev-parse --show-toplevel)"
+# shellcheck source=../ops/git-sync/common.sh
+GX_SYNC_TAG="pre-commit" source "${repo}/ops/git-sync/common.sh" 2>/dev/null || exit 0
+[ "$(gxs_role)" = writer ] || { echo "pre-commit: this node is not the gx-cluster Git writer (role=$(gxs_role)); refusing to commit." >&2; exit 1; }
+
+bad=()
+while IFS= read -r -d '' p; do
+  if gxs_forbidden_path "${p}" || gxs_file_too_large "${p}"; then bad+=("${p}"); fi
+done < <(git diff --cached --name-only -z --diff-filter=AMR)
+if [ "${#bad[@]}" -gt 0 ]; then
+  echo "pre-commit: refusing forbidden or oversized paths: ${bad[*]}" >&2
+  exit 1
+fi
+if git diff --cached --check 2>&1 | grep -q 'conflict marker'; then
+  echo "pre-commit: staged change contains conflict markers" >&2
+  exit 1
+fi
+hits="$(gxs_scan_staged)"; rc=$?
+case "${rc}" in
+  0) exit 0 ;;
+  1) echo "pre-commit: secret scan found possible credentials (file:line:rule):" >&2
+     printf '  %s\n' ${hits} >&2
+     exit 1 ;;
+  *) echo "pre-commit: secret scanner unavailable; refusing to commit to a public repository" >&2
+     exit 1 ;;
+esac

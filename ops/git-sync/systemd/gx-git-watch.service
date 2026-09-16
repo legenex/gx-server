@@ -1,0 +1,17 @@
+# gx10-01 only. Persistent change watcher: polls the checkout every 15 s and
+# commits/pushes once a change has been quiet for 45 s (node1-autosync.sh).
+[Unit]
+Description=gx-cluster Git change watcher (gx10-01 writer)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=@REPO@/ops/git-sync/node1-autosync.sh watch
+Restart=always
+RestartSec=10
+Nice=10
+IOSchedulingClass=idle
+
+[Install]
+WantedBy=default.target

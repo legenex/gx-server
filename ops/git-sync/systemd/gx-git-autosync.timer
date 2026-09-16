@@ -1,0 +1,10 @@
+[Unit]
+Description=gx-cluster Git autosync fallback, every minute (gx10-01)
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target

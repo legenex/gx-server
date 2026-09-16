@@ -127,30 +127,42 @@ class GxMaxLifecycle:
 
     # ------------------------------------------------------------ reconcile
     def _reconcile(self) -> None:
-        """Demote READY -> DOWN if the engine has gone away behind our back.
+        """Keep the state machine honest about an engine managed elsewhere.
 
-        The engine can be torn down outside this process (an operator running
-        gx-max-stop.sh, a crash, a node reboot). Without this, the state machine
-        would keep claiming READY and proxy requests into a dead endpoint
-        instead of re-acquiring.
+        READY -> DOWN when the engine has gone away behind our back (an
+        operator running gx-max-stop.sh, a crash, a node reboot); otherwise
+        requests would be proxied into a dead endpoint instead of re-acquiring.
+
+        DOWN -> READY when a healthy engine is found that this process did
+        not start (an operator running gx-max-start.sh directly). The startup
+        adoption above only covered engines that predated the orchestrator;
+        found 2026-09-16, `/health/detailed` reported gx-max "stopped" for a
+        serving engine until the first request happened to adopt it.
+        ACQUIRING/RELEASING are never touched: a worker thread owns those.
         """
         with self._cv:
-            if self._state is not State.READY:
+            if self._state not in (State.READY, State.DOWN):
                 return
             if time.time() - self._last_reconcile < self._RECONCILE_INTERVAL:
                 return
             self._last_reconcile = time.time()
+            observed = self._state
 
         # Probe outside the lock: it does network I/O.
-        if self._probe_health():
-            return
+        healthy = self._probe_health()
 
         with self._cv:
             # Re-check: the state may have moved while we were probing.
-            if self._state is State.READY:
+            if self._state is not observed:
+                return
+            if observed is State.READY and not healthy:
                 log.warning("gx-max disappeared while marked READY; marking DOWN")
                 self._last_used = None
                 self._set_state(State.DOWN, "engine vanished (torn down externally)")
+            elif observed is State.DOWN and healthy:
+                log.info("gx-max: adopted an engine started outside the orchestrator")
+                self._last_used = time.time()
+                self._set_state(State.READY, "adopted an externally started engine")
 
     # ----------------------------------------------------------------- status
     def status(self) -> LifecycleStatus:

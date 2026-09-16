@@ -1,0 +1,11 @@
+# Both nodes. Full integrity audit; results in /srv/logs/gx-git-sync/audit-latest.log.
+[Unit]
+Description=gx-cluster Git daily integrity audit
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=@REPO@/ops/git-sync/integrity-audit.sh
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=900

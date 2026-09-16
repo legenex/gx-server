@@ -50,7 +50,7 @@ StandardError=append:/srv/logs/gx-orchestrator.log
 # access beyond its own logs.
 NoNewPrivileges=true
 ProtectSystem=strict
-ReadWritePaths=/srv/logs
+ReadWritePaths=/srv/logs /srv/projects/gx-cluster/state /var/tmp/sglang-cache
 PrivateTmp=true
 
 [Install]

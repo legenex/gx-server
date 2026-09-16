@@ -44,8 +44,12 @@ set -uo pipefail
 
 _guard_here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# All state (lock files + residency ledgers) lives here. Override for tests.
-GX_GUARD_STATE_DIR="${GX_GUARD_STATE_DIR:-${_guard_here}/.state}"
+# All state (lock files + residency ledgers) lives here, OUTSIDE the Git
+# checkout: it is mutable, machine-specific runtime state and the checkout is
+# continuously synced to a public repository (D-026). /srv itself is
+# root-owned on these nodes, so the user-owned /srv/projects is the root.
+# Override for tests.
+GX_GUARD_STATE_DIR="${GX_GUARD_STATE_DIR:-${GX_STATE_ROOT:-/srv/projects/gx-cluster/state}/guard}"
 
 # Human-mandated floor, 2026-09-14: never budget a node down to the wire.
 GX_GUARD_RESERVE_GIB="${GX_GUARD_RESERVE_GIB:-30}"
@@ -76,6 +80,21 @@ gx_guard_check() {
       --node "${node}" --name "${name}" --class "${class}" --estimated-gib "${est}" \
       --reserve-gib "${GX_GUARD_RESERVE_GIB}" --node-total-gib "${GX_GUARD_NODE_TOTAL_GIB}" \
       --meminfo-path "${GX_GUARD_MEMINFO}" )
+}
+
+# gx_guard_takeover_check NODE NAME FACTS_LINE
+# gx-max cluster-takeover admission (D-025): clean start, swapfile active,
+# swap headroom, no other large/exclusive resident. NOT estimate+reserve.
+# FACTS_LINE comes from gx-max-safety.sh's gxs_clean_start_facts, run on the
+# node being judged. Prints JSON; returns 0 = allowed, 2 = refused.
+gx_guard_takeover_check() {
+  local node="$1" name="$2" facts="$3"
+  ( cd "${GX_GUARD_ORCH_DIR}" && "${GX_GUARD_PY}" -m gx_orchestrator.resource_guard \
+      --state-dir "${GX_GUARD_STATE_DIR}" takeover-check \
+      --node "${node}" --name "${name}" --facts "${facts}" \
+      --min-avail-gib "${GXMAX_CLEAN_START_MIN_AVAIL_GIB:-100}" \
+      --min-swap-free-gib "${GXMAX_MIN_SWAP_FREE_GIB:-40}" \
+      --max-psi-full "${GXMAX_MAX_PSI_FULL_AVG10:-5}" )
 }
 
 # gx_guard_register NODE NAME CLASS ESTIMATED_GIB [CONTAINER]

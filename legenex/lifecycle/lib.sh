@@ -18,9 +18,10 @@ n2() { ssh -o BatchMode=yes -o ConnectTimeout=10 "${GXMAX_NODE2_SSH}" "$@"; }
 #
 # The LOCKED parts (engine, --model-path, --tp 2, --nnodes 2, the DSV4/b12x
 # backend selection) are literals here and must stay literals. The memory
-# sizing values are read from gx-max.conf's GXMAX_* tuning block, which the
-# operator has explicitly delegated -- see that block for the measured
-# rationale behind each number (coordination/DECISIONS.md D-022).
+# sizing values come from gx-max.conf, whose defaults are the verified 4b96e49
+# / official-cookbook values (D-025). With the defaults this emits the 4b96e49
+# vector plus --enable-metrics (D-002); only the flag ORDER differs, because
+# --model-loader-extra-config is emitted last.
 gxmax_args() {
   local rank="$1"
   printf '%s\n' \
@@ -92,13 +93,11 @@ gxmax_env_flags() {
 # Docker flags common to both ranks. GPU access is via CDI (nvidia.com/gpu=all);
 # /dev/infiniband + CAP_IPC_LOCK + unlimited memlock are required for RoCE.
 #
-# --memory / --oom-score-adj: host-resilience hardening. The cap does NOT
-# bound the model -- on this unified-memory hardware the CUDA pool is not
-# charged to the container cgroup at all (coordination/BLOCKERS.md B-021).
-# It bounds the part that IS charged (the loader's page cache and anonymous
-# working set), which measurement showed to be the difference between a
-# survivable load transient and a starved host. See gx-max.conf's
-# GXMAX_MEM_LIMIT block for the measured numbers.
+# There is deliberately NO --memory / --memory-swap (D-025). An equal pair
+# sets the container's memory.swap.max to 0, which stopped the loader's
+# staging pages from spilling into /swapfile-sglang and turned a survivable
+# load transient into a kernel OOM kill. --oom-score-adj stays: it makes
+# SGLang, not sshd/tailscaled, the kernel's victim of last resort.
 gxmax_docker_flags() {
   printf '%s\n' \
     --network host \
@@ -108,8 +107,6 @@ gxmax_docker_flags() {
     --device /dev/infiniband \
     --cap-add IPC_LOCK \
     --ulimit memlock=-1:-1 \
-    --memory "${GXMAX_MEM_LIMIT}" \
-    --memory-swap "${GXMAX_MEM_LIMIT}" \
     --oom-score-adj "${GXMAX_OOM_SCORE_ADJ}" \
     -v "${GXMAX_MODEL_DIR}:/model:ro" \
     -v "${GXMAX_CACHE_DIR}:/root/.cache"

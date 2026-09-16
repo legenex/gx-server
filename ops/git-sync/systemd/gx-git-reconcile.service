@@ -1,0 +1,13 @@
+# gx10-02 only. Reconcile the pull-only mirror to origin/main. Started by
+# gx-git-reconcile.timer every minute, and on demand by gx10-01 right after
+# each successful push (systemctl --user start --no-block).
+[Unit]
+Description=gx-cluster Git mirror reconcile to origin/main (gx10-02)
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=@REPO@/ops/git-sync/node2-reconcile.sh
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=300

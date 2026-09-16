@@ -1,0 +1,13 @@
+# gx10-01 only. One autosync pass (commit if quiet, push if ahead, notify
+# gx10-02). Fired every minute by gx-git-autosync.timer as the fallback for
+# the watcher and for pushes that failed while GitHub was unreachable.
+[Unit]
+Description=gx-cluster Git autosync pass (gx10-01 writer)
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=@REPO@/ops/git-sync/node1-autosync.sh once
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=300

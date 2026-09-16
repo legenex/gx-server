@@ -968,6 +968,21 @@ stack on this platform can charge device allocations to the cgroup at all —
 research, not a config change, and not worth doing unless a real incident
 demands it.
 
+## B-022 (S1) — RESOLVED 2026-09-16 (D-025): gx-max serves again. The "does not fit" conclusion below was wrong.
+
+**Resolution.** The failed runs recorded below were not the verified
+configuration. They ran with `--memory 106g --memory-swap 106g`, which sets
+the container's swap limit to 0, and with `--mem-fraction-static` at 0.70 or
+0.50, both below the ~0.731 a TP=2 shard needs. With the verified `4b96e49`
+vector restored, no cgroup cap, and a gx-max-specific takeover admission
+policy in place of `peak + 30 GiB`, gx-max loaded in 539 s and served
+correct output on both the direct and gateway paths. Numbers are in D-025
+and TEST_RESULTS.md §16. The original text is kept below as a record of the
+investigation. Residual load-time swap headroom on node 1 is tracked as
+B-023.
+
+### Original entry (superseded)
+
 ## B-022 (S1) — gx-max cannot hold a 30 GiB MemAvailable reserve on 128 GB nodes; the floor and the locked model are arithmetically incompatible
 
 **Opened:** 2026-09-16. **Status:** OPEN — needs a human decision on the
@@ -1038,3 +1053,30 @@ different quantisation, or more than 2 nodes. All three are LOCKED (L-6).
 Until this is decided, `GXMAX_GUARD_RESERVE_GIB` stays at **30** and the
 admission guard refuses gx-max rather than quietly admitting it under a
 number nobody approved.
+
+
+## B-023 (S3) — node 1's gx-max load transient reaches the swap ceiling
+
+**Status:** OPEN, monitored, not blocking. **Found:** 2026-09-16.
+
+During the verified gx-max load, node 1 used all 64 GiB of swap for about
+5 s. MemAvailable was 2.6 GiB at that point, and PSI full peaked at 22%.
+Node 2, which has no control plane, peaked at 51.6 GiB. The 2026-09-14 run
+showed the same "63/63 GB". The load succeeds, and the management plane
+stayed responsive throughout (fork+exec at most 6 ms). But the margin is
+thin: node 1 carries the gateway, Postgres, Open WebUI, AgentOS and a
+desktop session.
+
+**Protection in place.** `gx-max-safety.sh` aborts and unwinds if
+MemAvailable stays under 512 MiB **and** swap free stays under 2 GiB for
+30 s. `--oom-score-adj 950` makes SGLang the kernel's victim.
+
+**Options, none of which touch a locked value:**
+
+* stop non-cluster workloads on node 1 (Open WebUI, AgentOS, desktop apps)
+  before a gx-max launch;
+* raise node 1's swap. This needs root and is explicitly not done (L-8
+  says keep, not add).
+
+**Human decision needed:** whether gx-max-start.sh may stop Open WebUI and
+AgentOS as part of its drain.
