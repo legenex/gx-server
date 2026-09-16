@@ -135,3 +135,4 @@ gx10-02's previous non-Git copy is kept next to the checkout as
 `gx-cluster.pre-git-<timestamp>`.
 
 _Sync path last exercised end to end: 2026-09-16 13:44 SAST (TEST 1, D-026)._
+_TEST 2 (push blocked then retried): 2026-09-16 13:45 SAST._
