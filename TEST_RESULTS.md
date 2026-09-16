@@ -1020,3 +1020,44 @@ Also answered correctly: "17*23" → `119`.
 | 2. Push blocked (push URL pointed at a closed port) | commit kept locally, failure logged; 18 s after unblocking, all three = `09ea38c` — **PASS** |
 | 3. Drift on gx10-02 (untracked file, plus a tracked edit containing a fake token) | caught within 44 s; evidence saved at mode 0700 with the token masked; file removed; edit reverted; no commit made on gx10-02 — **PASS** |
 | 4. Integrity audit | gx10-01 15 PASS / 0 FAIL; gx10-02 17 PASS / 0 FAIL — **PASS** (after fixing a placeholder false positive and redeploying stale copies) |
+
+### 16.6 Final cycle and alias validation
+
+**Final gx-max cycle (orchestrator acquire, then gateway, then graceful release):**
+
+* **Load:** 559 s. node 1 minimum 2,481 MiB MemAvailable, node 2 minimum
+  7,465 MiB. Swap peaked at 64 GiB (node 1) and 50.9 GiB (node 2). Steady
+  state 15.0 / 16.6 GiB.
+* **Gateway `gx-max`:** 8/8 PASS. 700 tokens at 40.89 tok/s wall, TTFT
+  1.38 s, 5,877 MiB of RDMA traffic.
+* **`POST /lifecycle/gx-max/release`:** returned in 32 s. No rank containers
+  remained on either node.
+  * MemAvailable: node 1 went from 14.9 to 117.9 GiB; node 2 was at 117.9 GiB.
+  * Swap: node 1 at 4.9 GiB, node 2 at 3.2 GiB.
+  * Ledger empty, both locks free.
+  * The node 1 watcher was disarmed without firing, and the node 2 deadman
+    exited cleanly.
+  * llama-swap on both nodes and the node 2 media stack were restored and
+    healthy.
+
+**gx-auto never acquires gx-max:** a prompt loaded with "hardest" signals,
+sent while gx-max was down, produced this result:
+
+| What was checked | Result |
+|---|---|
+| Classifier score | `hard_score 7` |
+| Routing | served by `gx-reason`, with `downgraded_from: gx-max` |
+| New acquisitions | 0 |
+| gx-max containers on either node | 0 |
+
+**Acceptance suite (normal tiers):**
+
+* **First run: 12 PASS / 3 FAIL.** The failures traced back to the migration:
+  * The branch switch left `gx-llama-swap-node01`'s bind-mounted `/app/env`
+    pointing at a deleted directory. gx-mini's `docker run` then failed with
+    exit 125.
+  * With gx-mini failing, LiteLLM put `gx-auto` into cooldown, and the test
+    harness misread the previous request's routing line as this one's. The
+    harness now fails honestly in that case.
+* **After `docker restart gx-llama-swap-node01`:** `acceptance.sh mini auto`
+  passed 5/5.
