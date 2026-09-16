@@ -134,10 +134,11 @@ macros:
   gx_fast_model_dir: "/models/vllm/Qwen3.6-35B-A3B-Uncensored-NVFP4"
 
   # Fraction of the node's 121.6 GiB unified memory vLLM may claim (weights
-  # 21 GiB + KV + activations + CUDA graphs). 0.40 ~= 48.6 GiB. Sized so that
+  # 21 GiB + KV + activations + CUDA graphs). 0.34 ~= 41 GiB (0.40 measured a
+  # 22 GiB KV pool = 2.1M tokens, far more than 8 sequences need). Sized so that
   # gx-mini (~10 GiB) + gx-fast + the control plane leave >= 30 GiB
   # MemAvailable: both stay resident (measured, TEST_RESULTS.md §18).
-  gx_fast_gpu_fraction: "0.40"
+  gx_fast_gpu_fraction: "0.34"
 
   # ----------------------------------------------------------------------------
   # HOST-RESILIENCE HARDENING (added 2026-09-14, after the gx10-02 mmap-thrash
