@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **gx10-02 no longer depends on the retired `~/gx-worker` tree.** The
+  live containers (`gx-llama-swap-node02`, `gx-media-router`, `gx-comfyui`)
+  were bind-mounting files through `~/gx-gateway`, `~/gx-media` and
+  `~/gx-kernel-lock`, which were symlinks into `gx-worker`. Those are now
+  real runtime directories deployed from `legenex/gateway`, `legenex/media`
+  and `legenex/host/kernel-lock`, and the containers were recreated on them.
+- `integrity-audit.sh` (mirror): checks `~/gx-kernel-lock` instead of the
+  `gx-worker` copy. It also compares the deployed `gx-reason.env`,
+  `extra_model_paths.yaml` and media workflows, and warns if a deploy
+  directory is a symlink or `~/gx-worker` reappears.
+- `recover-node2.sh`: dropped the `gx-worker` `gx-node2ctl` and
+  `sync-status-to-lead.sh` steps. ComfyUI status now comes from the media
+  router's `/health`.
+
 ## [0.14.0] - 2026-09-16
 
 ### Added

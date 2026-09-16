@@ -34,8 +34,6 @@
 #       anything under /srv/models or /srv/cache, never a RUNNING container
 #   13. node2 service health checks (llama-swap, over both loopback and the
 #       fabric address that node 1 actually uses)
-#   14. best-effort trigger of the worker's own status sync back to
-#       coordination/node2/ on this host
 #
 # This script NEVER starts gx-max or gx-reason. Bringing those up is a decision
 # for a human (or legenex/tests/gx-max-validate.sh / a real client request)
@@ -75,7 +73,6 @@ SWAP_PORT="${GX_SWAP_PORT:-28080}"
 SSH_CONNECT_TIMEOUT="${GX_SSH_CONNECT_TIMEOUT:-10}"
 # Hard wall-clock cap on ANY single remote call. See header note above.
 SSH_HARD_TIMEOUT="${GX_SSH_HARD_TIMEOUT:-20}"
-NODE2_WORKER_DIR="${GX_NODE2_WORKER_DIR:-/home/legenex-02/gx-worker}"
 LOG_DIR="${GX_LOG_DIR:-/srv/logs}"
 
 # Containers this script is EVER allowed to remove under --apply, and only when
@@ -348,17 +345,13 @@ check_lifecycle_lease_staleness() {
     *)      step_warn "comfyui pid file check" "unexpected output: ${out}" ;;
   esac
 
-  # gx-node2ctl is the worker's own lifecycle controller for comfyui. Note:
-  # its gx-reason subcommands are STALE (they predate the llama-swap wiring in
-  # legenex/gateway/llama-swap/node02.yaml and always report NOT_PROVISIONED).
-  # Only trust it for comfyui status, not gx-reason.
-  local ctl="${NODE2_WORKER_DIR}/scripts/gx-node2ctl"
-  if remote "test -x '${ctl}'" 2>/dev/null; then
-    local st; st=$(remote "'${ctl}' status" 2>&1)
-    log "gx-node2ctl status (comfyui-authoritative; ignore its gx_reason= line, it is a stale placeholder):"
-    _write "${st}"
+  # ComfyUI runs as the gx-comfyui container behind gx-media-router
+  # (~/gx-media, deployed from legenex/media); the router's /health reports it.
+  local st; st=$(curl -fsS -m 5 "http://${NODE2_FABRIC_A}:18800/health" 2>&1)
+  if [ -n "${st}" ] && [[ "${st}" == *'"status": "ok"'* ]]; then
+    vlog "media router health: ${st:0:300}"
   else
-    step_skip "gx-node2ctl status" "not found at ${ctl} (or not executable)"
+    log "media router not answering on ${NODE2_FABRIC_A}:18800 (may simply not be started): ${st:0:150}"
   fi
 }
 
@@ -445,23 +438,6 @@ check_node2_services() {
   fi
 }
 
-# ---------------------------------------------------- 14. sync worker status --
-sync_worker_status() {
-  [ "${NODE2_REACHABLE}" = 1 ] || { step_skip "worker status sync" "ssh not reachable"; return; }
-  local sync="${NODE2_WORKER_DIR}/scripts/sync-status-to-lead.sh"
-  if ! remote "test -x '${sync}'" 2>/dev/null; then
-    step_skip "worker status sync" "not found at ${sync} on node2"
-    return
-  fi
-  local out rc
-  out=$(remote "'${sync}'" 2>&1); rc=$?
-  if [ "${rc}" -eq 0 ]; then
-    step_pass "worker status synced to coordination/node2/"
-  else
-    step_warn "worker status sync" "sync script exited ${rc}: ${out:0:200}"
-  fi
-}
-
 # ------------------------------------------------------------------- driver --
 check_ssh
 check_hostname
@@ -476,7 +452,6 @@ check_lifecycle_lease_staleness
 detect_giant_accidental_workload
 clear_stale_state
 check_node2_services
-sync_worker_status
 
 log "=============================================================="
 log " This script did NOT start gx-max or gx-reason. Those remain OFF"

@@ -165,8 +165,19 @@ if [ "${ROLE}" = mirror ]; then
   check_copy "${HOME}/.gx-guard/gx-max-safety.sh" legenex/lifecycle/gx-max-safety.sh
   check_copy "${HOME}/gx-gateway/docker-compose.node02.yml" legenex/gateway/docker-compose.node02.yml
   check_copy "${HOME}/gx-gateway/node02.yaml" legenex/gateway/llama-swap/node02.yaml
+  check_copy "${HOME}/gx-gateway/env/gx-reason.env" legenex/gateway/llama-swap/env/gx-reason.env
   check_copy "${HOME}/gx-media/docker-compose.media.yml" legenex/media/docker-compose.media.yml
-  check_copy "${HOME}/gx-worker/kernel-lock/verify-kernel-lock.sh" legenex/host/kernel-lock/verify-kernel-lock.sh
+  check_copy "${HOME}/gx-media/comfyui/extra_model_paths.yaml" legenex/media/comfyui/extra_model_paths.yaml
+  for wf in "${GX_SYNC_REPO}"/legenex/media/workflows/*.json; do
+    check_copy "${HOME}/gx-media/workflows/$(basename "${wf}")" "legenex/media/workflows/$(basename "${wf}")"
+  done
+  check_copy "${HOME}/gx-kernel-lock/verify-kernel-lock.sh" legenex/host/kernel-lock/verify-kernel-lock.sh
+  # The retired ~/gx-worker tree must never come back as a runtime dependency:
+  # the deploy dirs are real directories, not links into it.
+  for d in gx-gateway gx-media gx-kernel-lock; do
+    [ -L "${HOME}/${d}" ] && r WARN "deploy dir ${HOME}/${d} is a symlink to $(readlink "${HOME}/${d}"); expected a real directory"
+  done
+  [ -e "${HOME}/gx-worker" ] && r WARN "legacy ${HOME}/gx-worker exists again; it must not be an operational dependency"
 else
   check_copy "${HOME}/gx-kernel-lock/verify-kernel-lock.sh" legenex/host/kernel-lock/verify-kernel-lock.sh
   check_copy "${HOME}/.config/systemd/user/gx-orchestrator.service" legenex/orchestrator/systemd/gx-orchestrator.service
