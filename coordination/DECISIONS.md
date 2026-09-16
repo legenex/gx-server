@@ -758,3 +758,86 @@ simulated kernel install. Both were verifier bugs, not lock failures:
 
 Result: both nodes report 13 passed, 0 warnings, 0 failed. Nothing was
 reinstalled, upgraded or removed, and GRUB was not touched (L-4).
+
+## D-028 — Management web UI: a thin, authenticated interface on gx10-01 (`legenex/control-ui`)
+
+**Date:** 2026-09-16. **Status:** ACCEPTED.
+
+**Decision.** The cluster gets one management web UI, `gx-control-ui`, on
+gx10-01 port **8088**, bound to **127.0.0.1 and the Tailscale address only**.
+It is an interface to the existing control plane, not a second one:
+
+* **Reads:** `/proc`, `/sys`, `docker ps`, `systemctl --user`, Git, the
+  orchestrator, LiteLLM, both llama-swaps, the media router and SGLang health.
+  gx10-02 is read with one SSH call per refresh that streams the same
+  collector (`hostfacts.py`) to `python3 -`.
+* **Writes:** only the fixed operations in `gx_control_ui/actions.py`.
+  gx-max load/unload/restart/force-release call the orchestrator's
+  acquire/release API. llama-swap tiers use llama-swap's own on-demand load
+  and per-model unload, after the same 30 GiB admission formula
+  (`resource_guard.compute_admission`). Media "unload" is ComfyUI's own
+  `/free` on node 2's loopback. There is no shell, no generic command, no
+  file browser, and no upgrade, kernel or firmware operation.
+* **Safety interlocks:** model and infrastructure operations refuse while
+  gx-max is acquiring, ready or releasing, or while a rank container exists;
+  one state-changing operation runs at a time; gx-max load needs the typed
+  phrase `gx-max`, force release needs `FORCE RELEASE`.
+
+**Why this shape.**
+
+* **Stdlib Python backend** (like the orchestrator, D-003): it sits beside
+  the recovery path and must not depend on pip or a registry.
+* **Dependency-free ES-module frontend:** no bundler and no runtime npm
+  packages, so the strict CSP (`script-src 'self'`, no inline code) holds
+  and there is no frontend supply chain. Playwright and axe-core are dev-only.
+* **A user systemd unit, not a container:** the backend needs the host's
+  `/proc`, the user's SSH key for gx10-02, `systemctl --user` and the Docker
+  CLI. A container would need the Docker socket and SSH keys mounted, which
+  is a larger privilege surface than the unit (`NoNewPrivileges`,
+  `ProtectSystem=strict`, `MemoryMax=512M`).
+
+**Authentication.** One local admin account. The password is stored as a
+scrypt hash (`hashlib.scrypt`, N=2^15, r=8, p=1, random salt) in
+`/srv/projects/gx-cluster/secrets/control-ui/auth.json` (0600 in a 0700
+directory), set only by `legenex/control-ui/scripts/gx-ui-passwd`. Sessions
+are server-side: opaque tokens in `HttpOnly; SameSite=Strict` cookies, 1 h
+idle and 12 h absolute. Every POST needs the session's CSRF token and a
+same-origin request. Five failed logins lock an address out for 15 minutes.
+Upstream keys come from the existing ignored `legenex/gateway/.env` via the
+unit's `EnvironmentFile`; the browser never receives one.
+
+**Transport.** Plain HTTP inside Tailscale (WireGuard-encrypted). Tailscale
+HTTPS certificates are not enabled on this tailnet (`CertDomains` is empty),
+so the cookie `Secure` flag is set only when a request arrives with
+`X-Forwarded-Proto: https`. Enabling tailnet HTTPS and fronting the UI with
+`tailscale serve` is a possible later hardening step. It needs a tailnet
+admin setting, not code.
+
+## D-029 — Orchestrator: read-only gx-max lifecycle events and job history
+
+**Date:** 2026-09-16. **Status:** ACCEPTED.
+
+The Jobs page needs real phase data. Instead of a second scheduler, the
+orchestrator now publishes what it already runs:
+
+* `gx-max-start.sh` and `gx-max-stop.sh` are run through a streaming
+  `Popen` with the same timeout semantics as the `subprocess.run` it
+  replaces. Each output line goes to a 400-line buffer and to
+  `/srv/logs/gx-max-lifecycle.log`.
+* A `phase` is derived from the section markers the scripts already print
+  (preflight, draining, admission, loading_rank1, loading_rank0, warming,
+  ready, serving; and draining_requests, stopping_ranks, memory_recovery,
+  restoring, released for a release). Phase never drives a transition:
+  `State` (down / acquiring / ready / releasing) is unchanged.
+* A job history (last 25 acquire/release jobs with phases, outcome, error
+  and the measured startup seconds) is kept in
+  `/srv/projects/gx-cluster/state/orchestrator/gx-max-history.json`.
+* New endpoint `GET /lifecycle/gx-max/events?after=&limit=`, read-only.
+  `/lifecycle/gx-max/status` gains `phase`, `phase_seconds`,
+  `last_startup_seconds` and `idle_ttl`.
+
+The launch vector, the scripts, admission and the unwind paths are
+unchanged. The job record is finalised before the READY/DOWN transition
+wakes waiters, so a status read never sees a half-written job. Covered by
+`legenex/orchestrator/tests/test_lifecycle_events.py`, and all 138 existing
+orchestrator tests still pass.

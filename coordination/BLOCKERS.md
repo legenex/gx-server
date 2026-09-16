@@ -1080,3 +1080,38 @@ MemAvailable stays under 512 MiB **and** swap free stays under 2 GiB for
 
 **Human decision needed:** whether gx-max-start.sh may stop Open WebUI and
 AgentOS as part of its drain.
+
+
+## B-024 (S3) — the media router's bearer key is the public placeholder `not-required`
+
+**Status:** OPEN, needs a human. **Found:** 2026-09-16 (control-UI run).
+
+`GX_MEDIA_API_KEY` in `legenex/gateway/.env` on gx10-01 and in
+`~/gx-media/.env` on gx10-02 is the literal string `not-required`. That
+string is published in the public `.env.sample`. The router listens only on
+the point-to-point fabric address (`192.168.100.11:18800`), so the practical
+exposure is small: anything that can reach the fabric can generate media.
+Still, the key protects nothing.
+
+The control UI shows it as a warning (Dashboard → warnings, Settings →
+credential hygiene), without the value.
+
+**Why the agent did not fix it.** Rotating it writes to both secret stores,
+and the permission policy blocked that write during this run.
+
+**Fix (about 2 minutes, no model impact).** Run on **gx10-01**:
+
+```bash
+cd ~/Documents/Projects/Server/gx-cluster/legenex/gateway
+umask 077; cp -p .env /srv/projects/gx-cluster/secrets/gateway.env.bak-$(date +%Y%m%dT%H%M%S)
+NEW="sk-$(openssl rand -hex 32)"
+sed -i "s|^GX_MEDIA_API_KEY=.*|GX_MEDIA_API_KEY=${NEW}|" .env
+printf '%s' "$NEW" | ssh legenex-02@gx10-02 'umask 077; K=$(cat); cp -p ~/gx-media/.env ~/gx-media/.env.bak; sed -i "s|^GX_MEDIA_API_KEY=.*|GX_MEDIA_API_KEY=${K}|" ~/gx-media/.env'
+unset NEW
+ssh legenex-02@gx10-02 'cd ~/gx-media && docker compose -f docker-compose.media.yml up -d --no-deps router'
+docker compose --env-file .env -f docker-compose.gateway.yml up -d --no-deps litellm
+systemctl --user restart gx-orchestrator.service gx-control-ui.service   # only while gx-max is down
+```
+
+Then verify: control UI → Playground → gx-image and gx-video, and Settings →
+credential hygiene shows `GX_MEDIA_API_KEY: set`.

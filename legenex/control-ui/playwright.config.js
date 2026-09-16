@@ -34,7 +34,9 @@ export default defineConfig({
       name: 'live',
       testMatch: /live\..*\.spec\.js/,
       timeout: 60 * 60_000,
-      use: { ...devices['Desktop Chrome'], baseURL: process.env.GX_UI_URL || 'http://127.0.0.1:8088' },
+      // Google Chrome (not the bundled Chromium) so H.264 MP4 from gx-video can be
+      // decoded for the frame check.
+      use: { ...devices['Desktop Chrome'], channel: 'chrome', baseURL: process.env.GX_UI_URL || 'http://127.0.0.1:8088' },
     },
   ],
   webServer: onlyLive ? undefined : {

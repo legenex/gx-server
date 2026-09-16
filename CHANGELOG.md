@@ -9,6 +9,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-09-16
+
+### Added
+- **Management web UI** `gx-control-ui` (`legenex/control-ui/`, D-028).
+  It runs on gx10-01 port 8088, bound to loopback and Tailscale only, as the
+  user unit `gx-control-ui.service`. Pages:
+  * **Dashboard:** both nodes, rails, Tailscale, models, gx-max lifecycle,
+    locks and ledger, Git HEADs, services, warnings, queue.
+  * **Models:** the seven aliases with facts and live state, and
+    LOAD / UNLOAD / RESTART through the sanctioned paths. gx-max goes only
+    through the orchestrator.
+  * **Runtime** and **Cluster:** topology and live RoCE throughput.
+  * **Jobs / Queue** and **Logs:** 25 predefined, redacted streams.
+  * **API Playground:** chat, vision, tools, streaming, image and video,
+    with curl / Python / JavaScript snippets.
+  * **Docs:** 7 pages covering every operator and user topic.
+  * **Settings / System:** integrity audit, kernel verifier, node-2
+    reconcile, and safe restarts.
+- **Control UI security:**
+  * single admin account with a scrypt hash in a 0600 file outside Git,
+    set with `scripts/gx-ui-passwd`;
+  * server-side sessions, CSRF tokens, same-origin checks and a
+    login-throttle lockout;
+  * strict CSP and security headers;
+  * an audit log;
+  * no shell, upgrade or firmware operation;
+  * upstream keys never reach the browser.
+- **Control UI QA** (`npm run qa`):
+  * ruff, mypy, 132 unit/API/auth/performance tests and the build check;
+  * 11 Playwright tests including axe-core WCAG 2.2 AA and a mobile
+    layout check;
+  * gitleaks and npm audit.
+  * `npm run test:live` drives the deployed UI with real model calls.
+- **Orchestrator:** read-only gx-max lifecycle observability (D-029).
+  * `GET /lifecycle/gx-max/events`;
+  * `phase`, `phase_seconds`, `last_startup_seconds` and `idle_ttl` on
+    `/lifecycle/gx-max/status`;
+  * a live output buffer and `/srv/logs/gx-max-lifecycle.log`;
+  * a persistent job history. Launch vector and scripts unchanged.
+- **Integrity audit** also checks the installed control-UI unit against the
+  rendered repo template.
+
+### Fixed
+- `gx_orchestrator/tiers.py`: stale gx-reason checkpoint note (now
+  `nvidia/Qwen3.6-27B-NVFP4`, D-021).
+
+### Security
+- **B-024 opened:** the media router key on both nodes is the public
+  placeholder `not-required`. The rotation procedure is documented; the
+  rotation itself was not performed in this run, because the permission
+  policy blocked writes to the secret stores.
+
 ## [0.13.0] - 2026-09-16
 
 ### Fixed

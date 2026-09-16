@@ -60,6 +60,7 @@ The system separates three concerns that are easy to conflate:
 | **Gateway** | LiteLLM `:4000` | One OpenAI-compatible entry point. Auth, accounting, alias table. Knows nothing about processes. |
 | **Routing** | orchestrator `:18900` (`gx-auto`) | Chooses a *tier* for a request. Pure decision logic. Starts nothing. |
 | **Lifecycle** | orchestrator + llama-swap | Ensures the *process* for a tier exists. On-demand load, idle TTL, drain, unload. Chooses nothing. |
+| **Management UI** | gx-control-ui `:8088` (gx10-01) | Shows the state of everything above and calls their existing APIs for a fixed set of operations. Schedules nothing itself (§11). |
 
 Routing and lifecycle are deliberately NOT the same thing. `gx-auto` decides
 *which* tier; llama-swap and the gx-max lifecycle decide *whether the engine for
@@ -210,6 +211,10 @@ it, under logger `gx.routing`.
   logs, or git history.
 * **Known gap:** SGLang `:30000` currently binds `0.0.0.0` with no auth. See
   BLOCKERS.md B-003.
+* The control UI `:8088` binds loopback and the Tailscale address only, and
+  requires a password session plus CSRF for every change (§11, D-028).
+* **Known gap:** the media router's bearer key is the public placeholder
+  `not-required`. See BLOCKERS.md B-024.
 
 ## 8. Node roles under each operating state
 
@@ -337,3 +342,33 @@ only. Everything else lives outside the checkout:
 Live service copies outside the checkout (`~/gx-gateway`, `~/gx-media`,
 `~/.gx-guard` on node 2) are compared against the repo by the audit, but
 deploying them stays a deliberate operator step.
+
+## 11. Management web UI (D-028, D-029)
+
+`legenex/control-ui/` runs as the user unit `gx-control-ui.service` on
+gx10-01 at `http://100.105.214.61:8088/` (and `127.0.0.1:8088`).
+
+```
+browser ──(Tailscale, password session + CSRF)──► gx-control-ui :8088 (gx10-01)
+   reads:  /proc /sys docker systemctl git · orchestrator :18900 · LiteLLM :4000
+           llama-swap :28080 (node 1 loopback, node 2 fabric) · media router :18800 (fabric)
+           SGLang :30000 health · gx10-02 host facts over one SSH call (Tailscale)
+   writes: orchestrator acquire/release (gx-max) · llama-swap load/unload (mini/fast/reason)
+           ComfyUI /free on node-2 loopback (media) · fixed audits/verifier/reconcile
+           restart of LiteLLM / llama-swap / media router / orchestrator / itself
+```
+
+| Rule | How it is enforced |
+|---|---|
+| No competing orchestration | Every change is an entry in `actions.py`; gx-max only via the orchestrator API; llama-swap loads go through llama-swap's own on-demand path after `resource_guard.compute_admission` |
+| No collision with gx-max | Model and infrastructure operations refuse unless gx-max is `down` and no rank container exists; only one state-changing operation runs at a time |
+| No arbitrary execution | No shell endpoint, no path or container supplied by the browser; log streams are a fixed list; node-2 commands are fixed strings |
+| Secrets stay server-side | Upstream keys come from the ignored gateway `.env`; responses and logs are redacted; the password is a scrypt hash in a 0600 file outside Git |
+| Least exposure | Loopback + Tailscale binds (wildcards refused in code); strict CSP, `frame-ancestors 'none'`, `SameSite=Strict`, no-store API responses |
+| Small footprint | `MemoryMax=512M`, `TasksMax=256`, `NoNewPrivileges`, `ProtectSystem=strict`; about 15 MB resident |
+
+The orchestrator publishes read-only lifecycle data for the Jobs page
+(`GET /lifecycle/gx-max/events`, phase fields on `/status`, job history
+under `/srv/projects/gx-cluster/state/orchestrator/`). The phase is derived
+from the start and stop scripts' own section markers and never drives a
+state transition (D-029).

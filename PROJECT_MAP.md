@@ -1,7 +1,8 @@
 # Project map — gx-cluster (two-node GX10)
 
 **Current phase:** production operation of all seven tiers, with automated
-source control. Version: see `VERSION`.
+source control and a management web UI (`http://100.105.214.61:8088/`).
+Version: see `VERSION`.
 **Canonical remote:** https://github.com/legenex/gx-server (`main`). This
 repository is **public**.
 
@@ -21,6 +22,7 @@ repository is **public**.
 | `legenex/lifecycle/` | gx-max start/stop/unwind/status, the safety rules, both watchdogs, the resource guard |
 | `legenex/media/` | gx-image / gx-video router and ComfyUI compose (node 2) |
 | `legenex/host/` | Host watchdog and the kernel-lock tooling |
+| `legenex/control-ui/` | Management web UI: stdlib backend, ES-module frontend, in-UI docs, unit/API/E2E tests (D-028) |
 | `legenex/tests/` | Acceptance, unwind regression, gx-max validation and inference suites |
 | `ops/git-sync/` | Writer, mirror and audit tooling for source control (D-026) |
 | `.githooks/` | Versioned Git hooks (writer only) |
@@ -40,6 +42,12 @@ repository is **public**.
   * the only writer auto-commits and pushes;
   * the mirror reconciles to `origin/main`;
   * a daily audit runs on both nodes.
+* **Management web UI** (`gx-control-ui.service`, port 8088, loopback and
+  Tailscale). Nine pages: Dashboard, Models, Runtime, Cluster, Jobs,
+  Logs, API Playground, Docs and Settings. It has password sessions with
+  CSRF, a fixed set of audited operations, and in-UI documentation.
+* **Orchestrator lifecycle events** (read-only): gx-max phases, a live
+  output buffer, and a persistent job history (D-029).
 
 ## Runtime layout (outside Git)
 
@@ -47,8 +55,8 @@ repository is **public**.
 |---|---|
 | `/srv/models` | weights, a separate copy per node |
 | `/srv/logs` | logs; `gx-git-sync/` holds sync logs and drift evidence |
-| `/srv/projects/gx-cluster/state` | guard locks and ledgers, git-sync role and lock, watcher pid |
-| `/srv/projects/gx-cluster/secrets` | mode 0700; machine-local secrets |
+| `/srv/projects/gx-cluster/state` | guard locks and ledgers, git-sync role and lock, watcher pid, `orchestrator/gx-max-history.json`, `control-ui/model-results.json` |
+| `/srv/projects/gx-cluster/secrets` | mode 0700; machine-local secrets; `control-ui/auth.json` (scrypt hash, 0600) |
 | `/srv/projects/gx-cluster/backups` | pre-migration Git bundle |
 | `legenex/gateway/.env`, `legenex/media/.env` | ignored; live keys |
 
@@ -68,8 +76,15 @@ repository is **public**.
 * **B-015:** sshd, tailscaled and friends cannot be OOM-protected without
   root.
 * **B-016:** there is no remote power-cycle path.
+* **B-024:** the media router key is the public placeholder
+  `not-required`. The fix is documented; rotating it needs a human, because
+  it writes to the secret stores.
 * **Server-side status:** GitHub branch protection and secret scanning are
   not configured from here.
+* **Routing metadata:** `gx_orchestrator/tiers.py` still lists context
+  windows of 262,144 (gx-fast) and 131,072 (gx-reason). Both are served at
+  65,536. This affects only gx-auto's long-context escalation threshold.
+  It was left unchanged because changing it changes routing behaviour.
 
 ## Test commands
 
@@ -81,6 +96,8 @@ legenex/tests/unwind-tests.sh E1 E2 E3 E4 E6         # non-destructive
 legenex/tests/acceptance.sh                          # live tiers
 legenex/tests/gx-max-inference.sh                    # against a running gx-max
 ops/git-sync/integrity-audit.sh
+(cd legenex/control-ui && npm run qa)                # UI: lint, types, 132 tests, build, E2E + axe, security
+(cd legenex/control-ui && npm run test:live)         # UI against the real cluster (real model calls)
 ```
 
 ## Next logical step

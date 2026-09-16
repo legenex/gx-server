@@ -170,6 +170,15 @@ if [ "${ROLE}" = mirror ]; then
 else
   check_copy "${HOME}/gx-kernel-lock/verify-kernel-lock.sh" legenex/host/kernel-lock/verify-kernel-lock.sh
   check_copy "${HOME}/.config/systemd/user/gx-orchestrator.service" legenex/orchestrator/systemd/gx-orchestrator.service
+  # Installed by legenex/control-ui/scripts/install.sh with @REPO@ rendered.
+  unit="${HOME}/.config/systemd/user/gx-control-ui.service"
+  if [ -f "${unit}" ]; then
+    if sed "s#@REPO@#${GX_SYNC_REPO}#g" "${GX_SYNC_REPO}/legenex/control-ui/systemd/gx-control-ui.service" | cmp -s - "${unit}"; then
+      r PASS "deployed unit matches rendered repo template: ${unit}"
+    else
+      r WARN "deployed unit differs from the rendered repo template: ${unit} (run legenex/control-ui/scripts/install.sh)"
+    fi
+  fi
 fi
 
 echo "==== result: PASS=${PASS} WARN=${WARN} FAIL=${FAIL} ====" | tee -a "${OUT}"
