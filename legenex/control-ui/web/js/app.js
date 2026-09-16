@@ -192,7 +192,16 @@ function pageContext() {
 }
 
 function initShell() {
-  window.addEventListener('hashchange', route);
+  window.addEventListener('hashchange', () => {
+    // Only '#/page' hashes are routes; anything else is an in-page anchor.
+    if (location.hash.startsWith('#/') || !location.hash) route();
+  });
+  document.querySelector('.skip-link').addEventListener('click', (ev) => {
+    ev.preventDefault();
+    const target = document.getElementById('main');
+    target.focus();
+    target.scrollIntoView({ block: 'start' });
+  });
   // Close the mobile drawer on every nav click, including a click on the
   // page that is already open (which fires no hashchange).
   $('sidenav').addEventListener('click', (ev) => {
