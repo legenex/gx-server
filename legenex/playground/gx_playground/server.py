@@ -30,6 +30,7 @@ import re
 import secrets
 import socket
 import ssl
+import stat as stat_module
 import subprocess
 import sys
 import threading
@@ -137,19 +138,93 @@ def allowed(method: str, path: str) -> bool:
 
 
 class Static:
-    def __init__(self, root: Path) -> None:
-        self.files: dict[str, tuple[bytes, bytes | None, str, str]] = {}
-        for p in sorted(root.rglob("*")):
-            if not p.is_file() or p.name.startswith("."):
-                continue
-            rel = "/" + p.relative_to(root).as_posix()
+    """The `web/` tree, cached in memory but re-read whenever a file changes.
+
+    The Playground is deployed by editing this checkout in place, so a snapshot
+    taken once at start-up silently serves yesterday's JavaScript to the browser
+    while the source on disk is current (B-028). Every lookup therefore stats the
+    file and rebuilds the entry when its mtime, size or inode changed, and a path
+    that was not in the tree at start-up is picked up the first time it is asked
+    for. An unchanged file costs one `stat()`; the body, the gzip copy and the
+    ETag come from the cache.
+
+    Set `GX_PG_STATIC_FREEZE=1` to keep the start-up snapshot (used by tests that
+    assert on a fixed ETag).
+    """
+
+    __slots__ = ("root", "freeze", "_lock", "_cache")
+
+    #: (data, gzipped or None, content type, ETag)
+    Entry = tuple[bytes, bytes | None, str, str]
+
+    def __init__(self, root: Path, *, freeze: bool | None = None) -> None:
+        self.root = root.resolve()
+        self.freeze = (os.environ.get("GX_PG_STATIC_FREEZE") == "1") if freeze is None else freeze
+        self._lock = threading.Lock()
+        #: path -> (stat signature, entry). A signature of None means "known absent".
+        self._cache: dict[str, tuple[tuple[int, int, int] | None, Static.Entry | None]] = {}
+        for p in sorted(self.root.rglob("*")):
+            if p.is_file() and not p.name.startswith("."):
+                self.get("/" + p.relative_to(self.root).as_posix())
+
+    @property
+    def files(self) -> dict[str, "Static.Entry"]:
+        """The currently cached entries. Kept for callers that enumerate the tree."""
+        with self._lock:
+            return {k: v for k, (_sig, v) in self._cache.items() if v is not None}
+
+    def _path_of(self, path: str) -> Path | None:
+        """The file `path` names, or None when it escapes the tree or is hidden."""
+        if not path.startswith("/") or "\x00" in path:
+            return None
+        parts = [seg for seg in path[1:].split("/") if seg]
+        if not parts or any(seg in (".", "..") or seg.startswith(".") for seg in parts):
+            return None
+        p = self.root.joinpath(*parts)
+        try:
+            if p.resolve().relative_to(self.root) is None:  # pragma: no cover - defensive
+                return None
+        except (OSError, ValueError):
+            return None
+        return p
+
+    @staticmethod
+    def _build(p: Path, data: bytes) -> "Static.Entry":
+        ctype = mimetypes.guess_type(p.name)[0] or "application/octet-stream"
+        if ctype.startswith("text/") or ctype in ("application/json", "image/svg+xml",
+                                                  "application/manifest+json"):
+            ctype += "; charset=utf-8"
+        gz = gzip.compress(data, 6) if len(data) > 1024 and not ctype.startswith("image/png") else None
+        return (data, gz, ctype, '"' + hashlib.sha256(data).hexdigest()[:20] + '"')
+
+    def get(self, path: str) -> "Static.Entry | None":
+        with self._lock:
+            cached = self._cache.get(path)
+        if cached is not None and self.freeze:
+            return cached[1]
+        p = self._path_of(path)
+        if p is None:
+            return None
+        try:
+            st = p.stat()
+            if not stat_module.S_ISREG(st.st_mode):
+                raise OSError
+            sig = (st.st_mtime_ns, st.st_size, st.st_ino)
+        except OSError:
+            if cached is not None:
+                with self._lock:
+                    self._cache[path] = (None, None)
+            return None
+        if cached is not None and cached[0] == sig:
+            return cached[1]
+        try:
             data = p.read_bytes()
-            ctype = mimetypes.guess_type(p.name)[0] or "application/octet-stream"
-            if ctype.startswith("text/") or ctype in ("application/json", "image/svg+xml",
-                                                      "application/manifest+json"):
-                ctype += "; charset=utf-8"
-            gz = gzip.compress(data, 6) if len(data) > 1024 and not ctype.startswith("image/png") else None
-            self.files[rel] = (data, gz, ctype, '"' + hashlib.sha256(data).hexdigest()[:20] + '"')
+        except OSError:
+            return cached[1] if cached else None
+        entry = self._build(p, data)
+        with self._lock:
+            self._cache[path] = (sig, entry)
+        return entry
 
 
 class RateLimit:
@@ -304,7 +379,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/" or SPA_ROUTE.fullmatch(path):
             path = "/index.html"
         app_document = path == "/index.html"
-        entry = self.static.files.get(path)
+        entry = self.static.get(path)
         if entry is None:
             self._send(404, b"not found", "text/plain; charset=utf-8")
             return
