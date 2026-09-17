@@ -1,12 +1,20 @@
 """The permanent media library (D-034).
 
-Every image and video produced through the Control UI (and every source a
-user uploads for editing) is stored here, outside Git:
+Every image, video and music track produced through GX-Playground / the
+Control UI (and every source a user uploads for editing) is stored here,
+outside Git:
 
     <root>/images/<id>.<ext>
     <root>/videos/<id>.<ext>
+    <root>/audio/<id>.<fmt>         one file per format (wav master, flac, mp3)
     <root>/thumbnails/<id>.jpg
     <root>/metadata/library.db      SQLite, schema versioned by PRAGMA user_version
+
+Schema 2 (D-037) adds audio: the `audio` type, the music operations
+(remix, repaint, extend), and the columns a track needs (variants, lyrics,
+tags, bpm, key, time signature, waveform). The migration rebuilds the table
+(SQLite cannot alter a CHECK constraint) inside one transaction, after a
+copy of the version-1 database is written next to it.
 
 Rules:
 * Asset ids are server-generated (`a_<24 hex>`); no caller string ever
@@ -38,15 +46,20 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 ASSET_ID = re.compile(r"^a_[0-9a-f]{24}$")
 MEDIA_TYPES = {
     "png": ("image", "image/png"), "jpg": ("image", "image/jpeg"), "webp": ("image", "image/webp"),
     "mp4": ("video", "video/mp4"), "mov": ("video", "video/quicktime"), "webm": ("video", "video/webm"),
+    "wav": ("audio", "audio/wav"), "flac": ("audio", "audio/flac"), "mp3": ("audio", "audio/mpeg"),
+    "ogg": ("audio", "audio/ogg"), "m4a": ("audio", "audio/mp4"),
 }
+TYPES = ("image", "video", "audio")
+FOLDERS = {"image": "images", "video": "videos", "audio": "audio"}
 SORTS = {"newest": "created_at DESC", "oldest": "created_at ASC", "title": "COALESCE(title, prompt) ASC",
-         "size": "file_size DESC"}
-OPERATIONS = ("generate", "edit", "variation", "i2v", "v2v", "upload")
+         "size": "file_size DESC", "duration": "COALESCE(duration, 0) DESC"}
+OPERATIONS = ("generate", "edit", "variation", "i2v", "v2v", "upload", "remix", "repaint", "extend")
+AUDIO_FORMATS = ("wav", "flac", "mp3")
 MAX_ZIP_ITEMS = 200
 MAX_ZIP_BYTES = 4 * 1024 ** 3
 
@@ -91,6 +104,66 @@ _MIGRATIONS = {
     CREATE INDEX assets_parent ON assets(parent_id);
     CREATE INDEX assets_type ON assets(type);
     """,
+    2: """
+    CREATE TABLE assets_v2 (
+        id            TEXT PRIMARY KEY,
+        type          TEXT NOT NULL CHECK (type IN ('image','video','audio')),
+        ext           TEXT NOT NULL,
+        media_type    TEXT NOT NULL,
+        filename      TEXT NOT NULL,
+        title         TEXT,
+        created_at    REAL NOT NULL,
+        operation     TEXT NOT NULL,
+        model_alias   TEXT,
+        model_repo    TEXT,
+        model_revision TEXT,
+        workflow      TEXT,
+        prompt        TEXT,
+        negative_prompt TEXT,
+        seed          INTEGER,
+        steps         INTEGER,
+        guidance      REAL,
+        strength      REAL,
+        width         INTEGER,
+        height        INTEGER,
+        duration      REAL,
+        fps           REAL,
+        frame_count   INTEGER,
+        distinct_frames INTEGER,
+        file_size     INTEGER NOT NULL,
+        sha256        TEXT,
+        parent_id     TEXT,
+        parent_deleted INTEGER NOT NULL DEFAULT 0,
+        favourite     INTEGER NOT NULL DEFAULT 0,
+        is_test       INTEGER NOT NULL DEFAULT 0,
+        job_id        TEXT,
+        router_job_id TEXT,
+        settings      TEXT NOT NULL DEFAULT '{}',
+        variants      TEXT NOT NULL DEFAULT '{}',
+        lyrics        TEXT,
+        tags          TEXT NOT NULL DEFAULT '[]',
+        bpm           REAL,
+        music_key     TEXT,
+        time_signature TEXT,
+        sample_rate   INTEGER,
+        channels      INTEGER,
+        waveform      TEXT
+    );
+    INSERT INTO assets_v2 (id, type, ext, media_type, filename, title, created_at, operation, model_alias,
+        model_repo, model_revision, workflow, prompt, negative_prompt, seed, steps, guidance, strength, width,
+        height, duration, fps, frame_count, distinct_frames, file_size, sha256, parent_id, parent_deleted,
+        favourite, is_test, job_id, router_job_id, settings)
+      SELECT id, type, ext, media_type, filename, title, created_at, operation, model_alias,
+        model_repo, model_revision, workflow, prompt, negative_prompt, seed, steps, guidance, strength, width,
+        height, duration, fps, frame_count, distinct_frames, file_size, sha256, parent_id, parent_deleted,
+        favourite, is_test, job_id, router_job_id, settings FROM assets;
+    DROP TABLE assets;
+    ALTER TABLE assets_v2 RENAME TO assets;
+    CREATE INDEX assets_created ON assets(created_at);
+    CREATE INDEX assets_parent ON assets(parent_id);
+    CREATE INDEX assets_type ON assets(type);
+    CREATE INDEX assets_job ON assets(job_id)
+    """,
 }
 
 
@@ -129,6 +202,16 @@ class NewAsset:
     router_job_id: str | None = None
     is_test: bool = False
     settings: dict | None = None
+    #: audio only: other formats of the same track, {fmt: path to move in}
+    variant_paths: dict[str, Path] | None = None
+    lyrics: str | None = None
+    tags: list[str] | None = None
+    bpm: float | None = None
+    music_key: str | None = None
+    time_signature: str | None = None
+    sample_rate: int | None = None
+    channels: int | None = None
+    waveform: list | None = None
 
 
 def new_id() -> str:
@@ -224,7 +307,7 @@ class MediaLibrary:
         self.root = Path(root)
         self.tools = tools or MediaTools()
         self._lock = threading.RLock()
-        for sub in ("images", "videos", "thumbnails", "metadata", "tmp"):
+        for sub in ("images", "videos", "audio", "thumbnails", "metadata", "tmp"):
             (self.root / sub).mkdir(parents=True, exist_ok=True, mode=0o750)
         self.db_path = self.root / "metadata" / "library.db"
         self._migrate()
@@ -247,6 +330,13 @@ class MediaLibrary:
             for version in sorted(_MIGRATIONS):
                 if version <= current:
                     continue
+                if current:
+                    # Keep the pre-migration database next to it (rollback point).
+                    backup = self.db_path.with_name(f"library.pre-v{version}.db")
+                    if not backup.exists():
+                        with sqlite3.connect(backup) as dst:
+                            con.backup(dst)
+                        os.chmod(backup, 0o640)
                 con.execute("BEGIN IMMEDIATE")
                 try:
                     for statement in _MIGRATIONS[version].split(";"):
@@ -254,6 +344,7 @@ class MediaLibrary:
                             con.execute(statement)
                     con.execute(f"PRAGMA user_version={version}")
                     con.execute("COMMIT")
+                    current = version
                 except Exception:
                     con.execute("ROLLBACK")
                     raise
@@ -264,9 +355,21 @@ class MediaLibrary:
             return int(con.execute("PRAGMA user_version").fetchone()[0])
 
     # --------------------------------------------------------------- paths
-    def file_path(self, row: dict | sqlite3.Row) -> Path:
-        folder = "images" if row["type"] == "image" else "videos"
-        return self.root / folder / f"{row['id']}.{row['ext']}"
+    def file_path(self, row: dict | sqlite3.Row, fmt: str | None = None) -> Path:
+        """The asset's file, or for audio one of its format variants."""
+        ext = row["ext"]
+        if fmt and fmt != ext:
+            if row["type"] != "audio" or fmt not in AUDIO_FORMATS:
+                raise LibraryError(f"no {fmt} version of this asset", 404)
+            ext = fmt
+        return self.root / FOLDERS[row["type"]] / f"{row['id']}.{ext}"
+
+    def all_files(self, row: dict | sqlite3.Row) -> list[Path]:
+        files = [self.file_path(row)]
+        if row["type"] == "audio":
+            variants = row["variants"] if isinstance(row["variants"], dict) else json.loads(row["variants"] or "{}")
+            files += [self.file_path(row, fmt) for fmt in variants if fmt != row["ext"]]
+        return files
 
     def thumb_path(self, asset_id: str) -> Path:
         return self.root / "thumbnails" / f"{asset_id}.jpg"
@@ -278,16 +381,20 @@ class MediaLibrary:
 
     # ---------------------------------------------------------------- write
     def add(self, asset: NewAsset) -> dict:
-        if asset.type not in ("image", "video") or asset.ext not in MEDIA_TYPES \
+        if asset.type not in TYPES or asset.ext not in MEDIA_TYPES \
                 or MEDIA_TYPES[asset.ext][0] != asset.type:
             raise LibraryError(f"unsupported {asset.type} format {asset.ext!r}")
         if asset.operation not in OPERATIONS:
             raise LibraryError(f"unknown operation {asset.operation!r}")
         if asset.parent_id is not None and not ASSET_ID.match(asset.parent_id):
             raise LibraryError("invalid parent id")
+        if asset.variant_paths and (asset.type != "audio"
+                                    or any(f not in AUDIO_FORMATS for f in asset.variant_paths)):
+            raise LibraryError("format variants are only kept for audio (wav, flac, mp3)")
         asset_id = new_id()
-        folder = "images" if asset.type == "image" else "videos"
+        folder = FOLDERS[asset.type]
         dest = self.root / folder / f"{asset_id}.{asset.ext}"
+        written: list[Path] = []
         tmp = dest.with_suffix(dest.suffix + ".part")
         if asset.data is not None:
             tmp.write_bytes(asset.data)
@@ -297,6 +404,18 @@ class MediaLibrary:
             raise LibraryError("no media data")
         os.chmod(tmp, 0o640)
         os.replace(tmp, dest)
+        written.append(dest)
+        variants: dict[str, dict] = {}
+        if asset.type == "audio":
+            variants[asset.ext] = {"bytes": dest.stat().st_size, "sha256": _sha256_file(dest)}
+            for fmt, src in (asset.variant_paths or {}).items():
+                if fmt == asset.ext:
+                    continue
+                vdest = self.root / folder / f"{asset_id}.{fmt}"
+                os.replace(src, vdest)
+                os.chmod(vdest, 0o640)
+                written.append(vdest)
+                variants[fmt] = {"bytes": vdest.stat().st_size, "sha256": _sha256_file(vdest)}
 
         width, height = asset.width, asset.height
         thumb = self.thumb_path(asset_id)
@@ -304,7 +423,7 @@ class MediaLibrary:
         if asset.type == "image":
             w, h = self.tools.image_thumbnail(dest, thumb)
             width, height = width or w, height or h
-        else:
+        elif asset.type == "video":
             probe = self.tools.probe(dest)
             self.tools.video_thumbnail(dest, thumb)
             width = width or probe.get("width")
@@ -326,6 +445,11 @@ class MediaLibrary:
             "parent_id": asset.parent_id, "favourite": 0, "is_test": int(bool(asset.is_test)),
             "job_id": asset.job_id, "router_job_id": asset.router_job_id,
             "settings": json.dumps(asset.settings or {}, sort_keys=True),
+            "variants": json.dumps(variants, sort_keys=True),
+            "lyrics": asset.lyrics, "tags": json.dumps(list(asset.tags or [])),
+            "bpm": asset.bpm, "music_key": asset.music_key, "time_signature": asset.time_signature,
+            "sample_rate": asset.sample_rate, "channels": asset.channels,
+            "waveform": json.dumps(asset.waveform) if asset.waveform is not None else None,
         }
         cols = ", ".join(row)
         marks = ", ".join("?" for _ in row)
@@ -339,10 +463,31 @@ class MediaLibrary:
                 con.execute(f"INSERT INTO assets ({cols}) VALUES ({marks})", tuple(row.values()))  # noqa: S608
                 con.execute("COMMIT")
         except Exception:
-            dest.unlink(missing_ok=True)
+            for f in written:
+                f.unlink(missing_ok=True)
             thumb.unlink(missing_ok=True)
             raise
         return self.get(asset_id)
+
+    def find_by_job(self, job_id: str) -> list[dict]:
+        """Assets already imported for a generation job (idempotent imports)."""
+        with self._connect() as con:
+            rows = con.execute("SELECT * FROM assets WHERE job_id=? ORDER BY created_at", (job_id,)).fetchall()
+        return [self._public(r) for r in rows]
+
+    def update_settings(self, asset_id: str, **values: Any) -> None:
+        """Merge server-side bookkeeping (e.g. a node-2 upload id) into settings."""
+        self._check_id(asset_id)
+        with self._lock, self._connect() as con:
+            con.execute("BEGIN IMMEDIATE")
+            row = con.execute("SELECT settings FROM assets WHERE id=?", (asset_id,)).fetchone()
+            if row is None:
+                con.execute("ROLLBACK")
+                raise LibraryError("no such asset", 404)
+            data = json.loads(row["settings"] or "{}")
+            data.update(values)
+            con.execute("UPDATE assets SET settings=? WHERE id=?", (json.dumps(data, sort_keys=True), asset_id))
+            con.execute("COMMIT")
 
     def update(self, asset_id: str, *, title: str | None = None, favourite: bool | None = None) -> dict:
         self._check_id(asset_id)
@@ -382,7 +527,8 @@ class MediaLibrary:
                 removed.append(dict(row))
             con.execute("COMMIT")
         for row in removed:
-            self.file_path(row).unlink(missing_ok=True)
+            for f in self.all_files(row):
+                f.unlink(missing_ok=True)
             self.thumb_path(row["id"]).unlink(missing_ok=True)
         return {"deleted": [r["id"] for r in removed], "missing": sorted(set(ids) - {r["id"] for r in removed})}
 
@@ -397,13 +543,24 @@ class MediaLibrary:
         d["favourite"] = bool(d["favourite"])
         d["is_test"] = bool(d["is_test"])
         d["parent_deleted"] = bool(d["parent_deleted"])
-        try:
-            d["settings"] = json.loads(d.get("settings") or "{}")
-        except ValueError:
-            d["settings"] = {}
+        for key, default in (("settings", {}), ("variants", {}), ("tags", []), ("waveform", None)):
+            try:
+                d[key] = json.loads(d.get(key) or "null")
+            except ValueError:
+                d[key] = None
+            if d[key] is None:
+                d[key] = default
+        settings = d["settings"] if isinstance(d["settings"], dict) else {}
+        settings.pop("node2_upload_id", None)  # internal bookkeeping
+        d["settings"] = settings
         d["url"] = f"/api/media/assets/{d['id']}/file"
         d["thumbnail_url"] = f"/api/media/assets/{d['id']}/thumbnail"
         d["download_url"] = f"/api/media/assets/{d['id']}/file?download=1"
+        if d["type"] == "audio":
+            d["stream_url"] = (f"/api/media/assets/{d['id']}/file?format=mp3" if "mp3" in d["variants"]
+                               else d["url"])
+            d["downloads"] = {fmt: f"/api/media/assets/{d['id']}/file?download=1&format={fmt}"
+                              for fmt in AUDIO_FORMATS if fmt in d["variants"]}
         return d
 
     def get(self, asset_id: str, *, lineage: bool = False) -> dict:
@@ -433,7 +590,16 @@ class MediaLibrary:
     def _brief(self, row: sqlite3.Row) -> dict:
         return {"id": row["id"], "type": row["type"], "operation": row["operation"],
                 "title": row["title"], "prompt": (row["prompt"] or "")[:160], "created_at": row["created_at"],
+                "model_alias": row["model_alias"], "parent_id": row["parent_id"],
                 "thumbnail_url": f"/api/media/assets/{row['id']}/thumbnail"}
+
+    def tree(self, asset_id: str, depth: int = 0) -> list[dict]:
+        """Descendants of an asset (bounded), for the lineage view."""
+        if depth > 12:
+            return []
+        with self._connect() as con:
+            rows = con.execute("SELECT * FROM assets WHERE parent_id=? ORDER BY created_at", (asset_id,)).fetchall()
+        return [{**self._brief(r), "children": self.tree(r["id"], depth + 1)} for r in rows]
 
     def search(self, *, q: str = "", type_: str = "", model: str = "", operation: str = "",
                favourite: bool | None = None, sort: str = "newest", limit: int = 60, offset: int = 0,
@@ -444,11 +610,12 @@ class MediaLibrary:
             if len(q) > 200:
                 raise LibraryError("search text is too long")
             like = "%" + q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
-            where.append("(prompt LIKE ? ESCAPE '\\' OR title LIKE ? ESCAPE '\\' OR id = ?)")
-            args += [like, like, q]
+            where.append("(prompt LIKE ? ESCAPE '\\' OR title LIKE ? ESCAPE '\\' OR lyrics LIKE ? ESCAPE '\\' "
+                         "OR tags LIKE ? ESCAPE '\\' OR id = ?)")
+            args += [like, like, like, like, q]
         if type_:
-            if type_ not in ("image", "video"):
-                raise LibraryError("type must be image or video")
+            if type_ not in TYPES:
+                raise LibraryError("type must be image, video or audio")
             where.append("type=?")
             args.append(type_)
         if model:
@@ -480,8 +647,25 @@ class MediaLibrary:
             }
             counts = {r[0]: r[1] for r in con.execute("SELECT type, COUNT(*) FROM assets GROUP BY type")}
         return {"total": total, "items": [self._public(r) for r in rows], "facets": facets,
-                "counts": {"image": counts.get("image", 0), "video": counts.get("video", 0)},
+                "counts": {t: counts.get(t, 0) for t in TYPES},
                 "limit": limit, "offset": offset}
+
+    def usage(self) -> dict:
+        """Bytes per type, including audio format variants (Storage page)."""
+        out = {t: {"count": 0, "bytes": 0} for t in TYPES}
+        with self._connect() as con:
+            for row in con.execute("SELECT type, file_size, variants, ext FROM assets"):
+                entry = out.setdefault(row["type"], {"count": 0, "bytes": 0})
+                entry["count"] += 1
+                size = int(row["file_size"] or 0)
+                try:
+                    for fmt, meta in json.loads(row["variants"] or "{}").items():
+                        if fmt != row["ext"]:
+                            size += int(meta.get("bytes") or 0)
+                except (ValueError, AttributeError):
+                    pass
+                entry["bytes"] += size
+        return out
 
     def stats(self) -> dict:
         with self._connect() as con:
@@ -503,7 +687,8 @@ class MediaLibrary:
                                ids).fetchall()
         if len(rows) != len(ids):
             raise LibraryError("some selected assets no longer exist", 404)
-        total = sum(int(r["file_size"]) for r in rows)
+        files = {r["id"]: self.all_files(r) for r in rows}
+        total = sum(f.stat().st_size for fl in files.values() for f in fl if f.exists())
         if total > MAX_ZIP_BYTES:
             raise LibraryError("the selection is larger than 4 GiB; download fewer items", 413)
         out = self.tmp_file(".zip")
@@ -512,16 +697,20 @@ class MediaLibrary:
         with zipfile.ZipFile(out, "w", compression=zipfile.ZIP_STORED) as zf:
             for row in rows:
                 base = _safe_name(row["title"] or row["prompt"] or row["id"])
-                name = f"{base}-{row['id'][2:10]}.{row['ext']}"
-                while name in used:
-                    name = f"{base}-{secrets.token_hex(3)}.{row['ext']}"
-                used.add(name)
-                zf.write(self.file_path(row), arcname=name)
+                names = []
+                for path in files[row["id"]]:
+                    ext = path.suffix.lstrip(".")
+                    name = f"{base}-{row['id'][2:10]}.{ext}"
+                    while name in used:
+                        name = f"{base}-{secrets.token_hex(3)}.{ext}"
+                    used.add(name)
+                    if path.exists():
+                        zf.write(path, arcname=name)
+                        names.append(name)
                 meta = self._public(row)
-                meta.pop("url", None)
-                meta.pop("thumbnail_url", None)
-                meta.pop("download_url", None)
-                manifest.append({"file": name, **meta})
+                for key in ("url", "thumbnail_url", "download_url", "stream_url", "downloads", "waveform"):
+                    meta.pop(key, None)
+                manifest.append({"file": names[0] if names else None, "files": names, **meta})
             zf.writestr("gx-media-manifest.json", json.dumps(manifest, indent=2, default=str))
         return out, len(rows)
 
