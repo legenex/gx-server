@@ -32,8 +32,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from gx_music import audio, validation as v  # noqa: E402
 from gx_music import config as config_mod  # noqa: E402
 from gx_music import store as st  # noqa: E402
-from gx_music.engine import READY, UNLOADED, EngineController  # noqa: E402
-from gx_music.errors import ConflictError, EngineError, NotFoundError, ResourceWait, ValidationError  # noqa: E402
+from gx_music.engine import READY, UNLOADED, EngineController, GuardAdapter  # noqa: E402
+from gx_music.errors import (ConflictError, EngineError, MusicError, NotFoundError, ResourceWait,  # noqa: E402
+                             ValidationError)
 from gx_music.server import TagIndex, build_servers  # noqa: E402
 from gx_music.service import MusicService  # noqa: E402
 
@@ -353,15 +354,21 @@ class FakeDocker:
 
 
 class FakeGuard:
+    on_admitted = None
+
     def __init__(self):
         self.refuse = 0
         self.registered = False
         self.launches = 0
+        self.extras: list[float] = []
 
-    def launch(self, start):
+    def launch(self, start, extra_gib=0.0):
+        self.extras.append(extra_gib)
         if self.refuse:
             self.refuse -= 1
             raise ResourceWait("waiting for memory on the media node (other models are using it)")
+        if self.on_admitted is not None:
+            self.on_admitted()
         start()
         self.launches += 1
         self.registered = True
@@ -384,7 +391,8 @@ def make_config(root: Path, engine_port: int, **over) -> config_mod.Config:
         engine_estimate_gib=32, engine_memory_cap="56g", engine_lm_backend="vllm", engine_start_timeout=60,
         idle_unload_s=600, resource_wait_s=30, resource_retry_s=2, generation_timeout_s=60,
         max_upload_bytes=1 << 20, max_queue=5, max_duration_s=600, evict_comfy=False, evict_reason=False,
-        media_router_container="gx-media-router", gxmax_hold_file=root / "guard" / "node2.gxmax-hold",
+        media_router_container="gx-media-router", media_router_url="",
+        gxmax_hold_file=root / "guard" / "node2.gxmax-hold",
         maintenance_hold_file=root / "guard" / "node2.maintenance-hold", pins_file=root / "guard" / "pins.json",
         gxmax_hold_ttl_s=1200, gxmax_rank_container="gx-max-rank1",
         gxmax_deadman_pidfile=root / "guard" / "deadman.pid", control_plane_container="", reserve_gib=30)
@@ -882,6 +890,136 @@ class MediaEvictionTests(unittest.TestCase):
         with self.assertRaises(ResourceWait):
             ctl._admit_and_start()
         self.assertEqual(docker.free_requests, 0)
+
+
+class ReserveCoordinationTests(unittest.TestCase):
+    """D-038: gx-music and the media router keep the 30 GiB reserve together."""
+
+    def setUp(self):
+        self.h = Harness()
+
+    def tearDown(self):
+        self.h.close()
+
+    def test_health_publishes_what_the_router_needs_and_nothing_private(self):
+        code, body, _ = self.h.call("GET", "/health", key=None)
+        self.assertEqual(code, 200)
+        self.assertEqual((body["busy"], body["pinned"], body["active_jobs"]), (False, False, 0))
+        self.assertEqual(body["memory"]["pending_gib"], 0.0)
+        self.assertEqual(body["memory"]["estimate_gib"], 32)
+        self.assertEqual(body["memory"]["reserve_gib"], 30)
+        self.assertNotIn(KEY, json.dumps(body))
+        eng = self.h.engine
+        # loading: 32 GiB estimate, 10 GiB already gone since admission -> 22 pending
+        with mock.patch("gx_music.engine.meminfo", return_value={"MemAvailable": 100.0}):
+            eng._record_admission()
+        eng.state = "loading"
+        with mock.patch("gx_music.engine.meminfo", return_value={"MemAvailable": 90.0}):
+            self.assertEqual(eng.pending_gib(), 22.0)
+        # ready: measured 26 GiB resident -> 6 GiB generation headroom stays pending
+        eng.state, eng.loaded_gib = "ready", 26.0
+        self.assertEqual(eng.pending_gib(), 6.0)
+        eng.state = "unloaded"
+        self.assertEqual(eng.pending_gib(), 0.0)
+
+    def test_load_measures_the_resident_size(self):
+        values = iter([114.0, 88.0, 88.0, 88.0, 88.0])
+        with mock.patch("gx_music.engine.meminfo", side_effect=lambda: {"MemAvailable": next(values, 88.0)}):
+            self.h.engine.ensure_loaded()
+        self.assertEqual(self.h.engine.loaded_gib, 26.0)
+        self.assertEqual(self.h.engine.pending_gib(), 6.0)
+        self.h.engine.unload("test")
+        self.assertIsNone(self.h.engine.loaded_gib)
+
+    def test_running_media_job_growth_is_added_to_the_music_admission(self):
+        eng = self.h.engine
+        media = {"reachable": True, "busy": True, "held_by": "video-abc", "resident_alias": "gx-video",
+                 "pending_gib": 40.0, "waiting": 0}
+        self.h.guard.refuse = 1
+        with mock.patch.object(eng, "media_state", return_value=media), \
+                mock.patch("gx_music.engine.meminfo", return_value={"MemAvailable": 88.0}):
+            with self.assertRaises(ResourceWait) as ctx:
+                eng._admit_and_start()
+        self.assertEqual(self.h.guard.extras, [40.0])
+        reason = ctx.exception.reason
+        self.assertIn("Waiting for gx-video to finish on gx10-02", reason)
+        self.assertIn("32 GiB plus the 30 GiB reserve plus 40 GiB", reason)
+        self.assertIn("102 GiB must be available; 88 GiB is", reason)
+        self.assertEqual(eng.last_wait["reason"], reason)
+        # nothing pending on the router: only the engine's own estimate is asked for
+        with mock.patch.object(eng, "media_state", return_value={}):
+            eng._admit_and_start()
+        self.assertEqual(self.h.guard.extras[-1], 0.0)
+
+    def test_the_real_guard_refuses_music_next_to_a_video_that_would_break_the_reserve(self):
+        repo = Path(__file__).resolve().parents[2]
+        root = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, root, True)
+        (root / "guard").mkdir()
+        cfg = make_config(root, 1, orchestrator_dir=repo / "orchestrator")
+        adapter = GuardAdapter(cfg)
+        meminfo = root / "meminfo"
+        started = []
+        real = adapter.rg.guard_launch
+
+        def guard_with(avail):
+            meminfo.write_text(f"MemAvailable: {int(avail * 1048576)} kB\n")
+            return lambda *a, **kw: real(*a, **{**kw, "meminfo_path": str(meminfo)})
+
+        # a video is loaded: 42 GiB available; 42 - 32 < 30 -> refused, nothing started
+        with mock.patch.object(adapter.rg, "guard_launch", guard_with(42.0)):
+            with self.assertRaises(ResourceWait):
+                adapter.launch(lambda: started.append(1))
+        # 88 GiB available but the router still has 40 GiB of a cold video to take: refused
+        with mock.patch.object(adapter.rg, "guard_launch", guard_with(88.0)):
+            with self.assertRaises(ResourceWait):
+                adapter.launch(lambda: started.append(1), extra_gib=40.0)
+        self.assertEqual(started, [])
+        # the same 88 GiB with nothing pending: admitted (88 - 32 = 56 >= 30)
+        with mock.patch.object(adapter.rg, "guard_launch", guard_with(88.0)):
+            adapter.launch(lambda: started.append(1))
+        self.assertEqual(started, [1])
+        ledger = json.loads((root / "guard" / "node2-residency.json").read_text())
+        self.assertEqual(ledger["gx-music"]["estimated_gib"], 32)
+
+    def test_if_idle_unload_never_takes_the_engine_from_waiting_work(self):
+        eng = self.h.engine
+        eng.ensure_loaded()
+        jid = self.h.store.create_job(operation="generate", title="t", request={}, model={},
+                                      parent_job_id=None, parent_index=None, source=None)
+        code, body, _ = self.h.call("POST", "/v1/music/unload", {"if_idle": True})
+        self.assertEqual(code, 409)
+        self.assertIn("queued", body["error"]["message"])
+        self.assertTrue(eng.is_loaded())
+        self.h.store.transition(jid, st.CANCELLED)
+        self.h.cfg.pins_file.write_text(json.dumps({"gx-music": {"by": "admin"}}))
+        with mock.patch("gx_music.engine.meminfo", return_value={"MemAvailable": 80.0}):
+            code, body, _ = self.h.call("POST", "/v1/music/unload", {"if_idle": True})
+        self.assertEqual(code, 409)
+        self.assertIn("pinned", body["error"]["message"])
+        self.h.cfg.pins_file.write_text("{}")
+        code, body, _ = self.h.call("POST", "/v1/music/unload", {"if_idle": True})
+        self.assertEqual(code, 200)
+        self.assertTrue(body["container_gone"])
+        self.assertIn("media router", body["reason"])
+        self.assertFalse(eng.is_loaded())
+        # already unloaded: a no-op, still reports the container state
+        code, body, _ = self.h.call("POST", "/v1/music/unload", {"if_idle": True})
+        self.assertEqual((code, body.get("noop"), body["container_gone"]), (200, True, True))
+        # the Control Center's plain unload (no body) is unchanged
+        eng.ensure_loaded()
+        req = urllib.request.Request(self.h.base + "/v1/music/unload", method="POST",
+                                     headers={"Authorization": f"Bearer {KEY}"})
+        with urllib.request.urlopen(req, timeout=30) as r:
+            self.assertEqual(r.status, 200)
+        self.assertFalse(eng.is_loaded())
+
+    def test_reserve_cannot_be_configured_below_30(self):
+        with mock.patch.dict(os.environ, {"GX_GUARD_RESERVE_GIB": "20"}):
+            with self.assertRaises(MusicError):
+                config_mod._float("GX_GUARD_RESERVE_GIB", 30.0, 30.0, 120.0)
+        self.assertIn('_float("GX_GUARD_RESERVE_GIB", 30.0, 30.0, 120.0)',
+                      (Path(config_mod.__file__)).read_text())
 
 
 class TagIndexTests(unittest.TestCase):
