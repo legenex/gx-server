@@ -55,7 +55,10 @@ test('profile selector offers exactly Auto/Text/Media/Music/Max and switching ap
   const labels = await radios.allTextContents();
   ['Auto', 'Text', 'Media', 'Music', 'Max'].forEach((w, i) => expect(labels[i]).toMatch(new RegExp(`^${w}`)));
   await expect(page.getByText(/maintenance/i)).toHaveCount(0);
-  await expect(page.locator('.res-row')).toHaveText([/Text/, /Image/, /Video/, /Music/, /Max/]);
+  // Build V3 added the Voice and Live capability rows (D-040). The five
+  // PROFILES are unchanged — profiles and capability rows are different things.
+  await expect(page.locator('.res-row')).toHaveText(
+    [/Text/, /Image/, /Video/, /Music/, /Voice/, /Live/, /Max/]);
   await expect(page.locator('#queued-count')).toHaveText(/\d+ jobs? queued/);
   await expect(page.getByRole('link', { name: 'Open Advanced Resource Controls' })).toHaveAttribute('href', summary.control_center_url);
   await expect(page.locator('.studio-row')).toHaveCount(3);
