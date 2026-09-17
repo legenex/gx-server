@@ -329,6 +329,101 @@ docker build --progress=plain \
 
 Log: **`/srv/logs/gx-call/build-20260917T192556Z.log`** on gx10-02.
 
+### Attempt 1 FAILED (for real this time) — root cause
+
+Ended 21:50 after 480 s in `[builder 3/3]`, `Dockerfile:36`, the
+`pip wheel … mamba-ssm==2.3.2.post1` step. `causal-conv1d` built (348 s);
+`mamba-ssm` did not. 18 compiler errors, all of one kind:
+
+```
+torch/include/ATen/ATen.h:5:2: error: #error C++20 or later compatible compiler
+                                      is required to use ATen.
+torch/include/c10/util/intrusive_ptr.h:775:27: error: 'strong_ordering' in
+                                      namespace 'std' does not name a type
+  note: 'std::strong_ordering' is only available from C++20 onwards
+torch/include/ATen/core/TensorBase.h:1031:5: warning: identifier 'requires' is
+                                      a keyword in C++20 [-Wc++20-compat]
+RuntimeError: Error compiling objects for extension
+```
+
+The nvcc invocation in the log shows why, and also shows a second problem:
+
+```
+nvcc … -O3 -std=c++17 -U__CUDA_NO_HALF_OPERATORS__ …
+  -gencode arch=compute_75,code=sm_75   -gencode arch=compute_80,code=sm_80
+  -gencode arch=compute_87,code=sm_87   -gencode arch=compute_90,code=sm_90
+  -gencode arch=compute_100,code=sm_100 -gencode arch=compute_120,code=sm_120
+  -gencode arch=compute_103,code=sm_103 -gencode arch=compute_110,code=sm_110
+  -gencode arch=compute_121,code=sm_121 --threads 4
+```
+
+Both come from the packages' own `setup.py`, and **no environment variable can
+override either**:
+
+1. `-std=c++17` is hardcoded in `extra_compile_args["cxx"]` **and** `["nvcc"]`
+   (mamba-ssm 2.3.2.post1 `setup.py:213,216,226,230`; causal-conv1d 1.6.2.post1
+   `setup.py:209,212`).
+2. The nine `-gencode` pairs are appended by hand to `cc_flag`
+   (`setup.py:181-201`) and spliced in as `… + cc_flag`. Because the caller
+   already passes `-gencode`, torch's `_get_cuda_arch_flags` stays out of the
+   way, so `TORCH_CUDA_ARCH_LIST="12.0"` — which the Dockerfile *does* set — has
+   no effect at all.
+
+**Why the env-variable route was skipped, with evidence** (the lead asked for
+least-invasive first; these two checks are cheaper than an 8-minute build and
+settle it):
+
+* `torch/utils/cpp_extension.py` at tag **v2.14.0** contains **zero**
+  occurrences of `NVCC_APPEND_FLAGS`, `NVCC_PREPEND_FLAGS` and `CXXFLAGS`
+  (verified against the file fetched from the v2.14.0 tag; `TORCH_CUDA_ARCH_LIST`
+  appears 6 times, only inside `_get_cuda_arch_flags`). torch simply never reads
+  those variables, so nothing they contain can reach nvcc or g++.
+* Even an nvcc-only override would not be enough: one of mamba-ssm's sources,
+  `csrc/selective_scan/selective_scan.cpp`, is a **host `.cpp`** compiled with
+  the `"cxx"` flags.
+* A newer release is not an option either: **2.3.2.post1 is the latest
+  mamba-ssm on PyPI** (checked on the PyPI JSON API, 2026-09-17).
+
+### The fix
+
+`legenex/call/engine/patch-cuda-ext.py` (new) patches both unpacked sdists in
+the builder stage before `pip wheel`:
+
+* every `"-std=c++17"` → `"-std=c++20"` (4 in mamba-ssm, 2 in causal-conv1d);
+* every `+ cc_flag` → `+ ["-gencode", "arch=compute_120,code=sm_120"]`, which
+  leaves the nine `cc_flag.append(...)` statements building a list that nothing
+  reads, so the compiler receives exactly one architecture.
+
+It **asserts** the counts it expects and exits non-zero if upstream changes, so
+the build fails loudly rather than silently producing the wrong binary. Dry-run
+on both real sdists: the patched `setup.py` still parses, `+ cc_flag` occurrences
+drop to 0, and re-running the patch refuses as designed. The Dockerfile carries
+the whole rationale as a comment so nobody has to rediscover it.
+
+`causal-conv1d` is patched too even though it compiled under C++17 — its sources
+simply do not pull in `ATen.h` — so both agree with the torch 2.14 headers.
+
+### Attempt 2 (patched)
+
+```
+ssh legenex-02@gx10-02
+cd ~/Documents/Projects/Server/gx-cluster        # commit 931dc3a
+docker build --progress=plain \
+  -t gx-call-engine:voicechat-097dfe9-t214 legenex/call/engine
+```
+
+Log: **`/srv/logs/gx-call/build-20260917T201527Z.log`**, started 22:15 SAST.
+The patch step reported exactly the expected counts:
+
+```
+patched causal_conv1d-1.6.2.post1/setup.py: 2x -std=c++17 -> c++20, 2x cc_flag -> sm_120 only
+patched mamba_ssm-2.3.2.post1/setup.py: 4x -std=c++17 -> c++20, 2x cc_flag -> sm_120 only
+```
+
+**causal-conv1d: 348 s -> 134 s** for the same wheel, and it still builds under
+C++20. mamba-ssm then compiled past the point where attempt 1 died, with 0
+errors. OUTCOME_PLACEHOLDER
+
 Node-2 state when it was started (VOI's voice acceptance was running, so the
 build was checked not to crowd it): `gx-voice-engine` up, media router and
 ComfyUI healthy, **MemAvailable 104.6 GiB**, load average 1.19, 219 GB free on

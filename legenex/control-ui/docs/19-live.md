@@ -9,7 +9,7 @@ question to one of the bigger GX text models and speak the answer back.
 | Model | `openbmb/MiniCPM-o-4_5` @ `503e754207c94da6bb26850b4469f367c9ea3582` (apache-2.0) |
 | Runtime | transformers 4.51.0 remote code, torch 2.14.0+cu130, SDPA (no flash-attn on sm_121), bfloat16. Image `gx-live-engine:minicpmo45-503e754-t214` |
 | Node | gx10-02, `192.168.100.11:18850` (fabric and loopback only; never a browser) |
-| Memory | measured 2026-09-17: 34 GiB admission estimate (load transient included), ~31 GiB resident, ~102 s cold start |
+| Memory | measured on the deployed cluster 2026-09-17: 34 GiB admission estimate (load transient included; the measured node growth was 30.6 GiB), 26-30 GiB resident while a session runs, **128 s cold start** |
 | Sessions | **one at a time.** The model is held exclusively by the open session |
 | Protocol | `gx-live.v1`, one WebSocket per session (`legenex/live/PROTOCOL.md`) |
 
@@ -22,6 +22,8 @@ question to one of the bigger GX text models and speak the answer back.
   itself when the page is insecure.
 * gx10-02 must have ~34 GiB free above the 30 GiB reserve. If it does not, the
   session still starts and the page says what it is waiting for, with numbers.
+* The first session after an idle period waits about **two minutes** while
+  MiniCPM-o 4.5 loads; after that a new session starts in a second or two.
 * gx-max holding the node, or Maintenance, refuses a new session (and ends a
   running one).
 
@@ -40,7 +42,7 @@ question to one of the bigger GX text models and speak the answer back.
    * **Voice detection** — raise it in a noisy room.
    * **Longest answer** — 32–1024 tokens. Short answers feel much faster.
 3. Press **Start session**. The browser asks for the microphone, then the page
-   shows *Loading MiniCPM-o 4.5* (about 100 s cold) and then *Listening*.
+   shows *Loading MiniCPM-o 4.5* (about two minutes cold) and then *Listening*.
 4. Talk. Stop talking, and the assistant answers.
 
 Expected result: your words appear as a line in the conversation, the
@@ -87,8 +89,11 @@ long it took and whether it worked.
 ## Ending a session, and what is kept
 
 **End session** stops the conversation and releases the model; it asks first if
-there is a conversation you have not saved. Closing the tab or leaving the page
-ends it too — the model is never left held by a browser that went away.
+there is a conversation you have not saved. Leaving the page ends the session at
+once. Closing the tab ends it too: if the browser manages to send the goodbye it
+is immediate, otherwise the session stays open for 60 seconds in case you come
+back and then ends by itself. Either way the model is never left held by a
+browser that went away.
 
 What the Control Center keeps (`live_*` tables, migration `060_live.sql`):
 
