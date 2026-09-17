@@ -59,6 +59,16 @@ whisper_normalizer
 matplotlib
 pesq
 pystoi
+# --- nlp / metrics (reachable from nemo.collections.speechlm2.models at import
+# time, so the Dockerfile import gate needs them):
+#   * duplex_ear_tts -> parts.metrics.asr_bleu imports sacrebleu
+#   * duplex_stt_model -> nemo.collections.nlp.parts.nlp_overrides ->
+#     modules.common.megatron.adapters.parallel_adapters imports megatron.core
+# Both are NeMo's own requirements_nlp.txt deps. megatron-core is pure Python
+# (no compiled extension) and only needs to import; the engine uses the PyTorch
+# S2S path, not megatron training.
+sacrebleu
+megatron-core==0.19.1
 # --- lightning (transformers pin replaced by the model card's 4.56.0)
 # wandb is NOT optional even though nothing here trains: importing
 # nemo.collections.speechlm2 pulls in nemo.collections.tts, whose __init__

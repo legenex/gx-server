@@ -114,6 +114,31 @@ RUN python -c "import torch, torchaudio, torchvision; open('/opt/constraints.txt
 COPY --from=builder /wheels /wheels
 RUN uv pip install --python /opt/gxcall/bin/python --no-deps /wheels/*.whl && rm -rf /wheels
 
+# NeMo's MANIFEST.in ships only requirements/*, so the wheel build drops 34
+# package-data files -- including speechlm2/inference/pipelines/data/*.json,
+# which streaming_s2s_pipeline.py reads at import time (FileNotFoundError).
+# Restore every non-Python file the source tree has that the wheel omitted.
+RUN /opt/gxcall/bin/python - <<'EOF'
+import os, shutil
+src = "/opt/nemo/nemo"
+dst = os.path.dirname(__import__("nemo").__file__)
+copied = []
+for dirpath, dirnames, filenames in os.walk(src):
+    dirnames[:] = [d for d in dirnames if d != "__pycache__"]
+    for name in filenames:
+        if name.endswith((".py", ".pyc", ".pyi", ".so")):
+            continue
+        rel = os.path.relpath(os.path.join(dirpath, name), src)
+        target = os.path.join(dst, rel)
+        if not os.path.exists(target):
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            shutil.copy2(os.path.join(dirpath, name), target)
+            copied.append(rel)
+print(f"restored {len(copied)} package-data files the wheel build dropped")
+for rel in sorted(copied):
+    print("  +", rel)
+EOF
+
 COPY gx_call_engine.py gx_call_tracker.py gx_voicechat_patches.py /opt/gxcall-app/
 ENV PYTHONPATH=/opt/gxcall-app \
     HF_HOME=/work/cache/hf TORCH_HOME=/work/cache/torch NEMO_CACHE_DIR=/work/cache/nemo \
