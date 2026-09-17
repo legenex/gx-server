@@ -77,7 +77,9 @@ test('gx-reason: real reasoning through the UI', async ({ page }) => {
     prompt: 'A bat and a ball cost $1.10 in total. The bat costs $1.00 more than the ball. How much does the ball cost? Give the final answer in cents.',
   });
   expect(r.answer).toMatch(/\b5\b|0\.05|five cents/i);
-  expect(r.answer).not.toMatch(/\b10 cents\b/);
+  // The model may discuss the classic wrong answer; it must not claim it.
+  const claims = r.answer.split(/(?<=[.!?\n])\s+/).filter((x) => !/mistake|assum|intuiti|wrong|\bif\b|incorrect|common/i.test(x)).join(' ');
+  expect(claims).not.toMatch(/ball (?:costs|is)\W{0,4}(?:\$0?\.10|10 cents)/i);
   results['gx-reason'] = { answer: r.answer.slice(0, 200), seconds: r.seconds, reasoning: r.text.includes('Reasoning content') };
 });
 
