@@ -263,7 +263,7 @@ def main() -> int:
         created_assets.extend(m3.get("library_assets") or [])
 
         # -------------------------------------------------------------- S4
-        s.call("POST", "/api/resources/gx-music/pin", {}, expect=200)
+        s.call("POST", "/api/resources/gx-music/pin", {}, expect=202)
         time.sleep(3)
         eng = music_engine()
         check("S4 music is loaded and pinned", eng["engine"] == "ready" and eng.get("pinned"), engine=eng["engine"],
@@ -289,7 +289,7 @@ def main() -> int:
         eng = music_engine()
         check("S4 pinned music was not unloaded while the video waited", eng["engine"] == "ready",
               engine=eng["engine"])
-        s.call("POST", "/api/resources/gx-music/unpin", {}, expect=200)
+        s.call("POST", "/api/resources/gx-music/unpin", {}, expect=202)
         final = None
         for _ in range(900):
             status, j = router("GET", f"/v1/videos/{vid}")
@@ -322,6 +322,10 @@ def main() -> int:
                 check("S5 keyframe video edit fails fast with the reserve explanation (B-028)",
                       kfj["phase"] == "failed" and "137" in (kfj.get("error") or "") and time.time() - t < 60,
                       error=kfj.get("error"), seconds=round(time.time() - t, 1))
+    except Exception as exc:  # noqa: BLE001 - a crash is a failed run, reported below
+        import traceback
+        traceback.print_exc()
+        check(f"run completed without a crash ({type(exc).__name__}: {exc})"[:200], False)
     finally:
         mem = sampler.stop()
         report["memory"] = mem
