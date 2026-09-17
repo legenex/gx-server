@@ -31,9 +31,9 @@ The upstream GPU guide recommends the 4B LM for ≥24 GB of memory. Turbo gives 
 best quality per second for an interactive product, and it covers generate, remix,
 edit and extend.
 
-**Not installed: XL base.** Each XL variant is another ~20 GB, and node 2 has
-about 24 GB of disk free (98% full). XL base is the only way to get
-extract/lego/complete. Adding it later is a download plus `GX_MUSIC_DIT=…`;
+**Not installed: XL base.** Each XL variant is another ~20 GB. XL base is the
+only way to get extract/lego/complete, and installing it is a separate product
+decision (disk is no longer the constraint: node 2 has ~328 GB free). Adding it later is a download plus `GX_MUSIC_DIT=…`;
 the capability table switches automatically (`validation.Capabilities`).
 
 ## Capabilities (exactly what the service accepts)
@@ -131,10 +131,22 @@ The API never returns filesystem paths. Clients get ids and `/content` URLs.
   (the same formula and ledger as `gx-safe-run.sh`). The reserve is 30 GiB.
 * **Refused → `waiting_for_resource`**, retried every 20 s for up to 30 min,
   then `failed / insufficient_memory` (retryable).
-* **Idle ComfyUI weights** may be freed (`/free`, only when its queue is
-  empty) before a refused load is retried: `GX_MUSIC_EVICT_COMFY_WEIGHTS`,
-  default on. gx-reason is **never** evicted by music
+* **Idle ComfyUI weights** may be freed before a refused load is retried
+  (`GX_MUSIC_EVICT_COMFY_WEIGHTS`, default on). The free goes through the
+  media router (`docker exec gx-media-router python -m
+  gx_media_router.free_node`), the same path gx-reason's start uses. The
+  router refuses while a generation runs or a video is queued, and it clears
+  its resident-model record, so its next image or video job is admitted as
+  **cold** (60/76 GiB), never as warm (8 GiB). Music never calls ComfyUI
+  directly. gx-reason is **never** evicted by music
   (`GX_MUSIC_EVICT_REASON=0`).
+* **Maintenance mode** (`state/guard/node2.maintenance-hold`, written by the
+  Control Center): no new engine loads; queued jobs wait with the reason
+  "Maintenance mode"; a running track finishes, then the engine is unloaded.
+* **Pin** (`state/guard/pins.json` has a `gx-music` entry): the idle unload
+  is skipped while MemAvailable stays at or above the 30 GiB reserve and no
+  gx-max hold or Maintenance is active. A pin never blocks gx-max or another
+  tenant's admission.
 * **Idle unload**: `docker stop` after `GX_MUSIC_IDLE_UNLOAD_S` (600 s) with
   no queued work. Unload = container removed + ledger released. There is no
   soft unload.
@@ -179,8 +191,9 @@ GB10 (sm_121) that build fails *every* cuBLAS gemm with
 not fix it. The image replaces it with the set `gx-comfyui` proved on this
 hardware: torch 2.14.0 / torchaudio 2.11.0 / torchvision 0.29.0 (cu130).
 torchao's C++ extensions are then skipped; gx-music does not use torchao
-quantization. On 2026-09-17 node 2 was too full for the canonical build, so
-`Dockerfile.gb10-overlay` applied the same override on top of the base build.
+quantization. On 2026-09-17 node 2 was then too full for the canonical build, so
+`Dockerfile.gb10-overlay` applied the same override on top of the base build;
+the running image `gx-music-engine:acestep15-ca1e85f-t214` came from it.
 
 ## Tests
 

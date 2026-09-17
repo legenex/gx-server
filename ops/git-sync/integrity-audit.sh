@@ -41,6 +41,7 @@ CRITICAL=(
   legenex/lifecycle/rank1-deadman.sh
   legenex/lifecycle/resource-guard.sh
   legenex/lifecycle/restore-normal.sh
+  legenex/lifecycle/node2-holds.sh
   legenex/orchestrator/gx_orchestrator/resource_guard.py
   legenex/gateway/litellm/config.yaml
   legenex/gateway/.env.sample
@@ -51,6 +52,12 @@ CRITICAL=(
   legenex/media/docker-compose.media.yml
   legenex/media/router/gx_media_router/server.py
   legenex/media/router/gx_media_router/service.py
+  legenex/media/router/gx_media_router/policy.py
+  legenex/music/systemd/gx-music.service
+  legenex/music/gx_music/engine.py
+  legenex/music/gx_music/service.py
+  legenex/music/gx_music/config.py
+  legenex/music/gx_music/server.py
   legenex/scripts/recover-node2.sh
   legenex/host/kernel-lock/verify-kernel-lock.sh
   ops/git-sync/common.sh
@@ -172,6 +179,24 @@ if [ "${ROLE}" = mirror ]; then
     check_copy "${HOME}/gx-media/workflows/$(basename "${wf}")" "legenex/media/workflows/$(basename "${wf}")"
   done
   check_copy "${HOME}/gx-kernel-lock/verify-kernel-lock.sh" legenex/host/kernel-lock/verify-kernel-lock.sh
+  # gx-music (D-036): the user unit is a symlink into this checkout, and the
+  # supervisor must run from the checkout, not from the Stage A staging tree.
+  munit="${HOME}/.config/systemd/user/gx-music.service"
+  if [ -e "${munit}" ]; then
+    if [ "$(readlink -f "${munit}")" = "${GX_SYNC_REPO}/legenex/music/systemd/gx-music.service" ]; then
+      r PASS "gx-music unit is the checkout's unit (symlink)"
+    else
+      r WARN "gx-music unit is not a symlink to the checkout: ${munit}"
+    fi
+    if grep -qs '^GX_MUSIC_HOME=' "${HOME}/.config/gx-music/gx-music.env"; then
+      r WARN "gx-music.env overrides GX_MUSIC_HOME (supervisor may run from outside the checkout)"
+    fi
+    if systemctl --user is-active --quiet gx-music.service; then
+      r PASS "gx-music supervisor active"
+    else
+      r WARN "gx-music supervisor is not active"
+    fi
+  fi
   # The retired ~/gx-worker tree must never come back as a runtime dependency:
   # the deploy dirs are real directories, not links into it.
   for d in gx-gateway gx-media gx-kernel-lock; do
