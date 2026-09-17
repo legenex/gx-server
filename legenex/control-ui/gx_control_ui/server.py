@@ -52,6 +52,7 @@ from .media_jobs import IMAGE_SIZES, KIND_LABEL, VIDEO_SIZES, JobError, MediaJob
 from .media_library import LibraryError, MediaLibrary, MediaTools, read_range
 from .model_manager import ManagerError, ModelManager, gateway_probe
 from .music import MusicClient, MusicError, MusicJobs
+from .owui_identity import OpenWebUIIdentity
 from .resources import AdmissionBlocked, ResourceController, ResourceError
 from .storage import StorageError, StorageManager
 from .auth import write_private_file
@@ -145,6 +146,9 @@ class App:
             results=self.results, model_identity=self.workflow_identity, audit=self.actions.audit)
         self.hf = HFClient(cfg.hf_token_file)
         self.manager = ModelManager(cfg, self.cluster, self.hf, audit=self.actions.audit)
+        self.identity = OpenWebUIIdentity(self.manager.registry_path, audit=self.actions.audit)
+        if not cfg.offline:
+            self.manager.identity_sync = lambda: self.identity.apply(user="model-manager")
         self.keys = KeyManager(cfg.litellm_base, lambda: cfg.secret("LITELLM_MASTER_KEY"))
         self.proxy_token = self._proxy_token()
         self.music = MusicJobs(MusicClient(cfg.music_base, cfg.music_key_file), self.library,

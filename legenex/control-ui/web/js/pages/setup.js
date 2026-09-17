@@ -103,6 +103,54 @@ function kiloPanel() {
   ];
 }
 
+const IDENTITY_STATE = {
+  ok: ['ok', 'In sync'], missing: ['warn', 'Missing'], drift: ['warn', 'Out of date'],
+  inactive: ['warn', 'Disabled in Open WebUI'], foreign: ['crit', 'Edited outside the sync'],
+};
+
+function identityTable(out, r) {
+  if (r.offline) {
+    clear(out).append(h('p', { class: 'small muted' }, 'Not available in offline mode.'));
+    return;
+  }
+  clear(out).append(
+    h('p', {}, h('span', { class: `badge badge-${r.in_sync ? 'ok' : 'warn'}`, id: 'owui-identity-verdict' },
+      r.in_sync ? 'IN SYNC' : 'NEEDS SYNC'),
+    ` Open WebUI ${r.open_webui_version || '?'}${r.version_ok ? '' : ` (sync verified against ${r.verified_against})`}`),
+    table(['Alias', 'State', 'Underlying model', 'Facts'], r.items.map((i) => {
+      const [tone, label] = IDENTITY_STATE[i.state] || ['warn', i.state];
+      return [h('code', {}, i.id), h('span', { class: `badge badge-${tone}` }, label),
+        i.repository ? h('code', {}, i.repository) : 'router (no single model)',
+        i.facts_verified ? 'verified' : 'repository only'];
+    }), { caption: 'Model identity entries in Open WebUI' }),
+    ...(r.written && r.written.length ? [h('p', { class: 'small' }, `Updated: ${r.written.join(', ')}`)] : []),
+    ...(r.skipped && r.skipped.length ? [h('p', { class: 'small' },
+      `Left alone: ${r.skipped.map((x) => `${x.id} (${x.reason})`).join('; ')}`)] : []));
+}
+
+function identityCard() {
+  const out = h('div', { 'aria-live': 'polite', id: 'owui-identity' }, h('p', { class: 'loading' },
+    h('span', { class: 'spin', 'aria-hidden': 'true' }), 'Reading Open WebUI…'));
+  const btn = h('button', { type: 'button', class: 'btn', id: 'owui-identity-sync' }, 'Sync identity from the registry');
+  btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    try {
+      identityTable(out, await api.post('/api/setup/openwebui/identity/sync', {}));
+      toast('Open WebUI identity entries updated.', 'ok');
+    } catch (e) {
+      clear(out).append(errorBox(e));
+    } finally {
+      btn.disabled = false;
+    }
+  });
+  api.get('/api/setup/openwebui/identity').then((r) => identityTable(out, r)).catch((e) => clear(out).append(errorBox(e)));
+  return card('Model identity (this cluster\'s Open WebUI)',
+    h('p', {}, 'Each alias gets an Open WebUI model entry with a short, factual system prompt from the model registry, '
+      + 'so a model answers "which model are you?" with its alias and its real underlying model. '
+      + 'Model Manager updates these entries after an assignment or a rollback.'),
+    out, h('div', { class: 'btn-row' }, btn));
+}
+
 function openwebuiPanel() {
   const o = info.openwebui;
   const version = o.version
@@ -128,10 +176,12 @@ function openwebuiPanel() {
       aliasChips(['gx-auto', 'gx-mini', 'gx-fast', 'gx-reason', 'gx-max'])),
     keyWorkflow('openwebui'),
     card('Manual setup (Open WebUI)', h('ol', { class: 'steps' }, o.manual_steps.map((s) => h('li', {}, s)))),
+    identityCard(),
     testCard('openwebui'),
     card('Troubleshooting', h('ul', {},
       h('li', {}, 'Verify Connection fails: check the URL ends in /v1 and Auth is Bearer.'),
       h('li', {}, 'No models listed: the key allows none of the Model IDs you entered.'),
+      h('li', {}, 'A model names the wrong model when asked: check Model identity above; the answer comes from its entry, the routing from the gateway.'),
       h('li', {}, 'Images, video and music: use GX-Playground; Open WebUI is set up for chat here.'))),
   ];
 }

@@ -225,6 +225,8 @@ class ModelManager:
         self._busy: str | None = None
         #: live free-bytes lookup per node (App wires the host facts in)
         self.storage_free: Any = None
+        #: D-038: re-publish the Open WebUI identity entries after a binding changes
+        self.identity_sync: Any = None
 
     # ============================================================== state
     def registry(self) -> dict:
@@ -809,8 +811,24 @@ class ModelManager:
                       "revision": manifest.get("revision") or entry.get("revision"),
                       "path": str(path), "assigned_by": job.user, "assigned_at": stamp})
         self._save_registry(reg)
+        self._sync_identity(job)
         job.log("assigned; the previous model stays on disk as the rollback point until you accept")
         return True
+
+    def _sync_identity(self, job: MMJob | None) -> None:
+        """Keep Open WebUI's gx-* identity prompts on the registry's current bindings (D-038)."""
+        if self.identity_sync is None:
+            return
+        try:
+            out = self.identity_sync()
+            msg = ("Open WebUI identity entries " + ("in sync" if out.get("in_sync") else "NOT in sync")
+                   + (f" (updated {', '.join(out.get('written') or [])})" if out.get("written") else ""))
+        except Exception as exc:  # noqa: BLE001 - never fails an assignment; reported instead
+            msg = (f"Open WebUI identity sync failed: {exc}; run it from Setup > Open WebUI or "
+                   "python3 -m gx_control_ui.owui_identity apply")
+        if job is not None:
+            job.log(msg)
+        log.info(msg)
 
     def _restart_and_verify(self, job: MMJob, alias: str) -> bool:
         node = ALIAS_NODE[alias]
@@ -889,6 +907,7 @@ class ModelManager:
                           "path": prev.get("path")})
             entry.pop("previous", None)
             self._save_registry(reg)
+            self._sync_identity(job)
         return ok
 
     def accept(self, body: dict, *, user: str) -> dict:

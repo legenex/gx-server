@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any
 
 from . import setup as client_setup
 from .music import OPERATIONS, MusicError
+from .owui_identity import IdentityError
 from .redact import redact
 from .resources import GENERATIVE, POLICIES, PROFILE_IDS, ResourceError
 from .server import MAX_BODY, Handler, _q, read_upload, route
@@ -186,6 +187,34 @@ def api_setup_test(h: Handler) -> None:
     result = client_setup.test_connection(h.app.cfg, str(client), body.get("secret"))
     h.app.actions.audit(user=h.session.username, ip=h._client_ip(), action=f"setup.test.{client}",
                         outcome="ok" if result.get("connected") else "failed")
+    h._json(200, result)
+
+
+@route("GET", r"/api/setup/openwebui/identity")
+def api_setup_owui_identity(h: Handler) -> None:
+    """D-038: are production Open WebUI's gx-* entries on the registry's bindings?"""
+    if h.app.cfg.offline:
+        h._json(200, {"offline": True, "items": [], "in_sync": None})
+        return
+    try:
+        h._json(200, h.app.identity.plan())
+    except IdentityError as exc:
+        h._json(503, {"error": {"code": "openwebui_unavailable", "message": str(exc)}})
+
+
+@route("POST", r"/api/setup/openwebui/identity/sync")
+def api_setup_owui_identity_sync(h: Handler) -> None:
+    assert h.session is not None  # noqa: S101
+    h._body(256)
+    if h.app.cfg.offline:
+        raise ValueError("not available in offline mode")
+    try:
+        result = h.app.identity.apply(user=h.session.username)
+    except IdentityError as exc:
+        h.app.actions.audit(user=h.session.username, ip=h._client_ip(), action="openwebui.identity.sync",
+                            outcome="failed", detail=str(exc)[:200])
+        h._json(409, {"error": {"code": "openwebui_identity", "message": str(exc)}})
+        return
     h._json(200, result)
 
 
