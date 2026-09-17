@@ -383,6 +383,17 @@ speaker can speak any supported language. Languages: `auto`, `english`,
 `chinese`, `german`, `french`, `spanish`, `italian`, `portuguese`, `russian`,
 `japanese`, `korean`.
 
+**Timing to expect** (measured on gx10-02, 2026-09-17; evidence
+`/srv/logs/acceptance/build-v3/voi/`). The engine is loaded on demand, so the
+first job after an idle period pays a **cold start of about 35 s** (3.5 s for
+the container plus ~31 s for the model); a job that needs a different model
+variant than the resident one pays a **26-28 s switch**. Generation then runs
+at a real-time factor of **0.72-1.0** (an 8.6 s take takes ~6.4 s), and the
+whole take is returned at once — there is no streaming. Poll the job rather
+than assuming a deadline, and read `status`: `loading_model` means the cold
+start, `waiting_for_resource` means gx10-02 is busy and `waiting.reason` says
+why. The engine unloads after 10 idle minutes, so the next job is cold again.
+
 ### Session routes
 
 | Method | Path | |

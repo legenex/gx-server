@@ -54,6 +54,9 @@ ASSET_ID = re.compile(r"^a_[0-9a-f]{24}$")
 FLOW_ID = re.compile(r"^[A-Za-z0-9_\-]{1,64}$")
 OPERATIONS = ("tts", "voice_design", "voice_clone", "dialogue")
 LIBRARY_OPERATION = {"tts": "tts", "dialogue": "tts", "voice_design": "voice_design", "voice_clone": "voice_clone"}
+#: Human labels for the Logs feed when a job has no title.
+OPERATION_LABEL = {"tts": "Speech", "dialogue": "Dialogue", "voice_design": "Voice design",
+                   "voice_clone": "Voice clone"}
 TERMINAL = ("completed", "failed", "cancelled")
 LANGUAGES = ("auto", "english", "chinese", "german", "french", "spanish", "italian", "portuguese",
              "russian", "japanese", "korean")
@@ -803,6 +806,36 @@ class VoiceStudio:
         with self.library.connect() as con:
             rows = con.execute(q, args).fetchall()
         return [self._view(r) for r in rows]
+
+    def activity(self, user: str, since: float, limit: int) -> builtins.list[dict]:
+        """This user's voice jobs for the Playground Logs feed (plt.md section 6).
+
+        Only small, non-sensitive fields: never the script, the voice
+        description or a consent statement."""
+        with self.library.connect() as con:
+            rows = con.execute(
+                "SELECT id, operation, status, title, detail, voice_id, created_at, finished_at, error_json, "
+                "timings_json FROM voice_jobs WHERE deleted_at IS NULL AND user=? AND "
+                "COALESCE(finished_at, created_at) >= ? ORDER BY created_at DESC LIMIT ?",
+                (user, float(since or 0), max(1, min(200, int(limit))))).fetchall()
+        out = []
+        for r in rows:
+            error = json.loads(r["error_json"]) if r["error_json"] else None
+            timings = json.loads(r["timings_json"] or "{}")
+            out.append({
+                "id": r["id"], "kind": "voice",
+                "title": r["title"] or OPERATION_LABEL.get(r["operation"], "Voice"),
+                "status": r["status"],
+                "at": r["finished_at"] or r["created_at"],
+                "duration_ms": (int((r["finished_at"] - r["created_at"]) * 1000)
+                                if r["finished_at"] and r["created_at"] else None),
+                "error": (error or {}).get("message"),
+                "link": f"#/voice?job={r['id']}",
+                "detail": {"operation": r["operation"], "voice_id": r["voice_id"],
+                           "audio_seconds": timings.get("audio_s"), "rtf": timings.get("rtf"),
+                           "variant": (timings.get("variants") or [None])[0]},
+            })
+        return out
 
     def cancel(self, job_id: str, *, user: str) -> dict:
         row = self._job_row(job_id)

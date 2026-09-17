@@ -179,6 +179,26 @@ class JobTests(StudioBase):
         with self.assertRaises(VoiceError):
             self.studio.take_file(job["id"], 0, "exe")
 
+    def test_activity_feed_source(self):
+        """plt.md section 6: this user's jobs, no script, description or consent text."""
+        from gx_control_ui.activity import normalise
+
+        job = self.studio.submit({"operation": "tts", "text": "A secret internal script.",
+                                  "voice_id": "preset:ryan", "title": "Logs feed check"}, user="admin")
+        self.finish(job["id"])
+        self.studio.submit({"operation": "tts", "text": "Someone else's line.",
+                            "voice_id": "preset:ryan"}, user="other")
+        items = self.studio.activity("admin", 0.0, 50)
+        self.assertEqual([i["id"] for i in items], [job["id"]])
+        item = items[0]
+        self.assertEqual((item["kind"], item["title"], item["status"]), ("voice", "Logs feed check", "completed"))
+        self.assertEqual(item["link"], f"#/voice?job={job['id']}")
+        self.assertEqual(item["detail"]["operation"], "tts")
+        self.assertNotIn("secret", json.dumps(item).lower())
+        self.assertIsNotNone(normalise("voice", item))
+        self.assertEqual(normalise("voice", item)["status"], "ok")
+        self.assertEqual(self.studio.activity("admin", time.time() + 60, 50), [])
+
     def test_design_then_saved_designed_voice_uses_base(self):
         job = self.studio.submit({"operation": "voice_design", "text": "Hello there, this is my new voice. " * 3,
                                   "description": "gravelly old sea captain, slow and warm"}, user="admin")

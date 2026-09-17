@@ -215,8 +215,8 @@ class Run:
         self.check(f"{name}: job dict sample rate matches the file",
                    take.get("sample_rate") == facts["sample_rate"], str(take.get("sample_rate")))
         if expect_notes is not None:
-            has = any("instruction" in str(n).lower() for n in (job.get("notes") or []))
-            self.check(f"{name}: instructions note present" if expect_notes
+            has = any("not applied" in str(n).lower() for n in (job.get("notes") or []))
+            self.check(f"{name}: the job says the instructions were NOT applied (Base model)" if expect_notes
                        else f"{name}: instructions were applied (no 'not applied' note)",
                        has is expect_notes, json.dumps(job.get("notes") or []))
         return rec
@@ -302,6 +302,7 @@ def main() -> int:  # noqa: C901 - a linear acceptance script
             any(v["id"] == designed["id"] for v in listed), f"{len(listed)} voices")
     reuse = r.submit("saved_designed", {"operation": "tts", "voice_id": designed["id"],
                                         "text": "This line proves a saved voice can be used again.",
+                                        "instructions": "Sound delighted and excited.",
                                         "language": "english", "seed": 4004,
                                         "title": "VOI acceptance saved designed"})
     r.case("saved_designed", reuse, expect_notes=True)
@@ -340,6 +341,7 @@ def main() -> int:  # noqa: C901 - a linear acceptance script
             f"{cloned['id']} consent={cloned.get('consent_id')}")
     reuse2 = r.submit("saved_cloned", {"operation": "tts", "voice_id": cloned["id"],
                                        "text": "The saved cloned voice speaks this second line.",
+                                       "instructions": "Sound delighted and excited.",
                                        "language": "english", "seed": 6006,
                                        "title": "VOI acceptance saved clone"})
     r.case("saved_cloned", reuse2, expect_notes=True)
@@ -354,7 +356,7 @@ def main() -> int:  # noqa: C901 - a linear acceptance script
     again = s.call("POST", f"/api/voice/jobs/{job1['id']}/takes/0/save", {}, expect=200)
     r.check("saving the same take again is idempotent", again.get("id") == saved_asset.get("id"),
             str(again.get("id")))
-    lib = s.call("GET", "/api/library?type=audio&limit=50", expect=200)
+    lib = s.call("GET", "/api/media/assets?type=audio&limit=50", expect=200)
     items = lib.get("assets") or lib.get("items") or lib.get("data") or []
     r.check("Library lists the saved take", any(i.get("id") == saved_asset.get("id") for i in items),
             f"{len(items)} audio assets")
