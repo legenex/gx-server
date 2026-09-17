@@ -162,6 +162,53 @@ def _swap_entry(svc: dict, key: str, alias: str) -> tuple[str | None, bool]:
     return None, True
 
 
+#: Outcomes that are the caller's problem, not the model's (D-039).
+_CLIENT_OUTCOMES = {
+    "ok", "context_length_exceeded", "client_disconnected", "invalid_request", "invalid_model",
+    "BadRequestError", "ContextWindowExceededError", "HTTPException", "AuthenticationError",
+    "UnprocessableEntityError", "NotFoundError", "PermissionDeniedError",
+}
+#: A server-side failure this recent marks a loaded alias as degraded.
+DEGRADED_WINDOW_S = 900
+
+
+def _is_server_failure(rec: dict | None) -> bool:
+    if not rec or rec.get("outcome") in _CLIENT_OUTCOMES:
+        return False
+    try:
+        status = int(rec.get("status") or 0)
+    except (TypeError, ValueError):
+        status = 0
+    return not (400 <= status < 500)
+
+
+def text_live(alias: str, svc: dict, now: float | None = None) -> dict:
+    """Budget, routing and last-request facts for one text alias (D-039).
+
+    Merges the orchestrator's view (gx-auto traffic and direct gx-max) with
+    the gateway hook's view (direct gx-mini / gx-fast / gx-reason traffic),
+    keeping whichever request is newest. No prompt text is involved.
+    """
+    now = now or time.time()
+    probe = svc.get("text_status") or {}
+    body = probe.get("body") if probe.get("ok") and isinstance(probe.get("body"), dict) else {}
+    entry = dict((body.get("aliases") or {}).get(alias) or {})
+    gw = svc.get("gateway_text") or {}
+    gw_last = (gw.get("by_alias") or {}).get(alias)
+    orch_last = entry.get("last_request")
+    candidates = [r for r in (orch_last, gw_last) if isinstance(r, dict)]
+    last = max(candidates, key=lambda r: float(r.get("ts") or 0)) if candidates else None
+    entry["last_request"] = last
+    entry["orchestrator_last"] = orch_last
+    entry["gateway_last"] = gw_last
+    entry["recent_gateway_failures"] = (gw.get("recent_failures") or {}).get(alias, 0)
+    entry["available"] = bool(probe.get("ok"))
+    age = now - float(last.get("ts") or 0) if last else None
+    entry["last_request_age_s"] = round(age, 1) if age is not None else None
+    entry["degraded"] = bool(last and _is_server_failure(last) and age is not None and age < DEGRADED_WINDOW_S)
+    return entry
+
+
 def _containers(facts: dict) -> dict[str, dict]:
     return {c["name"]: c for c in ((facts or {}).get("docker") or {}).get("containers", [])}
 
@@ -278,6 +325,16 @@ def live_state(cluster: Cluster, results: ResultLog) -> list[dict]:
                 state, detail = "ready", "on demand"
             extra["media"] = media_body
             extra["containers"] = {"router": c2.get("gx-media-router"), "comfyui": c2.get("gx-comfyui")}
+
+        if alias in ("gx-mini", "gx-fast", "gx-reason", "gx-max", "gx-auto"):
+            text = text_live(alias, svc)
+            extra["text"] = text
+            if text["degraded"] and state in ("loaded", "ready"):
+                # Never show a healthy badge while requests are failing.
+                last = text["last_request"] or {}
+                state = "degraded"
+                detail = (f"last request failed {int(text['last_request_age_s'] or 0)} s ago "
+                          f"({last.get('outcome')}: {str(last.get('error') or '')[:120]})")
 
         info.update({
             "alias": alias,

@@ -117,6 +117,9 @@ class Cluster:
             "media": _probe(http_json, "GET", f"{c.media_base}/health", timeout=4),
             "music": _probe(http_json, "GET", f"{c.music_base}/health", timeout=4),
             "sglang": _probe(http_json, "GET", f"{c.gxmax_base}/health", timeout=3),
+            # D-039: per-alias budget, routing and last-request facts.
+            "text_status": _probe(http_json, "GET", f"{c.orchestrator_base}/text/status", timeout=4),
+            "gateway_text": gateway_text_metrics(c.srv_logs / "gx-text" / "gateway-text.jsonl"),
         }
         if out["sglang"]["ok"]:
             out["sglang_models"] = _probe(http_json, "GET", f"{c.gxmax_base}/v1/models", timeout=4)
@@ -229,3 +232,33 @@ class Cluster:
     def invalidate(self) -> None:
         for c in (self.node1, self.node2, self.services, self.remote_git, self.guard, self.lifecycle):
             c.invalidate()
+
+
+def gateway_text_metrics(path: Path, *, tail_bytes: int = 256_000) -> dict[str, Any]:
+    """The newest gateway record per text alias (D-039 metrics file).
+
+    The LiteLLM hook writes timing and token counts only, never prompt text.
+    Returns {"by_alias": {alias: record}, "recent_failures": {alias: n}}.
+    """
+    out: dict[str, Any] = {"by_alias": {}, "recent_failures": {}, "path": str(path)}
+    try:
+        with path.open("rb") as fh:
+            fh.seek(0, 2)
+            size = fh.tell()
+            fh.seek(max(0, size - tail_bytes))
+            lines = fh.read().decode("utf-8", "replace").splitlines()
+    except OSError:
+        return out
+    now = time.time()
+    for line in lines:
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        alias = rec.get("alias") if isinstance(rec, dict) else None
+        if not isinstance(alias, str):
+            continue
+        out["by_alias"][alias] = rec
+        if rec.get("outcome") not in ("ok", None) and now - float(rec.get("ts") or 0) < 900:
+            out["recent_failures"][alias] = out["recent_failures"].get(alias, 0) + 1
+    return out

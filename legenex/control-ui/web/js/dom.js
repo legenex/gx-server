@@ -47,7 +47,7 @@ export function levelBadge(level, text) {
 
 const STATE_LEVEL = {
   loaded: 'ok', ready: 'ok', serving: 'ok', succeeded: 'ok', active: 'ok', free: 'ok', running: 'ok',
-  loading: 'warn', unloading: 'warn', acquiring: 'warn', releasing: 'warn', queued: 'warn', held: 'warn',
+  loading: 'warn', unloading: 'warn', degraded: 'warn', acquiring: 'warn', releasing: 'warn', queued: 'warn', held: 'warn',
   unloaded: 'idle', down: 'idle', stopped: 'idle', idle: 'idle', inactive: 'idle', absent: 'idle', exited: 'idle',
   unavailable: 'crit', error: 'crit', failed: 'crit', dead: 'crit',
 };

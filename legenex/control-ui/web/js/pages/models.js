@@ -109,7 +109,7 @@ function gxmaxPanel(m) {
       ['Served model id', served || '—'],
       ['Live tp_size / nnodes', info.tp_size ? `${info.tp_size} / ${info.nnodes ?? '—'}` : '—'],
       ['Last measured startup', lc.last_startup_seconds ? `${lc.last_startup_seconds} s` : 'not recorded yet (reference: 508–559 s cold)'],
-      ['Idle auto-release', lc.idle_ttl ? duration(lc.idle_ttl) : '—'],
+      ['Idle auto-release (keep-warm)', lc.idle_ttl ? `${duration(lc.idle_ttl)}${lc.ttl_remaining_seconds !== null && lc.ttl_remaining_seconds !== undefined ? ` · ${duration(lc.ttl_remaining_seconds)} left` : ''}` : '—'],
     ]),
     table(['Rank', 'Container'], [rankRow('rank 0 (gx10-01)', lv.rank0), rankRow('rank 1 (gx10-02)', lv.rank1)], { caption: 'Ranks' }),
     kv([
@@ -129,6 +129,66 @@ function gxmaxPanel(m) {
     table(['Node', 'Device', 'Netdev', 'Rate', 'Cumulative tx / rx'], rdmaRows, { caption: 'RDMA counters', empty: 'No active RDMA ports reported.' }),
     h('p', { class: 'muted small' }, 'Counters are cumulative since boot. During a gx-max load and generation both rails move by gigabytes.'),
   );
+}
+
+function tokens(n) {
+  return n === null || n === undefined ? '—' : `${Number(n).toLocaleString()} tokens`;
+}
+
+function ms(v) {
+  if (v === null || v === undefined) return '—';
+  return v >= 10000 ? `${num(v / 1000, 1)} s` : `${Math.round(v)} ms`;
+}
+
+function lastRequestRows(r, age) {
+  if (!r) return [['Last request', 'none recorded yet']];
+  const failed = r.outcome && r.outcome !== 'ok';
+  return [
+    ['Last request', h('span', { class: failed ? 'text-crit' : '' },
+      `${failed ? 'FAILED' : 'OK'} · ${r.outcome || '—'}${r.status ? ` · HTTP ${r.status}` : ''} · ${age !== null && age !== undefined ? `${duration(age)} ago` : ago(r.ts)}${r.via ? ` · via ${r.via}` : ''}`)],
+    ['Last TTFT', r.stream === false ? 'n/a (not streamed)' : ms(r.ttft_ms)],
+    ['Last tokens / s', r.tokens_per_s ? num(r.tokens_per_s, 1) : '—'],
+    ['Last response time', ms(r.elapsed_ms)],
+    ['Prompt / completion', `${r.prompt_tokens ?? '—'} / ${r.completion_tokens ?? '—'} tokens`],
+    ['Estimated input', r.estimated_input_tokens !== undefined ? `${tokens(r.estimated_input_tokens)} (tool schema ${tokens(r.tool_schema_tokens)})` : undefined],
+    ['Requested output', r.requested_output_tokens !== undefined ? tokens(r.requested_output_tokens) : undefined],
+    ['Safe output allowance', r.safe_output_tokens !== undefined ? tokens(r.safe_output_tokens) : undefined],
+    ['Output sent', r.output_tokens !== undefined ? `${tokens(r.output_tokens)}${r.clamped ? ' (clamped to fit)' : ''}` : undefined],
+    ['Attempts', r.attempts ? `${r.attempts}${r.retry_reason ? ` (${r.retry_reason})` : ''}` : undefined],
+    ['Last error', r.error ? h('code', {}, String(r.error).slice(0, 240)) : undefined],
+  ];
+}
+
+function textPanel(m) {
+  const t = (m.live || {}).text;
+  if (!t) return null;
+  const rows = [];
+  if (t.context_limit) {
+    rows.push(['Served context window', tokens(t.context_limit)]);
+    rows.push(['Engine output ceiling', tokens(t.max_output)]);
+    rows.push(['gx-auto needs free for this tier', tokens(t.planning_output)]);
+  }
+  if (t.runtime) rows.push(['Runtime (orchestrator view)', `${t.runtime.state}${t.runtime.reason ? ` — ${t.runtime.reason}` : ''}`]);
+  const lc = t.lifecycle;
+  if (lc) {
+    rows.push(['Lifecycle phase', `${lc.phase || lc.state}${lc.phase_seconds ? ` for ${duration(lc.phase_seconds)}` : ''}`]);
+    rows.push(['Requests in flight', String(lc.in_flight ?? 0)]);
+    rows.push(['Keep-warm left', lc.ttl_remaining_seconds !== null && lc.ttl_remaining_seconds !== undefined
+      ? `${duration(lc.ttl_remaining_seconds)} of ${duration(lc.idle_ttl)}` : `not running (keep-warm ${duration(lc.idle_ttl)})`]);
+  }
+  const d = t.last_decision;
+  if (d) {
+    const b = d.budget || {};
+    rows.push(['Last routing', h('span', {}, h('strong', {}, d.tier), ` — ${d.summary || ''}`)]);
+    rows.push(['Why', (d.reasons || []).join(' · ')]);
+    rows.push(['Task facts', `intent ${d.intent}, task ~${d.task_tokens} tokens, reasoning evidence ${d.reasoning_score} (raw ${d.reasoning_raw ?? '—'}, density ${d.density ?? '—'})${(d.indicators || []).length ? `: ${d.indicators.join(', ')}` : ''}`]);
+    rows.push(['Context budget', `${tokens(b.estimated_input_tokens)} input (tool schema ${tokens(b.tool_schema_tokens)}, ${d.tool_count || 0} tools) in ${tokens(b.context_limit)}; output ${tokens(b.output_tokens ?? b.requested_output_tokens)}${b.clamped ? ` — clamped from ${tokens(b.requested_output_tokens)}` : ''} (${b.status})`]);
+  }
+  rows.push(...lastRequestRows(t.last_request, t.last_request_age_s));
+  if (t.recent_gateway_failures) rows.push(['Gateway failures (15 min)', String(t.recent_gateway_failures)]);
+  return h('details', { class: 'text-panel', open: m.state === 'degraded' },
+    h('summary', {}, 'Latency, context budget and routing'),
+    kv(rows));
 }
 
 function repoLink(m) {
@@ -196,6 +256,7 @@ function modelCard(m) {
   controls(m),
   facts,
   componentsTable(m),
+  textPanel(m),
   m.alias === 'gx-max' ? gxmaxPanel(m) : null);
   return card;
 }
