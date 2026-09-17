@@ -226,6 +226,32 @@ The other required checks, all passing in the same run:
   spelling variant of the same word (`harbour`→`harbor`, `authorised`→
   `authorized`) or a dropped comma. **No take is silent, truncated or wrong.**
 
+### 2.3b OpenAI-compatible speech endpoint and the remaining output formats
+
+Tested directly against the supervisor on gx10-02 (the gateway hop is the only
+untested link — see 2.8 request 2). Evidence:
+**`/srv/logs/acceptance/build-v3/voi/speech-20260917T1940/`** (the six files
+plus `ffprobe.txt`).
+
+`POST http://192.168.100.11:18830/v1/audio/speech` with
+`{"model":"gx-voice","voice":"aiden","input":"…","instructions":"warm and upbeat",
+"response_format": …}` returned **HTTP 200 and real, decodable audio in all six
+formats**, confirmed with `ffprobe` from `linuxserver/ffmpeg`:
+
+| `response_format` | bytes | `ffprobe` |
+|---|---|---|
+| `mp3` | 59 085 | mp3, 24 000 Hz, mono, 2.88 s |
+| `wav` | 188 204 | pcm_s16le, 24 000 Hz, mono, 3.92 s |
+| `flac` | 108 242 | flac, 24 000 Hz, mono, 3.52 s |
+| `opus` | 30 725 | opus, 48 000 Hz, mono, 3.45 s |
+| `aac` | 48 230 | aac, 24 000 Hz, mono, 3.44 s |
+| `pcm` | 168 960 | raw s16le 24 kHz mono = 3.52 s exactly |
+
+(Durations differ because each call used a fresh random seed, as documented.)
+`{"voice": "alloy"}` — an OpenAI voice name — is **rejected with 400
+`invalid_request`** and a message listing the real speakers, never silently
+substituted.
+
 ### 2.4 Measured footprint (1 Hz MemAvailable through the first cold load)
 
 `legenex/voice/scripts/measure-footprint.py` on gx10-02, through the
@@ -356,9 +382,10 @@ in the exact shape plt.md section 6 specifies, with no prompt or transcript.
 the recreate command is
 `env -i PATH="$PATH" HOME="$HOME" docker compose --env-file .env -f docker-compose.gateway.yml up -d --no-deps litellm`.
 Nothing on the VOI side depends on it: the Voice page, `/api/voice/*` and
-`/v1/voice/*` already work. Only `POST /v1/audio/speech` with
-`model: "gx-voice"` on port 4000 is blocked until then, so that one path is
-the only VOI capability not yet proved end to end.
+`/v1/voice/*` already work, and the OpenAI speech endpoint itself is proved on
+the supervisor in all six output formats (2.3b). Only the **gateway hop** —
+`POST http://…:4000/v1/audio/speech` with `model: "gx-voice"` — is untested,
+and it is the only VOI capability not yet proved end to end.
 
 **3 — `Manual.md`,** which has no Voice section at all. Suggested text to drop
 into the creative chapter:
