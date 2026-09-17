@@ -230,8 +230,7 @@ def main() -> int:
             desc = ((info.get("meta") or {}).get("description")) or ""
             check(f"{alias} visible to the test account with its gx-cluster entry",
                   alias in seen and m.get("name") == alias and bool(desc),
-                  entry_name=m.get("name"), description=desc[:120],
-                  has_system=bool((info.get("params") or {}).get("system")))
+                  entry_name=m.get("name"), description=desc[:120])
         check("no retired or foreign models are offered", set(seen) <= set(models), visible=sorted(seen))
 
         key_hash = owui_gateway_key_hash()
@@ -269,11 +268,16 @@ def main() -> int:
                                "completion_tokens": usage.get("completion_tokens"), "problems": problems})
             check(f"gx-mini fresh chat Q{i + 1}: {q}", not problems, answer=answer[:220], problems=problems)
         report["gx_mini_transcript"] = transcript
-        time.sleep(3)
 
         # ---- correlation: gateway, llama-swap, llama-server
-        rows = spend_rows(since, "gx-mini")
-        ours = [r for r in rows if r["api_key_sha256"] == key_hash]
+        # LiteLLM writes its spend log in batches: wait (bounded) for all rows
+        deadline = time.time() + 120
+        while True:
+            rows = spend_rows(since, "gx-mini")
+            ours = [r for r in rows if r["api_key_sha256"] == key_hash]
+            if len(ours) >= len(transcript) or time.time() > deadline:
+                break
+            time.sleep(5)
         report["litellm_spend_rows"] = ours
         check("every Open WebUI gx-mini request is in the LiteLLM log under Open WebUI's key",
               len(ours) == len(QUESTIONS) * 2, found=len(ours), expected=len(QUESTIONS) * 2)
@@ -304,7 +308,14 @@ def main() -> int:
               modalities=props.get("modalities"))
 
         # ---- controls: direct LiteLLM with the same prompt, and without any prompt
-        system = (seen.get("gx-mini", {}).get("info", {}).get("params") or {}).get("system")
+        # the listing hides system prompts from non-owners: read the stored one (read-only)
+        system = json.loads(subprocess.run(
+            ["docker", "exec", "open-webui", "python3", "-c",
+             "import sqlite3,json;c=sqlite3.connect('file:/app/backend/data/webui.db?mode=ro',uri=True);"
+             "print(json.dumps(json.loads(c.execute(\"select params from model where id='gx-mini'\")"
+             ".fetchone()[0]).get('system')))"], capture_output=True, text=True, timeout=30, check=True).stdout)
+        check("the stored gx-mini entry carries the identity prompt", bool(system) and FULL in system,
+              prompt_chars=len(system or ""))
         ctl = []
         for label, msgs in (("with the identity prompt", [{"role": "system", "content": system}]),
                             ("without any system prompt", [])):

@@ -51,7 +51,8 @@
           "Qwen3.5-4B-Uncensored-HauhauCS-Aggressive-Q4_K_M.gguf": "79e28ecacf84e75b6056cf4059636d435aa9eb67795780f7b7dbc7d32a962741",
           "mmproj-Qwen3.5-4B-Uncensored-HauhauCS-Aggressive-BF16.gguf": "a1e32e86ea99aa7a56f3dcfe7e63c1d0be9439d31fd07087099f15bc0fda0f22"
         },
-        "verified": "2026-09-17: both sha256 values equal the Hugging Face LFS hashes at this revision; the running llama-server reports this model_path and 2 slots x 65536 tokens; the model card says 'Based on Qwen3.5-4B' and '4B dense parameters'"
+        "verified": "2026-09-17: both sha256 values equal the Hugging Face LFS hashes at this revision; the running llama-server reports this model_path and 2 slots x 65536 tokens; the model card says 'Based on Qwen3.5-4B' and '4B dense parameters'",
+        "base_parameters": "about 4 billion (4B dense)"
       }
     },
     "gx-fast": {
@@ -98,7 +99,8 @@
         "parameters": "35B total, about 3B active per token (mixture of experts)",
         "weights": "NVFP4 (W4A16) routed experts with FP8 attention and shared experts; not full precision",
         "modalities": "text and image input, text output, tool calls, optional thinking",
-        "verified": "2026-09-17: repository, revision and base_model read from the live Hugging Face API (cardData.base_model)"
+        "verified": "2026-09-17: repository, revision and base_model read from the live Hugging Face API (cardData.base_model)",
+        "base_parameters": "35B total, about 3B active per token"
       }
     },
     "gx-reason": {
@@ -147,7 +149,8 @@
         "parameters": "27B dense",
         "weights": "NVIDIA ModelOpt NVFP4; not full precision",
         "modalities": "text and image input, text output, tool calls, reasoning",
-        "verified": "2026-09-17: repository, revision and base_model read from the live Hugging Face API (cardData.base_model)"
+        "verified": "2026-09-17: repository, revision and base_model read from the live Hugging Face API (cardData.base_model)",
+        "base_parameters": "27B dense"
       }
     },
     "gx-max": {
@@ -193,7 +196,8 @@
         "parameters": "284B total, mixture of experts",
         "weights": "DeepSeek's FP8 attention and shared experts with FP4 routed experts; not full precision",
         "modalities": "text input and output, tool calls, thinking",
-        "verified": "2026-09-17: repository, revision and base_model read from the live Hugging Face API (cardData.base_model)"
+        "verified": "2026-09-17: repository, revision and base_model read from the live Hugging Face API (cardData.base_model)",
+        "base_parameters": "284B total, mixture of experts"
       }
     },
     "gx-auto": {

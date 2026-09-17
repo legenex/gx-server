@@ -93,6 +93,8 @@ def model_prompt(alias: str, entry: dict) -> str:
         details = []
         if ident.get("parameters"):
             details.append(f"Parameters: {ident['parameters']}.")
+        if ident.get("base_model") and ident.get("base_parameters"):
+            details.append(f"Base model {ident['base_model']}: {ident['base_parameters']} parameters.")
         if ident.get("weights"):
             details.append(f"Weights: {ident['weights']}.")
         if ident.get("modalities"):
@@ -116,7 +118,8 @@ def model_prompt(alias: str, entry: dict) -> str:
     answer = f"that you are {alias}, and that your underlying model is {repo}"
     if base:
         answer += f", derived from {base}"
-    lines.append(f"When asked what model you are, say {answer}. Keep the alias and the underlying model distinct.")
+    lines.append(f"When asked what model you are, say {answer}. If asked whether you are {repo}, answer yes: it is "
+                 f"the model generating your replies, served under the alias {alias}.")
     lines.append("Do not claim to be an official release of the base model, a larger model, or any other model or "
                  "product (for example GPT, Claude, Gemini or Grok). Do not invent parameter counts, "
                  "quantization, precision, context length, training data, deployment details, safety "
