@@ -89,6 +89,8 @@ class Config:
     evict_reason: bool
     media_router_container: str
     gxmax_hold_file: Path
+    maintenance_hold_file: Path
+    pins_file: Path
     gxmax_hold_ttl_s: int
     gxmax_rank_container: str
     gxmax_deadman_pidfile: Path
@@ -180,6 +182,9 @@ def load() -> Config:
         evict_reason=_bool("GX_MUSIC_EVICT_REASON", False),
         media_router_container=_env("GX_MUSIC_MEDIA_ROUTER_CONTAINER", "gx-media-router"),
         gxmax_hold_file=Path(_env("GX_MUSIC_GXMAX_HOLD", "/srv/projects/gx-cluster/state/guard/node2.gxmax-hold")),
+        maintenance_hold_file=Path(_env("GX_MUSIC_MAINTENANCE_HOLD",
+                                        "/srv/projects/gx-cluster/state/guard/node2.maintenance-hold")),
+        pins_file=Path(_env("GX_MUSIC_PINS_FILE", "/srv/projects/gx-cluster/state/guard/pins.json")),
         gxmax_hold_ttl_s=_int("GX_MUSIC_GXMAX_HOLD_TTL_S", 1200, 60, 86400),
         gxmax_rank_container=_env("GX_MUSIC_GXMAX_RANK", "gx-max-rank1"),
         gxmax_deadman_pidfile=Path(_env("GX_MUSIC_GXMAX_DEADMAN_PID",

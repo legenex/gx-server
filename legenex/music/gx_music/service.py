@@ -207,6 +207,9 @@ class MusicService:
                 "evict_idle_comfy_weights": self.cfg.evict_comfy, "evict_gx_reason": self.cfg.evict_reason,
                 "gx_max": "never loads while gx-max-rank1 runs or a gx-max hold is fresh; "
                           "unloads immediately when either appears",
+                "maintenance": "no new loads while node2.maintenance-hold exists; an idle engine is unloaded",
+                "pinned": self.engine.pinned(),
+                "blocked_by": (self.engine.policy_block_reason() or (None, None))[1],
             },
         }
 
@@ -270,7 +273,7 @@ class MusicService:
                 self.store.transition(job_id, st.CANCELLED, "cancelled while waiting")
                 return
             try:
-                if self.engine.state != READY and not self.engine.gxmax_block_reason():
+                if self.engine.state != READY and not self.engine.policy_block_reason():
                     self.store.transition(job_id, st.LOADING, "loading ACE-Step 1.5 XL")
                     self.store.update_job(job_id, started_at=time.time())
                 load_s = self.engine.ensure_loaded()
@@ -499,31 +502,44 @@ class MusicService:
     def _reaper(self) -> None:
         while not self._stop.wait(15):
             try:
-                if self.engine.state != READY and not self.engine.gxmax_block_reason():
-                    continue
-                self._sample_memory()
-                block = self.engine.gxmax_block_reason()
-                if block:
-                    log.warning("gx-max claims node 2; unloading gx-music now")
-                    self.engine.unload("gx-max drain")
-                    self.store.event("engine_unloaded", reason="gx-max drain")
-                    continue
-                if not self.engine.docker.running(self.cfg.engine_container):
-                    self.engine.reconcile()
-                    self.store.event("engine_lost")
-                    continue
-                idle = time.time() - self.engine.last_activity
-                if (self.cfg.idle_unload_s and idle > self.cfg.idle_unload_s
-                        and self._current is None and self.store.count_active() == 0):
-                    info = self.engine.unload(f"idle for {int(idle)} s")
-                    self.store.event("engine_unloaded", **info)
+                self.reap_once()
             except Exception:  # noqa: BLE001
                 log.exception("reaper iteration failed")
 
-    def load(self) -> dict:
+    def reap_once(self) -> str | None:
+        """One lifecycle pass. Returns what it did (for tests and the log)."""
+        if self.engine.state != READY and not self.engine.gxmax_block_reason():
+            return None
+        self._sample_memory()
         block = self.engine.gxmax_block_reason()
         if block:
-            raise UnavailableError(block, code="gx_max_active")
+            log.warning("gx-max claims node 2; unloading gx-music now")
+            self.engine.unload("gx-max drain")
+            self.store.event("engine_unloaded", reason="gx-max drain")
+            return "gx-max"
+        if self.engine.maintenance_reason() and self._current is None:
+            # Maintenance: let the running track finish, then hand the memory back.
+            info = self.engine.unload("maintenance mode")
+            self.store.event("engine_unloaded", **info)
+            return "maintenance"
+        if not self.engine.docker.running(self.cfg.engine_container):
+            self.engine.reconcile()
+            self.store.event("engine_lost")
+            return "lost"
+        idle = time.time() - self.engine.last_activity
+        if (self.cfg.idle_unload_s and idle > self.cfg.idle_unload_s
+                and self._current is None and self.store.count_active() == 0):
+            if self.engine.pin_honoured():
+                return "pinned"
+            info = self.engine.unload(f"idle for {int(idle)} s")
+            self.store.event("engine_unloaded", **info)
+            return "idle"
+        return None
+
+    def load(self) -> dict:
+        block = self.engine.policy_block_reason()
+        if block:
+            raise UnavailableError(block[1], code=block[0])
         if self._current:
             return self.engine.snapshot()
         try:

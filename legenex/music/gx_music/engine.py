@@ -131,6 +131,36 @@ class EngineController:
         log.warning("ignoring stale gx-max hold %s (age %.0fs, no rank container)", hold, age)
         return None
 
+    def maintenance_reason(self) -> str | None:
+        """Maintenance mode (D-036): no new engine loads; an idle engine is unloaded."""
+        if self.cfg.maintenance_hold_file.exists():
+            return "the cluster is in Maintenance mode; music resumes when Maintenance ends"
+        return None
+
+    def policy_block_reason(self) -> tuple[str, str] | None:
+        """(code, reason) for anything that forbids a NEW engine load, gx-max first."""
+        block = self.gxmax_block_reason()
+        if block:
+            return "gx_max_active", block
+        block = self.maintenance_reason()
+        if block:
+            return "maintenance", block
+        return None
+
+    def pinned(self) -> bool:
+        """Pinned in the Control Center: keep the engine past the idle timer."""
+        try:
+            data = json.loads(self.cfg.pins_file.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return False
+        return isinstance(data, dict) and isinstance(data.get(WORKLOAD_NAME), dict)
+
+    def pin_honoured(self) -> bool:
+        """A pin never overrides gx-max, Maintenance or the memory reserve."""
+        if not self.pinned() or self.policy_block_reason():
+            return False
+        return meminfo().get("MemAvailable", 0.0) >= self.cfg.reserve_gib
+
     # ------------------------------------------------------------ state --
     def snapshot(self) -> dict:
         with self._lock:
@@ -143,6 +173,9 @@ class EngineController:
                 "last_unload": self.last_unload,
                 "idle_seconds": round(self.clock() - self.last_activity, 1),
                 "idle_unload_after_s": self.cfg.idle_unload_s,
+                "pinned": self.pinned(),
+                "pin_honoured": self.pin_honoured() if self.state == READY else None,
+                "blocked_by": (self.policy_block_reason() or (None, None))[1],
             }
 
     def touch(self) -> None:
@@ -187,9 +220,9 @@ class EngineController:
             if self.state == READY and self.docker.running(self.cfg.engine_container):
                 self.touch()
                 return None
-            block = self.gxmax_block_reason()
+            block = self.policy_block_reason()
             if block:
-                raise ResourceWait(block, code="gx_max_active")
+                raise ResourceWait(block[1], code=block[0])
             self.reconcile()
             if self.state == READY:
                 return None
@@ -450,6 +483,8 @@ class GuardAdapter:
 
 
 def _human_refusal(reason: str) -> str:
+    if "maintenance" in reason.lower():
+        return "the cluster is in Maintenance mode; music resumes when Maintenance ends"
     if "reserve" in reason:
         return "waiting for memory on the media node (other models are using it)"
     if "large/exclusive" in reason:

@@ -385,6 +385,7 @@ def make_config(root: Path, engine_port: int, **over) -> config_mod.Config:
         idle_unload_s=600, resource_wait_s=30, resource_retry_s=2, generation_timeout_s=60,
         max_upload_bytes=1 << 20, max_queue=5, max_duration_s=600, evict_comfy=False, evict_reason=False,
         media_router_container="gx-media-router", gxmax_hold_file=root / "guard" / "node2.gxmax-hold",
+        maintenance_hold_file=root / "guard" / "node2.maintenance-hold", pins_file=root / "guard" / "pins.json",
         gxmax_hold_ttl_s=1200, gxmax_rank_container="gx-max-rank1",
         gxmax_deadman_pidfile=root / "guard" / "deadman.pid", control_plane_container="", reserve_gib=30)
     base.update(over)
@@ -630,6 +631,51 @@ class ServiceIntegrationTests(unittest.TestCase):
         self.h.engine.unload("gx-max drain")
         self.assertFalse(self.h.docker.exists("gx-music"))
         self.assertFalse(self.h.guard.registered)
+
+    def test_maintenance_blocks_new_loads_and_unloads_an_idle_engine(self):
+        eng = self.h.engine
+        eng.ensure_loaded()
+        self.assertTrue(eng.is_loaded())
+        self.h.cfg.maintenance_hold_file.write_text("x")
+        # a running track is allowed to finish
+        self.h.service._current = "mus-running"
+        self.assertIsNone(self.h.service.reap_once())
+        self.assertTrue(eng.is_loaded())
+        self.h.service._current = None
+        self.assertEqual(self.h.service.reap_once(), "maintenance")
+        self.assertFalse(self.h.docker.exists("gx-music"))
+        code, body, _ = self.h.call("POST", "/v1/music/load")
+        self.assertEqual(code, 503)
+        self.assertEqual(body["error"]["code"], "maintenance")
+        _, j, _ = self.h.call("POST", "/v1/music/generations", {"prompt": "x"})
+        job = self.h.wait(j["id"], statuses=("waiting_for_resource",), timeout=10)
+        self.assertIn("Maintenance", job["detail"])
+        self.h.cfg.maintenance_hold_file.unlink()
+        self.assertEqual(self.h.wait(j["id"])["status"], "completed")
+
+    def test_pin_keeps_the_engine_only_while_allowed(self):
+        eng = self.h.engine
+        eng.ensure_loaded()
+        eng.last_activity -= 10_000
+        self.h.cfg.pins_file.write_text(json.dumps({"gx-music": {"by": "admin"}}))
+        with mock.patch("gx_music.engine.meminfo", return_value={"MemAvailable": 80.0}):
+            self.assertTrue(eng.pin_honoured())
+            self.assertEqual(self.h.service.reap_once(), "pinned")
+            self.assertTrue(eng.is_loaded())
+            model = self.h.call("GET", "/v1/music/model")[1]
+            self.assertTrue(model["policy"]["pinned"])
+        # under the reserve the pin is suspended
+        with mock.patch("gx_music.engine.meminfo", return_value={"MemAvailable": 20.0}):
+            self.assertFalse(eng.pin_honoured())
+            self.assertEqual(self.h.service.reap_once(), "idle")
+        self.assertFalse(eng.is_loaded())
+
+    def test_pin_never_overrides_maintenance(self):
+        eng = self.h.engine
+        self.h.cfg.pins_file.write_text(json.dumps({"gx-music": {}}))
+        self.h.cfg.maintenance_hold_file.write_text("x")
+        with mock.patch("gx_music.engine.meminfo", return_value={"MemAvailable": 100.0}):
+            self.assertFalse(eng.pin_honoured())
 
     def test_other_gxmax_signals(self):
         eng = self.h.engine
