@@ -287,7 +287,7 @@ test('library: search, select all / none, favourite, rename, viewer, delete with
   await page.click('#confirm-ok');
   await expect(page.locator('.toast').last()).toContainText('Deleted 1');
   await page.fill('#lib-search', '');
-  await expect(tiles).toHaveCount(before - 1 + 1 > before ? before : before - 1 + (await tiles.count() - (before - 1)));
+  await expect(tiles).toHaveCount(before - 1);
   expect(problems).toEqual([]);
 });
 
