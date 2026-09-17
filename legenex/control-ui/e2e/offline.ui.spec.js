@@ -266,7 +266,7 @@ test('resource control: profiles, live map, admission, compatibility, pin and ma
   // compatibility explains itself
   await page.locator('[data-pair="gx-reason|gx-video"]').click();
   await expect(page.locator('.compat-detail')).toContainText('gx-reason + gx-video');
-  await expect(page.locator('.compat-detail')).toContainText('needs 76 GiB');
+  await expect(page.locator('.compat-detail')).toContainText('needs 102 GiB');
   await page.locator('[data-pair="gx-mini|gx-reason"]').click();
   await expect(page.locator('.compat-detail')).toContainText('different nodes');
   // harmless switch: no dialog

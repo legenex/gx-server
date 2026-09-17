@@ -121,21 +121,21 @@ POLICIES: dict[str, RuntimePolicy] = {
     "gx-image": RuntimePolicy(
         "gx-image", "node2", "image", "ComfyUI behind gx-media-router", 57.0, 57.0, 600, "on-demand", 50, True, True,
         "one ComfyUI generation at a time; image and video weights never stack",
-        "media router (57 GiB cold growth + 30 GiB reserve)",
+        "media router: 57 GiB + 30 GiB reserve",
         ("unload", "pin", "unpin"), "114 -> 57.5 GiB available during a cold generation (2026-09-17)",
         "weights load with the first job", {"edit": 57.0}),
     "gx-video": RuntimePolicy(
         "gx-video", "node2", "video", "ComfyUI behind gx-media-router", 72.0, 72.0, 600, "on-demand", 40, True, True,
         "needs most of gx10-02: waits for gx-reason and gx-music to unload (a cold video plus the 30 GiB "
         "reserve leaves no room for either)",
-        "media router (72 GiB cold growth + 30 GiB reserve; keyframe edit 107 GiB cannot keep the reserve)",
+        "media router: 72 GiB + 30 GiB reserve (a keyframe edit, 107 GiB, cannot run)",
         ("unload", "pin", "unpin"), "114 -> 42 GiB available for t2v/i2v; 7 GiB for keyframe edit (2026-09-17)",
         "weights load with the first job", {"keyframe_edit": 107.0}),
     "gx-music": RuntimePolicy(
         "gx-music", "node2", "music", "ACE-Step 1.5 XL (gx-music supervisor)", 32.0, 26.0, 600, "on-demand", 50, True,
         True, "coexists with gx-reason (measured); never with a cold video (the 30 GiB reserve); hands idle "
         "ComfyUI weights over through the router, and the router unloads it when idle for a video",
-        "resource guard (32 GiB estimate + 30 GiB reserve + the media router's pending growth)",
+        "resource guard: 32 GiB + 30 GiB reserve, plus any media load in progress",
         ("load", "unload", "drain", "pin", "unpin"),
         "24-27 GiB loaded (115 -> 88-90 GiB available, 2026-09-17); minimum 37.7 GiB available next to "
         "gx-reason (Stage A)", "82-107 s"),

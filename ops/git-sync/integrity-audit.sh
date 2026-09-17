@@ -181,6 +181,20 @@ if [ "${ROLE}" = mirror ]; then
     check_copy "${HOME}/gx-media/workflows/$(basename "${wf}")" "legenex/media/workflows/$(basename "${wf}")"
   done
   check_copy "${HOME}/gx-kernel-lock/verify-kernel-lock.sh" legenex/host/kernel-lock/verify-kernel-lock.sh
+  # D-038: the media router image is built from ~/gx-media/router; its source must
+  # be the checkout's, and the running router must report the checkout's version.
+  for src in "${GX_SYNC_REPO}"/legenex/media/router/gx_media_router/*.py; do
+    check_copy "${HOME}/gx-media/router/gx_media_router/$(basename "${src}")" \
+      "legenex/media/router/gx_media_router/$(basename "${src}")"
+  done
+  want_ver="$(sed -n 's/^__version__ = "\(.*\)"/\1/p' "${GX_SYNC_REPO}/legenex/media/router/gx_media_router/__init__.py")"
+  have_ver="$(curl -fsS -m 5 http://192.168.100.11:18800/health 2>/dev/null \
+    | python3 -c 'import json,sys; print(json.load(sys.stdin).get("version",""))' 2>/dev/null || true)"
+  if [ -n "${have_ver}" ] && [ "${have_ver}" = "${want_ver}" ]; then
+    r PASS "running media router is ${have_ver} (checkout ${want_ver})"
+  else
+    r WARN "running media router is '${have_ver:-unreachable}', checkout is ${want_ver} (legenex/media/deploy-node2.sh)"
+  fi
   # gx-music (D-036): the user unit is a symlink into this checkout, and the
   # supervisor must run from the checkout, not from the Stage A staging tree.
   munit="${HOME}/.config/systemd/user/gx-music.service"
@@ -224,6 +238,15 @@ else
       r PASS "deployed unit matches rendered repo template: ${punit}"
     else
       r WARN "deployed unit differs from the rendered repo template: ${punit} (run legenex/playground/scripts/install.sh)"
+    fi
+  fi
+  # D-038: production Open WebUI's gx-* identity entries follow the model registry.
+  if docker inspect open-webui >/dev/null 2>&1; then
+    if (cd "${GX_SYNC_REPO}/legenex/control-ui" \
+        && timeout 120 python3 -m gx_control_ui.owui_identity check >/dev/null 2>&1); then
+      r PASS "open-webui gx-* identity entries match legenex/models/registry.json"
+    else
+      r WARN "open-webui gx-* identity entries differ from the registry (Control Center > Setup > Open WebUI)"
     fi
   fi
   # The running gateway must hold the media key from the ignored .env (a recreate
