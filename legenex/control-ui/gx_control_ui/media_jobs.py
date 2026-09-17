@@ -212,7 +212,7 @@ class MediaJobs:
         self.library = library
         self.router = router
         self.results = results
-        self.model_identity = model_identity or (lambda workflow: {})
+        self.model_identity: Any = model_identity or (lambda workflow: {})
         self.audit = audit or (lambda **kw: None)
         self.poll_interval = poll_interval
         self._jobs: collections.OrderedDict[str, MediaJob] = collections.OrderedDict()

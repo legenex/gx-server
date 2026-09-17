@@ -346,7 +346,8 @@ class MediaLibrary:
 
     def update(self, asset_id: str, *, title: str | None = None, favourite: bool | None = None) -> dict:
         self._check_id(asset_id)
-        sets, args = [], []
+        sets: list[str] = []
+        args: list[Any] = []
         if title is not None:
             title = title.strip()
             if len(title) > 200 or "\x00" in title:
@@ -415,7 +416,7 @@ class MediaLibrary:
             if lineage:
                 out["children"] = [self._brief(r) for r in con.execute(
                     "SELECT * FROM assets WHERE parent_id=? ORDER BY created_at", (asset_id,))]
-                ancestors = []
+                ancestors: list[dict] = []
                 parent = row["parent_id"]
                 seen = {asset_id}
                 while parent and parent not in seen and len(ancestors) < 50:
@@ -437,7 +438,8 @@ class MediaLibrary:
     def search(self, *, q: str = "", type_: str = "", model: str = "", operation: str = "",
                favourite: bool | None = None, sort: str = "newest", limit: int = 60, offset: int = 0,
                include_tests: bool = True) -> dict:
-        where, args = [], []
+        where: list[str] = []
+        args: list[Any] = []
         if q:
             if len(q) > 200:
                 raise LibraryError("search text is too long")

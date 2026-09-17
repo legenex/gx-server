@@ -18,6 +18,7 @@ import time
 from typing import Any
 
 from .util import HTTPError, bearer, http_json
+from datetime import UTC
 
 PUBLIC_ALIASES = ("gx-mini", "gx-fast", "gx-reason", "gx-max", "gx-auto", "gx-image", "gx-video")
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ._-]{0,62}$")
@@ -165,13 +166,13 @@ def _mask(secret: str) -> str:
 def _remaining_days(expires: Any) -> str:
     if not expires:
         return "never"
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     try:
         when = datetime.fromisoformat(str(expires).replace("Z", "+00:00"))
     except ValueError:
         return "never"
-    seconds = (when - datetime.now(timezone.utc)).total_seconds()
+    seconds = (when - datetime.now(UTC)).total_seconds()
     if seconds <= 0:
         return "expired"
     return f"{max(1, int(-(-seconds // 86400)))}d"
@@ -181,10 +182,10 @@ def _expired(expires: Any) -> bool:
     if not expires:
         return False
     try:
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         when = datetime.fromisoformat(str(expires).replace("Z", "+00:00"))
-        return when < datetime.now(timezone.utc)
+        return when < datetime.now(UTC)
     except ValueError:
         return False
 
@@ -208,7 +209,7 @@ def probe(gateway_base: str, secret: str, model: str = "gx-mini") -> dict:
             out["chat_answer"] = (data["choices"][0].get("message") or {}).get("content", "")[:80]
         elif isinstance(data, dict):
             err = data.get("error")
-            out["chat_error"] = (err.get("message") if isinstance(err, dict) else str(err))[:200]
+            out["chat_error"] = str(err.get("message") if isinstance(err, dict) else err)[:200]
     except HTTPError as exc:
         out["error"] = exc.message
     return out

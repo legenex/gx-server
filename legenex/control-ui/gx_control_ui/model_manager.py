@@ -85,7 +85,8 @@ for cat in ("gguf", "vllm", "deepseek", "staging"):
         except Exception:
             pass
         out["dirs"].append({"category": cat, "name": d.name, "path": str(d), "size": size,
-                            "manifest": {k: man.get(k) for k in ("repository", "revision", "verified_at", "gated")} if man else None})
+                            "manifest": {k: man.get(k) for k in ("repository", "revision", "verified_at", "gated")}
+                            if man else None})
 mdir = root / "manifests"
 if mdir.is_dir():
     for f in sorted(mdir.glob("*.json")):
@@ -340,7 +341,8 @@ class ModelManager:
         for key, label in (("gx_mini_model", "gx-mini binding"), ("gx_fast_model_dir", "gx-fast binding")):
             v = n1.get(key, "")
             if v.startswith("/models/"):
-                refs[str(MODELS_ROOT / Path(v[len('/models/'):]).parts[0] / Path(v[len('/models/'):]).parts[1])].append(label)
+                rel_parts = Path(v[len("/models/"):]).parts
+                refs[str(MODELS_ROOT / rel_parts[0] / rel_parts[1])].append(label)
         v = n2.get("gx_reason_model_dir", "")
         if v.startswith("/models/"):
             rel = Path(v[len("/models/"):])
@@ -513,7 +515,8 @@ class ModelManager:
                   f"echo '== verify =='; {vf}")
         proc = subprocess.Popen(ssh_args(self.cfg.node2_ssh, 10) + ["bash", "-c", q(script)],
                                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-        assert proc.stdin is not None
+        if proc.stdin is None:  # pragma: no cover - Popen(stdin=PIPE) always sets it
+            raise ManagerError("could not open the SSH session")
         proc.stdin.write((self.hf.token() or "") + "\n")
         proc.stdin.close()
         while proc.poll() is None:
@@ -614,8 +617,9 @@ class ModelManager:
                 job.log("the candidate did not become healthy in time")
                 return False
             load_s = round(time.time() - started, 1)
+            question = "What is 12 times 12? Answer with the number."
             body = json.dumps({"model": "candidate", "max_tokens": 32, "temperature": 0,
-                               "messages": [{"role": "user", "content": "What is 12 times 12? Answer with the number."}]})
+                               "messages": [{"role": "user", "content": question}]})
             t0 = time.time()
             chat = sh(["curl", "-fsS", "-m", "300", "-H", "Content-Type: application/json", "-d", body,
                        f"http://127.0.0.1:{port}/v1/chat/completions"], 320)
@@ -788,8 +792,8 @@ class ModelManager:
             try:
                 status, data = http_json(
                     "POST", f"{self.cfg.litellm_base}/v1/chat/completions", headers=bearer(key), timeout=2400,
-                    body={"model": alias, "max_tokens": 64, "temperature": 0,
-                          "messages": [{"role": "user", "content": "What is 12 times 12? Answer with the number."}]})
+                    body={"model": alias, "max_tokens": 64, "temperature": 0, "messages": [
+                        {"role": "user", "content": "What is 12 times 12? Answer with the number."}]})
             except HTTPError as exc:
                 job.log(f"gateway not ready: {exc.message}")
                 time.sleep(10)
@@ -825,7 +829,7 @@ class ModelManager:
         return False
 
     def rollback(self, body: dict, *, user: str) -> dict:
-        alias = body.get("alias")
+        alias = str(body.get("alias") or "")
         point = self.rollback_points().get(alias)
         if not point:
             raise ManagerError("no rollback point for that alias")

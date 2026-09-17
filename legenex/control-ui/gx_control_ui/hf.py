@@ -203,14 +203,14 @@ class HFClient:
         sha = data.get("sha")
         if not isinstance(sha, str) or not SHA_RE.match(sha):
             raise HFError("Hugging Face did not return a commit SHA")
-        files = []
+        files: list[dict[str, Any]] = []
         for s in data.get("siblings") or []:
             name = s.get("rfilename")
             if not isinstance(name, str):
                 continue
             lfs = s.get("lfs") or {}
             files.append({"path": name, "size": s.get("size") or 0, "sha256": lfs.get("sha256")})
-        total = sum(f["size"] for f in files)
+        total = sum(int(f["size"]) for f in files)
         tags = data.get("tags") or []
         card = data.get("cardData") or {}
         config = self._small_json(repo, sha, "config.json") if any(f["path"] == "config.json" for f in files) else None
@@ -222,7 +222,7 @@ class HFClient:
         access_note = None
         if gated:
             try:
-                probe_file = next((f["path"] for f in files if f["path"].endswith(".json")), None)
+                probe_file = next((str(f["path"]) for f in files if str(f["path"]).endswith(".json")), None)
                 if probe_file:
                     self._get(f"/{repo}/resolve/{sha}/{urllib.parse.quote(probe_file)}", limit=8 << 20)
             except HFError as exc:
@@ -349,7 +349,8 @@ def classify(repo: str, tags: list[str], files: list[dict], config: dict | None,
         if method and str(method).upper() not in quant:
             quant.append(str(method))
     arch = " ".join((config or {}).get("architectures") or []).lower()
-    moe = bool(config and any(k in json.dumps(config) for k in ("num_experts", "n_routed_experts", "num_local_experts")))
+    config_text = json.dumps(config) if config else ""
+    moe = any(k in config_text for k in ("num_experts", "n_routed_experts", "num_local_experts"))
     vision = bool(config and ("vision_config" in config or "vision" in arch)) or \
         any(n.startswith("mmproj") or "/mmproj" in n for n in lower) or \
         "image-text-to-text" in tagset
