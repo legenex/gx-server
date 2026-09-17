@@ -280,6 +280,22 @@ model_list:
       max_input_tokens: 4096
       max_output_tokens: 4096
 
+  # ===========================================================================
+  # gx-voice — Qwen3-TTS 12Hz 1.7B text-to-speech. Node 2 (Build V3 VOI, D-040).
+  # ===========================================================================
+  # OpenAI POST /v1/audio/speech, forwarded to the gx-voice supervisor on the
+  # RoCE fabric (legenex/voice). `voice` is a preset speaker, a saved voice
+  # name or a voice id. GX_VOICE_API_KEY holds the value of
+  # /srv/projects/gx-cluster/secrets/gx-voice/api-key (gateway .env).
+  - model_name: gx-voice
+    litellm_params:
+      model: openai/gx-voice
+      api_base: "http://192.168.100.11:18830/v1"
+      api_key: os.environ/GX_VOICE_API_KEY
+      timeout: 900
+    model_info:
+      mode: audio_speech
+
 litellm_settings:
   drop_params: true
   set_verbose: false

@@ -158,6 +158,11 @@ class StorageManager:
                     names[str(m)] = f"used by media workflow {wf.name.removesuffix('.api.json')}"
             for alias, spec in (reg.get("aliases") or {}).items():
                 for comp in spec.get("components") or []:
+                    manifest = str(comp.get("manifest") or "").split(" ", 1)[0]
+                    if manifest.startswith("/srv/models/") and "(gx10-02)" in str(comp.get("manifest")):
+                        # the verified download's configs and manifest (Build V3 IMG)
+                        why.setdefault(str(Path(manifest).parent), f"{alias} {comp.get('role', 'component')} "
+                                                                    "manifest and configs")
                     for name in _expand(Path(str(comp.get("file") or "")).name):
                         if name.endswith((".safetensors", ".gguf", ".ckpt", ".pt", ".bin")):
                             names.setdefault(name, f"{alias} {comp.get('role', 'component')}")

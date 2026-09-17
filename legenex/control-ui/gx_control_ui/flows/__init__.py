@@ -12,6 +12,7 @@ to signed-in operators).
 
 from __future__ import annotations
 
+import builtins
 import copy
 import logging
 import time
@@ -109,7 +110,7 @@ class FlowService:
         return out
 
     # ================================================================ flows
-    def list(self, *, owner: str | None, q: str = "", limit: int = 100) -> list[dict]:
+    def list(self, *, owner: str | None, q: str = "", limit: int = 100) -> builtins.list[dict]:
         return self.store.list_flows(owner=owner, q=q, limit=limit)
 
     def get(self, flow_id: str, *, owner: str | None) -> dict:
@@ -212,7 +213,7 @@ class FlowService:
             n["locked"] = False
         return self.create({"graph": graph}, owner=new_owner, user=user)
 
-    def versions(self, flow_id: str, *, owner: str | None) -> list[dict]:
+    def versions(self, flow_id: str, *, owner: str | None) -> builtins.list[dict]:
         self.store.get_flow(flow_id, owner=owner)
         return self.store.versions(flow_id)
 
@@ -233,7 +234,7 @@ class FlowService:
         return self.get(updated["id"], owner=None)
 
     # ============================================================ templates
-    def templates(self, *, owner: str | None) -> list[dict]:
+    def templates(self, *, owner: str | None) -> builtins.list[dict]:
         return self.store.list_templates(owner=None if owner == UI_OWNER else owner)
 
     def template(self, tid: str, *, owner: str | None) -> dict:
@@ -266,8 +267,8 @@ class FlowService:
 
     def duplicate_template(self, tid: str, body: dict, *, owner: str, user: str) -> dict:
         src = self.template(tid, owner=owner)
-        name = body.get("name") if isinstance(body.get("name"), str) and body["name"].strip() \
-            else f"{src['name']} (copy)"
+        raw = body.get("name")
+        name = raw if isinstance(raw, str) and raw.strip() else f"{src['name']} (copy)"
         return self.save_template({"name": name[:120], "description": src["description"],
                                    "category": "custom", "graph": src["graph"]}, owner=owner, user=user)
 
@@ -339,7 +340,7 @@ class FlowService:
         run["active"] = run["status"] in ("queued", "running")
         return run
 
-    def runs(self, flow_id: str | None, *, owner: str | None, limit: int = 50) -> list[dict]:
+    def runs(self, flow_id: str | None, *, owner: str | None, limit: int = 50) -> builtins.list[dict]:
         return self.store.list_runs(flow_id, owner=owner, limit=limit)
 
     def cancel(self, run_id: str, *, owner: str | None, user: str) -> dict:
@@ -398,7 +399,7 @@ class FlowService:
         return {"valid": True, "issues": [], "readiness": readiness(clean), "graph": clean}
 
     # ============================================================== secrets
-    def secrets(self) -> list[dict]:
+    def secrets(self) -> builtins.list[dict]:
         return self.services.secrets.names()
 
     def set_secret(self, name: str, value: str, *, user: str) -> None:
@@ -411,7 +412,7 @@ class FlowService:
         return ok
 
     # ============================================================= activity
-    def activity(self, user: str, since: float, limit: int) -> list[dict]:
+    def activity(self, user: str, since: float, limit: int) -> builtins.list[dict]:
         items = []
         for r in self.store.runs_for_activity(since, limit):
             if r["user"] != user:

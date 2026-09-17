@@ -4,13 +4,15 @@
 import { api, deleteAssets, getAsset, searchAssets, updateAsset } from './api.js';
 import { audioPlayer, miniWave } from './audio.js';
 import { ago, bytes, clear, confirmDialog, dateTime, debounce, h, mmss, openDialog, openDrawer, promptDialog, titleOf, toast, truncate, replace } from './dom.js';
-import { friendlyError, submitMedia, submitMusic } from './jobs.js';
+import { friendlyError, submitMedia, submitMusic, submitVideo, submitVoice } from './jobs.js';
+import { musicBodyFromRequest } from './music-recipe.js';
 import { openAsset } from './nav.js';
 import { assetThumb, button, emptyState, hasThumb, iconButton, kv, linkButton, loading, skeletonGrid, textInput } from './ui.js';
 
 export const OP_LABEL = {
   generate: 'Generated', edit: 'Edit', variation: 'Variation', i2v: 'Image to video', v2v: 'Video edit',
   upload: 'Upload', remix: 'Remix', repaint: 'Repaint', extend: 'Extend',
+  tts: 'Speech', voice_design: 'Voice design', voice_clone: 'Voice clone',
 };
 export const TYPE_LABEL = { image: 'Image', video: 'Video', audio: 'Audio' };
 
@@ -86,14 +88,15 @@ export function downloadButtons(asset, { size = 'sm' } = {}) {
 // The recipe that re-creates an asset, or null (uploads, unknown origin).
 export function recipeOf(asset) {
   const s = asset.settings || {};
+  if (asset.source_kind === 'voice_take') {
+    // Build V3 VOI. A clone is never re-run from the Library: it needs a fresh permission confirmation.
+    if (!s.request || s.operation === 'voice_clone') return null;
+    return { type: 'voice', body: { ...s.request } };
+  }
   if (asset.type === 'audio') {
     const req = s.request;
     if (!req || !s.operation) return null;
-    const body = { operation: s.operation, ...(req.parameters || {}) };
-    for (const k of ['prompt', 'lyrics', 'style_tags']) if (req[k] !== undefined && req[k] !== '') body[k] = req[k];
-    for (const k of ['instrumental', 'description', 'vocal_language', 'batch_size', 'infer_method', 'thinking', 'enhance_prompt', 'lm_temperature', 'lm_cfg_scale', 'lm_top_p', 'noise_strength', 'start', 'end', 'mode', 'seconds', 'direction']) {
-      if (req[k] !== undefined && req[k] !== null) body[k] = req[k];
-    }
+    const body = musicBodyFromRequest(req, s.operation);
     if (s.operation !== 'generate') {
       if (!asset.parent_id || asset.parent_deleted) return null;
       body.source_asset_id = asset.parent_id;
@@ -104,6 +107,7 @@ export function recipeOf(asset) {
   }
   const req = s.requested;
   if (!req || !req.kind) return null;
+  if (req.wan && req.wan.request) return { type: 'video', body: { ...req.wan.request } };
   const body = { ...req };
   if (body.source_id && asset.parent_deleted) return null;
   // Only the mask's metadata is stored: a masked edit is repeated from the Images page.
@@ -121,7 +125,8 @@ export async function duplicateAsset(asset, { newSeed = false } = {}) {
   const body = { ...r.body };
   if (newSeed) delete body.seed;
   try {
-    const job = r.type === 'music' ? await submitMusic(body) : await submitMedia(body);
+    const submit = { music: submitMusic, video: submitVideo, voice: submitVoice }[r.type] || submitMedia;
+    const job = await submit(body);
     toast('Submitted. Follow it in Activity.', 'ok');
     return job;
   } catch (err) {
@@ -263,6 +268,9 @@ export function recipeRows(a) {
     ['Model repository', a.model_repo],
     ['Model revision', a.model_revision ? truncate(a.model_revision, 14) : undefined],
     ['Workflow', a.workflow],
+    ['LoRAs', s.wan && s.wan.loras && s.wan.loras.length ? s.wan.loras.filter((l) => l.enabled).map((l) => `${l.display_name} (${[l.strength_high, l.strength_low].filter((x) => x !== null && x !== undefined).map((x) => Number(x).toFixed(2)).join(' / ')})`).join(', ') || 'none enabled' : undefined],
+    ['Workflow version', s.wan ? s.wan.workflow_version : undefined],
+    ['ComfyUI prompt id', s.wan ? s.wan.comfy_prompt_id : undefined],
     ['Parent', a.parent_id ? (a.parent_deleted ? `${a.parent_id} (deleted)` : a.parent_id) : undefined],
     ['File size', a.file_size ? bytes(a.file_size) : undefined],
     ['Asset ID', a.id],

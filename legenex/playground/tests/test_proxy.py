@@ -99,17 +99,74 @@ class ProxyTests(unittest.TestCase):
     def test_allow_list(self):
         allowed = [("GET", "/api/session"), ("GET", "/api/media/assets"), ("GET", "/api/music/jobs"),
                    ("GET", "/api/resources/summary"), ("GET", "/api/creative/overview"),
-                   ("GET", "/api/music/jobs/mus-" + "a" * 32 + "/lineage"), ("GET", "/v1/music/model")]
+                   ("GET", "/api/music/jobs/mus-" + "a" * 32 + "/lineage"), ("GET", "/v1/music/model"),
+                   ("GET", "/api/music/reference/" + "ab" * 12)]
         for method, path in allowed:
             self.assertEqual(self.req(method, path)[0], 200, path)
         denied = [("GET", "/api/keys"), ("GET", "/api/resources"), ("GET", "/api/storage"),
                   ("GET", "/api/system"), ("GET", "/api/logs/orchestrator"), ("GET", "/api/manager/inventory"),
                   ("GET", "/api/setup"), ("GET", "/api/actions"), ("GET", "/api/playground/config"),
-                  ("GET", "/api/music/../keys"), ("GET", "/v1/chat/completions")]
+                  ("GET", "/api/music/../keys"), ("GET", "/v1/chat/completions"),
+                  # MUS: only the exact AI/reference paths, with the right method and id shape
+                  ("GET", "/api/music/ai/build"), ("GET", "/api/music/reference/analyze"),
+                  ("GET", "/api/music/reference/XYZ"), ("GET", "/api/music/reference/" + "ab" * 12 + "/x"),
+                  ("GET", "/api/music/ai/../../keys")]
         for method, path in denied:
             self.assertEqual(self.req(method, path)[0], 404, path)
         self.assertEqual(Backend.calls and [c["path"] for c in Backend.calls if "keys" in c["path"]], [])
         self.assertEqual(self.req("PUT", "/api/session")[0], 405)
+
+    def test_allow_list_video_loras(self):
+        """Build V3 WAN: only the exact /api/video paths, methods and id shapes."""
+        entry, preset, gen = "l_" + "0a" * 8, "wp_" + "1b" * 8, "2c" * 8
+        origin = {"Content-Type": "application/json", "Host": f"127.0.0.1:{self.port}",
+                  "Origin": f"http://127.0.0.1:{self.port}"}
+        for path in ("/api/video/config", "/api/video/loras", f"/api/video/loras/{entry}", "/api/video/presets",
+                     f"/api/video/presets/{preset}", "/api/video/generations", f"/api/video/generations/{gen}",
+                     f"/api/video/generations/{gen}/workflow", "/api/video/errors"):
+            self.assertEqual(self.req("GET", path)[0], 200, path)
+        for path in ("/api/video/loras/rescan", "/api/video/loras/order", f"/api/video/loras/{entry}",
+                     "/api/video/pairs", "/api/video/pairs/remove", "/api/video/pairs/restore", "/api/video/presets",
+                     f"/api/video/presets/{preset}", f"/api/video/presets/{preset}/duplicate",
+                     f"/api/video/presets/{preset}/delete", f"/api/video/presets/{preset}/resolve",
+                     "/api/video/workflow", "/api/video/generate", f"/api/video/jobs/{gen}/cancel"):
+            self.assertEqual(self.req("POST", path, b"{}", origin)[0], 200, path)
+        denied = [("GET", "/api/video/generate"), ("GET", "/api/video/loras/rescan"),
+                  ("POST", "/api/video/config"), ("POST", "/api/video/generations"),
+                  ("GET", "/api/video/loras/../../keys"), ("GET", "/api/video/loras/l_XYZ"),
+                  ("GET", "/api/video/presets/wp_" + "1b" * 8 + "/delete"),
+                  ("GET", f"/api/video/generations/{gen}/workflow/x"), ("GET", "/api/video/loras/%2e%2e"),
+                  ("POST", "/api/video/presets/wp_x/delete"), ("POST", "/api/video/jobs/zz/cancel")]
+        for method, path in denied:
+            st = self.req(method, path, b"{}" if method == "POST" else None, origin if method == "POST" else None)[0]
+            self.assertEqual(st, 404, f"{method} {path}")
+
+    def test_allow_list_voice(self):
+        """Build V3 VOI: only the exact /api/voice and /v1/voice paths, methods and id shapes."""
+        voice, job = "vc_" + "0a" * 12, "vj_" + "1b" * 16
+        origin = {"Content-Type": "application/json", "Host": f"127.0.0.1:{self.port}",
+                  "Origin": f"http://127.0.0.1:{self.port}"}
+        for path in ("/api/voice/model", "/api/voice/voices", "/api/voice/jobs", f"/api/voice/voices/{voice}",
+                     "/api/voice/voices/preset:uncle_fu", f"/api/voice/voices/{voice}/versions",
+                     f"/api/voice/jobs/{job}", f"/api/voice/jobs/{job}/takes/3/audio", "/v1/voice/model",
+                     "/v1/voice/voices", "/v1/voice/voices/preset:ryan", f"/v1/voice/jobs/{job}",
+                     f"/v1/voice/jobs/{job}/takes/0/content"):
+            self.assertEqual(self.req("GET", path)[0], 200, path)
+        for path in ("/api/voice/voices", "/api/voice/jobs", "/api/voice/upload", f"/api/voice/voices/{voice}",
+                     f"/api/voice/voices/{voice}/delete", f"/api/voice/jobs/{job}/cancel",
+                     f"/api/voice/jobs/{job}/delete", f"/api/voice/jobs/{job}/takes/1/save", "/v1/voice/speech",
+                     "/v1/voice/design", "/v1/voice/clone", "/v1/voice/dialogue", "/v1/voice/uploads",
+                     f"/v1/voice/jobs/{job}/cancel", f"/v1/voice/jobs/{job}/takes/2/save"):
+            self.assertEqual(self.req("POST", path, b"{}", origin)[0], 200, path)
+        denied = [("POST", "/api/voice/load"), ("POST", "/api/voice/unload"), ("POST", "/v1/voice/unload"),
+                  ("POST", "/v1/voice/load"), ("GET", "/api/voice/jobs/vj_x"), ("GET", f"/api/voice/jobs/{job}/takes/4/audio"),
+                  ("POST", "/api/voice/voices/preset:ryan"), ("POST", "/api/voice/voices/preset:ryan/delete"),
+                  ("GET", "/api/voice/voices/../../keys"), ("DELETE", f"/v1/voice/jobs/{job}"),
+                  ("GET", f"/v1/voice/jobs/{job}/takes/0/content/x"), ("GET", "/v1/audio/speech"),
+                  ("POST", "/v1/audio/speech"), ("GET", "/api/voice/voices/vc_ZZ")]
+        for method, path in denied:
+            st = self.req(method, path, b"{}" if method == "POST" else None, origin if method == "POST" else None)[0]
+            self.assertEqual(st, 404, f"{method} {path}")
 
     def test_post_requires_same_origin(self):
         body = b"{}"

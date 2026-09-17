@@ -246,9 +246,9 @@ class VoiceStudio:
         self.client = client
         self.library = library
         self.takes_root = Path(takes_root)
-        self.audit = audit or (lambda **kw: None)
+        self.audit = audit if audit is not None else (lambda **kw: None)
         self.results = results
-        self.explain = explain or (lambda alias: None)
+        self.explain = explain if explain is not None else (lambda alias: None)
         self.poll_interval = poll_interval
         self._lock = threading.RLock()
         self._wake = threading.Event()
@@ -637,7 +637,8 @@ class VoiceStudio:
                 if not isinstance(seg, dict) or set(seg) - {"voice_id", "text", "instructions", "pause_ms"}:
                     raise VoiceError(f"line {i + 1}: use voice_id, text, instructions and pause_ms")
                 _, spec = self._resolve_voice(seg.get("voice_id"), f"line {i + 1} voice")
-                entry = {"text": _text(seg.get("text"), f"line {i + 1} text", max_len=MAX_TEXT), "voice": spec}
+                entry: dict[str, Any] = {"text": _text(seg.get("text"), f"line {i + 1} text", max_len=MAX_TEXT),
+                                         "voice": spec}
                 seg_instr = _text(seg.get("instructions"), f"line {i + 1} instructions", max_len=500,
                                   required=False, single_line=True)
                 if seg_instr:
@@ -699,7 +700,15 @@ class VoiceStudio:
         if consent_asset is not None:
             consent_id = self._consent(body["reference"]["consent"], asset=consent_asset, user=user, via=via,
                                        ip=ip, job_id=job_id)
-        remote = self.client.call("POST", "/v1/voice/jobs", body=node, timeout=60)
+        try:
+            remote = self.client.call("POST", "/v1/voice/jobs", body=node, timeout=60)
+        except VoiceError as exc:
+            saved = sorted({seg["voice"]["voice_id"] for seg in segments if seg["voice"]["kind"] == "saved"})
+            if exc.status != 404 or not saved:
+                raise
+            for vid in saved:  # gx10-02 lost a replica or its clip: push again, then retry once
+                self._sync_voice(vid)
+            remote = self.client.call("POST", "/v1/voice/jobs", body=node, timeout=60)
         node_id = remote.get("id") if isinstance(remote, dict) else None
         if not NODE_JOB_ID.match(str(node_id)):
             raise VoiceError("the voice service returned an invalid job", 502, "upstream_error")
@@ -967,10 +976,8 @@ class VoiceStudio:
             rows = con.execute("SELECT id, version, deleted_at, synced_version FROM voice_voices").fetchall()
         for r in rows:
             try:
-                if r["deleted_at"] is None and have.get(r["id"]) != r["version"]:
-                    self._sync_voice(r["id"])
-                    pushed += 1
-                elif r["deleted_at"] is not None and r["id"] in have:
+                stale = have.get(r["id"]) != r["version"] if r["deleted_at"] is None else r["id"] in have
+                if stale:
                     self._sync_voice(r["id"])
                     pushed += 1
             except (VoiceError, LibraryError) as exc:

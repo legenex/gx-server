@@ -206,6 +206,8 @@ export function seedField(storeKey, { label = 'Seed' } = {}) {
     if (lockIt) setLock(true);
   };
   el.input = input;
+  el.isLocked = () => locked;
+  el.current = () => readNumber(input, { integer: true });
   return el;
 }
 
@@ -303,6 +305,7 @@ export function card(title, body, { actions, cls = '', level = 2, sub } = {}) {
 // probed the file (it then also wrote a thumbnail); otherwise a placeholder.
 export function hasThumb(asset) {
   if (asset.type === 'image') return true;
+  if (typeof asset.has_thumbnail === 'boolean') return asset.has_thumbnail;
   if (asset.type === 'video') return Boolean(asset.width || asset.frame_count);
   return false;
 }

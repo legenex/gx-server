@@ -2,6 +2,7 @@
 import { api } from './api.js';
 import { h, clear, elapsed, toast, replace } from './dom.js';
 import { icon } from './icons.js';
+import { musicBodyFromRequest } from './music-recipe.js';
 import { button, progressBar } from './ui.js';
 
 export const PHASE = {
@@ -26,10 +27,15 @@ const MUSIC_PHASE = {
 const TERMINAL = new Set(['COMPLETE', 'FAILED', 'CANCELLED']);
 
 export const isMusic = (job) => typeof job.id === 'string' && job.id.startsWith('mus-');
+// Build V3 VOI: gx-voice jobs share the music status vocabulary.
+export const isVoice = (job) => typeof job.id === 'string' && job.id.startsWith('vj_');
+const VOICE_TITLE = { tts: 'Speech', voice_design: 'Voice design', voice_clone: 'Voice clone', dialogue: 'Dialogue' };
 
 export function phaseOf(job) {
   let key;
-  if (isMusic(job)) {
+  if (isVoice(job)) {
+    key = MUSIC_PHASE[job.status] || 'QUEUED';
+  } else if (isMusic(job)) {
     key = MUSIC_PHASE[job.phase] || MUSIC_PHASE[job.status] || 'QUEUED';
     // A render that finished on gx10-02 is only COMPLETE once it is in the Library.
     if (job.status === 'completed' && job.phase === 'saving') key = 'SAVING';
@@ -38,18 +44,20 @@ export function phaseOf(job) {
   }
   const p = PHASE[key];
   let label = p.label;
-  if (!isMusic(job) && key === 'GENERATING' && job.cold_start) label = 'LOADING MODEL · GENERATING';
+  if (!isMusic(job) && !isVoice(job) && key === 'GENERATING' && job.cold_start) label = 'LOADING MODEL · GENERATING';
   return { key, label, tone: p.tone, terminal: TERMINAL.has(key) };
 }
 
 export const isTerminal = (job) => phaseOf(job).terminal;
 
 export function jobKind(job) {
+  if (isVoice(job)) return 'voice';
   if (isMusic(job)) return 'music';
   return job.alias === 'gx-video' ? 'video' : 'image';
 }
 
 export function jobTitle(job) {
+  if (isVoice(job)) return `${VOICE_TITLE[job.operation] || 'Voice'}${job.title ? ` · ${job.title}` : ''}`;
   if (isMusic(job)) {
     const op = { generate: 'Create music', remix: 'Remix', edit: 'Repaint', extend: 'Extend' }[job.operation] || 'Music';
     return `${op}${job.title ? ` · ${job.title}` : ''}`;
@@ -58,15 +66,20 @@ export function jobTitle(job) {
 }
 
 export function jobPrompt(job) {
+  if (isVoice(job)) {
+    const r = job.request || {};
+    return r.text || r.description || (r.segments || []).map((s) => s.text).join(' / ');
+  }
   if (isMusic(job)) return (job.request && job.request.prompt) || '';
   return job.prompt || '';
 }
 
 export function jobStarted(job) {
-  return isMusic(job) ? (job.started_at || job.created_at) : (job.started || job.created);
+  return isMusic(job) || isVoice(job) ? (job.started_at || job.created_at) : (job.started || job.created);
 }
 
 export function jobElapsed(job) {
+  if (isVoice(job)) return (job.finished_at || Date.now() / 1000) - job.created_at;
   if (isMusic(job)) {
     if (job.finished_at && job.created_at) return job.finished_at - job.created_at;
     return job.elapsed_s;
@@ -77,15 +90,17 @@ export function jobElapsed(job) {
 export function canCancel(job) {
   const p = phaseOf(job);
   if (p.terminal) return false;
+  if (isVoice(job)) return job.status !== 'saving';
   if (isMusic(job)) return job.status !== 'completed';
   return job.phase === 'queued' || job.phase === 'waiting';
 }
 
 export function jobProgress(job) {
-  return isMusic(job) && typeof job.progress === 'number' && !phaseOf(job).terminal ? job.progress : null;
+  return (isMusic(job) || isVoice(job)) && typeof job.progress === 'number' && !phaseOf(job).terminal ? job.progress : null;
 }
 
 export function jobError(job) {
+  if (isVoice(job)) return job.error ? job.error.message || String(job.error.code) : null;
   if (isMusic(job)) return job.error ? job.error.message || String(job.error) : (job.import_error || null);
   return job.error || null;
 }
@@ -121,6 +136,13 @@ export async function submitMedia(body) {
   return job;
 }
 
+export async function submitVideo(body) {
+  const job = await api.post('/api/video/generate', body);
+  submitted.set(job.id, { type: 'video', body });
+  center.track(job);
+  return job;
+}
+
 export async function submitMusic(body) {
   const job = await api.post('/api/music/jobs', body);
   submitted.set(job.id, { type: 'music', body });
@@ -128,19 +150,31 @@ export async function submitMusic(body) {
   return job;
 }
 
+export async function submitVoice(body) {
+  const job = await api.post('/api/voice/jobs', body);
+  submitted.set(job.id, { type: 'voice', body });
+  center.track(job);
+  return job;
+}
+
 export function recipeOf(job) {
   const known = submitted.get(job.id);
   if (known) return known;
+  if (isVoice(job)) {
+    // A clone is never re-run from history: it needs a fresh permission confirmation.
+    return job.operation === 'voice_clone' ? null : { type: 'voice', body: { ...(job.request || {}) } };
+  }
   if (isMusic(job)) {
     const req = job.request || {};
-    const body = { operation: job.operation || req.operation || 'generate', ...(req.parameters || {}) };
-    for (const k of ['prompt', 'lyrics', 'style_tags']) if (req[k] !== undefined && req[k] !== '') body[k] = req[k];
+    const body = musicBodyFromRequest(req, job.operation || req.operation);
     if (job.parent_asset_id) body.source_asset_id = job.parent_asset_id;
     if (job.reference_asset_id) body.reference_asset_id = job.reference_asset_id;
     if (job.title) body.title = job.title;
     return { type: 'music', body };
   }
   const p = { ...(job.params || {}) };
+  // Wan text-to-video with LoRAs (Build V3 WAN): resend the validated video request.
+  if (p.wan && p.wan.request) return { type: 'video', body: { ...p.wan.request } };
   if (job.prompt) p.prompt = job.prompt;
   // A masked edit keeps only the mask's metadata; it cannot be re-sent without the mask itself.
   if (p.mask && typeof p.mask === 'object') return { type: 'media', body: p, needsMask: true };
@@ -148,15 +182,23 @@ export function recipeOf(job) {
 }
 
 export async function retryJob(job) {
-  const { type, body, needsMask } = recipeOf(job);
+  const recipe = recipeOf(job);
+  if (!recipe) throw new Error('Start a voice clone again from the Voice page (it needs your permission confirmation).');
+  const { type, body, needsMask } = recipe;
+  if (type === 'voice') {
+    const nextVoice = await submitVoice(body);
+    toast('Submitted again with the same recipe.', 'ok');
+    return nextVoice;
+  }
   if (needsMask) throw new Error('This edit used a mask. Open it in Images and paint the mask again.');
-  const next = type === 'music' ? await submitMusic(body) : await submitMedia(body);
+  const next = type === 'music' ? await submitMusic(body) : type === 'video' ? await submitVideo(body) : await submitMedia(body);
   toast('Submitted again with the same recipe.', 'ok');
   return next;
 }
 
 export async function cancelJob(job) {
-  const path = isMusic(job) ? `/api/music/jobs/${job.id}/cancel` : `/api/media/jobs/${job.id}/cancel`;
+  const path = isVoice(job) ? `/api/voice/jobs/${job.id}/cancel`
+    : isMusic(job) ? `/api/music/jobs/${job.id}/cancel` : `/api/media/jobs/${job.id}/cancel`;
   const next = await api.post(path, {});
   center.update(next);
   return next;
@@ -242,11 +284,11 @@ class JobCenter {
     this.busy = true;
     try {
       await Promise.all(active.map(async (j) => {
-        const path = isMusic(j) ? `/api/music/jobs/${j.id}` : `/api/media/jobs/${j.id}`;
+        const path = isVoice(j) ? `/api/voice/jobs/${j.id}` : isMusic(j) ? `/api/music/jobs/${j.id}` : `/api/media/jobs/${j.id}`;
         try {
           this.update(await api.get(path));
         } catch (err) {
-          if (err.status === 404) this.update({ ...j, phase: 'failed', status: 'failed', error: isMusic(j) ? { message: 'This job no longer exists.' } : 'This job no longer exists.' });
+          if (err.status === 404) this.update({ ...j, phase: 'failed', status: 'failed', error: isMusic(j) || isVoice(j) ? { message: 'This job no longer exists.' } : 'This job no longer exists.' });
         }
       }));
     } finally {
@@ -262,18 +304,20 @@ class JobCenter {
     if (!this.enabled) return null;
     let result = null;
     if (!document.hidden) {
-      const [media, music] = await Promise.allSettled([
-        api.get('/api/media/jobs'), api.get('/api/music/jobs?limit=100'),
+      const [media, music, voice] = await Promise.allSettled([
+        api.get('/api/media/jobs'), api.get('/api/music/jobs?limit=100'), api.get('/api/voice/jobs?limit=100'),
       ]);
       const mediaJobs = media.status === 'fulfilled' ? media.value.jobs || [] : [];
       const musicJobs = music.status === 'fulfilled' ? music.value.jobs || [] : [];
-      for (const j of [...mediaJobs, ...musicJobs]) {
+      const voiceJobs = voice.status === 'fulfilled' ? voice.value.jobs || [] : [];
+      for (const j of [...mediaJobs, ...musicJobs, ...voiceJobs]) {
         const prev = this.jobs.get(j.id);
         if (!prev || JSON.stringify(prev) !== JSON.stringify(j)) this.update(j);
       }
       result = {
-        jobs: [...mediaJobs, ...musicJobs],
+        jobs: [...mediaJobs, ...musicJobs, ...voiceJobs],
         musicError: music.status === 'rejected' ? music.reason.message : null,
+        voiceError: voice.status === 'rejected' ? voice.reason.message : null,
         mediaError: media.status === 'rejected' ? media.reason.message : null,
       };
       if (this.active().length) this.schedule(1000);
@@ -336,7 +380,7 @@ export function jobCard(job, opts = {}) {
   const render = () => {
     const j = current;
     const p = phaseOf(j);
-    const err = p.key === 'FAILED' ? friendlyError(jobError(j)) : null;
+    const err = p.key === 'FAILED' ? (j.error_hint ? { text: j.error_hint, detail: jobError(j) } : friendlyError(jobError(j))) : null;
     const detail = isMusic(j) ? (j.phase_detail || j.detail) : j.detail;
     const actions = [];
     if (canCancel(j)) {
@@ -357,7 +401,7 @@ export function jobCard(job, opts = {}) {
     const kind = jobKind(j);
     replace(root,
       h('div', { class: 'job-head' },
-        h('span', { class: `job-kind job-kind-${kind}`, 'aria-hidden': 'true' }, icon(kind === 'music' ? 'music' : kind === 'video' ? 'video' : 'image', { size: 16 })),
+        h('span', { class: `job-kind job-kind-${kind}`, 'aria-hidden': 'true' }, icon({ music: 'music', video: 'video', voice: 'mic' }[kind] || 'image', { size: 16 })),
         h('div', { class: 'job-meta' },
           h('p', { class: 'job-title' }, jobTitle(j)),
           opts.showPrompt !== false && jobPrompt(j) ? h('p', { class: 'job-prompt' }, jobPrompt(j)) : null),

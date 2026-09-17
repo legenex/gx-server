@@ -1,14 +1,15 @@
 // History: every media and music job, newest first, live.
 import { clear, h, plural, replace } from '../dom.js';
-import { center, isMusic, jobCard, jobKind, jobStarted, phaseOf } from '../jobs.js';
+import { center, isMusic, isVoice, jobCard, jobKind, jobStarted, phaseOf } from '../jobs.js';
 import { navigate } from '../nav.js';
 import { button, callout, chips, emptyState, pageHeader, skeletonLines } from '../ui.js';
 
 const FILTERS = [['all', 'All'], ['active', 'Active'], ['done', 'Completed'], ['failed', 'Failed']];
-const KINDS = [['', 'Everything'], ['image', 'Images'], ['video', 'Video'], ['music', 'Music']];
+const KINDS = [['', 'Everything'], ['image', 'Images'], ['video', 'Video'], ['music', 'Music'], ['voice', 'Voice']];
 
 function openResult(job) {
   const kind = jobKind(job);
+  if (isVoice(job)) { navigate('voice', { job: job.id }); return; }
   const ids = isMusic(job) ? job.library_assets || [] : job.assets || [];
   if (ids.length) navigate(kind === 'music' ? 'music' : kind === 'video' ? 'video' : 'images', { asset: ids[0] });
   else navigate('library');
@@ -49,7 +50,7 @@ export default {
       });
       clear(list);
       if (!shown.length) {
-        list.append(emptyState({ icon: 'history', title: all.length ? 'No jobs match this filter' : 'No jobs yet', text: all.length ? 'Choose another filter.' : 'Jobs you start in Images, Video or Music show up here.' }));
+        list.append(emptyState({ icon: 'history', title: all.length ? 'No jobs match this filter' : 'No jobs yet', text: all.length ? 'Choose another filter.' : 'Jobs you start in Images, Video, Music or Voice show up here.' }));
         return;
       }
       for (const j of shown.slice(0, 150)) {
@@ -70,6 +71,7 @@ export default {
       jobs = res.jobs;
       clear(note);
       if (res.musicError) note.append(callout('warn', 'Music jobs could not be loaded', res.musicError));
+      if (res.voiceError) note.append(callout('warn', 'Voice jobs could not be loaded', res.voiceError));
       if (res.mediaError) note.append(callout('warn', 'Image and video jobs could not be loaded', res.mediaError));
       render();
     }

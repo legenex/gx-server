@@ -151,8 +151,8 @@ export function createLoraStack({ onChange } = {}) {
       h('div', { class: 'wan-item-body' },
         sw,
         applySel ? field('Applies to', applySel) : h('p', { class: 'muted small' }, APPLY_LABEL[it.apply] || ''),
-        (appliesHigh(it) || !it.apply) && it.apply !== null ? strengthSlider(it, 'high') : null,
-        (appliesLow(it) || !it.apply) && it.apply !== null ? strengthSlider(it, 'low') : null,
+        appliesHigh(it) ? strengthSlider(it, 'high') : null,
+        appliesLow(it) ? strengthSlider(it, 'low') : null,
         warn ? h('p', { class: 'form-error form-danger small', role: 'status' }, warn) : null));
   }
 
@@ -546,7 +546,7 @@ export function openAdvancedDialog(data, opts) {
 export function generationDetails(gen, { onLoad } = {}) {
   const loras = gen.loras || [];
   const body = h('div', { class: 'stack' },
-    gen.asset_id ? h('video', { class: 'media-video', src: gen.asset_url, controls: true, preload: 'metadata', poster: gen.thumbnail_url, 'aria-label': 'Generated video' }) : null,
+    gen.asset_id ? h('video', { class: 'media-video', src: gen.asset_url, controls: true, preload: 'metadata', poster: gen.thumbnail_url || undefined, 'aria-label': 'Generated video' }) : null,
     gen.error_message ? callout(gen.status === 'cancelled' ? 'info' : 'danger', gen.error_message, gen.error_detail ? h('details', { class: 'err-detail' }, h('summary', {}, 'Technical details'), h('pre', { class: 'wan-json' }, gen.error_detail)) : null) : null,
     h('div', { class: 'row-wrap' },
       onLoad ? button('Load into form', { icon: 'refresh', size: 'sm', variant: 'primary', attrs: { 'data-action': 'load-generation' }, onClick: () => { onLoad(gen); dlg.close(); } }) : null,
@@ -603,7 +603,7 @@ export function createHistoryPanel({ onLoad, onPlay }) {
     const [label, tone] = STATUS[g.status] || [g.status, 'neutral'];
     const loras = (g.loras || []).filter((l) => l.enabled);
     return h('li', { class: 'wan-gen', dataset: { generation: g.id } },
-      h('div', { class: 'lib-row-thumb' }, g.asset_id ? h('img', { class: 'thumb-img', src: g.thumbnail_url, alt: '', loading: 'lazy' }) : h('div', { class: 'thumb-ph thumb-ph-video' })),
+      h('div', { class: 'lib-row-thumb' }, g.thumbnail_url ? h('img', { class: 'thumb-img', src: g.thumbnail_url, alt: '', loading: 'lazy' }) : h('div', { class: 'thumb-ph thumb-ph-video' })),
       h('div', { class: 'lib-row-main' },
         h('p', { class: 'wan-name' }, truncate(g.title || g.prompt, 90)),
         h('p', { class: 'muted small' }, [ago(g.created_at), g.size, g.frames ? `${g.frames} frames` : null, g.fps ? `${g.fps} fps` : null, `seed ${g.seed}`,
@@ -648,7 +648,7 @@ export function createErrorsPanel({ onLoad }) {
   async function load() {
     try {
       const res = await api.get('/api/video/errors?limit=20');
-      replace(listEl, res.items.length ? res.items.map((e) => h('li', { class: 'err-row' },
+      replace(listEl, res.items.length ? res.items.map((e) => h('li', { class: 'wan-err' },
         h('p', {}, h('strong', {}, e.error_message || 'Failed'), ' ', badge(e.error_code || 'error', e.status === 'cancelled' ? 'neutral' : 'danger')),
         h('p', { class: 'muted small' }, `${dateTime(e.created_at)} · ${truncate(e.prompt, 80)}`),
         e.error_detail ? h('details', { class: 'err-detail' }, h('summary', {}, 'Technical details'), h('pre', { class: 'wan-json' }, e.error_detail)) : null,

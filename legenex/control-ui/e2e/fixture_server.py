@@ -10,6 +10,7 @@ LiteLLM / media / orchestrator calls go to an in-process stub.
 from __future__ import annotations
 
 import base64
+import json
 import os
 import sys
 import threading
@@ -25,6 +26,8 @@ from gx_control_ui import auth  # noqa: E402
 from gx_control_ui import server as srv  # noqa: E402
 
 from music_stub import MusicStub  # noqa: E402
+from voice_stub import VoiceStub  # noqa: E402  (Build V3 VOI: the real gx-voice API, stub engine)
+from wan_router_stub import WanRouterStub  # noqa: E402
 
 GIB = 2**30
 
@@ -180,6 +183,58 @@ def key_delete(handler, body):
     return 200, {"deleted_keys": body.get("keys", [])}
 
 
+# gx-auto stand-in for the Music page (Build with AI / Improve / lyrics / reference
+# suggestions): answers the strict JSON schemas the Control Center sends.
+MUSIC_BUILD = {
+    "title": "Golden Hour Crossing", "description": "A luxury travel anthem about crossing the savannah at dusk.",
+    "style_tags": ["afro house", "female vocals", "dark", "uplifting", "african percussion", "deep bass"],
+    "style_prompt": "Soulful female lead over rolling African percussion, warm deep bassline, "
+                    "restrained build into an emotional chorus, organic groove, polished club mix",
+    "instrumental": False, "vocal_intent": "female", "vocal_language": "en",
+    "lyrics": "[Verse]\nGolden light on the open road\nWe leave the city far below\n[Chorus]\n"
+              "Take me where the rivers run\nDancing into the setting sun",
+    "bpm": 122, "key": "A minor", "time_signature": "4/4", "duration": 150, "seed": None, "thinking": True,
+    "inference_steps": 8, "infer_method": "ode", "lm_temperature": 0.85,
+    "notes": "Afro house at 122 BPM in A minor keeps it dark but uplifting.",
+}
+
+
+def chat_completions(handler, body):
+    body = body if isinstance(body, dict) else {}
+    fmt = ((body.get("response_format") or {}).get("json_schema") or {}).get("name")
+    text = json.dumps(body.get("messages") or [])
+    if fmt == "gx_music_lyrics":
+        content = {"lyrics": "[Verse]\nWritten by the e2e lyricist\n[Chorus]\nSing it back to me"}
+    elif fmt == "gx_music_settings" and "Improve these settings" in text:
+        content = {**MUSIC_BUILD, "title": "", "description": "A refined e2e description with more detail.",
+                   "style_prompt": "A refined e2e style prompt with warm pads and crisp drums",
+                   "style_tags": ["deep house", "warm pads", "crisp drums"], "bpm": 124, "key": "D minor",
+                   "instrumental": False, "vocal_intent": "female", "lyrics": "",
+                   "notes": "Refined the wording and added production tags."}
+    elif fmt == "gx_music_settings" and "reference analysis" in text:
+        content = {**MUSIC_BUILD, "title": "Reference-inspired groove", "lyrics": "", "bpm": 100,
+                   "key": "C major", "notes": "Built from the reference facts."}
+    elif fmt == "gx_music_settings":
+        content = MUSIC_BUILD
+    else:
+        return 200, {"id": "e2e", "model": "gx-mini",
+                     "usage": {"prompt_tokens": 12, "completion_tokens": 3, "total_tokens": 15},
+                     "choices": [{"message": {"role": "assistant", "content": "391"}}]}
+    return 200, {"id": "e2e-music", "model": "gx-auto", "usage": {"prompt_tokens": 400, "completion_tokens": 300},
+                 "choices": [{"message": {"role": "assistant", "content": json.dumps(content)},
+                              "finish_reason": "stop"}]}
+
+
+def oembed_fetch(url, **kw):
+    """Offline oEmbed: a fixed public YouTube answer, nothing leaves the host."""
+    from gx_control_ui.netguard import FetchResult  # noqa: PLC0415
+    if not url.startswith("https://www.youtube.com/oembed?"):
+        return FetchResult(url, 404, {}, b"{}")
+    data = {"title": "E2E Reference Session (Live)", "author_name": "E2E Channel", "provider_name": "YouTube",
+            "thumbnail_url": "https://i.ytimg.com/vi/x/hqdefault.jpg"}
+    return FetchResult(url, 200, {"content-type": "application/json"}, json.dumps(data).encode())
+
+
 def main() -> int:
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 18089
     password = os.environ["GX_E2E_PASSWORD"]
@@ -193,10 +248,7 @@ def main() -> int:
         ("POST", "/key/delete"): key_delete,
         ("POST", "/key/update"): key_update,
         ("GET", "/v1/models"): (200, {"data": [{"id": "gx-mini"}, {"id": "gx-fast"}]}),
-        ("POST", "/v1/chat/completions"): (200, {
-            "id": "e2e", "model": "gx-mini",
-            "usage": {"prompt_tokens": 12, "completion_tokens": 3, "total_tokens": 15},
-            "choices": [{"message": {"role": "assistant", "content": "391"}}]}),
+        ("POST", "/v1/chat/completions"): chat_completions,
         ("POST", "/v1/images/generations"): (200, {"created": 1, "data": [{"b64_json": PNG}],
                                                     "gx": {"workflow": "e2e", "seed": 1, "elapsed_seconds": 1,
                                                            "node": "gx10-02"}}),
@@ -212,11 +264,21 @@ def main() -> int:
     })
     music_key = "m" * 40
     music = MusicStub(music_key)
-    env = TempEnv(litellm_base=stub.url, media_base=stub.url, port=port, music_base=music.url,
+    voice_key = "v" * 44
+    voice = VoiceStub(voice_key, seconds_per_char=0.03)
+    # Build V3 WAN: the real media-router code answers /v1/loras and /v1/videos
+    # (fake ComfyUI, synthetic LoRA headers); image routes still hit the stub.
+    media_key = "e2e-media-" + os.urandom(8).hex()
+    wan_router = WanRouterStub(media_key, fallback_url=stub.url)
+    env = TempEnv(litellm_base=stub.url, media_base=wan_router.url, port=port, music_base=music.url,
+                  voice_base=voice.url,
                   orchestrator_base=stub.url)
     env.cfg.music_key_file.write_text(music_key)
+    env.cfg.voice_key_file.write_text(voice_key)
     auth.PasswordStore(env.cfg.password_file).set_password("admin", password, n=2**12)
     app, servers = srv.build(env.cfg)
+    app.media.router._key = lambda: media_key
+    app.media.poll_interval = 0.5
     cl = app.cluster
     history = [{"kind": "acquire", "started": time.time() - 4000, "ended": time.time() - 3450,
                 "elapsed_seconds": 550, "startup_seconds": 512, "outcome": "ready",
@@ -263,7 +325,12 @@ def main() -> int:
         Path(token_file).write_text(app.proxy_token + "\n")
         os.chmod(token_file, 0o600)
     threading.Thread(target=app.music._loop, daemon=True).start()
+    app.voice.poll_interval = 0.5
+    threading.Thread(target=app.voice._loop, daemon=True).start()
     app.music.poll_interval = 1.0
+    app.music_reference.fetch = oembed_fetch
+    app.music_reference.poll = 0.3
+    app.music_ai.sleep = lambda s: None
     app._fabric_cache = {"at": time.time() + 10**9, "192.168.100.11": "open", "192.168.101.11": "open"}
     # API keys: the stub upstream plays LiteLLM; a dummy admin credential stands in.
     app.keys._master = lambda: "e2e-dummy-admin"
@@ -302,6 +369,8 @@ def main() -> int:
     finally:
         stub.close()
         music.close()
+        voice.close()
+        wan_router.close()
         env.cleanup()
     return 0
 

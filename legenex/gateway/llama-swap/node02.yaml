@@ -231,8 +231,10 @@ models:
   # (mtp_num_hidden_layers 1). Measured 2026-09-17: decode 12.2 -> 25-28
   # tok/s, mean acceptance ~2.8, same answers on the code/reasoning checks.
   # A dense 27B is memory-bandwidth bound on GB10, so this is the main lever.
-  # --safetensors-load-strategy prefetch: vLLM only auto-prefetches on network
-  # filesystems; on this ext4 NVMe the lazy mmap load took 115-136 s.
+  # --safetensors-load-strategy prefetch was TRIED and reverted (2026-09-17):
+  # the files reached the page cache in 4-10 s but the load still took 152 s
+  # (lazy mmap: 115-136 s). The limit is the 45 GiB container cgroup holding
+  # page cache plus weights, not the NVMe; prefetch only adds cache pressure.
   #
   # ttl: 1200 -> 20 min idle then unload (D-039). A cold start costs ~6 min
   # and a reasoning answer several more, so 15 min made follow-up questions
@@ -289,6 +291,5 @@ models:
       --tool-call-parser qwen3_xml
       --reasoning-parser qwen3
       --speculative-config "{\"method\":\"mtp\",\"num_speculative_tokens\":2}"
-      --safetensors-load-strategy prefetch
       --trust-remote-code'
     cmdStop: "docker stop -t 150 gx-reason"

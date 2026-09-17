@@ -50,9 +50,9 @@ export default {
     let alive = true;
     let timer = null;
     let lastItems = [];
-    const list = h('ul', { class: 'log-list', id: 'log-list', 'aria-live': 'polite', 'aria-busy': 'true' }, skeletonLines(5));
+    const list = h('ul', { class: 'log-list', id: 'log-list', 'aria-busy': 'true', 'aria-label': 'Activity entries' }, h('li', {}, skeletonLines(5)));
     const note = h('div', { class: 'stack-sm' });
-    const summary = h('p', { class: 'page-sub' }, 'Loading your activity…');
+    const summary = h('p', { class: 'page-sub', 'aria-live': 'polite' }, 'Loading your activity…');
     const kindSel = select([['', 'All sources']], state.kind, { onChange: (v) => { state.kind = v; load(); }, attrs: { name: 'kind' } });
     const rangeSel = select(RANGES, state.range, { onChange: (v) => { state.range = v; load(); }, attrs: { name: 'range' } });
     const search = textInput({ placeholder: 'Search titles, errors and ids', maxLength: 100, type: 'search', attrs: { name: 'q' } });
@@ -90,10 +90,9 @@ export default {
       try {
         const res = await api.get(`/api/activity${qs({ kind: state.kind, status: state.status, q: state.q, since: since ? since.toFixed(0) : '', limit: 300 })}`);
         if (!alive) return;
-        const current = kindSel.value;
         replace(kindSel, h('option', { value: '' }, 'All sources'),
           ...(res.kinds || []).map((k) => h('option', { value: k }, KIND_LABEL[k] || k)));
-        kindSel.value = current;
+        kindSel.value = state.kind;
         lastItems = res.items || [];
         const c = res.counts || {};
         summary.textContent = `${res.total} entr${res.total === 1 ? 'y' : 'ies'} · ${c.failed || 0} error${c.failed === 1 ? '' : 's'} · ${c.running || 0} running`;
@@ -110,7 +109,14 @@ export default {
       } finally {
         list.setAttribute('aria-busy', 'false');
       }
-      if (alive) timer = setTimeout(() => (document.hidden ? load() : load()), REFRESH_MS);
+      if (alive) timer = setTimeout(tick, REFRESH_MS);
+    }
+
+    // background refresh only while the tab is visible
+    function tick() {
+      if (!alive) return;
+      if (document.hidden) timer = setTimeout(tick, REFRESH_MS);
+      else load();
     }
 
     await load();

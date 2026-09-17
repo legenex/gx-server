@@ -234,10 +234,11 @@ class WebSocket:
             self.sock.shutdown(socket.SHUT_RDWR)
         except OSError:
             pass
-        try:
-            self.sock.close()
-        except OSError:
-            pass
+        for closer in (self._rfile.close, self.sock.close):
+            try:
+                closer()
+            except (OSError, ValueError):
+                pass
 
     # ---------------------------------------------------------- receiving --
     def _read_exact(self, n: int) -> bytes:

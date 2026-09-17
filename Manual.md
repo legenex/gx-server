@@ -385,6 +385,151 @@ free:
 * The turbo model has no extract, lego, complete or music guidance, so those
   controls are not shown.
 
+### Images: models, edit modes and masks (Build V3)
+
+**Purpose.** Generate images with a choice of model, and edit existing images
+so that the requested change really happens while the rest stays.
+
+**Prerequisites.** A signed-in Playground session. gx10-02 must be able to
+take the job (Resource Control); otherwise it waits and says why.
+
+**Models** (the **Model** menu at the top of the Images panel):
+* **Qwen Image 2512**: the default generator; strong prompt following and
+  text in images.
+* **Qwen Image Edit 2511**: the default editor; follows written
+  instructions and keeps faces and composition.
+* **VisionmasterPro_V3**: an SDXL photoreal model. It can generate, redraw a
+  whole image (Restyle, Full transformation) and repaint a masked area. It
+  does **not** follow edit instructions, so describe the result you want.
+
+**Steps (generate).**
+1. **Images** → **Generate**, pick a **Model**, write a prompt.
+2. Pick a size (each model offers its own), the number of images and, for
+   Qwen, the quality. VisionmasterPro_V3 has a **Quality tags** switch.
+3. Press **Generate**.
+
+**Steps (edit).**
+1. Pick a result and press **Edit**, or upload or choose a source image.
+2. Pick an **Edit mode**: Change / replace, Add, Remove, Restyle,
+   Background, Subject or Full transformation. The hint under the buttons
+   says what the mode does.
+3. Write the instruction (Qwen) or a description of the result
+   (VisionmasterPro_V3).
+4. Optional: open **Limit the edit to an area (mask)** and paint the area that
+   may change. You can use the brush, the eraser, **Undo** (Ctrl+Z),
+   **Invert** and **Clear**. There are two ways to do it without a mouse:
+   * focus the painting area and use the arrow keys (Shift = faster), then
+     Space or Enter to paint (E switches to the eraser);
+   * enter rectangles in percent and press **Add rectangle**.
+   VisionmasterPro_V3 needs a mask for every mode except Restyle and Full
+   transformation.
+5. **Edit quality** (Qwen): **Fast** (4 steps) or **High quality** (about
+   20 steps with real guidance; slower; also uses the negative prompt).
+6. **Strength** is shown only where it changes something: Full
+   transformation (how far from the source layout) and the
+   VisionmasterPro_V3 modes (how much is redrawn).
+7. Press **Apply edit**. The result is a new image linked to its source.
+
+**Expected result.** The requested change is visible. Without a mask, Qwen
+keeps identity and composition as far as the mode asks. With a mask, pixels
+outside it are the source's own. Measured timings and before/after examples
+are in `coordination/build-v3/img.md`.
+
+**Errors.**
+* "… needs a mask for …": paint the area, or pick Restyle or Full
+  transformation.
+* "Full transformation changes the whole image": clear the mask.
+* "the mask is empty": the painted area is too small; paint more.
+* "Waiting for … gx10-02 memory": another tenant (usually gx-reason) holds
+  the node; the job starts when it is released.
+* **Run again** on a masked edit is refused: only the mask's size and
+  coverage are stored, so paint it again.
+
+**Mobile.** The panel stacks above the result. The mask painter works with
+touch (the page does not scroll while you paint on it), and the rectangle
+fields fall back to two columns.
+
+**Accessibility.** Every control has a label. The model menu is a native
+select. Edit modes and quality are toggle buttons with pressed state. The
+painter has keyboard painting and a text alternative (rectangles), and the
+selected coverage is announced.
+
+**Offline.** Nothing is generated without gx10-02. The page still opens,
+and a submitted job shows the connection error.
+
+**Privacy.** Sources, masks and results stay on the cluster. The Library
+keeps the mask's size, coverage, checksum and rectangles, not the mask
+image. VisionmasterPro_V3 is an NSFW-capable checkpoint (licence
+creativeml-openrail-m).
+
+### Video: Wan 2.2 LoRAs, presets and history (Build V3)
+
+**Purpose.** Apply your own Wan 2.2 LoRAs to text-to-video without editing a
+ComfyUI graph, keep reusable presets, and look up or repeat every video you
+made.
+
+**Prerequisites.**
+* LoRA files (`.safetensors`) on **gx10-02** under
+  `/srv/models/video/loras/` (subfolders included; suggested:
+  `wan22/paired`, `wan22/high_noise`, `wan22/low_noise`, `wan22/general`) or
+  `/srv/models/shared/loras/`. Existing files can stay where they are.
+* Wan 2.2 LoRAs usually come as two files, one for the high-noise and one for
+  the low-noise expert; name them `<name>_high_noise` / `<name>_low_noise`
+  (or put them in `high_noise/` and `low_noise/`) so they pair automatically.
+
+**Steps.**
+1. Open **Video** → **Text to Video** and write a prompt.
+2. Under **LoRAs** press **Add LoRA**. Press **Rescan** if you just copied
+   files. Search, filter and sort; **Details** shows each file's path on
+   gx10-02, size, compatibility and high/low class. Press **Add**.
+3. Set the **High noise** and **Low noise** strengths (0.0-1.5; 0.8 is the
+   default for a pair). For a general LoRA choose **Applies to** (high, low or
+   both). Reorder with **Move up / Move down**; switch one off with
+   **Enabled**. With two or more LoRAs, **Use 0.5 for each** is offered as a
+   starting point; your values are never changed unless you press it.
+4. Optional: pick a **Preset** and press **Apply** (the form stays
+   editable), or **Save as…** to store the current settings. **Manage**
+   renames, duplicates and deletes presets.
+5. Optional: **Advanced settings** (shift, CFG, steps, switch step, sampler,
+   scheduler) and **Preview workflow**, which shows the high and low chains,
+   the exact file names and strengths, the model files and the ComfyUI
+   workflow JSON (copy or download).
+6. Press **Generate video**.
+
+**Expected result.** The job card shows queued → waiting (with the reason) →
+generating → saving → complete. The video plays in the viewer and appears in
+**Video history** with its LoRAs, strengths, seed and run time. **Details**
+there shows the stored workflow, the ComfyUI prompt id, **Asset metadata** and
+**Reuse in Creative Flows**; **Load settings into the form** and **Run
+again** repeat it.
+
+**Pairing by hand.** LoRA library → **Pair files by hand** → choose a
+high-noise and a low-noise file → **Pair**. **Unpair** splits a pair. Pairs
+are stored in the application database; files are never renamed.
+
+**Errors.** Failures say what happened, for example "A selected LoRA file is
+no longer on gx10-02" (rescan), "The high-noise file of a paired LoRA is
+missing", "not compatible with Wan 2.2 T2V-A14B", "compatibility could not be
+determined" (allow it in the library only if you trust the file), "ComfyUI
+does not list a selected LoRA yet" (rescan), "gx10-02 ran out of memory"
+(fewer LoRAs, shorter or smaller video) or "ComfyUI rejected the generated
+workflow". The **Errors** section lists recent failures with technical
+details. A queued or waiting job can be cancelled from its card.
+
+**Mobile and accessibility.** The LoRA list, library and presets stack on
+phones. Every slider, switch and move button has a name that includes the
+LoRA; reordering works with the keyboard; the dialogs and history pass the
+axe WCAG 2.2 AA checks.
+
+**Offline and privacy.** Everything runs on the cluster. The browser receives
+file names and paths on gx10-02, never keys. Exported workflow files contain
+model file names only (no host paths, addresses or keys). LoRA files are only
+read (their headers), never changed.
+
+**Limits.** LoRAs apply to text-to-video only; at most 8 per expert; the
+gateway `gx-video` API does not take LoRAs. More in the Control Center
+**Docs → Video LoRAs** page.
+
 **Library.** One Library holds every image, video and track. You can search
 prompts, titles, lyrics and tags, filter by type, model and operation, and
 sort. You can select, select all or clear, then run a bulk action:

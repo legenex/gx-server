@@ -515,7 +515,7 @@ class FlowEngine:
 
 
 def _small(meta: dict[str, Any]) -> dict[str, Any]:
-    out = {}
+    out: dict[str, Any] = {}
     for k, v in meta.items():
         if isinstance(v, (str, int, float, bool)) or v is None:
             out[k] = v if not isinstance(v, str) else v[:300]

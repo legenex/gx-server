@@ -1259,7 +1259,7 @@ every ~303 s for 20-30 minutes.
   gx-max is down is a 400 with a hint (was a retryable 503).
 * gx-max: in-flight requests hold the engine; the idle TTL (1800 s) counts
   from the end of the last request and its remaining time is exposed.
-**Status:** implemented and tested; live evidence in TEST_RESULTS.md §21.
+**Status:** implemented and tested; live evidence in TEST_RESULTS.md §22.
 
 ## D-040 — Build V3: creative flows, video LoRAs, voice, call agents and live (amends L-10)
 

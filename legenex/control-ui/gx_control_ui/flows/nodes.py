@@ -128,7 +128,8 @@ class NodeContext:
             value = self.render(str(self.config.get(field_id) or ""))
         value = value.strip()
         if required and not value:
-            what = self.nt.input(port).label if port and self.nt.input(port) else field_id
+            in_port = self.nt.input(port) if port else None
+            what = in_port.label if in_port is not None else field_id
             raise NodeFailure(f"{self.label}: '{what}' is empty", code="missing_input")
         if len(value) > limit:
             raise NodeFailure(f"{self.label}: the text is longer than {limit} characters", code="too_long")
@@ -202,7 +203,7 @@ class NodeContext:
                 model_alias=model, workflow=workflow, prompt=prompt, parent_id=parent,
                 settings={"flow": {"node_type": self.nt.type, "node_label": self.label, **(settings or {})}},
                 variant_paths=moved or None, source_kind="flow_node", source_ref=f"{self.run_id}#{self.node_id}",
-                **self.provenance()))
+                flow_id=self.flow_id, flow_run_id=self.run_id, flow_node_id=self.node_id))
         except LibraryError as exc:
             tmp.unlink(missing_ok=True)
             for p in moved.values():
@@ -687,17 +688,19 @@ def _enhancer(ctx: NodeContext) -> NodeResult:
                       payload={"model": model, "messages": _short_messages(messages)})
 
 
-STRUCT_SCHEMA = {"string": {"type": "string"}, "number": {"type": "number"}, "boolean": {"type": "boolean"},
-                 "list": {"type": "array", "items": {"type": "string"}}}
+STRUCT_SCHEMA: dict[str, dict[str, Any]] = {
+    "string": {"type": "string"}, "number": {"type": "number"}, "boolean": {"type": "boolean"},
+    "list": {"type": "array", "items": {"type": "string"}},
+}
 
 
 @executor("ai.structured")
 def _structured(ctx: NodeContext) -> NodeResult:
     text = ctx.text("text", None, limit=20000)
-    fields = ctx.config.get("schema") or []
+    fields: list[dict[str, str]] = list(ctx.config.get("schema") or [])
     if not fields:
         raise NodeFailure(f"{ctx.label}: define at least one field", code="missing_field")
-    props = {f["key"]: dict(STRUCT_SCHEMA[f["value"]]) for f in fields}
+    props: dict[str, dict[str, Any]] = {f["key"]: dict(STRUCT_SCHEMA[f["value"]]) for f in fields}
     schema = {"type": "object", "additionalProperties": False, "properties": props, "required": list(props)}
     instruction = ctx.render(str(ctx.config.get("instruction") or "Extract the fields."))
     messages = [
@@ -768,7 +771,7 @@ def _media_job(ctx: NodeContext, body: dict[str, Any], alias: str,
             ctx.status("running", str(job.get("detail") or phase), resource=None)
         if time.time() > deadline:
             raise NodeFailure(f"{alias} did not finish in time", code="timeout", retryable=True)
-        ctx.sleep(ctx.services.poll_interval)
+        ctx.cancel.wait(ctx.services.poll_interval)  # the loop top cancels the job itself
     assets = []
     for aid in job.get("assets") or []:
         ctx.tag(aid)
@@ -1162,7 +1165,7 @@ def _music_job(ctx: NodeContext, body: dict[str, Any]) -> tuple[list[dict[str, A
             if exc.status == 503:
                 ctx.status("waiting", "gx10-02 music service is not reachable; retrying",
                            resource={"code": "node_unavailable", "reason": str(exc)})
-                ctx.sleep(max(5.0, ctx.services.poll_interval))
+                ctx.cancel.wait(max(5.0, ctx.services.poll_interval))
                 continue
             raise NodeFailure(str(exc), code=exc.code) from None
         status = job.get("status")
@@ -1192,7 +1195,7 @@ def _music_job(ctx: NodeContext, body: dict[str, Any]) -> tuple[list[dict[str, A
                        progress=job.get("progress") if isinstance(job.get("progress"), (int, float)) else None)
         if time.time() > deadline:
             raise NodeFailure("gx-music did not finish in time", code="timeout", retryable=True)
-        ctx.sleep(ctx.services.poll_interval)
+        ctx.cancel.wait(ctx.services.poll_interval)  # the loop top cancels the job itself
     assets = []
     for aid in job.get("library_assets") or []:
         ctx.tag(aid)
@@ -1340,7 +1343,7 @@ def _voice_job(ctx: NodeContext, body: dict[str, Any]) -> dict[str, Any]:
                        progress=job.get("progress") if isinstance(job.get("progress"), (int, float)) else None)
         if time.time() > deadline:
             raise NodeFailure("gx-voice did not finish in time", code="timeout", retryable=True)
-        ctx.sleep(ctx.services.poll_interval)
+        ctx.cancel.wait(ctx.services.poll_interval)  # the loop top cancels the job itself
     for note in job.get("notes") or []:
         ctx.log(f"gx-voice note: {note}")
     return job

@@ -125,6 +125,40 @@ function errorsCard(errors, musicError) {
     items.length ? h('ul', { class: 'err-list' }, items) : h('p', { class: 'muted' }, 'No failed jobs recently.')));
 }
 
+// Everything beyond the three studios, built from the navigation itself so
+// only pages that exist are offered (other workstreams add theirs there).
+const EXPLORE_SUB = {
+  flows: 'Chain models into reusable pipelines', voice: 'Speech, voice design and cloning',
+  live: 'Talk with a model using camera and microphone', call: 'Voice agents for calls',
+  library: 'Everything you have made', history: 'Every job and why it waits',
+  models: 'What each model does and whether it is ready', logs: 'Your activity and errors',
+  settings: 'Preferences, HTTPS and API access',
+};
+
+function exploreCard() {
+  const groups = [...document.querySelectorAll('.rail-group')].filter((g) => !g.hidden).map((g) => {
+    const label = (g.querySelector('.rail-group-label') || {}).textContent || '';
+    const links = [...g.querySelectorAll('.rail-link')]
+      .filter((a) => !['dashboard', 'images', 'video', 'music'].includes(a.dataset.page))
+      .map((a) => {
+        const name = a.dataset.page;
+        const ic = (a.querySelector('.rail-ic') || {}).dataset;
+        return h('li', {}, h('a', { class: 'explore-link', href: a.getAttribute('href') },
+          icon(ic && ic.icon ? ic.icon : 'chevronRight', { size: 18 }),
+          h('span', {}, (a.querySelector('.rail-label') || a).textContent,
+            EXPLORE_SUB[name] ? h('span', { class: 'explore-sub' }, EXPLORE_SUB[name]) : null)));
+      });
+    return links.length ? h('div', {}, h('h3', { class: 'explore-title' }, label), h('ul', { class: 'explore-list' }, links)) : null;
+  }).filter(Boolean);
+  const realtime = document.querySelector('#nav-realtime .rail-link');
+  const insecure = realtime && !window.isSecureContext
+    ? callout('info', 'Live and Call Agents need a secure connection', 'The microphone and camera only work over HTTPS here.',
+      [h('a', { class: 'link', href: href('settings', { focus: 'https' }) }, 'Set up HTTPS')])
+    : null;
+  return card('Explore', h('div', { class: 'stack' }, insecure, h('div', { class: 'explore-groups' }, groups)),
+    { sub: 'Realtime, models, logs and settings' });
+}
+
 function quickCreate(user) {
   let kind = 'image';
   const box = composer({ label: 'Describe what you want to create', placeholder: 'A lighthouse on a cliff at golden hour, cinematic…', maxLength: 2000, rows: 3, onSubmit: () => go() });
@@ -172,7 +206,8 @@ export default {
       h('div', { class: 'dash-grid' },
         h('div', { class: 'dash-main' },
           card('In progress', activeBox, { sub: 'Jobs update live. Waiting jobs explain what they wait for.', actions: h('a', { class: 'link', href: href('history') }, 'All activity') }),
-          card('Recent creations', recentBox, { actions: h('a', { class: 'link', href: href('library') }, 'Open Library') })),
+          card('Recent creations', recentBox, { actions: h('a', { class: 'link', href: href('library') }, 'Open Library') }),
+          exploreCard()),
         side));
     const shown = new Map();
     const renderActive = () => {

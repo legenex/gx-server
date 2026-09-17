@@ -58,6 +58,8 @@ UPSTREAM = os.environ.get("GX_PG_UPSTREAM", "http://127.0.0.1:8088")
 TOKEN_FILE = Path(os.environ.get("GX_PG_PROXY_TOKEN_FILE",
                                  "/srv/projects/gx-cluster/secrets/control-ui/proxy-token"))
 CONTROL_URL = os.environ.get("GX_PG_CONTROL_URL", "http://100.105.214.61:8088/")
+#: The LiteLLM gateway clients use (shown on the Settings page; never proxied).
+GATEWAY_URL = os.environ.get("GX_PG_GATEWAY_URL", "http://100.105.214.61:4000/v1")
 MAX_BODY = 160 * 1024 * 1024
 #: Optional HTTPS listener (plt.md section 2): 0 disables it.
 TLS_PORT = int(os.environ.get("GX_PG_TLS_PORT", "0") or 0)
@@ -72,9 +74,30 @@ ALLOW: tuple[tuple[frozenset[str], re.Pattern[str]], ...] = tuple(
         ("POST", r"/api/(login|logout)"),
         ("GET,POST", r"/api/media/(assets|jobs|options|upload|delete|zip)(/[A-Za-z0-9_\-]+){0,2}"),
         ("GET,POST", r"/api/music/(model|tags|jobs|upload)(/mus-[0-9a-f]{32}(/(lineage|cancel))?)?"),
+        # Build V3 MUS: conditioning preview, Build with AI / Improve, reference analysis
+        ("POST", r"/api/music/(preview|ai/build|ai/improve|reference/analyze)"),
+        ("GET", r"/api/music/reference/[0-9a-f]{24}"),
+        # Build V3 WAN: Wan 2.2 LoRA library, presets, workflow preview, generation, history
+        ("GET", r"/api/video/(config|loras|loras/l_[0-9a-f]{16}|presets|presets/wp_[0-9a-f]{16}|generations"
+                r"|generations/[0-9a-f]{16}(/workflow)?|errors)"),
+        ("POST", r"/api/video/(loras/rescan|loras/order|loras/l_[0-9a-f]{16}|pairs(/remove|/restore)?|presets"
+                 r"|presets/wp_[0-9a-f]{16}(/(duplicate|delete|resolve))?|workflow|generate|jobs/[0-9a-f]{16}/cancel)"),
         ("GET", r"/api/resources/(summary|explain/gx-[a-z]{3,6}|profile/plan)"),
         ("POST", r"/api/resources/profile"),
         ("GET", r"/api/creative/overview"),
+        # Build V3 platform (PLT): Models, Logs, Settings pages and realtime session list
+        ("GET", r"/api/(catalog|activity|realtime/sessions)"),
+        ("GET,POST", r"/api/preferences"),
+        # Build V3 VOI: Voice Studio (session) and the public voice API (gateway key)
+        ("GET", r"/api/voice/(model|voices|jobs)"),
+        ("POST", r"/api/voice/(voices|jobs|upload)"),
+        ("GET", r"/api/voice/voices/(vc_[0-9a-f]{24}|preset:[a-z_]{2,16})(/versions)?"),
+        ("POST", r"/api/voice/voices/vc_[0-9a-f]{24}(/delete)?"),
+        ("GET", r"/api/voice/jobs/vj_[0-9a-f]{32}(/takes/[0-3]/audio)?"),
+        ("POST", r"/api/voice/jobs/vj_[0-9a-f]{32}/(cancel|delete|takes/[0-3]/save)"),
+        ("GET,POST", r"/v1/voice/(model|voices|jobs|uploads|speech|design|clone|dialogue)"),
+        ("GET", r"/v1/voice/voices/(vc_[0-9a-f]{24}|preset:[a-z_]{2,16})"),
+        ("GET,POST", r"/v1/voice/jobs/vj_[0-9a-f]{32}(/cancel|/takes/[0-3]/(content|save))?"),
         ("GET,POST,DELETE", r"/v1/music(/[A-Za-z0-9_\-]+){0,2}"),
     ))
 REQUEST_HEADERS = ("cookie", "content-type", "content-length", "x-csrf-token", "accept", "accept-encoding",
@@ -82,7 +105,7 @@ REQUEST_HEADERS = ("cookie", "content-type", "content-length", "x-csrf-token", "
 RESPONSE_HEADERS = ("content-type", "content-length", "content-encoding", "content-range", "accept-ranges",
                     "content-disposition", "cache-control", "set-cookie", "etag", "vary", "location",
                     "retry-after", "last-modified")
-SPA_ROUTE = re.compile(r"/(dashboard|images|video|music|library|history|models|logs|settings)"
+SPA_ROUTE = re.compile(r"/(dashboard|images|video|music|voice|library|history|models|logs|settings)"
                        r"(/[a-z0-9_\-]{0,64}){0,2}")
 
 CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; "
@@ -225,7 +248,8 @@ class Handler(BaseHTTPRequestHandler):
                                  "upstream": self._upstream_health()})
                 return
             if path == "/pg/config":
-                self._json(200, {"control_center_url": CONTROL_URL, "version": __version__,
+                self._json(200, {"control_center_url": CONTROL_URL, "gateway_url": GATEWAY_URL,
+                                 "version": __version__,
                                  "tls": self.tls_info(), "realtime": {"enabled": LIMITS.enabled,
                                                                       "idle_s": LIMITS.idle_s,
                                                                       "max_frame": LIMITS.max_frame}})

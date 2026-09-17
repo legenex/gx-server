@@ -15,13 +15,47 @@ import json
 import math
 import re
 import struct
+import sys
 import threading
 import time
 import uuid
 import wave
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+# The supervisor's request validation is stdlib-only: the stub uses the real
+# thing, so previews and vocal-rule refusals match gx10-02 exactly.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "music"))
+from gx_music import validation as music_validation  # noqa: E402
+from gx_music.errors import MusicError as SupervisorError  # noqa: E402
 
 KEY_MIN = 32
+TURBO = music_validation.Capabilities.for_model("acestep-v15-xl-turbo")
+MEASURED = {
+    "method": "gx-music DSP v1: numpy/scipy, STFT 2048/512 at 22.05 kHz, no ML model", "duration_s": 2.0,
+    "tempo": {"bpm": 122.0, "confidence": 0.62, "stability": 0.9,
+              "candidates": [{"bpm": 122.0, "score": 4.1}, {"bpm": 61.0, "score": 3.2}]},
+    "beats": {"count": 4, "first_s": 0.1, "median_interval_s": 0.49},
+    "time_signature": {"value": "4/4", "confidence": 0.4, "method": "beat accent periodicity (2/3/4 beats)"},
+    "key": {"value": "A minor", "confidence": 0.35, "correlation": 0.8,
+            "alternatives": [{"key": "C major", "correlation": 0.7}],
+            "method": "Aarden-Essen profile correlation on log harmonic chroma"},
+    "loudness": {"rms_dbfs": -14.2, "peak_dbfs": -1.0, "crest_db": 13.2, "dynamic_range_db": 8.1},
+    "energy": {"level": "high", "trend": "builds", "curve": [0.2, 0.5, 0.9, 1.0]},
+    "spectrum": {"centroid_hz": 1900, "rolloff_hz": 4200, "bass_ratio": 0.2, "air_ratio": 0.02,
+                 "flatness": 0.1, "brightness": "balanced", "bass_weight": "moderate"},
+    "texture": {"percussive_ratio": 0.52, "character": "percussive"},
+    "stereo": {"width": 0.3, "label": "moderate"},
+    "structure": {"segments": [{"start": 0.0, "end": 1.0, "label": "A", "energy_db": -6.0, "energy": "medium"},
+                               {"start": 1.0, "end": 2.0, "label": "B", "energy_db": 0.0, "energy": "high"}],
+                  "count": 2, "method": "Foote novelty"},
+    "descriptors": ["fast tempo", "driving beat"],
+}
+UNDERSTOOD = {"method": "ACE-Step 1.5 audio understanding (audio -> 5Hz codes -> 5Hz LM); model inference, "
+                        "not measurement",
+              "caption": "An energetic Afro house groove with a soulful female vocal.", "genres": "afro house",
+              "lyrics": "[Verse]\nhold the light", "vocals_detected": True, "language": "en", "bpm": 122,
+              "key": "A minor", "key_raw": "A minor", "time_signature": "4", "duration_s": 2.0}
 
 
 def sine_wav(seconds: float = 2.0, freq: float = 440.0, rate: int = 48000) -> bytes:
@@ -40,46 +74,8 @@ def sine_wav(seconds: float = 2.0, freq: float = 440.0, rate: int = 48000) -> by
     return buf.getvalue()
 
 
-CAPABILITIES = {
-    "task_types": ["text2music", "cover", "repaint"],
-    "operations": {"generate": "text2music", "remix": "cover", "edit": "repaint", "extend": "repaint",
-                   "extract": None, "lego": None, "complete": None},
-    "controls": {
-        "prompt": {"type": "string", "max_length": 512},
-        "style_tags": {"type": "array", "max_items": 24, "item_max_length": 48},
-        "lyrics": {"type": "string", "max_length": 4096,
-                   "sections": ["Intro", "Verse", "Pre-Chorus", "Chorus", "Post-Chorus", "Bridge", "Hook",
-                                "Breakdown", "Drop", "Build", "Interlude", "Instrumental", "Solo",
-                                "Guitar Solo", "Outro", "Fade Out"]},
-        "instrumental": {"type": "boolean"},
-        "description": {"type": "string", "max_length": 512},
-        "vocal_language": {"type": "enum", "values": ["en", "de", "es", "fr", "ja", "ko", "zh", "unknown"]},
-        "duration": {"type": "number", "min": 10, "max": 600, "unit": "s"},
-        "bpm": {"type": "integer", "min": 30, "max": 300, "nullable": True},
-        "key": {"type": "string", "example": "F# minor", "nullable": True},
-        "time_signature": {"type": "enum", "values": ["2", "3", "4", "6"], "nullable": True,
-                           "labels": {"2": "2/4", "3": "3/4", "4": "4/4", "6": "6/8"}},
-        "seed": {"type": "integer", "min": 0, "max": 2147483647, "nullable": True},
-        "batch_size": {"type": "integer", "min": 1, "max": 4},
-        "inference_steps": {"type": "integer", "min": 1, "max": 20, "default": 8},
-        "infer_method": {"type": "enum", "values": ["ode", "sde"]},
-        "thinking": {"type": "boolean", "default": True},
-        "enhance_prompt": {"type": "boolean", "default": False},
-        "lm_temperature": {"type": "number", "min": 0.0, "max": 2.0},
-        "lm_cfg_scale": {"type": "number", "min": 1.0, "max": 5.0},
-        "lm_top_p": {"type": "number", "min": 0.0, "max": 1.0},
-        "output_format": {"type": "enum", "values": ["wav", "flac", "mp3"]},
-        "reference": {"type": "source"},
-    },
-    "remix_controls": {"strength": {"type": "number", "min": 0.0, "max": 1.0, "default": 0.5},
-                       "noise_strength": {"type": "number", "min": 0.0, "max": 1.0, "default": 0.0}},
-    "edit_controls": {"start": {"type": "number", "min": 0}, "end": {"type": "number", "min": 0},
-                      "mode": {"type": "enum", "values": ["conservative", "balanced", "aggressive"]},
-                      "strength": {"type": "number", "min": 0.0, "max": 1.0}},
-    "extend_controls": {"seconds": {"type": "number", "min": 5, "max": 240},
-                        "direction": {"type": "enum", "values": ["end", "start"]}},
-    "max_duration_s": 600,
-}
+# The real capability table of the installed checkpoint (validation.Capabilities).
+CAPABILITIES = {**TURBO.as_dict(600), "max_duration_s": 600}
 
 
 class MusicStub:
@@ -182,9 +178,14 @@ class MusicStub:
                 "title": req.get("title") or (req.get("prompt") or "Untitled")[:60], "request": {
                     "operation": job["operation"], "prompt": req.get("prompt", ""),
                     "style_tags": req.get("style_tags", []), "lyrics": req.get("lyrics", ""),
+                    "description": req.get("description", ""), "vocal_intent": req.get("vocal_intent", "auto"),
+                    "lyrics_source": req.get("lyrics_source", "user"), "instrumental": req.get("instrumental"),
+                    "vocal_mode": (job.get("conditioning") or {}).get("vocal_mode"),
+                    "conditioning": job.get("conditioning"),
                     "parameters": {k: req.get(k) for k in ("duration", "bpm", "key", "time_signature", "seed",
                                                            "inference_steps", "strength") if k in req}},
                 "tracks": tracks, "timings": {"generate_s": 1.2, "audio_seconds": 2.0 * len(tracks)},
+                "analysis": job.get("analysis"),
                 "model": self.model()["identity"], "parent_job_id": (req.get("source") or {}).get("job_id"),
                 "parent_index": (req.get("source") or {}).get("index"), "source": req.get("source"),
                 "cancel_requested": 0, "error": job.get("error"),
@@ -194,6 +195,17 @@ class MusicStub:
         if job["status"] in ("completed", "failed", "cancelled"):
             return
         job["polls"] += 1
+        if job["operation"] == "analyze":
+            understand = bool(job["request"].get("understand"))
+            if job["polls"] == 1:
+                job.update(status="preparing", detail="measuring tempo, key, energy and structure")
+            elif job["polls"] == 2 and understand:
+                job.update(status="generating", detail="listening (ACE-Step audio understanding)",
+                           analysis={"measured": MEASURED, "understanding": None})
+            else:
+                job.update(status="completed", detail="", progress=1.0, finished_at=time.time(),
+                           analysis={"measured": MEASURED, "understanding": UNDERSTOOD if understand else None})
+            return
         if job["polls"] == 1:
             job.update(status="loading_model", detail="loading ACE-Step 1.5 XL")
             self.engine = "loading"
@@ -217,8 +229,35 @@ class MusicStub:
             if method == "POST" and path in ("/v1/music/load", "/v1/music/unload"):
                 self.engine = "ready" if path.endswith("load") and "un" not in path else "unloaded"
                 return 200, {"state": self.engine}
+            if method == "POST" and path == "/v1/music/preview":
+                try:
+                    req = music_validation.generation(json.loads(raw or b"{}"), TURBO, max_duration=600)
+                except SupervisorError as exc:
+                    return 400, exc.payload()
+                return 200, {"object": "music.preview", "conditioning": req.conditioning(),
+                             "vocal_mode": req.vocal_mode, "vocal_intent": req.vocal_intent,
+                             "lyrics_source": req.lyrics_source, "caption_length": len(req.engine["prompt"]),
+                             "caption_max": 512}
+            if method == "POST" and path == "/v1/music/analyses":
+                body = json.loads(raw or b"{}")
+                src = body.get("source") or {}
+                if not (src.get("upload_id") in self.uploads or src.get("job_id") in self.jobs):
+                    return 404, {"error": {"code": "not_found", "message": "the referenced upload does not exist",
+                                           "retryable": False}}
+                jid = "mus-" + uuid.uuid4().hex
+                self.jobs[jid] = {"id": jid, "operation": "analyze", "status": "preparing",
+                                  "detail": "measuring", "progress": None, "created_at": time.time(),
+                                  "request": {"source": src, "understand": bool(body.get("understand"))},
+                                  "polls": 0, "batch": 0}
+                return 202, self.view(self.jobs[jid])
             if method == "POST" and path in ops:
                 body = json.loads(raw or b"{}")
+                conditioning = None
+                if ops[path] == "generate":
+                    try:
+                        conditioning = music_validation.generation(body, TURBO, max_duration=600).conditioning()
+                    except SupervisorError as exc:
+                        return 400, exc.payload()
                 if ops[path] != "generate" and not body.get("source"):
                     return 400, {"error": {"code": "invalid_request", "message": "source is required",
                                            "retryable": False}}
@@ -229,7 +268,7 @@ class MusicStub:
                 jid = "mus-" + uuid.uuid4().hex
                 self.jobs[jid] = {"id": jid, "operation": ops[path], "status": "queued", "detail": "queued",
                                   "progress": None, "created_at": time.time(), "request": body, "polls": 0,
-                                  "batch": int(body.get("batch_size") or 1)}
+                                  "batch": int(body.get("batch_size") or 1), "conditioning": conditioning}
                 return 202, self.view(self.jobs[jid])
             if method == "POST" and path == "/v1/music/uploads":
                 uid = "upl-" + uuid.uuid4().hex
@@ -245,8 +284,10 @@ class MusicStub:
             if method == "GET" and path == "/v1/music/jobs":
                 for j in self.jobs.values():
                     self.advance(j)
-                return 200, {"data": [self.view(j) for j in sorted(self.jobs.values(),
-                                                                   key=lambda j: -j["created_at"])]}
+                op = dict(p.split("=", 1) for p in query.split("&") if "=" in p).get("operation")
+                jobs = [j for j in self.jobs.values()
+                        if op is None or (op == "creative" and j["operation"] != "analyze") or j["operation"] == op]
+                return 200, {"data": [self.view(j) for j in sorted(jobs, key=lambda j: -j["created_at"])]}
             m = re.fullmatch(r"/v1/music/(mus-[0-9a-f]{32})(/lineage|/content|/cancel)?", path)
             if not m or m.group(1) not in self.jobs:
                 return 404, {"error": {"code": "not_found", "message": "no such music job", "retryable": False}}

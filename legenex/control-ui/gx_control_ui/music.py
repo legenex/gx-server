@@ -53,6 +53,7 @@ AUDIO_TYPES = {"audio/wav": "wav", "audio/x-wav": "wav", "audio/wave": "wav", "a
 #: Fields a client may send; everything else is dropped before forwarding.
 REQUEST_FIELDS = {
     "title", "prompt", "style_tags", "lyrics", "instrumental", "description", "vocal_language", "duration",
+    "vocal_intent", "lyrics_source", "lm_caption_rewrite",
     "bpm", "key", "time_signature", "seed", "batch_size", "inference_steps", "infer_method", "thinking",
     "enhance_prompt", "lm_temperature", "lm_cfg_scale", "lm_top_p", "output_format", "reference",
     "guidance_scale", "source", "strength", "noise_strength", "start", "end", "mode", "crossfade",
@@ -141,6 +142,12 @@ def _sha256(path: Path) -> str:
     return h.hexdigest()
 
 
+def needs_written_lyrics(req: dict) -> bool:
+    """``lyrics_source: assistant`` with nothing to sing: gx-auto writes the lyrics first."""
+    return (req.get("lyrics_source") == "assistant" and req.get("instrumental") is not True
+            and not str(req.get("lyrics") or "").strip())
+
+
 def clean_request(operation: str, body: Any) -> dict:
     """Coarse shape checks. Node 2 does the full, capability-aware validation."""
     if operation not in OPERATIONS:
@@ -159,8 +166,11 @@ class MusicJobs:
     def __init__(self, client: MusicClient, library: MediaLibrary, state_file: Path, *,
                  audit: Callable[..., None] | None = None, results=None,
                  explain: Callable[[str], dict | None] | None = None, poll_interval: float = 3.0,
-                 start_worker: bool = True) -> None:
+                 start_worker: bool = True,
+                 lyricist: Callable[[dict, str], str] | None = None) -> None:
         self.client = client
+        #: writes lyrics for ``lyrics_source: assistant`` (gx-auto, music_ai.MusicAI.write_lyrics)
+        self.lyricist = lyricist
         self.library = library
         self.state_file = Path(state_file)
         self.audit = audit or (lambda **kw: None)
@@ -261,7 +271,24 @@ class MusicJobs:
 
     # ------------------------------------------------------------ submit
     def submit(self, operation: str, body: Any, *, user: str, via: str = "ui", ip: str = "") -> dict:
+        """Queue a music job on gx10-02 (the one entry point: Playground, public API, Creative Flows).
+
+        ``body`` is the full structured request (see legenex/playground/API.md
+        "Music"): description, style_tags, prompt (style prompt), lyrics,
+        instrumental, vocal_intent, lyrics_source (user | assistant | planner),
+        vocal_language, duration, bpm, key, time_signature, seed, batch_size,
+        planner/sampler settings, and a Library ``reference_asset_id`` /
+        ``source_asset_id``. With ``lyrics_source: "assistant"`` and no lyrics,
+        gx-auto writes them here before the job is queued, so the stored recipe
+        holds the words that were sung.
+        """
         req = clean_request(operation, body)
+        lyrics_written = False
+        if operation == "generate" and needs_written_lyrics(req):
+            if self.lyricist is None:
+                raise MusicError("Write with AI is not available here", 503, "not_configured")
+            req["lyrics"] = self.lyricist(req, user)
+            lyrics_written = True
         parent_asset = None
         if "source_asset_id" in req:
             req["source"], parent_asset = self._resolve_ref({"asset_id": req.pop("source_asset_id")}, "source")
@@ -282,11 +309,32 @@ class MusicJobs:
         with self._lock:
             self._jobs[job_id] = {"user": user, "via": via, "operation": operation, "submitted_at": time.time(),
                                   "parent_asset": parent_asset, "reference_asset": reference_asset,
-                                  "imported": False, "assets": []}
+                                  "imported": False, "assets": [], "lyrics_written": lyrics_written}
         self._save()
-        self.audit(user=user, ip=ip, action=f"music.{operation}", outcome="queued", job=job_id, via=via)
+        self.audit(user=user, ip=ip, action=f"music.{operation}", outcome="queued", job=job_id, via=via,
+                   lyrics_written=lyrics_written)
         self._wake.set()
         return self.decorate(job)
+
+    def preview(self, body: Any) -> dict:
+        """The exact ACE-Step conditioning for a Create request (nothing is queued).
+
+        With ``lyrics_source: assistant`` and empty lyrics the words do not exist
+        yet; the preview then uses a placeholder verse and says so."""
+        req = clean_request("generate", body)
+        req.pop("source_asset_id", None)
+        req.pop("reference_asset_id", None)
+        req.pop("reference", None)
+        pending = needs_written_lyrics(req)
+        if pending:
+            req["lyrics"] = "[Verse]\n(gx-auto writes these lyrics when you create the track)"
+        out = self.client.call("POST", "/v1/music/preview", body=req, timeout=15)
+        if pending and isinstance(out, dict):
+            out["lyrics_pending"] = True
+            cond = out.get("conditioning") or {}
+            cond["lyrics"] = ""
+            cond.setdefault("notes", []).append("lyrics will be written by gx-auto (Write with AI) when you create")
+        return out
 
     def upload(self, data: bytes, filename: str, content_type: str, *, title: str | None, user: str) -> dict:
         """A reference/source upload: kept in the Library (type audio, operation upload)."""
@@ -343,7 +391,8 @@ class MusicJobs:
         return self.decorate(self.client.call("GET", f"/v1/music/{job_id}"))
 
     def list(self, status: str | None = None, limit: int = 50, mine_only: bool = False) -> list[dict]:
-        q = f"?limit={max(1, min(200, int(limit)))}" + (f"&status={status}" if status else "")
+        """Creative music jobs (reference analyses are listed by the Music page itself)."""
+        q = f"?operation=creative&limit={max(1, min(200, int(limit)))}" + (f"&status={status}" if status else "")
         data = self.client.call("GET", f"/v1/music/jobs{q}")
         jobs = [self.decorate(j) for j in (data or {}).get("data", [])]
         if mine_only:
@@ -445,6 +494,9 @@ class MusicJobs:
                     return []  # the parent is still being saved; the next sweep imports this job
         req = job.get("request") or {}
         params = req.get("parameters") or {}
+        if job.get("operation") == "analyze":
+            self._mark(job_id, imported=True, final=True, assets=[], import_error=None)
+            return []
         ids: list[str] = []
         for track in job.get("tracks") or []:
             index = int(track.get("index", 0))
@@ -487,6 +539,12 @@ class MusicJobs:
                     parent_id=parent_asset, job_id=job_id,
                     settings={"music_job_id": job_id, "track_index": index, "operation": job.get("operation"),
                               "request": req, "timings": job.get("timings"), "model": model,
+                              "description": req.get("description") or None,
+                              "vocal_mode": track.get("vocal_mode") or req.get("vocal_mode"),
+                              "vocal_intent": req.get("vocal_intent"),
+                              "lyrics_source": req.get("lyrics_source"),
+                              "conditioning": req.get("conditioning"),
+                              "lyrics_written_by": "gx-auto" if local.get("lyrics_written") else None,
                               "engine_seed": track.get("engine_seed"), "genres": track.get("genres"),
                               "peak": track.get("peak"), "rms_dbfs": track.get("rms_dbfs"),
                               "bit_depth": track.get("bit_depth"), "reference_asset": local.get("reference_asset"),

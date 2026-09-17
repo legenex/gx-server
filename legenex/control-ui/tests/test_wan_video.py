@@ -633,7 +633,17 @@ class GenerationApiTests(WanApiBase):
         self.assertEqual(status, 202)
         self.assertNotIn("wan", job["params"])
         self.assertEqual(self.wait_job(job["id"])["phase"], "ready")
-        self.assertEqual(self.get(f"/api/video/generations/{job['id']}")[0], 404)
+        # every video generation is recorded, with no LoRAs and its real graph
+        status, gen = self.get(f"/api/video/generations/{job['id']}")
+        self.assertEqual((status, gen["loras"], gen["model"], gen["status"]), (200, [], "wan22-t2v-a14b", "ready"))
+        self.assertNotIn("1000", gen["workflow"])
+        self.assertEqual(gen["request"]["kind"], "t2v")
+
+    def test_failed_jobs_carry_a_readable_hint(self):
+        _, job = self.post("/api/video/generate", {"prompt": "e2e-oom hint", "seed": 9})
+        done = self.wait_job(job["id"])
+        self.assertEqual((done["error_code"], done["phase"]), ("out_of_memory", "failed"))
+        self.assertIn("ran out of memory", done["error_hint"])
 
 
 class MigrationSqlTests(unittest.TestCase):

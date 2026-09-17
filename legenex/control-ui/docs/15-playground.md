@@ -15,8 +15,8 @@ GX-Playground is the creative application: `http://100.105.214.61:8090/`
 | Page | What it does |
 |---|---|
 | Dashboard | quick create (image, video, music); status of gx-image, gx-video and gx-music; a simple resource widget (profile, status, queue); active jobs with their waiting reason; recent creations; recent errors; capacity |
-| Images | generate, edit, variation, re-prompt, reuse settings or seed, compare, history rail, fullscreen, download, favourite, rename, delete, Make Video |
-| Video | text-to-video, image-to-video, video edit, variation / re-prompt, player, history, download, favourite, rename, delete |
+| Images | model selector (Qwen Image 2512 / Qwen Image Edit 2511 / VisionmasterPro_V3), generate, edit with edit modes (Change, Add, Remove, Restyle, Background, Subject, Full transformation), edit quality, mask painter (brush, eraser, undo, invert, keyboard painting, rectangle entry), variation, re-prompt, reuse settings or seed, compare, history rail, fullscreen, download, favourite, rename, delete, Make Video |
+| Video | text-to-video with Wan 2.2 LoRAs (LoRA library, high/low strengths, pairing, presets, advanced settings, workflow preview), image-to-video, video edit, variation / re-prompt, player, video history (load settings, run again, details, workflow JSON, reuse in Creative Flows), errors, download, favourite, rename, delete |
 | Music | the ACE-Step studio (see "gx-music") |
 | Library | one Library for images, video and music: grid/list, search, filters, sort, preview/play, open in editor, rename, favourite, duplicate, download, lineage, select / select all / clear, bulk favourite / unfavourite / delete / ZIP |
 | History | every job with its phase, waiting reason, time, result or error |

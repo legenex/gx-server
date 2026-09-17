@@ -111,6 +111,22 @@ ARCHITECTURE.md L-6.
 
 ## gx-image / gx-video — ComfyUI on node 2
 
+### gx-image model: VisionmasterPro_V3 (Build V3, 2026-09-17)
+
+| Field | Value |
+|---|---|
+| Shown as | **VisionmasterPro_V3** (the file name is never the user-facing name) |
+| Requested checkpoint | `pornmasterPro_noobV3VAE` (Civitai model 1045588, version 1767015; the Civitai download needs an API key, HTTP 401) |
+| Source used | `votepurchase/pornmasterPro_noobV3VAE` @ `75f59d136b165d48f3e678bb057af99f7cf1a71e` (public, not gated) |
+| Format | diffusers SDXL (`StableDiffusionXLPipeline`), UNet F32, `prediction_type: epsilon`, EulerDiscrete |
+| Files (node 2) | `image/diffusion_models/pornmasterPro_noobV3VAE/unet.safetensors` sha256 `16fd4046…f5da` (10.27 GB); `image/text_encoders/pornmasterPro_noobV3VAE/clip_l.safetensors` `911844f9…62f6`; `…/clip_g.safetensors` `7556aaa7…340ce`; `image/vae/pornmasterPro_noobV3VAE/vae.safetensors` `98a14dc6…f88` |
+| Verification | `hf-verify.py` against the HF LFS oids (manifest `/srv/models/image/pornmasterPro_noobV3VAE/.gx-manifest.json`) |
+| Conversion | none: ComfyUI loads the diffusers files directly |
+| Licence | creativeml-openrail-m (model card) |
+| Runtime | ComfyUI on gx10-02 behind the media router, `image_model: visionmaster-pro-v3`; templates `sdxl-visionmaster-pro-v3{,-img2img,-inpaint}` |
+| Footprint | measured live, see `coordination/build-v3/img.md` |
+
+
 All four intended candidates were verified to exist, current, and **ungated**:
 
 | Alias | Model | HF repo | HTTP | License | Gated |

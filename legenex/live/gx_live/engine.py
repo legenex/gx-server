@@ -22,7 +22,8 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 
 from .config import Config
 from .errors import EngineError, ResourceWait
@@ -384,6 +385,11 @@ class EngineController:
                              required_gib=round(need, 1), available_gib=avail, pending_gib=round(extra, 1),
                              outcome="waiting")
                 raise ResourceWait(reason, code=wait.code, details=details) from None
+            except EngineError:
+                self._teardown("container start failed")
+                self._set(FAILED, "the live engine container could not be started")
+                self._metric("model.load", alias="gx-live", outcome="failed", error_code="container_start")
+                raise
             self._set(LOADING, "loading MiniCPM-o 4.5 into memory")
             self.min_avail_gib = before
         try:
@@ -437,6 +443,8 @@ class EngineController:
             "-e", "GX_LIVE_MODEL_DIR=/models/model",
             "-v", f"{c.model_dir}:/models/model:ro",
             "-v", f"{c.engine_dir / 'gx_live_engine'}:/opt/gx-live/gx_live_engine:ro",
+            "-v", f"{c.common_dir / 'gxcommon'}:/opt/gx-live/gxcommon:ro",
+            "-e", "PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True",
             c.model.image,
         ]
         r = self.docker.run(args, timeout=120)

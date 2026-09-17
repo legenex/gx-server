@@ -11,8 +11,12 @@ export const PAGES = [
   ['images', 'Images'],
   ['video', 'Video'],
   ['music', 'Music'],
+  ['voice', 'Voice'],
   ['library', 'Library'],
   ['history', 'History'],
+  ['models', 'Models'],
+  ['logs', 'Logs'],
+  ['settings', 'Settings'],
 ];
 
 // Collects console errors, page errors, CSP violations and failed requests.
@@ -50,6 +54,10 @@ export async function login(page, { password = PASSWORD(), username = USER } = {
 
 export async function gotoPage(page, name) {
   const link = page.locator(`#rail a[data-page="${name}"]`);
+  if (!(await link.isVisible())) {
+    // phones: the link lives in its group's menu
+    await page.locator(`.rail-group:has(a[data-page="${name}"]) .rail-group-btn`).click();
+  }
   await link.click();
   await expect(link).toHaveAttribute('aria-current', 'page');
   await expect(page.locator(`#page-${name} h1`)).toBeVisible();

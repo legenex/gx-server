@@ -24,70 +24,11 @@ const LANG_LABEL = { en: 'English', de: 'German', es: 'Spanish', fr: 'French', j
 const AUDIO_EXT = { wav: 'audio/wav', flac: 'audio/flac', mp3: 'audio/mpeg', ogg: 'audio/ogg', m4a: 'audio/mp4' };
 const MODE_OPS = [['create', 'generate', 'Create', 'sparkles'], ['remix', 'remix', 'Remix/Cover', 'remix'], ['repaint', 'edit', 'Repaint', 'scissors'], ['extend', 'extend', 'Extend', 'extend']];
 
-const session = { jobs: [], done: new Set(), tracks: [], mode: 'create', sources: {}, reference: null, focusId: null };
+const session = { jobs: [], done: new Set(), tracks: [], mode: 'create', sources: {}, reference: null, focusId: null, locks: new Set() };
+const VOCAL_WORDS = /\b(vocals?|vocalist|singers?|singing|voices?|rap|rapper|choir|choral|duet|spoken word)\b/i;
+const NO_VOCALS = /\b(no|without|non)[ -]+(\w+[ -]+)?(vocals?|voices?|singing|lyrics)\b/gi;
 
 // ------------------------------------------------------------ components
-function tagPicker(groups, { max = 24, value = [] } = {}) {
-  let selected = [...value];
-  const listId = uid('tags');
-  const dl = h('datalist', { id: listId });
-  const selBox = h('div', { class: 'tag-selected', 'aria-live': 'polite' });
-  const input = textInput({ placeholder: 'Add a custom tag…', maxLength: 48, attrs: { list: listId, 'aria-label': 'Custom style tag' } });
-  const add = (t) => {
-    const tag = String(t || '').trim().toLowerCase().slice(0, 48);
-    if (!tag || selected.includes(tag)) return;
-    if (selected.length >= max) { toast(`At most ${max} tags.`, 'warn'); return; }
-    selected.push(tag);
-    render();
-  };
-  const groupChips = [];
-  const render = () => {
-    clear(selBox);
-    if (!selected.length) selBox.append(h('span', { class: 'muted small' }, 'No tags yet: pick some below or type your own.'));
-    for (const t of selected) {
-      selBox.append(h('span', { class: 'tag' }, t,
-        h('button', { type: 'button', class: 'tag-x', 'aria-label': `Remove tag ${t}`, onclick: () => { selected = selected.filter((x) => x !== t); render(); } }, icon('x', { size: 12 }))));
-    }
-    for (const g of groupChips) g.setValue(selected);
-  };
-  const suggest = debounce(async () => {
-    const q = input.value.trim();
-    if (!q) return;
-    try {
-      const res = await api.get(`/api/music/tags?q=${encodeURIComponent(q)}&limit=10`);
-      replace(dl, ...(res.suggestions || []).map((s) => h('option', { value: s })));
-    } catch { /* suggestions are optional */ }
-  }, 250);
-  input.addEventListener('input', suggest);
-  input.addEventListener('keydown', (ev) => {
-    if (ev.key === 'Enter' || ev.key === ',') { ev.preventDefault(); add(input.value); input.value = ''; }
-  });
-  const groupBox = h('div', { class: 'tag-groups' });
-  for (const [name, tags] of Object.entries(groups || {})) {
-    if (!Array.isArray(tags) || !tags.length) continue;
-    const c = chips(tags.map((t) => [t, t]), {
-      multiple: true, value: selected, label: GROUP_LABEL[name] || name, cls: 'chips-sm',
-      onChange: (vals) => {
-        const inGroup = new Set(tags);
-        selected = [...selected.filter((x) => !inGroup.has(x)), ...vals.filter((v) => inGroup.has(v))];
-        if (selected.length > max) selected = selected.slice(0, max);
-        render();
-      },
-    });
-    groupChips.push(c);
-    groupBox.append(h('div', { class: 'tag-group' }, h('p', { class: 'tag-group-name' }, GROUP_LABEL[name] || name), c));
-  }
-  const el = h('div', { class: 'field tag-picker' },
-    h('p', { class: 'field-label' }, 'Style tags'),
-    selBox,
-    h('div', { class: 'input-group' }, input, dl, button('Add', { size: 'sm', onClick: () => { add(input.value); input.value = ''; input.focus(); } })),
-    groupBox.children.length ? disclosure('Browse tags', groupBox, { ic: 'tag' }) : null);
-  render();
-  el.getValue = () => [...selected];
-  el.setValue = (v) => { selected = [...(v || [])]; render(); };
-  return el;
-}
-
 function lyricsEditor({ maxLength = 4096, label = 'Lyrics', placeholder = '[Verse]\nWrite your lines here…' } = {}) {
   const id = uid('lyrics');
   const ta = h('textarea', { id, class: 'input lyrics-input', rows: 8, maxlength: maxLength, placeholder, spellcheck: 'true' });
@@ -375,18 +316,35 @@ export default {
     const formError = (key) => { errors[key] = h('p', { class: 'form-error form-danger', role: 'alert', hidden: true }); return errors[key]; };
     const showError = (key, msg) => { errors[key].hidden = false; errors[key].textContent = msg; };
 
-    // Create
+    // Create — in conditioning order
     const cf = {};
+    const locks = session.locks;
+    const changed = () => { if (cf.preview) cf.preview.refresh(); if (cf.vocals) syncVocalStatus(); };
+    const withLock = (comp, name) => {
+      const lbl = comp.querySelector('label');
+      const row = h('div', { class: 'field-row' });
+      comp.insertBefore(row, lbl);
+      row.append(lbl, lockButton(name, locks, changed));
+      return comp;
+    };
     if (ops.generate) {
-      cf.description = C.description ? composer({ label: 'Song description', placeholder: 'An upbeat synth-pop song about a summer road trip, female vocals…', maxLength: C.description.max_length || 512, rows: 2, onSubmit: () => submit('create'), id: 'music-description' }) : null;
-      cf.descNote = callout('info', 'The language model writes the song', 'With a description, the planner writes the lyrics and picks tempo, key, time signature and length. Those fields are hidden while a description is set.');
-      cf.prompt = C.prompt ? composer({ label: 'Style prompt', placeholder: 'dreamy lo-fi hip hop, warm vinyl crackle, mellow Rhodes', maxLength: C.prompt.max_length || 512, rows: 3, onSubmit: () => submit('create'), id: 'music-prompt' }) : null;
-      cf.tags = C.style_tags ? tagPicker(tagGroups, { max: C.style_tags.max_items || 24 }) : null;
-      cf.instrumental = C.instrumental ? toggle('Instrumental (no vocals)', false) : null;
+      cf.ai = aiPanel({ readForm: () => readForm(), applySettings: (st, o) => applySettings(st, o), locks });
+      cf.referencePanel = referencePanel({
+        pickAsset: () => pickAsset({ type: 'audio', title: 'Choose a reference track' }),
+        uploadFile: (f, drop, done) => doUpload(f, done, drop),
+        applySettings: (st, o) => applySettings(st, o),
+      });
+      cf.reference = disclosure('Analyze Reference (upload, Library, YouTube, Spotify)', cf.referencePanel, { ic: 'wave' });
+      cf.description = C.description ? withLock(composer({ label: 'Song description — what song should be created?', placeholder: 'An emotional song about leaving Cape Town after the end of a relationship.', maxLength: C.description.max_length || 512, rows: 2, onSubmit: () => submit('create'), id: 'music-description' }), 'description') : null;
+      cf.tags = C.style_tags ? styleTagEditor({ groups: tagGroups, max: C.style_tags.max_items || 24, lock: lockButton('style_tags', locks, changed), onChange: changed }) : null;
+      cf.prompt = C.prompt ? withLock(composer({ label: 'Style prompt — how should it sound?', placeholder: 'Intimate close-mic female vocal, soft piano opening, gradually expanding strings, restrained percussion, powerful final chorus.', maxLength: C.prompt.max_length || 512, rows: 3, onSubmit: () => submit('create'), id: 'music-prompt' }), 'style_prompt') : null;
+      cf.vocals = vocalControls({ languages: (C.vocal_language && C.vocal_language.values) || [], langLabel: LANG_LABEL, locks, onChange: changed });
       cf.lyrics = C.lyrics ? lyricsEditor({ maxLength: C.lyrics.max_length || 4096 }) : null;
-      cf.language = C.vocal_language ? select([['', 'Auto'], ...(C.vocal_language.values || []).map((v) => [v, LANG_LABEL[v] || v])], '') : null;
-      // the default length comes from Settings (empty = the model decides)
-      cf.duration = C.duration ? numberField('Duration', { ...C.duration, value: pref('default_music_duration') ?? C.duration.value }, { unit: 's', hint: 'Seconds' }) : null;
+      if (cf.lyrics) {
+        cf.lyrics.querySelector('.field-row').append(lockButton('lyrics', locks, changed));
+        cf.lyrics.textarea.addEventListener('input', debounceChanged());
+      }
+      cf.duration = C.duration ? numberField('Duration', C.duration, { unit: 's', hint: 'Seconds' }) : null;
       cf.bpm = C.bpm ? numberField('BPM', C.bpm) : null;
       const keyList = uid('keys');
       cf.key = C.key ? textInput({ placeholder: C.key.example || 'e.g. F# minor', maxLength: 16, attrs: { list: keyList } }) : null;
@@ -395,53 +353,140 @@ export default {
       cf.batch = C.batch_size ? chips(Array.from({ length: Math.min(8, C.batch_size.max || 1) - (C.batch_size.min || 1) + 1 }, (_, i) => String((C.batch_size.min || 1) + i)).map((v) => [v, v]), { value: '1', label: 'Tracks per run' }) : null;
       cf.steps = C.inference_steps ? numberField('Inference steps', C.inference_steps, { placeholder: C.inference_steps.default ? `Default ${C.inference_steps.default}` : 'Default' }) : null;
       cf.sampler = C.infer_method ? select([['', 'Default'], ...(C.infer_method.values || []).map((v) => [v, v.toUpperCase()])], '') : null;
-      cf.thinking = C.thinking ? toggle('Planner “thinking”', C.thinking.default !== false, { hint: 'The language model reasons about structure before writing codes. Slower, usually better.' }) : null;
-      cf.enhance = C.enhance_prompt ? toggle('Enhance prompt', Boolean(C.enhance_prompt.default), { hint: 'Lets the planner expand a short style prompt.' }) : null;
+      cf.thinking = C.thinking ? toggle('Planner “thinking”', C.thinking.default !== false, { hint: 'The language model plans the song (audio codes) before rendering. Needed when the planner writes lyrics or the caption.' }) : null;
+      cf.enhance = C.enhance_prompt ? toggle('Enhance prompt', Boolean(C.enhance_prompt.default), { hint: 'Lets the planner expand a short style prompt and format the lyrics before rendering.' }) : null;
+      cf.rewrite = C.lm_caption_rewrite ? toggle('Let the planner rewrite the caption', Boolean(C.lm_caption_rewrite.default), { hint: 'Off (default): the caption shown under “What ACE-Step receives” is sent exactly.' }) : null;
       cf.lmTemp = C.lm_temperature ? numberField('Planner temperature', { ...C.lm_temperature, type: 'number' }, { placeholder: 'Default', hint: 'Language-model creativity' }) : null;
       cf.lmCfg = C.lm_cfg_scale ? numberField('Planner CFG (language model)', { ...C.lm_cfg_scale, type: 'number' }, { placeholder: 'Default', hint: 'Classifier-free guidance of the language-model planner, not of the music model' }) : null;
       cf.lmTopP = C.lm_top_p ? numberField('Planner top-p', { ...C.lm_top_p, type: 'number' }, { placeholder: 'Default' }) : null;
       cf.guidance = C.guidance_scale ? numberField('Music model guidance (DiT CFG)', { ...C.guidance_scale, type: 'number' }, { placeholder: 'Default' }) : null;
       cf.format = C.output_format ? select([['', 'Default'], ...(C.output_format.values || []).map((v) => [v, v.toUpperCase()])], '') : null;
       cf.title = textInput({ maxLength: 200, placeholder: 'Optional' });
-      cf.reference = C.reference ? sourcePicker('reference', { label: 'Reference track (optional)', required: false }) : null;
+      cf.referenceTrack = C.reference ? sourcePicker('reference', { label: 'Reference track for the sound (optional)', required: false }) : null;
       const keyHelper = cf.key ? h('div', { class: 'stack-sm' },
         h('datalist', { id: keyList }, COMMON_KEYS.map((k) => h('option', { value: k }))),
         h('div', { class: 'chips chips-sm', role: 'group', 'aria-label': 'Common keys' },
-          COMMON_KEYS.slice(0, 8).map((k) => h('button', { type: 'button', class: 'chip chip-sm', onclick: () => { cf.key.value = k; } }, k)))) : null;
-      cf.structured = h('div', { class: 'stack' },
-        cf.lyrics,
-        h('div', { class: 'grid-2' },
-          cf.duration, cf.bpm,
-          cf.key ? field('Key', cf.key, { hint: 'e.g. C major, A minor, F# minor' }) : null,
-          cf.ts ? field('Time signature', cf.ts) : null),
-        keyHelper);
-      if (cf.instrumental && cf.lyrics) {
-        cf.instrumental.input.addEventListener('change', () => {
-          const on = cf.instrumental.input.checked;
+          COMMON_KEYS.slice(0, 8).map((k) => h('button', { type: 'button', class: 'chip chip-sm', onclick: () => { cf.key.value = k; changed(); } }, k)))) : null;
+      for (const input of [cf.duration && cf.duration.input, cf.bpm && cf.bpm.input, cf.key]) if (input) input.addEventListener('input', debounceChanged());
+      for (const el of [cf.ts, cf.thinking && cf.thinking.input, cf.enhance && cf.enhance.input, cf.rewrite && cf.rewrite.input]) if (el) el.addEventListener('change', changed);
+      for (const c of [cf.description, cf.prompt]) if (c) c.textarea.addEventListener('input', debounceChanged());
+      cf.instrumentalLyrics = () => {
+        const on = cf.vocals.instrumental.input.checked;
+        if (cf.lyrics) {
           cf.lyrics.textarea.disabled = on;
-          for (const b of cf.lyrics.querySelectorAll('button')) b.disabled = on;
-          if (cf.language) cf.language.disabled = on;
-        });
-      }
-      const syncDesc = () => {
-        const has = Boolean(cf.description && cf.description.get());
-        cf.structured.hidden = has;
-        cf.descNote.hidden = !has;
+          for (const b of cf.lyrics.querySelectorAll('.section-btn')) b.disabled = on;
+        }
       };
-      if (cf.description) cf.description.textarea.addEventListener('input', syncDesc);
+      cf.vocals.instrumental.input.addEventListener('change', cf.instrumentalLyrics);
+      cf.preview = conditioningPreview(() => buildBody({ preview: true }));
+      const stepHead = (n, text) => h('p', { class: 'step-head' }, h('span', { class: 'step-num', 'aria-hidden': 'true' }, String(n)), text);
       forms.create = h('div', { class: 'stack', id: 'form-create' },
-        cf.description, cf.descNote, cf.prompt, cf.tags, cf.instrumental,
-        cf.structured,
-        cf.language ? field('Vocal language', cf.language) : null,
-        h('div', { class: 'grid-2' }, cf.batch ? h('div', { class: 'field' }, h('p', { class: 'field-label' }, 'Tracks per run'), cf.batch) : null, field('Title', cf.title)),
-        cf.seed, cf.reference,
-        disclosure('Advanced', h('div', { class: 'stack' },
+        cf.ai, cf.reference,
+        stepHead(1, 'What the song is'), cf.description,
+        stepHead(2, 'How it sounds'), cf.tags, cf.prompt,
+        stepHead(3, 'Vocals and lyrics'), cf.vocals, cf.lyrics,
+        stepHead(4, 'Technical'),
+        h('div', { class: 'grid-2' },
+          cf.duration ? withFieldLock(cf.duration, 'duration') : null, cf.bpm ? withFieldLock(cf.bpm, 'bpm') : null,
+          cf.key ? field('Key', cf.key, { hint: 'e.g. C major, A minor, F# minor', extra: lockButton('key', locks, changed) }) : null,
+          cf.ts ? field('Time signature', cf.ts, { extra: lockButton('time_signature', locks, changed) }) : null),
+        keyHelper,
+        h('div', { class: 'grid-2' }, cf.batch ? h('div', { class: 'field' }, h('p', { class: 'field-label' }, 'Tracks per run'), cf.batch) : null, field('Title', cf.title, { extra: lockButton('title', locks, changed) })),
+        cf.seed, cf.referenceTrack,
+        disclosure('Advanced (planner and sampler)', h('div', { class: 'stack' },
           h('div', { class: 'grid-2' }, cf.steps, cf.sampler ? field('Sampler', cf.sampler, { hint: 'ODE is deterministic; SDE adds variety.' }) : null),
-          cf.thinking, cf.enhance,
+          cf.thinking, cf.enhance, cf.rewrite,
           h('div', { class: 'grid-2' }, cf.lmTemp, cf.lmCfg, cf.lmTopP, cf.guidance,
             cf.format ? field('Preferred format', cf.format) : null)), { ic: 'sliders' }),
+        cf.preview,
         formError('create'));
-      syncDesc();
+      if (C.description === undefined) cf.ai.hidden = true;
+    }
+
+    function withFieldLock(numField, name) {
+      numField.querySelector('.field-row').append(lockButton(name, locks, changed));
+      return numField;
+    }
+
+    function debounceChanged() {
+      let t = null;
+      return () => { clearTimeout(t); t = setTimeout(changed, 350); };
+    }
+
+    function syncVocalStatus() {
+      const st = cf.vocals.status;
+      const f = safeForm();
+      if (!f) return;
+      const source = cf.vocals.source.value;
+      const words = (f.lyrics || '').split('\n').some((l) => l.trim() && !/^\s*\[[^\]]*\]\s*$/.test(l));
+      const asked = f.vocal_intent !== 'auto' || VOCAL_WORDS.test(`${f.style_prompt} ${f.style_tags.join(' ')} ${f.description}`.replace(NO_VOCALS, ' '));
+      let text = '';
+      if (f.instrumental) text = 'Instrumental: no vocals will be rendered.';
+      else if (words) text = 'Vocals: your lyrics will be sung.';
+      else if (source === 'assistant') text = 'Vocals: gx-auto writes the lyrics when you press Create.';
+      else if (source === 'planner') text = 'Vocals: ACE-Step’s planner writes the lyrics while rendering.';
+      else if (asked) text = 'Vocals need lyrics. Write them, pick “Write with AI”, or turn Instrumental on.';
+      else text = 'No lyrics: the track will be instrumental.';
+      st.textContent = text;
+      st.classList.toggle('form-danger', !f.instrumental && !words && source === 'user' && asked);
+    }
+
+    function safeForm() {
+      try { return readForm(); } catch { return null; }
+    }
+
+    // The form in the field names Build with AI / Improve / flows use.
+    function readForm() {
+      const num = (f) => (f ? f.read() : null);
+      const tsValue = cf.ts ? cf.ts.value : '';
+      return {
+        title: cf.title.value.trim(),
+        description: cf.description ? cf.description.get() : '',
+        style_tags: cf.tags ? cf.tags.getValue() : [],
+        style_prompt: cf.prompt ? cf.prompt.get() : '',
+        instrumental: cf.vocals.instrumental.input.checked,
+        vocal_intent: cf.vocals.intent.getValue(),
+        vocal_language: cf.vocals.language.value,
+        lyrics: cf.lyrics ? cf.lyrics.get().trim() : '',
+        bpm: num(cf.bpm),
+        key: cf.key && cf.key.value.trim() ? cf.key.value.trim() : null,
+        time_signature: tsValue ? (TS_LABEL[tsValue] || tsValue) : null,
+        duration: num(cf.duration),
+        seed: cf.seed && cf.seed.isLocked() ? cf.seed.current() : null,
+        thinking: cf.thinking ? cf.thinking.input.checked : null,
+        inference_steps: num(cf.steps),
+        infer_method: cf.sampler && cf.sampler.value ? cf.sampler.value : null,
+        lm_temperature: num(cf.lmTemp),
+      };
+    }
+
+    // Settings (from AI, a reference or Undo) -> the form. Locked fields stay unless forced.
+    function applySettings(st, { force = false } = {}) {
+      const take = (name) => Object.prototype.hasOwnProperty.call(st, name) && (force || !locks.has(name));
+      const setNum = (f, v) => { if (f) f.input.value = v === null || v === undefined ? '' : String(v); };
+      if (take('title')) cf.title.value = st.title || '';
+      if (take('description') && cf.description) cf.description.set(st.description || '');
+      if (take('style_tags') && cf.tags) cf.tags.setValue(st.style_tags || []);
+      if (take('style_prompt') && cf.prompt) cf.prompt.set(st.style_prompt || '');
+      if (take('instrumental')) cf.vocals.instrumental.input.checked = Boolean(st.instrumental);
+      if (take('vocal_intent')) cf.vocals.intent.setValue(st.vocal_intent || 'auto');
+      if (take('vocal_language')) {
+        const has = [...cf.vocals.language.options].some((o) => o.value === (st.vocal_language || ''));
+        cf.vocals.language.value = has ? (st.vocal_language || '') : '';
+      }
+      if (take('lyrics') && cf.lyrics && (st.lyrics || force || st.instrumental)) cf.lyrics.set(st.instrumental && !force ? '' : (st.lyrics || ''));
+      if (take('bpm')) setNum(cf.bpm, st.bpm);
+      if (take('duration')) setNum(cf.duration, st.duration);
+      if (take('key') && cf.key) cf.key.value = st.key || '';
+      if (take('time_signature') && cf.ts) cf.ts.value = st.time_signature ? (TS_BACK[st.time_signature] || String(st.time_signature)) : '';
+      if (take('seed') && cf.seed && st.seed !== null && st.seed !== undefined && st.seed !== cf.seed.current()) cf.seed.set(st.seed, true);
+      if (take('thinking') && cf.thinking && typeof st.thinking === 'boolean') cf.thinking.input.checked = st.thinking;
+      if (take('inference_steps')) setNum(cf.steps, st.inference_steps);
+      if (take('infer_method') && cf.sampler) cf.sampler.value = st.infer_method || '';
+      if (take('lm_temperature')) setNum(cf.lmTemp, st.lm_temperature);
+      cf.vocals.sync();
+      cf.instrumentalLyrics();
+      changed();
     }
 
     // Remix
@@ -449,7 +494,8 @@ export default {
     if (ops.remix) {
       rf.source = sourcePicker('remix', { label: 'Source track' });
       rf.prompt = composer({ label: 'New style', placeholder: 'the same song as a jazz trio, brushed drums', maxLength: (C.prompt && C.prompt.max_length) || 512, rows: 3, onSubmit: () => submit('remix'), id: 'remix-prompt' });
-      rf.tags = C.style_tags ? tagPicker(tagGroups, { max: C.style_tags.max_items || 24 }) : null;
+      rf.tags = C.style_tags ? styleTagEditor({ groups: {}, max: C.style_tags.max_items || 24 }) : null;
+      if (rf.tags) rf.tags.id = 'remix-tags';
       rf.lyrics = C.lyrics ? lyricsEditor({ label: 'Lyrics override (optional)', placeholder: 'Leave empty to keep the original lyrics' }) : null;
       const st = RC.strength || { min: 0, max: 1, default: 0.5 };
       rf.strength = slider({ label: 'Remix strength', min: st.min ?? 0, max: st.max ?? 1, step: 0.05, value: st.default ?? 0.5, format: (v) => v.toFixed(2), hint: 'Low stays close to the source (a faithful cover); high reinvents it more freely.' });
@@ -553,19 +599,15 @@ export default {
       const r = recipeOf(asset);
       if (!r || !ops.generate) return;
       const b = r.body;
-      if (cf.description) cf.description.set(b.description || '');
-      if (cf.prompt) cf.prompt.set(b.prompt || '');
-      if (cf.tags) cf.tags.setValue(b.style_tags || asset.tags || []);
-      if (cf.lyrics) cf.lyrics.set(b.lyrics || '');
-      if (cf.instrumental) { cf.instrumental.input.checked = Boolean(b.instrumental); cf.instrumental.input.dispatchEvent(new Event('change')); }
-      if (cf.duration) cf.duration.input.value = b.duration ?? '';
-      if (cf.bpm) cf.bpm.input.value = b.bpm ?? '';
-      if (cf.key) cf.key.value = b.key || '';
-      if (cf.ts) cf.ts.value = b.time_signature ? (TS_BACK[b.time_signature] || String(b.time_signature)) : '';
-      if (cf.steps && b.inference_steps) cf.steps.input.value = b.inference_steps;
-      if (cf.seed && (b.seed ?? asset.seed) !== undefined) cf.seed.set(b.seed ?? asset.seed, false);
-      if (cf.title) cf.title.value = b.title || '';
-      if (cf.description) cf.description.textarea.dispatchEvent(new Event('input'));
+      applySettings({
+        title: b.title || '', description: b.description || '', style_tags: b.style_tags || asset.tags || [],
+        style_prompt: b.prompt || '', instrumental: Boolean(b.instrumental), vocal_intent: b.vocal_intent || 'auto',
+        vocal_language: b.vocal_language || '', lyrics: b.instrumental ? '' : (b.lyrics || ''), bpm: b.bpm ?? null,
+        key: b.key || null, time_signature: b.time_signature ? (TS_LABEL[b.time_signature] || b.time_signature) : null,
+        duration: b.duration ?? null, seed: b.seed ?? asset.seed ?? null, thinking: typeof b.thinking === 'boolean' ? b.thinking : null,
+        inference_steps: b.inference_steps ?? null, infer_method: b.infer_method || null, lm_temperature: b.lm_temperature ?? null,
+      }, { force: true });
+      cf.vocals.source.value = 'user';
       setMode('create');
       toast('Settings loaded into Create.', 'ok', 2500);
     }
@@ -583,41 +625,42 @@ export default {
       }
     }
 
-    function buildCreate() {
+    function buildBody({ preview = false } = {}) {
+      const f = readForm();
       const body = { operation: 'generate' };
-      const desc = cf.description ? cf.description.get() : '';
-      const prompt = cf.prompt ? cf.prompt.get() : '';
-      const tags = cf.tags ? cf.tags.getValue() : [];
-      const instrumental = cf.instrumental ? cf.instrumental.input.checked : false;
-      if (desc) body.description = desc;
-      if (prompt) body.prompt = prompt;
-      if (tags.length) body.style_tags = tags;
-      if (cf.instrumental) body.instrumental = instrumental;
-      if (!desc) {
-        const lyr = cf.lyrics ? cf.lyrics.get().trim() : '';
-        if (lyr && !instrumental) body.lyrics = lyr;
-        const d = cf.duration ? cf.duration.read() : null;
-        if (d !== null) body.duration = d;
-        const bpm = cf.bpm ? cf.bpm.read() : null;
-        if (bpm !== null) body.bpm = bpm;
-        if (cf.key && cf.key.value.trim()) body.key = cf.key.value.trim();
-        if (cf.ts && cf.ts.value) body.time_signature = cf.ts.value;
+      if (f.description) body.description = f.description;
+      if (f.style_prompt) body.prompt = f.style_prompt;
+      if (f.style_tags.length) body.style_tags = f.style_tags;
+      body.instrumental = f.instrumental;
+      const source = cf.vocals.source.value;
+      if (!f.instrumental) {
+        if (f.lyrics) body.lyrics = f.lyrics;
+        if (f.vocal_intent !== 'auto') body.vocal_intent = f.vocal_intent;
+        if (f.vocal_language) body.vocal_language = f.vocal_language;
+        if (source !== 'user') body.lyrics_source = source;
       }
-      if (!desc && !prompt && !tags.length && !body.lyrics) throw new Error('Add a description, a style prompt, tags or lyrics.');
-      if (cf.language && cf.language.value && !instrumental) body.vocal_language = cf.language.value;
+      if (!f.description && !f.style_prompt && !f.style_tags.length) {
+        if (preview) return null;
+        throw new Error('Add a song description, style tags or a style prompt.');
+      }
+      if (f.duration !== null) body.duration = f.duration;
+      if (f.bpm !== null) body.bpm = f.bpm;
+      if (f.key) body.key = f.key;
+      if (cf.ts && cf.ts.value) body.time_signature = cf.ts.value;
       if (cf.batch) body.batch_size = Number(cf.batch.getValue());
-      const steps = cf.steps ? cf.steps.read() : null;
-      if (steps !== null) body.inference_steps = steps;
-      if (cf.sampler && cf.sampler.value) body.infer_method = cf.sampler.value;
+      if (f.inference_steps !== null) body.inference_steps = f.inference_steps;
+      if (f.infer_method) body.infer_method = f.infer_method;
       if (cf.thinking) body.thinking = cf.thinking.input.checked;
       if (cf.enhance) body.enhance_prompt = cf.enhance.input.checked;
-      for (const [k, f] of [['lm_temperature', cf.lmTemp], ['lm_cfg_scale', cf.lmCfg], ['lm_top_p', cf.lmTopP], ['guidance_scale', cf.guidance]]) {
-        const v = f ? f.read() : null;
+      if (cf.rewrite && cf.rewrite.input.checked) body.lm_caption_rewrite = true;
+      for (const [k, fl] of [['lm_temperature', cf.lmTemp], ['lm_cfg_scale', cf.lmCfg], ['lm_top_p', cf.lmTopP], ['guidance_scale', cf.guidance]]) {
+        const v = fl ? fl.read() : null;
         if (v !== null) body[k] = v;
       }
+      if (preview) return body;
       if (cf.format && cf.format.value) body.output_format = cf.format.value;
       if (cf.seed) body.seed = cf.seed.next();
-      if (cf.title.value.trim()) body.title = cf.title.value.trim();
+      if (f.title) body.title = f.title;
       if (session.reference) body.reference_asset_id = session.reference.id;
       return body;
     }
@@ -667,7 +710,7 @@ export default {
       if (err) err.hidden = true;
       let body;
       try {
-        body = { create: buildCreate, remix: buildRemix, repaint: buildRepaint, extend: buildExtend }[mode]();
+        body = { create: () => buildBody(), remix: buildRemix, repaint: buildRepaint, extend: buildExtend }[mode]();
       } catch (e) {
         showError(mode, e.message);
         return;
@@ -714,6 +757,7 @@ export default {
       if (t) t.textarea.focus();
     }
 
-    return () => { alive = false; unsubJobs(); unsubAssets(); };
+    if (cf.preview) { cf.vocals.sync(); changed(); }
+    return () => { alive = false; unsubJobs(); unsubAssets(); if (cf.referencePanel) cf.referencePanel.stop(); };
   },
 };

@@ -6,8 +6,12 @@ export const PAGE_LOADERS = {
   images: () => import('./pages/images.js'),
   video: () => import('./pages/video.js'),
   music: () => import('./pages/music.js'),
+  voice: () => import('./pages/voice.js'),
   library: () => import('./pages/library.js'),
   history: () => import('./pages/history.js'),
+  models: () => import('./pages/models.js'),
+  logs: () => import('./pages/logs.js'),
+  settings: () => import('./pages/settings.js'),
 };
 
 export function hasPage(name) {

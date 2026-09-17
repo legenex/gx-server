@@ -208,7 +208,7 @@ def builtin_sources(app: Any) -> dict[str, Source]:
     def metrics(user: str, since: float, limit: int) -> list[dict]:
         from .obs import metrics_files, read_metrics
         out = []
-        for m in read_metrics(metrics_files(), user=f"user:{user}", since=since, limit=limit):
+        for m in read_metrics(metrics_files(app.cfg.metrics_dir), user=f"user:{user}", since=since, limit=limit):
             ts = _parse_ts(m.get("ts"))
             title = f"{m.get('service')}: {m.get('event')}"
             out.append({"id": f"m-{ts:.3f}-{m.get('event')}"[:80], "title": title, "at": ts,

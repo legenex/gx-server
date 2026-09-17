@@ -476,7 +476,7 @@ class SnapshotTests(ControllerBase):
 
     def test_compatibility_matrix(self):
         comp = self.ctrl.compatibility()
-        self.assertEqual(len(comp["pairs"]), 21)
+        self.assertEqual(len(comp["pairs"]), 45)  # 10 generative aliases (Build V3)
         self.assertEqual(comp["aliases"], list(rc.GENERATIVE))
         for p in comp["pairs"]:
             self.assertIn(p["verdict"], comp["legend"])

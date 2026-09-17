@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 const here = dirname(fileURLToPath(import.meta.url));
 process.env.GX_BUILD_ROOT = process.env.GX_PG_STATIC_DIR
   ? resolve(process.env.GX_PG_STATIC_DIR) : resolve(here, '..', 'web');
-process.env.GX_BUILD_PAGES = 'dashboard,images,video,music,library,history';
+process.env.GX_BUILD_PAGES = 'dashboard,images,video,music,voice,library,history,models,logs,settings';
 process.env.GX_BUILD_NAV_IN_HTML = '0';
 process.env.GX_BUILD_BUDGET_KB = '600';
 await import('../../control-ui/scripts/build-check.mjs');

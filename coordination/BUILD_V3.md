@@ -171,3 +171,21 @@ Eleven public aliases: the existing eight plus `gx-voice`, `gx-call`, `gx-live`.
   `/v1/live/*`, WebSocket upgrade tunnelled by the Playground to gx10-02 over
   the fabric), authenticated with a gateway virtual key that allows the alias,
   like `gx-music`.
+
+## Coordination with gx-cluster-0c (D-039 session), agreed 2026-09-17 ~17:05
+
+* It owns `legenex/orchestrator/**`, `legenex/gateway/**` (except the one
+  additive `gx-voice` entry in `litellm/config.yaml`), `legenex/lifecycle/lib.sh`,
+  `gx-max-start.sh`, `legenex/tests/gx_tier_acceptance.py`, and Control Center
+  `models.py`, `services.py`, `web/js/pages/models.js`,
+  `tests/test_text_observability.py`.
+* Keep its `litellm_settings.callbacks` (gx_hooks budget hook) and
+  `router_settings.disable_cooldowns: true`. The lead (not VOI) recreates
+  gx-litellm, only with
+  `env -i PATH="$PATH" HOME="$HOME" docker compose --env-file .env -f docker-compose.gateway.yml up -d --no-deps litellm`
+  (B-027), keeping its new volume mounts.
+* gx-reason on gx10-02 now uses MTP speculative decoding, TTL 20 min,
+  footprint ≈ 32 GiB; media jobs queue behind it.
+* Media router 2.4.1 (SIGTERM fix in `__main__.py`) is deployed; 2.5.0 keeps it.
+* It announces its gx-max cold run (≥ 30-60 min away as of 17:05) before
+  starting. No GPU work while `node2.gxmax-hold` exists or gx-max loads.

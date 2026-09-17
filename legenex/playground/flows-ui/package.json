@@ -1,0 +1,40 @@
+{
+  "name": "gx-flows-ui",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Creative Flows canvas for GX-Playground (React + TypeScript + @xyflow/react), built into ../web/flows",
+  "license": "UNLICENSED",
+  "type": "module",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "eslint --max-warnings 0 src test scripts vite.config.ts",
+    "test": "vitest run",
+    "build": "vite build",
+    "check:fresh": "node scripts/check-fresh.mjs",
+    "qa": "npm run typecheck && npm run lint && npm run test && npm run check:fresh"
+  },
+  "dependencies": {
+    "@xyflow/react": "12.11.6",
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@testing-library/react": "16.3.3",
+    "@types/node": "22.20.3",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.1.1",
+    "eslint": "10.10.0",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "globals": "17.12.0",
+    "jsdom": "30.1.0",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.70.0",
+    "vite": "8.3.0",
+    "vitest": "5.0.1"
+  }
+}

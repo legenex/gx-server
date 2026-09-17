@@ -34,3 +34,17 @@ Library rows those services create, and only where the columns are NULL.
   `e2e/flows_fixture.py` (stub services for the offline flow tests).
 
 Progress, evidence and blockers follow below as they land.
+
+## Progress log
+
+- 17:10 backend landed: `gx_control_ui/flows/` (catalogue 67 node types, schema, graph, hashing, store,
+  services, nodes, engine, ai, templates, wiring), `routes_flo.py`, migration `030_flows.sql`,
+  hooks in `server.py` (App block, PUT/DELETE + 1 MiB body for `/v1/flows`, import line).
+  Public API registered with the lead's `public_api()` hook (`/v1/flows`, `/v1/flow-runs`, `/v1/assets`).
+  Tests: `tests/test_flows.py` (44), `tests/test_flows_engine.py` (14) pass; ruff + mypy clean for FLO files.
+- Integrates IMG (`app.image_catalog`, `image_model`, per-model sizes/qualities, `edit_mode`),
+  WAN (`app.wan.preset()`, `resolve_preset()` + `generate()`, t2v only), VOI (`app.voice` submit/get/cancel,
+  `create_voice`, `list_voices`, `dialogue` segments, `flow` provenance, `auto_save`), MUS (`app.music.submit`
+  with `description` / `prompt` / `lyrics` / `instrumental`; `lyrics_source=planner` only when MUS accepts it).
+- Not FLO's (reported, not changed): ruff findings in call_agents.py, call_intake.py, footprints.py,
+  music_ai.py, voice.py, tests/test_music_reference.py; mypy finding in routes_plt.py:49.

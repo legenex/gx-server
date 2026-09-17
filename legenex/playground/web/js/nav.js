@@ -21,6 +21,7 @@ export function navigate(page, query = {}) {
 
 // Where an asset opens for editing.
 export function workspaceFor(asset) {
+  if (asset.type === 'audio' && asset.source_kind && asset.source_kind.startsWith('voice_')) return 'voice';
   return asset.type === 'audio' ? 'music' : asset.type === 'video' ? 'video' : 'images';
 }
 

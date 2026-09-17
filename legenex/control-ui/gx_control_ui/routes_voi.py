@@ -38,7 +38,9 @@ def api_voice_model(h: Handler) -> None:
     info = h.app.voice.model()
     reg = (h.app.manager.registry().get("aliases") or {}).get("gx-voice") or {}
     last = h.app.results.get("gx-voice").get("inference") or {}
-    h._json(200, {**info, "registry": reg, "last_result": last or None})
+    h._json(200, {**info, "registry": reg, "last_result": last or None,
+                  "gateway_url": h.app.cfg.public_gateway_url.rstrip("/"),
+                  "playground_api": "/v1/voice"})
 
 
 @route("POST", r"/api/voice/(?P<op>load|unload)")

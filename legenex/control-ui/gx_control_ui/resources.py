@@ -97,6 +97,9 @@ class RuntimePolicy:
     measured: str
     cold_start_s: str = ""
     variants: dict[str, float] = field(default_factory=dict)
+    #: False until the owning workstream published a measured footprint (plt.md
+    #: section 7); the numbers above are then 0 and never used for arithmetic.
+    measured_ok: bool = True
 
     def public(self) -> dict:
         d = asdict(self)
@@ -148,9 +151,59 @@ POLICIES: dict[str, RuntimePolicy] = {
         "routes to mini/fast/reason; never acquires gx-max", "none (routing only)", (),
         "no memory of its own"),
 }
-GENERATIVE = ("gx-mini", "gx-fast", "gx-reason", "gx-image", "gx-video", "gx-music", "gx-max")
-NODE2_TENANTS = ("gx-reason", "gx-image", "gx-video", "gx-music")
+# ------------------------------------------------ Build V3 node-2 supervisors
+#: Static facts of gx-voice / gx-call / gx-live. Their memory numbers come ONLY
+#: from the measured footprint in the registry (apply_measurements); until then
+#: Resource Control says "not measured yet" and leaves admission to the
+#: supervisor, which enforces the 30 GiB reserve itself (plt.md section 5).
+V3_SERVICES: dict[str, dict[str, Any]] = {
+    "gx-voice": {"kind": "voice", "engine": "Qwen3-TTS 1.7B (gx-voice supervisor)", "idle_ttl_s": 600,
+                 "priority": 45, "exclusive": "coexists with the other node-2 tenants while the 30 GiB reserve "
+                 "holds; one voice job at a time"},
+    "gx-call": {"kind": "realtime", "engine": "NemotronLabs VoiceChat 11B (gx-call supervisor)", "idle_ttl_s": 600,
+                "priority": 55, "exclusive": "one live call at a time; a live call is never interrupted by the "
+                "scheduler (only by gx-max or an explicit unload)"},
+    "gx-live": {"kind": "realtime", "engine": "MiniCPM-o 4.5 (gx-live supervisor)", "idle_ttl_s": 600,
+                "priority": 55, "exclusive": "one live session at a time; a live session is never interrupted by "
+                "the scheduler (only by gx-max or an explicit unload)"},
+}
+
+
+def v3_policy(alias: str, fp: dict | None = None) -> RuntimePolicy:
+    """The RuntimePolicy of a Build V3 supervisor from its measured footprint (or none)."""
+    meta = V3_SERVICES[alias]
+    ok = isinstance(fp, dict) and isinstance(fp.get("cold_gib"), (int, float)) \
+        and isinstance(fp.get("resident_gib"), (int, float))
+    cold = float(fp["cold_gib"]) if ok else 0.0  # type: ignore[index]
+    resident = float(fp["resident_gib"]) if ok else 0.0  # type: ignore[index]
+    startup = f"{fp.get('startup_s'):.0f} s (measured)" if ok and isinstance(fp.get("startup_s"), (int, float)) \
+        else "not measured yet"  # type: ignore[union-attr]
+    measured = (f"{resident:.0f} GiB loaded, {cold:.0f} GiB to start (measured {fp.get('measured')})"  # type: ignore[union-attr]
+                if ok else "not measured yet")
+    return RuntimePolicy(
+        alias, "node2", meta["kind"], meta["engine"], cold, resident, meta["idle_ttl_s"], "on-demand",
+        meta["priority"], True, True, meta["exclusive"],
+        f"{alias} supervisor: its growth + other tenants' pending memory + 30 GiB reserve",
+        ("load", "unload", "drain", "pin", "unpin"), measured, startup, measured_ok=ok)
+
+
+for _alias in V3_SERVICES:
+    POLICIES[_alias] = v3_policy(_alias)
+
+GENERATIVE = ("gx-mini", "gx-fast", "gx-reason", "gx-image", "gx-video", "gx-music", "gx-voice", "gx-call",
+              "gx-live", "gx-max")
+NODE2_TENANTS = ("gx-reason", "gx-image", "gx-video", "gx-music", "gx-voice", "gx-call", "gx-live")
+V3_ALIASES = tuple(V3_SERVICES)
 PIN_ALIASES = tuple(a for a, p in POLICIES.items() if "pin" in p.controls)
+
+
+def apply_measurements(aliases: dict) -> None:
+    """Refresh the Build V3 policies from the registry's measured footprints."""
+    for alias in V3_SERVICES:
+        spec = aliases.get(alias) if isinstance(aliases, dict) else None
+        fp = spec.get("measured_footprint") if isinstance(spec, dict) else None
+        if POLICIES[alias].measured_ok != bool(fp) or fp:
+            POLICIES[alias] = v3_policy(alias, fp)
 
 
 class ResourceError(Exception):
@@ -208,6 +261,11 @@ def admission_view(alias: str, avail_gib: float | None, residents: dict[str, dic
         return {**out, "allowed": False, "code": "maintenance", "reason": "Maintenance mode is on; new heavy "
                 "work starts again when Maintenance ends", "blocking": [], "actions": []}
     resident = alias in residents
+    if not p.measured_ok:
+        return {**out, "allowed": None, "code": "unmeasured", "available_gib": avail_gib,
+                "reason": f"{alias}'s memory footprint is not measured yet; its supervisor on gx10-02 admits a load "
+                          "only while the 30 GiB reserve holds (other tenants' pending memory included)",
+                "blocking": [], "actions": []}
     if resident and alias not in ("gx-image", "gx-video"):
         return {**out, "allowed": True, "code": "resident", "reason": f"{alias} is already loaded",
                 "need_gib": 0.0, "available_gib": avail_gib, "blocking": [], "actions": []}
@@ -244,7 +302,7 @@ def admission_view(alias: str, avail_gib: float | None, residents: dict[str, dic
     # Smallest set of idle, unpinned, preemptible tenants that closes the gap.
     candidates = sorted(
         ((a, POLICIES[a].footprint_gib) for a, r in others.items()
-         if POLICIES[a].preemptible and not r.get("active") and a not in pins),
+         if POLICIES[a].preemptible and POLICIES[a].measured_ok and not r.get("active") and a not in pins),
         key=lambda x: -x[1])
     plan, freed = [], 0.0
     for a, gib in candidates:
@@ -254,7 +312,7 @@ def admission_view(alias: str, avail_gib: float | None, residents: dict[str, dic
         plan.append(a)
         freed += gib
     blocking = sorted(others, key=lambda a: -POLICIES[a].footprint_gib)
-    held = ", ".join(f"{a} (~{POLICIES[a].footprint_gib:.0f} GiB"
+    held = ", ".join(f"{a} ({f'~{POLICIES[a].footprint_gib:.0f} GiB' if POLICIES[a].measured_ok else 'size not measured'}"
                      f"{', busy' if others[a].get('active') else ''}{', pinned' if a in pins else ''})"
                      for a in blocking)
     reason = (f"{alias} needs {growth:.0f} GiB plus the {RESERVE_GIB:.0f} GiB reserve"
@@ -292,6 +350,12 @@ def pair_verdict(a: str, b: str, *, capacity: dict[str, float], residents: dict[
         return {"a": a, "b": b, "verdict": "coexist", "summary": "Safe to coexist (different nodes)", "why": why}
     node = pa.node
     cap = capacity.get(node, IDLE_CAPACITY_GIB.get(node, 113.0))
+    unmeasured = [x for x, px in ((a, pa), (b, pb)) if not px.measured_ok]
+    if unmeasured:
+        why.append(f"{' and '.join(unmeasured)}: memory footprint not measured yet, so no verdict is computed.")
+        why.append("The node-2 supervisors still admit a load only while the 30 GiB reserve holds, counting "
+                   "every other tenant's pending memory.")
+        return {"a": a, "b": b, "verdict": "unknown", "summary": "Not measured yet", "why": why}
     if {a, b} == {"gx-image", "gx-video"}:
         why.append("Both run on the same ComfyUI engine, one generation at a time. The router frees image "
                    "weights before loading video weights and the other way round, so they never stack.")
@@ -337,12 +401,18 @@ def pair_verdict(a: str, b: str, *, capacity: dict[str, float], residents: dict[
 # ------------------------------------------------------------ controller
 class ResourceController:
     def __init__(self, cfg, cluster, actions, *, music=None, media=None, audit: Callable[..., None] | None = None,
-                 node2_writer: Callable[[str, str], bool] | None = None, start_thread: bool = True) -> None:
+                 node2_writer: Callable[[str, str], bool] | None = None, start_thread: bool = True,
+                 services: dict | None = None, registry: Callable[[], dict] | None = None) -> None:
         self.cfg = cfg
         self.cluster = cluster
         self.actions = actions
         self.music = music
         self.media = media
+        #: Build V3 node-2 supervisors (gx-voice, gx-call, gx-live): alias -> Node2Service
+        self.services = services or {}
+        #: tests/E2E point the service clients at stubs and switch this on
+        self.probe_services = not cfg.offline
+        self._registry = registry or (lambda: {})
         self.audit = audit or (lambda **kw: None)
         self._node2_writer = node2_writer or self._ssh_write
         self._lock = threading.RLock()
@@ -468,6 +538,10 @@ class ResourceController:
         music = self._music_info()
         engine = music.get("engine") or {}
         creative = self.media.snapshot() if self.media is not None and hasattr(self.media, "snapshot") else {}
+        try:
+            apply_measurements((self._registry() or {}).get("aliases") or {})
+        except (OSError, ValueError) as exc:
+            log.warning("registry not readable for measured footprints: %s", exc)
 
         runtimes: dict[str, dict] = {}
 
@@ -564,6 +638,16 @@ class ResourceController:
                                 if "pending_gib" in m_mem else (32.0 if st == "LOADING" else 0.0),
                                 "loaded_gib": m_mem.get("loaded_gib")}
 
+        # Build V3 supervisors: their open /health (never started by a probe)
+        from .node2_services import runtime_view
+        for alias in V3_ALIASES:
+            client = self.services.get(alias)
+            health = client.health() if client is not None and self.probe_services else \
+                {"reachable": False, "error": "not probed"}
+            runtimes[alias] = runtime_view(alias, health, gx_busy=gx_busy or gxmax_hold, maint=maint)
+            if client is not None and not client.configured:
+                runtimes[alias]["detail"] = f"{alias} is not installed on this cluster yet (no service key)"
+
         gx_map = {"down": "UNLOADED", "acquiring": "LOADING", "ready": "READY", "releasing": "DRAINING"}
         runtimes["gx-max"] = {"state": gx_map.get(gx_state, "ERROR"), "detail": gx_state}
         orch_ok = (svc.get("orchestrator") or {}).get("ok")
@@ -573,7 +657,8 @@ class ResourceController:
         for alias, r in runtimes.items():
             p = POLICIES[alias]
             r.update({"alias": alias, "node": p.node, "pinned": alias in pins, "pin": pins.get(alias),
-                      "footprint_gib": p.footprint_gib, "residency": p.residency, "idle_ttl_s": p.idle_ttl_s,
+                      "footprint_gib": p.footprint_gib if p.measured_ok else None, "measured_ok": p.measured_ok,
+                      "residency": p.residency, "idle_ttl_s": p.idle_ttl_s,
                       "controls": list(p.controls)})
             if alias in pins:
                 r["pin_state"] = self._pin_state(alias, r, n1 if p.node == "node1" else n2, holds, gx_busy)
@@ -585,7 +670,8 @@ class ResourceController:
                  "node2": {**self._node_mem(n2), "name": "gx10-02",
                            "ledger": ((n2.get("guard") or {}).get("ledger")) or {},
                            "holds": holds["node2"],
-                           "runtimes": ["gx-reason", "gx-image", "gx-video", "gx-music", "gx-max"]}}
+                           "runtimes": ["gx-reason", "gx-image", "gx-video", "gx-music", "gx-voice", "gx-call",
+                                        "gx-live", "gx-max"]}}
         return {
             "generated_at": time.time(),
             "profile": {**profile, **PROFILES[profile["profile"]]},
@@ -596,6 +682,7 @@ class ResourceController:
             "runtimes": runtimes,
             "pins": pins,
             "queue": {"creative": creative.get("counts", {}), "music": queue.get("active", 0),
+                      **{a.removeprefix("gx-"): runtimes[a].get("queue", 0) for a in V3_ALIASES},
                       "media_router_video": (media or {}).get("video_queue_depth", 0)},
             "media_router": {k: (media or {}).get(k) for k in ("version", "busy", "held_by", "resident_models",
                                                                "resident_alias", "idle_seconds",
@@ -696,7 +783,8 @@ class ResourceController:
         return {"generated_at": time.time(), "aliases": list(GENERATIVE), "capacity_gib": capacity,
                 "pairs": pairs, "legend": {
                     "coexist": "Safe to coexist", "scheduled": "Scheduler dependent",
-                    "serialized": "Serialized", "exclusive": "Mutually exclusive"}}
+                    "serialized": "Serialized", "exclusive": "Mutually exclusive",
+                    "unknown": "Not measured yet"}}
 
     def explain(self, alias: str, variant: str | None = None) -> dict:
         """'Why am I waiting?' for a queued job of `alias`. Never an ETA."""
@@ -734,8 +822,10 @@ class ResourceController:
                 nxt = f"{', '.join(busy)} is working; the scheduler waits for it"
             elif profile == "music" and first == "gx-music":
                 nxt = "Music profile keeps gx-music loaded; it unloads after 10 minutes idle"
-            if first == "gx-music":
-                reason = "Waiting for gx-music to release enough gx10-02 memory"
+            if first in V3_ALIASES and snap["runtimes"][first].get("active_sessions"):
+                nxt = f"{first} has a live session; it is never interrupted by the scheduler"
+            if first in ("gx-music",) + V3_ALIASES:
+                reason = f"Waiting for {first} to release enough gx10-02 memory"
             else:
                 reason = f"Waiting for {first} to unload" if first != alias else "Waiting for enough gx10-02 memory"
         else:
@@ -794,6 +884,10 @@ class ResourceController:
                     continue
             if victim == "gx-music" and profile == "music":
                 continue
+            if victim in V3_ALIASES:
+                rt = snap["runtimes"].get(victim) or {}
+                if rt.get("active_sessions") or rt.get("queue"):
+                    continue  # a live call/session or queued voice work is never taken away
             if victim in ("gx-image", "gx-video") and profile == "media":
                 continue
             out.append(victim)
@@ -826,6 +920,13 @@ class ResourceController:
             # release is part of the same teardown); memory is re-read by the gate
             gone = isinstance(info, dict) and bool(info.get("container_gone"))
             return gone, json.dumps(info)[:200]
+        if alias in V3_ALIASES and alias in self.services:
+            from .node2_services import Node2Service, ServiceError
+            try:
+                info = self.services[alias].unload(if_idle=True, reason="scheduler")
+            except ServiceError as exc:
+                return False, str(exc)
+            return Node2Service.unloaded(info), json.dumps(info)[:200]
         return False, f"{alias} has no scheduler unload"
 
     def media_free(self) -> tuple[bool, str]:
@@ -866,7 +967,8 @@ class ResourceController:
         rt = snap["runtimes"]
         loaded = [a for a in GENERATIVE if rt[a]["state"] in ("READY", "GENERATING", "LOADING")]
         active = [a for a in GENERATIVE if rt[a]["state"] in ("GENERATING", "LOADING")]
-        queued = {a: rt[a].get("queue", 0) for a in ("gx-image", "gx-video", "gx-music") if rt[a].get("queue")}
+        queued = {a: rt[a].get("queue", 0) for a in ("gx-image", "gx-video", "gx-music") + V3_ALIASES
+                  if rt[a].get("queue")}
         stays, may_drain, now_drain, conflicts = list(loaded), [], [], []
         if target == "maintenance":
             now_drain = [a for a in loaded if a in NODE2_TENANTS and a not in active]
@@ -880,9 +982,9 @@ class ResourceController:
             if active:
                 conflicts.append(f"Active work on {', '.join(active)} is stopped by the gx-max drain")
         elif target == "media":
-            may_drain = [a for a in ("gx-reason", "gx-music") if a in loaded]
+            may_drain = [a for a in ("gx-reason", "gx-music") + V3_ALIASES if a in loaded]
         elif target == "music":
-            may_drain = [a for a in ("gx-image", "gx-video", "gx-reason") if a in loaded]
+            may_drain = [a for a in ("gx-image", "gx-video", "gx-reason") + V3_ALIASES if a in loaded]
         if current == "max" and target != "max" and snap["gxmax"]["state"] in ("acquiring", "ready"):
             now_drain.append("gx-max")
             conflicts.append("gx-max is released (graceful: in-flight requests finish first)")
@@ -940,6 +1042,11 @@ class ResourceController:
         if snap["runtimes"]["gx-reason"]["state"] == "READY":
             ok, msg = self._unload("gx-reason")
             steps.append("gx-reason unloaded" if ok else f"gx-reason left loaded: {msg}")
+        for alias in V3_ALIASES:
+            if snap["runtimes"][alias]["state"] == "READY" and alias in self.services:
+                ok, msg = self._unload(alias)
+                steps.append(f"{alias} unloaded" if ok else f"{alias} left loaded (it unloads itself when idle): "
+                             f"{msg[:120]}")
         ok, _ = self.media_free()
         steps.append("idle ComfyUI weights freed through the router" if ok
                      else "ComfyUI: nothing to free now (or a job is finishing; the router frees it after)")
@@ -982,13 +1089,16 @@ class ResourceController:
             raise ResourceError(f"{op} is not available for {alias}")
         if op in ("pin", "unpin"):
             return self.set_pin(alias, op == "pin", user=user, ip=ip)
+        if alias in V3_ALIASES:
+            self._service(alias)  # refuses before anything else when it is not installed
         snap = self.snapshot()
         if op == "load":
             view = self.admission(alias, snap=snap)
             if alias == "gx-max":
                 job = self.actions.submit("model.gx-max.load", user=user, ip=ip, confirm=confirm)
                 return {"started": job.as_dict(with_output=False)}
-            if not view.get("allowed"):
+            # an unmeasured supervisor decides itself (it keeps the reserve; plt.md section 5)
+            if not view.get("allowed") and view.get("code") != "unmeasured":
                 if confirm == "unload_and_continue" and view.get("actions"):
                     victims = view["actions"][0]["unload"]
                     busy = [v for v in victims if snap["runtimes"][v]["state"] in ("GENERATING", "LOADING")]
@@ -1005,6 +1115,10 @@ class ResourceController:
             if alias == "gx-music":
                 job = self._background(f"Load {alias}", user,
                                        lambda: self.music.lifecycle("load", user=user))
+                return {"started": job}
+            if alias in V3_ALIASES:
+                client = self._service(alias)
+                job = self._background(f"Load {alias}", user, client.load)
                 return {"started": job}
             if alias in ("gx-mini", "gx-fast", "gx-reason"):
                 job = self.actions.submit(f"model.{alias}.load", user=user, ip=ip)
@@ -1031,7 +1145,23 @@ class ResourceController:
                 return {"done": True, "detail": msg}
             if alias == "gx-music":
                 return {"done": True, "detail": self.music.lifecycle("unload", user=user)}
+            if alias in V3_ALIASES:
+                from .node2_services import ServiceError
+                if snap["runtimes"][alias].get("active_sessions") and confirm is not True:
+                    raise ResourceError(f"{alias} has a live session; confirm to end it and unload", 409)
+                try:
+                    info = self._service(alias).unload(if_idle=False, reason="manual")
+                except ServiceError as exc:
+                    raise ResourceError(str(exc), exc.status) from exc
+                self.audit(user=user, ip=ip, action=f"resources.unload.{alias}", outcome="ok")
+                return {"done": True, "detail": info}
         raise ResourceError("unsupported operation")
+
+    def _service(self, alias: str):
+        client = self.services.get(alias)
+        if client is None or not client.configured:
+            raise ResourceError(f"{alias} is not installed on this cluster yet", 503)
+        return client
 
     def _drain(self, alias: str) -> dict:
         """Wait (bounded) for active work to finish, then unload."""

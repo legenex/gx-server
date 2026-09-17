@@ -52,7 +52,7 @@ LANGUAGES = (("en", "English"), ("de", "German"), ("fr", "French"), ("es", "Span
 VOICE_LANGUAGES = (("auto", "Auto"), ("english", "English"), ("german", "German"), ("french", "French"),
                    ("spanish", "Spanish"), ("italian", "Italian"), ("portuguese", "Portuguese"),
                    ("chinese", "Chinese"), ("japanese", "Japanese"), ("korean", "Korean"), ("russian", "Russian"))
-SECRET_NAME = r"^[A-Za-z][A-Za-z0-9_\-]{0,63}$"
+SECRET_NAME = r"^[A-Za-z][A-Za-z0-9_\-]{0,63}$"  # noqa: S105 - a name pattern, not a secret
 HEADER_NAME = r"^[A-Za-z0-9][A-Za-z0-9\-]{0,63}$"
 
 

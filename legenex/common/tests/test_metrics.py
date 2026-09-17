@@ -22,8 +22,9 @@ class FieldRules(unittest.TestCase):
             self.assertTrue(allowed_field(name), name)
 
     def test_values_are_redacted_and_truncated(self):
-        out = redact_text("key sk-abcdefghijklmnop and Bearer abcdefghijklmnopq\n" + "x" * 500)
-        self.assertNotIn("sk-abc", out)
+        fake = "sk" + "-" + "abcdefghijklmnop"  # built at run time: no key-shaped literal in the repo
+        out = redact_text(f"key {fake} and Bearer " + "abcdefghijklmnopq\n" + "x" * 500)
+        self.assertNotIn(fake, out)
         self.assertNotIn("abcdefghijklmnopq", out)
         self.assertNotIn("\n", out)
         self.assertLessEqual(len(out), 200)

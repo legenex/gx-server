@@ -1,0 +1,6270 @@
+{
+ "categories": [
+  {
+   "id": "text",
+   "label": "Text & AI"
+  },
+  {
+   "id": "image",
+   "label": "Image"
+  },
+  {
+   "id": "video",
+   "label": "Video"
+  },
+  {
+   "id": "voice",
+   "label": "Voice"
+  },
+  {
+   "id": "music",
+   "label": "Music"
+  },
+  {
+   "id": "sound",
+   "label": "Sound"
+  },
+  {
+   "id": "compose",
+   "label": "Composition"
+  },
+  {
+   "id": "utility",
+   "label": "Utility"
+  }
+ ],
+ "nodes": [
+  {
+   "aliases": [],
+   "available": true,
+   "backend": "stored in the flow",
+   "cacheable": true,
+   "category": "text",
+   "description": "A block of text you type (a brief, a script, lyrics).",
+   "fields": [
+    {
+     "card": true,
+     "default": "",
+     "id": "text",
+     "kind": "textarea",
+     "label": "Text",
+     "max_length": 20000,
+     "options": [],
+     "required": true
+    }
+   ],
+   "inputs": [],
+   "keywords": [
+    "note",
+    "brief"
+   ],
+   "label": "Text",
+   "output_node": false,
+   "outputs": [
+    {
+     "id": "text",
+     "label": "Text",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "text"
+     ]
+    }
+   ],
+   "service": "local",
+   "type": "text.input",
+   "unavailable_reason": "",
+   "version": 1
+  },
+  {
+   "aliases": [],
+   "available": true,
+   "backend": "template rendering on gx10-01",
+   "cacheable": true,
+   "category": "text",
+   "description": "A prompt template. {{name}} inserts a flow variable and {{input}} the connected text.",
+   "fields": [
+    {
+     "card": true,
+     "default": "",
+     "id": "template",
+     "kind": "textarea",
+     "label": "Prompt",
+     "max_length": 8000,
+     "options": [],
+     "placeholder": "Cinematic photo of {{subject}}, golden hour",
+     "required": true
+    }
+   ],
+   "inputs": [
+    {
+     "id": "context",
+     "label": "Context",
+     "multiple": true,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "text"
+     ]
+    }
+   ],
+   "keywords": [
+    "image prompt",
+    "template"
+   ],
+   "label": "Prompt",
+   "output_node": false,
+   "outputs": [
+    {
+     "id": "text",
+     "label": "Prompt",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "text"
+     ]
+    }
+   ],
+   "service": "local",
+   "type": "text.prompt",
+   "unavailable_reason": "",
+   "version": 1
+  },
+  {
+   "aliases": [
+    "gx-auto"
+   ],
+   "available": true,
+   "backend": "LiteLLM gateway (gx-auto / gx-fast / gx-reason / gx-mini)",
+   "cacheable": true,
+   "category": "text",
+   "description": "Ask a text model. Connected text is appended to the instruction.",
+   "fields": [
+    {
+     "card": true,
+     "default": "gx-auto",
+     "help": "Runs through the LiteLLM gateway on the cluster. gx-max is used only if it is already running.",
+     "id": "model",
+     "kind": "select",
+     "label": "Model",
+     "options": [
+      {
+       "label": "gx-auto (routed)",
+       "value": "gx-auto"
+      },
+      {
+       "label": "gx-fast",
+       "value": "gx-fast"
+      },
+      {
+       "label": "gx-reason",
+       "value": "gx-reason"
+      },
+      {
+       "label": "gx-mini",
+       "value": "gx-mini"
+      },
+      {
+       "label": "gx-max (only when already running)",
+       "value": "gx-max"
+      }
+     ],
+     "required": false
+    },
+    {
+     "card": true,
+     "default": "",
+     "id": "instruction",
+     "kind": "textarea",
+     "label": "Instruction",
+     "max_length": 8000,
+     "options": [],
+     "required": true
+    },
+    {
+     "default": "",
+     "id": "system",
+     "kind": "textarea",
+     "label": "System prompt",
+     "max_length": 4000,
+     "options": [],
+     "required": false
+    },
+    {
+     "default": 0.7,
+     "id": "temperature",
+     "kind": "number",
+     "label": "Temperature",
+     "max": 2,
+     "options": [],
+     "required": false,
+     "step": 0.05
+    },
+    {
+     "default": 1024,
+     "id": "max_tokens",
+     "integer": true,
+     "kind": "number",
+     "label": "Max tokens",
+     "max": 8192,
+     "min": 16,
+     "options": [],
+     "required": false,
+     "step": 1
+    }
+   ],
+   "inputs": [
+    {
+     "id": "input",
+     "label": "Input",
+     "multiple": true,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "text"
+     ]
+    }
+   ],
+   "keywords": [
+    "chat",
+    "gpt",
+    "ask"
+   ],
+   "label": "LLM Prompt",
+   "output_node": false,
+   "outputs": [
+    {
+     "id": "text",
+     "label": "Answer",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "text"
+     ]
+    }
+   ],
+   "service": "llm",
+   "type": "ai.llm",
+   "unavailable_reason": "",
+   "version": 1
+  },
+  {
+   "aliases": [
+    "gx-auto"
+   ],
+   "available": true,
+   "backend": "LiteLLM gateway (gx-auto / gx-fast / gx-reason / gx-mini)",
+   "cacheable": true,
+   "category": "text",
+   "description": "Writes a timed script: narration for the voice and one visual prompt per scene.",
+   "fields": [
+    {
+     "card": true,
+     "default": "gx-auto",
+     "help": "Runs through the LiteLLM gateway on the cluster. gx-max is used only if it is already running.",
+     "id": "model",
+     "kind": "select",
+     "label": "Model",
+     "options": [
+      {
+       "label": "gx-auto (routed)",
+       "value": "gx-auto"
+      },
+      {
+       "label": "gx-fast",
+       "value": "gx-fast"
+      },
+      {
+       "label": "gx-reason",
+       "value": "gx-reason"
+      },
+      {
+       "label": "gx-mini",
+       "value": "gx-mini"
+      },
+      {
+       "label": "gx-max (only when already running)",
+       "value": "gx-max"
+      }
+     ],
+     "required": false
+    },
+    {
+     "card": true,
+     "default": "",
+     "fills": "brief",
+     "id": "brief",
+     "kind": "textarea",
+     "label": "Brief",
+     "max_length": 4000,
+     "options": [],
+     "placeholder": "30-second ad for ...",
+     "required": false
+    },
+    {
+     "default": "video_ad",
+     "id": "format",
+     "kind": "select",
+     "label": "Format",
+     "options": [
+      {
+       "label": "Video ad",
+       "value": "video_ad"
+      },
+      {
+       "label": "Voiceover",
+       "value": "voiceover"
+      },
+      {
+       "label": "Social post",
+       "value": "social"
+      },
+      {
+       "label": "Music video",
+       "value": "music_video"
+      }
+     ],
+     "required": false
+    },
+    {
+     "card": true,
+     "default": 30,
+     "id": "duration",
+     "integer": true,
+     "kind": "number",
+     "label": "Duration (s)",
+     "max": 300,
+     "min": 5,
+     "options": [],
+     "required": false,
+     "step": 1
+    },
+    {
+     "default": 1,
+     "help": "One visual prompt per scene; downstream image nodes run once per scene.",
+     "id": "scenes",
+     "integer": true,
+     "kind": "number",
+     "label": "Scenes",
+     "max": 8,
+     "min": 1,
+     "options": [],
+     "required": false,
+     "step": 1
+    },
+    {
+     "default": "trustworthy, warm",
+     "id": "tone",
+     "kind": "text",
+     "label": "Tone",
+     "max_length": 120,
+     "options": [],
+     "required": false
+    },
+    {
+     "default": "",
+     "id": "audience",
+     "kind": "text",
+     "label": "Audience",
+     "max_length": 160,
+     "options": [],
+     "required": false
+    },
+    {
+     "default": "",
+     "id": "cta",
+     "kind": "text",
+     "label": "Call to action",
+     "max_length": 200,
+     "options": [],
+     "required": false
+    }
+   ],
+   "inputs": [
+    {
+     "id": "brief",
+     "label": "Brief",
+     "multiple": true,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "text"
+     ]
+    }
+   ],
+   "keywords": [
+    "copy",
+    "narration",
+    "ad"
+   ],
+   "label": "Script Writer",
+   "output_node": false,
+   "outputs": [
+    {
+     "id": "narration",
+     "label": "Narration",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "text"
+     ]
+    },
+    {
+     "id": "visuals",
+     "label": "Scene visuals",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "text"
+     ]
+    },
+    {
+     "id": "script",
+     "label": "Script (JSON)",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "json"
+     ]
+    }
+   ],
+   "service": "llm",
+   "type": "ai.script_writer",
+   "unavailable_reason": "",
+   "version": 1
+  },
+  {
+   "aliases": [
+    "gx-auto"
+   ],
+   "available": true,
+   "backend": "LiteLLM gateway (gx-auto / gx-fast / gx-reason / gx-mini)",
+   "cacheable": true,
+   "category": "text",
+   "description": "Turns a brief, lyrics or a script into N visual scene prompts (one item per scene).",
+   "fields": [
+    {
+     "card": true,
+     "default": "gx-auto",
+     "help": "Runs through the LiteLLM gateway on the cluster. gx-max is used only if it is already running.",
+     "id": "model",
+     "kind": "select",
+     "label": "Model",
+     "options": [
+      {
+       "label": "gx-auto (routed)",
+       "value": "gx-auto"
+      },
+      {
+       "label": "gx-fast",
+       "value": "gx-fast"
+      },
+      {
+       "label": "gx-reason",
+       "value": "gx-reason"
+      },
+      {
+       "label": "gx-mini",
+       "value": "gx-mini"
+      },
+      {
+       "label": "gx-max (only when already running)",
+       "value": "gx-max"
+      }
+     ],
+     "required": false
+    },
+    {
+     "card": true,
+     "default": 4,
+     "id": "count",
+     "integer": true,
+     "kind": "number",
+     "label": "Scenes",
+     "max": 8,
+     "min": 1,
+     "options": [],
+     "required": false,
+     "step": 1
+    },
+    {
+     "card": true,
+     "default": "cinematic, 35mm, natural light",
+     "id": "style",
+     "kind": "text",
+     "label": "Visual style",
+     "max_length": 200,
+     "options": [],
+     "required": false
+    }
+   ],
+   "inputs": [
+    {
+     "id": "source",
+     "label": "Source",
+     "multiple": true,
+     "required": true,
+     "same_as": null,
+     "types": [
+      "text"
+     ]
+    }
+   ],
+   "keywords": [
+    "storyboard",
+    "shots"
+   ],
+   "label": "Scene Prompts",
+   "output_node": false,
+   "outputs": [
+    {
+     "id": "prompts",
+     "label": "Scene prompts",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "text"
+     ]
+    }
+   ],
+   "service": "llm",
+   "type": "ai.scene_prompts",
+   "unavailable_reason": "",
+   "version": 1
+  },
+  {
+   "aliases": [
+    "gx-auto"
+   ],
+   "available": true,
+   "backend": "LiteLLM gateway (gx-auto / gx-fast / gx-reason / gx-mini)",
+   "cacheable": true,
+   "category": "text",
+   "description": "Rewrites a short idea into a detailed prompt for an image, video, music or voice model.",
+   "fields": [
+    {
+     "card": true,
+     "default": "gx-auto",
+     "help": "Runs through the LiteLLM gateway on the cluster. gx-max is used only if it is already running.",
+     "id": "model",
+     "kind": "select",
+     "label": "Model",
+     "options": [
+      {
+       "label": "gx-auto (routed)",
+       "value": "gx-auto"
+      },
+      {
+       "label": "gx-fast",
+       "value": "gx-fast"
+      },
+      {
+       "label": "gx-reason",
+       "value": "gx-reason"
+      },
+      {
+       "label": "gx-mini",
+       "value": "gx-mini"
+      },
+      {
+       "label": "gx-max (only when already running)",
+       "value": "gx-max"
+      }
+     ],
+     "required": false
+    },
+    {
+     "card": true,
+     "default": "image",
+     "id": "target",
+     "kind": "select",
+     "label": "Target",
+     "options": [
+      {
+       "label": "Image",
+       "value": "image"
+      },
+      {
+       "label": "Video",
+       "value": "video"
+      },
+      {
+       "label": "Music",
+       "value": "music"
+      },
+      {
+       "label": "Voice style",
+       "value": "voice"
+      }
+     ],
+     "required": false
+    },
+    {
+     "default": "",
+     "id": "style",
+     "kind": "text",
+     "label": "Style hints",
+     "max_length": 200,
+     "options": [],
+     "required": false
+    }
+   ],
+   "inputs": [
+    {
+     "id": "text",
+     "label": "Idea",
+     "multiple": false,
+     "required": true,
+     "same_as": null,
+     "types": [
+      "text"
+     ]
+    }
+   ],
+   "keywords": [
+    "improve",
+    "rewrite"
+   ],
+   "label": "Prompt Enhancer",
+   "output_node": false,
+   "outputs": [
+    {
+     "id": "text",
+     "label": "Enhanced prompt",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "text"
+     ]
+    }
+   ],
+   "service": "llm",
+   "type": "ai.prompt_enhancer",
+   "unavailable_reason": "",
+   "version": 1
+  },
+  {
+   "aliases": [
+    "gx-auto"
+   ],
+   "available": true,
+   "backend": "LiteLLM gateway (gx-auto / gx-fast / gx-reason / gx-mini)",
+   "cacheable": true,
+   "category": "text",
+   "description": "Extracts structured data from text with a strict JSON schema.",
+   "fields": [
+    {
+     "card": true,
+     "default": "gx-auto",
+     "help": "Runs through the LiteLLM gateway on the cluster. gx-max is used only if it is already running.",
+     "id": "model",
+     "kind": "select",
+     "label": "Model",
+     "options": [
+      {
+       "label": "gx-auto (routed)",
+       "value": "gx-auto"
+      },
+      {
+       "label": "gx-fast",
+       "value": "gx-fast"
+      },
+      {
+       "label": "gx-reason",
+       "value": "gx-reason"
+      },
+      {
+       "label": "gx-mini",
+       "value": "gx-mini"
+      },
+      {
+       "label": "gx-max (only when already running)",
+       "value": "gx-max"
+      }
+     ],
+     "required": false
+    },
+    {
+     "card": true,
+     "default": "Extract the fields.",
+     "id": "instruction",
+     "kind": "textarea",
+     "label": "Instruction",
+     "max_length": 4000,
+     "options": [],
+     "required": false
+    },
+    {
+     "default": [
+      {
+       "key": "headline",
+       "value": "string"
+      }
+     ],
+     "help": "Field name -> string, number, boolean or list.",
+     "id": "schema",
+     "kind": "keyvalue",
+     "label": "Fields",
+     "max_length": 32,
+     "options": [],
+     "required": true
+    }
+   ],
+   "inputs": [
+    {
+     "id": "text",
+     "label": "Text",
+     "multiple": true,
+     "required": true,
+     "same_as": null,
+     "types": [
+      "text"
+     ]
+    }
+   ],
+   "keywords": [
+    "extract",
+    "schema",
+    "convert"
+   ],
+   "label": "JSON / Structured Output",
+   "output_node": false,
+   "outputs": [
+    {
+     "id": "json",
+     "label": "JSON",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "json"
+     ]
+    }
+   ],
+   "service": "llm",
+   "type": "ai.structured",
+   "unavailable_reason": "",
+   "version": 1
+  },
+  {
+   "aliases": [],
+   "available": true,
+   "backend": "stored in the flow",
+   "cacheable": true,
+   "category": "text",
+   "description": "Named values. The flow's variables plus these are available as {{name}} in prompts.",
+   "fields": [
+    {
+     "card": true,
+     "default": [],
+     "id": "values",
+     "kind": "keyvalue",
+     "label": "Values",
+     "max_length": 64,
+     "options": [],
+     "required": false
+    }
+   ],
+   "inputs": [],
+   "keywords": [],
+   "label": "Variables",
+   "output_node": false,
+   "outputs": [
+    {
+     "id": "json",
+     "label": "Variables",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "json"
+     ]
+    }
+   ],
+   "service": "local",
+   "type": "text.variables",
+   "unavailable_reason": "",
+   "version": 1
+  },
+  {
+   "aliases": [],
+   "available": true,
+   "backend": "gx10-01",
+   "cacheable": true,
+   "category": "text",
+   "description": "Joins several texts, in connection order.",
+   "fields": [
+    {
+     "card": true,
+     "default": "\\n\\n",
+     "help": "\\n is a line break.",
+     "id": "separator",
+     "kind": "text",
+     "label": "Separator",
+     "max_length": 20,
+     "options": [],
+     "required": false
+    }
+   ],
+   "inputs": [
+    {
+     "id": "parts",
+     "label": "Parts",
+     "multiple": true,
+     "required": true,
+     "same_as": null,
+     "types": [
+      "text"
+     ]
+    }
+   ],
+   "keywords": [
+    "join",
+    "merge",
+    "concat"
+   ],
+   "label": "Combine Text",
+   "output_node": false,
+   "outputs": [
+    {
+     "id": "text",
+     "label": "Text",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "text"
+     ]
+    }
+   ],
+   "service": "local",
+   "type": "text.combine",
+   "unavailable_reason": "",
+   "version": 1
+  },
+  {
+   "aliases": [],
+   "available": true,
+   "backend": "Media Library",
+   "cacheable": true,
+   "category": "image",
+   "description": "An image from the Library or a new upload.",
+   "fields": [
+    {
+     "asset_type": "image",
+     "card": true,
+     "default": null,
+     "help": "Pick an item from the Library (or upload one).",
+     "id": "asset_id",
+     "kind": "asset",
+     "label": "Image",
+     "options": [],
+     "pattern": "^a_[0-9a-f]{24}$",
+     "required": true
+    }
+   ],
+   "inputs": [],
+   "keywords": [
+    "input",
+    "file"
+   ],
+   "label": "Upload Image",
+   "output_node": false,
+   "outputs": [
+    {
+     "id": "image",
+     "label": "Image",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "image"
+     ]
+    }
+   ],
+   "service": "local",
+   "type": "image.upload",
+   "unavailable_reason": "",
+   "version": 1
+  },
+  {
+   "aliases": [],
+   "available": true,
+   "backend": "Media Library",
+   "cacheable": true,
+   "category": "image",
+   "description": "A style or composition reference from the Library.",
+   "fields": [
+    {
+     "asset_type": "image",
+     "card": true,
+     "default": null,
+     "help": "Pick an item from the Library (or upload one).",
+     "id": "asset_id",
+     "kind": "asset",
+     "label": "Reference image",
+     "options": [],
+     "pattern": "^a_[0-9a-f]{24}$",
+     "required": true
+    },
+    {
+     "default": "",
+     "id": "note",
+     "kind": "text",
+     "label": "Note",
+     "max_length": 200,
+     "options": [],
+     "required": false
+    }
+   ],
+   "inputs": [],
+   "keywords": [],
+   "label": "Reference Image",
+   "output_node": false,
+   "outputs": [
+    {
+     "id": "image",
+     "label": "Reference",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "image"
+     ]
+    }
+   ],
+   "service": "local",
+   "type": "image.reference",
+   "unavailable_reason": "",
+   "version": 1
+  },
+  {
+   "aliases": [
+    "gx-image"
+   ],
+   "available": true,
+   "backend": "gx-image (ComfyUI on gx10-02 via the media queue)",
+   "cacheable": true,
+   "category": "image",
+   "description": "Text to image with gx-image.",
+   "fields": [
+    {
+     "card": true,
+     "default": "",
+     "fills": "prompt",
+     "help": "Used when nothing is connected to the prompt input. {{name}} inserts a flow variable.",
+     "id": "prompt",
+     "kind": "textarea",
+     "label": "Prompt",
+     "max_length": 4000,
+     "options": [],
+     "placeholder": "A trustworthy woman beside a rear-ended BMW, cinematic",
+     "required": false
+    },
+    {
+     "card": true,
+     "default": "",
+     "help": "Qwen Image 2512 (default) or VisionmasterPro_V3 (SDXL).",
+     "id": "image_model",
+     "kind": "select",
+     "label": "Model",
+     "options": [
+      {
+       "label": "Default model",
+       "value": ""
+      }
+     ],
+     "required": false,
+     "source": "image_models:generate"
+    },
+    {
+     "card": true,
+     "default": "",
+     "help": "Empty = the model's default size. Sizes depend on the model.",
+     "id": "size",
+     "kind": "select",
+     "label": "Aspect ratio",
+     "options": [
+      {
+       "label": "Square 1:1 (1328)",
+       "value": "1328x1328"
+      },
+      {
+       "label": "Square 1:1 (1024)",
+       "value": "1024x1024"
+      },
+      {
+       "label": "Landscape 16:9",
+       "value": "1664x928"
+      },
+      {
+       "label": "Portrait 9:16",
+       "value": "928x1664"
+      },
+      {
+       "label": "Landscape 5:3",
+       "value": "1328x800"
+      },
+      {
+       "label": "Portrait 3:5",
+       "value": "800x1328"
+      },
+      {
+       "label": "Small 1:1",
+       "value": "768x768"
+      }
+     ],
+     "required": false,
+     "source": "image_sizes"
+    },
+    {
+     "card": true,
+     "default": "",
+     "help": "Only models with quality presets use this.",
+     "id": "quality",
+     "kind": "select",
+     "label": "Quality",
+     "options": [
+      {
+       "label": "Model default",
+       "value": ""
+      },
+      {
+       "label": "Fast",
+       "value": "fast"
+      },
+      {
+       "label": "Standard",
+       "value": "standard"
+      },
+      {
+       "label": "HD",
+       "value": "hd"
+      }
+     ],
+     "required": false
+    },
+    {
+     "default": "",
+     "id": "negative_prompt",
+     "kind": "textarea",
+     "label": "Negative prompt",
+     "max_length": 2000,
+     "options": [],
+     "required": false
+    },
+    {
+     "default": null,
+     "help": "Empty = model default.",
+     "id": "steps",
+     "integer": true,
+     "kind": "number",
+     "label": "Steps",
+     "max": 100,
+     "min": 1,
+     "options": [],
+     "required": false,
+     "step": 1
+    },
+    {
+     "default": null,
+     "help": "Empty = model default.",
+     "id": "guidance",
+     "kind": "number",
+     "label": "Guidance (CFG)",
+     "max": 20,
+     "options": [],
+     "required": false,
+     "step": 0.1
+    },
+    {
+     "default": 1,
+     "id": "count",
+     "integer": true,
+     "kind": "number",
+     "label": "Images",
+     "max": 4,
+     "min": 1,
+     "options": [],
+     "required": false,
+     "step": 1
+    },
+    {
+     "default": null,
+     "help": "Empty = random. A fixed seed plus unchanged settings reproduces the result.",
+     "id": "seed",
+     "integer": true,
+     "kind": "seed",
+     "label": "Seed",
+     "max": 9007199254740991,
+     "options": [],
+     "required": false
+    },
+    {
+     "default": "",
+     "help": "Library title for the result (optional).",
+     "id": "title",
+     "kind": "text",
+     "label": "Title",
+     "max_length": 200,
+     "options": [],
+     "required": false
+    }
+   ],
+   "inputs": [
+    {
+     "id": "prompt",
+     "label": "Prompt",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "text"
+     ]
+    }
+   ],
+   "keywords": [
+    "t2i",
+    "picture",
+    "photo",
+    "visionmaster",
+    "sdxl"
+   ],
+   "label": "Generate Image",
+   "output_node": false,
+   "outputs": [
+    {
+     "id": "image",
+     "label": "Image",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "image"
+     ]
+    }
+   ],
+   "service": "image",
+   "type": "image.generate",
+   "unavailable_reason": "",
+   "version": 1
+  },
+  {
+   "aliases": [
+    "gx-image"
+   ],
+   "available": true,
+   "backend": "gx-image edit (Qwen-Image-Edit-2511 by default, ComfyUI on gx10-02)",
+   "cacheable": true,
+   "category": "image",
+   "description": "Instruction edit of an image.",
+   "fields": [
+    {
+     "card": true,
+     "default": "",
+     "fills": "prompt",
+     "help": "Used when nothing is connected to the prompt input. {{name}} inserts a flow variable.",
+     "id": "prompt",
+     "kind": "textarea",
+     "label": "Instruction",
+     "max_length": 4000,
+     "options": [],
+     "placeholder": "Make it night time",
+     "required": false
+    },
+    {
+     "default": "",
+     "id": "image_model",
+     "kind": "select",
+     "label": "Model",
+     "options": [
+      {
+       "label": "Default edit model",
+       "value": ""
+      }
+     ],
+     "required": false,
+     "source": "image_models:edit"
+    },
+    {
+     "card": true,
+     "default": "",
+     "help": "What kind of change to make.",
+     "id": "edit_mode",
+     "kind": "select",
+     "label": "Edit mode",
+     "options": [
+      {
+       "label": "Model default",
+       "value": ""
+      }
+     ],
+     "required": false,
+     "source": "edit_modes"
+    },
+    {
+     "default": "",
+     "id": "edit_quality",
+     "kind": "select",
+     "label": "Edit quality",
+     "options": [
+      {
+       "label": "Model default",
+       "value": ""
+      },
+      {
+       "label": "Fast",
+       "value": "fast"
+      },
+      {
+       "label": "Quality",
+       "value": "quality"
+      }
+     ],
+     "required": false
+    },
+    {
+     "default": null,
+     "help": "Only 'Full transformation' uses it. Empty = model default.",
+     "id": "strength",
+     "kind": "number",
+     "label": "Strength",
+     "max": 1,
+     "options": [],
+     "required": false,
+     "step": 0.05
+    },
+    {
+     "default": "",
+     "id": "negative_prompt",
+     "kind": "textarea",
+     "label": "Negative prompt",
+     "max_length": 2000,
+     "options": [],
+     "required": false
+    },
+    {
+     "default": null,
+     "id": "steps",
+     "integer": true,
+     "kind": "number",
+     "label": "Steps",
+     "max": 50,
+     "min": 1,
+     "options": [],
+     "required": false,
+     "step": 1
+    },
+    {
+     "default": null,
+     "help": "Empty = random. A fixed seed plus unchanged settings reproduces the result.",
+     "id": "seed",
+     "integer": true,
+     "kind": "seed",
+     "label": "Seed",
+     "max": 9007199254740991,
+     "options": [],
+     "required": false
+    },
+    {
+     "default": "",
+     "help": "Library title for the result (optional).",
+     "id": "title",
+     "kind": "text",
+     "label": "Title",
+     "max_length": 200,
+     "options": [],
+     "required": false
+    }
+   ],
+   "inputs": [
+    {
+     "id": "image",
+     "label": "Image",
+     "multiple": false,
+     "required": true,
+     "same_as": null,
+     "types": [
+      "image"
+     ]
+    },
+    {
+     "id": "prompt",
+     "label": "Instruction",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "text"
+     ]
+    }
+   ],
+   "keywords": [
+    "inpaint",
+    "change",
+    "restyle"
+   ],
+   "label": "Image Edit",
+   "output_node": false,
+   "outputs": [
+    {
+     "id": "image",
+     "label": "Image",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "image"
+     ]
+    }
+   ],
+   "service": "image",
+   "type": "image.edit",
+   "unavailable_reason": "",
+   "version": 1
+  },
+  {
+   "aliases": [
+    "gx-image"
+   ],
+   "available": true,
+   "backend": "gx-image variation (ComfyUI on gx10-02)",
+   "cacheable": true,
+   "category": "image",
+   "description": "A new image that follows a source image and a prompt.",
+   "fields": [
+    {
+     "card": true,
+     "default": "",
+     "fills": "prompt",
+     "help": "Used when nothing is connected to the prompt input. {{name}} inserts a flow variable.",
+     "id": "prompt",
+     "kind": "textarea",
+     "label": "Prompt",
+     "max_length": 4000,
+     "options": [],
+     "required": false
+    },
+    {
+     "default": "",
+     "id": "image_model",
+     "kind": "select",
+     "label": "Model",
+     "options": [
+      {
+       "label": "Default model",
+       "value": ""
+      }
+     ],
+     "required": false,
+     "source": "image_models:variation"
+    },
+    {
+     "card": true,
+     "default": 0.5,
+     "id": "strength",
+     "kind": "number",
+     "label": "Strength",
+     "max": 1,
+     "min": 0.05,
+     "options": [],
+     "required": false,
+     "step": 0.05
+    },
+    {
+     "default": null,
+     "help": "Empty = random. A fixed seed plus unchanged settings reproduces the result.",
+     "id": "seed",
+     "integer": true,
+     "kind": "seed",
+     "label": "Seed",
+     "max": 9007199254740991,
+     "options": [],
+     "required": false
+    },
+    {
+     "default": "",
+     "help": "Library title for the result (optional).",
+     "id": "title",
+     "kind": "text",
+     "label": "Title",
+     "max_length": 200,
+     "options": [],
+     "required": false
+    }
+   ],
+   "inputs": [
+    {
+     "id": "image",
+     "label": "Source",
+     "multiple": false,
+     "required": true,
+     "same_as": null,
+     "types": [
+      "image"
+     ]
+    },
+    {
+     "id": "prompt",
+     "label": "Prompt",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "text"
+     ]
+    }
+   ],
+   "keywords": [
+    "variation"
+   ],
+   "label": "Image-to-Image",
+   "output_node": false,
+   "outputs": [
+    {
+     "id": "image",
+     "label": "Image",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "image"
+     ]
+    }
+   ],
+   "service": "image",
+   "type": "image.img2img",
+   "unavailable_reason": "",
+   "version": 1
+  },
+  {
+   "aliases": [
+    "gx-image"
+   ],
+   "available": true,
+   "backend": "gx-image instruction edit (Qwen-Image-Edit-2511, 'Change' mode) with an identity-preserving instruction",
+   "cacheable": true,
+   "category": "image",
+   "description": "A new scene with the same character, using the reference image as identity.",
+   "fields": [
+    {
+     "card": true,
+     "default": "",
+     "fills": "prompt",
+     "help": "Used when nothing is connected to the prompt input. {{name}} inserts a flow variable.",
+     "id": "prompt",
+     "kind": "textarea",
+     "label": "Scene",
+     "max_length": 4000,
+     "options": [],
+     "placeholder": "standing in a sunny car park, smiling",
+     "required": false
+    },
+    {
+     "default": null,
+     "help": "Empty = random. A fixed seed plus unchanged settings reproduces the result.",
+     "id": "seed",
+     "integer": true,
+     "kind": "seed",
+     "label": "Seed",
+     "max": 9007199254740991,
+     "options": [],
+     "required": false
+    },
+    {
+     "default": "",
+     "help": "Library title for the result (optional).",
+     "id": "title",
+     "kind": "text",
+     "label": "Title",
+     "max_length": 200,
+     "options": [],
+     "required": false
+    }
+   ],
+   "inputs": [
+    {
+     "id": "character",
+     "label": "Character",
+     "multiple": false,
+     "required": true,
+     "same_as": null,
+     "types": [
+      "image"
+     ]
+    },
+    {
+     "id": "prompt",
+     "label": "Scene",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "text"
+     ]
+    }
+   ],
+   "keywords": [
+    "consistent",
+    "person"
+   ],
+   "label": "Character Reference",
+   "output_node": false,
+   "outputs": [
+    {
+     "id": "image",
+     "label": "Image",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "image"
+     ]
+    }
+   ],
+   "service": "image",
+   "type": "image.character",
+   "unavailable_reason": "",
+   "version": 1
+  },
+  {
+   "aliases": [],
+   "available": true,
+   "backend": "FFmpeg lanczos resize on gx10-01 (deterministic, max 4096 px)",
+   "cacheable": true,
+   "category": "image",
+   "description": "Enlarges an image with a Lanczos resize. This is NOT AI super-resolution: no upscale model is installed on the cluster.",
+   "fields": [
+    {
+     "card": true,
+     "default": "2",
+     "id": "factor",
+     "kind": "select",
+     "label": "Factor",
+     "options": [
+      {
+       "label": "2x",
+       "value": "2"
+      },
+      {
+       "label": "3x",
+       "value": "3"
+      },
+      {
+       "label": "4x",
+       "value": "4"
+      }
+     ],
+     "required": false
+    }
+   ],
+   "inputs": [
+    {
+     "id": "image",
+     "label": "Image",
+     "multiple": false,
+     "required": true,
+     "same_as": null,
+     "types": [
+      "image"
+     ]
+    }
+   ],
+   "keywords": [
+    "enlarge"
+   ],
+   "label": "Upscale Image (resize)",
+   "output_node": false,
+   "outputs": [
+    {
+     "id": "image",
+     "label": "Image",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "image"
+     ]
+    }
+   ],
+   "service": "ffmpeg",
+   "type": "image.upscale",
+   "unavailable_reason": "",
+   "version": 1
+  },
+  {
+   "aliases": [
+    "gx-image"
+   ],
+   "available": false,
+   "backend": "none installed",
+   "cacheable": true,
+   "category": "image",
+   "description": "Cut out the subject.",
+   "fields": [],
+   "inputs": [
+    {
+     "id": "image",
+     "label": "Image",
+     "multiple": false,
+     "required": true,
+     "same_as": null,
+     "types": [
+      "image"
+     ]
+    }
+   ],
+   "keywords": [
+    "cutout",
+    "matte"
+   ],
+   "label": "Background Removal",
+   "output_node": false,
+   "outputs": [
+    {
+     "id": "image",
+     "label": "Image",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "image"
+     ]
+    }
+   ],
+   "service": "image",
+   "type": "image.remove_bg",
+   "unavailable_reason": "No background-removal model (e.g. BiRefNet/RMBG) is installed in ComfyUI on gx10-02, so this node cannot run. It is listed so templates can show where it would go.",
+   "version": 1
+  },
+  {
+   "aliases": [],
+   "available": true,
+   "backend": "Media Library",
+   "cacheable": true,
+   "category": "image",
+   "description": "Marks the final image(s) of the flow.",
+   "fields": [
+    {
+     "default": "",
+     "help": "Library title for the result (optional).",
+     "id": "title",
+     "kind": "text",
+     "label": "Title",
+     "max_length": 200,
+     "options": [],
+     "required": false
+    },
+    {
+     "default": false,
+     "id": "favourite",
+     "kind": "boolean",
+     "label": "Add to favourites",
+     "options": [],
+     "required": false
+    }
+   ],
+   "inputs": [
+    {
+     "id": "image",
+     "label": "Image",
+     "multiple": true,
+     "required": true,
+     "same_as": null,
+     "types": [
+      "image"
+     ]
+    }
+   ],
+   "keywords": [],
+   "label": "Image Output",
+   "output_node": true,
+   "outputs": [],
+   "service": "local",
+   "type": "image.output",
+   "unavailable_reason": "",
+   "version": 1
+  },
+  {
+   "aliases": [
+    "gx-video"
+   ],
+   "available": true,
+   "backend": "gx-video (Wan 2.2 A14B, ComfyUI on gx10-02)",
+   "cacheable": true,
+   "category": "video",
+   "description": "Text to video, or image to video when a start image is connected (Wan 2.2). LoRA presets apply to text to video only.",
+   "fields": [
+    {
+     "card": true,
+     "default": "",
+     "fills": "prompt",
+     "help": "Used when nothing is connected to the prompt input. {{name}} inserts a flow variable.",
+     "id": "prompt",
+     "kind": "textarea",
+     "label": "Prompt",
+     "max_length": 4000,
+     "options": [],
+     "placeholder": "Slow dolly shot, rain, neon reflections",
+     "required": false
+    },
+    {
+     "card": true,
+     "default": "832x480",
+     "id": "size",
+     "kind": "select",
+     "label": "Resolution",
+     "options": [
+      {
+       "label": "Landscape 16:9 (832x480)",
+       "value": "832x480"
+      },
+      {
+       "label": "Portrait 9:16 (480x832)",
+       "value": "480x832"
+      },
+      {
+       "label": "Square (640)",
+       "value": "640x640"
+      },
+      {
+       "label": "Square (704)",
+       "value": "704x704"
+      },
+      {
+       "label": "Small square",
+       "value": "512x512"
+      }
+     ],
+     "required": false
+    },
+    {
+     "card": true,
+     "default": 3,
+     "id": "seconds",
+     "kind": "number",
+     "label": "Duration (s)",
+     "max": 10,
+     "min": 0.5,
+     "options": [],
+     "required": false,
+     "step": 0.5
+    },
+    {
+     "default": 16,
+     "id": "fps",
+     "integer": true,
+     "kind": "number",
+     "label": "Frame rate",
+     "max": 24,
+     "min": 8,
+     "options": [],
+     "required": false,
+     "step": 1
+    },
+    {
+     "default": "",
+     "id": "lora_preset",
+     "kind": "select",
+     "label": "LoRA preset",
+     "options": [
+      {
+       "label": "None",
+       "value": ""
+      }
+     ],
+     "required": false,
+     "source": "lora_presets"
+    },
+    {
+     "default": "",
+     "id": "negative_prompt",
+     "kind": "textarea",
+     "label": "Negative prompt",
+     "max_length": 2000,
+     "options": [],
+     "required": false
+    },
+    {
+     "default": null,
+     "help": "Empty = random. A fixed seed plus unchanged settings reproduces the result.",
+     "id": "seed",
+     "integer": true,
+     "kind": "seed",
+     "label": "Seed",
+     "max": 9007199254740991,
+     "options": [],
+     "required": false
+    },
+    {
+     "default": "",
+     "help": "Library title for the result (optional).",
+     "id": "title",
+     "kind": "text",
+     "label": "Title",
+     "max_length": 200,
+     "options": [],
+     "required": false
+    }
+   ],
+   "inputs": [
+    {
+     "id": "prompt",
+     "label": "Prompt",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "text"
+     ]
+    },
+    {
+     "id": "image",
+     "label": "Start image",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "image"
+     ]
+    },
+    {
+     "id": "lora",
+     "label": "LoRA preset",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "lora"
+     ]
+    }
+   ],
+   "keywords": [
+    "clip",
+    "wan"
+   ],
+   "label": "Generate Video",
+   "output_node": false,
+   "outputs": [
+    {
+     "id": "video",
+     "label": "Video",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "video"
+     ]
+    }
+   ],
+   "service": "video",
+   "type": "video.generate",
+   "unavailable_reason": "",
+   "version": 1
+  },
+  {
+   "aliases": [
+    "gx-video"
+   ],
+   "available": true,
+   "backend": "gx-video t2v (ComfyUI on gx10-02)",
+   "cacheable": true,
+   "category": "video",
+   "description": "Wan 2.2 text to video.",
+   "fields": [
+    {
+     "card": true,
+     "default": "",
+     "fills": "prompt",
+     "help": "Used when nothing is connected to the prompt input. {{name}} inserts a flow variable.",
+     "id": "prompt",
+     "kind": "textarea",
+     "label": "Prompt",
+     "max_length": 4000,
+     "options": [],
+     "required": false
+    },
+    {
+     "card": true,
+     "default": "832x480",
+     "id": "size",
+     "kind": "select",
+     "label": "Resolution",
+     "options": [
+      {
+       "label": "Landscape 16:9 (832x480)",
+       "value": "832x480"
+      },
+      {
+       "label": "Portrait 9:16 (480x832)",
+       "value": "480x832"
+      },
+      {
+       "label": "Square (640)",
+       "value": "640x640"
+      },
+      {
+       "label": "Square (704)",
+       "value": "704x704"
+      },
+      {
+       "label": "Small square",
+       "value": "512x512"
+      }
+     ],
+     "required": false
+    },
+    {
+     "card": true,
+     "default": 3,
+     "id": "seconds",
+     "kind": "number",
+     "label": "Duration (s)",
+     "max": 10,
+     "min": 0.5,
+     "options": [],
+     "required": false,
+     "step": 0.5
+    },
+    {
+     "default": 16,
+     "id": "fps",
+     "integer": true,
+     "kind": "number",
+     "label": "Frame rate",
+     "max": 24,
+     "min": 8,
+     "options": [],
+     "required": false,
+     "step": 1
+    },
+    {
+     "default": "",
+     "id": "lora_preset",
+     "kind": "select",
+     "label": "LoRA preset",
+     "options": [
+      {
+       "label": "None",
+       "value": ""
+      }
+     ],
+     "required": false,
+     "source": "lora_presets"
+    },
+    {
+     "default": "",
+     "id": "negative_prompt",
+     "kind": "textarea",
+     "label": "Negative prompt",
+     "max_length": 2000,
+     "options": [],
+     "required": false
+    },
+    {
+     "default": null,
+     "help": "Empty = random. A fixed seed plus unchanged settings reproduces the result.",
+     "id": "seed",
+     "integer": true,
+     "kind": "seed",
+     "label": "Seed",
+     "max": 9007199254740991,
+     "options": [],
+     "required": false
+    },
+    {
+     "default": "",
+     "help": "Library title for the result (optional).",
+     "id": "title",
+     "kind": "text",
+     "label": "Title",
+     "max_length": 200,
+     "options": [],
+     "required": false
+    }
+   ],
+   "inputs": [
+    {
+     "id": "prompt",
+     "label": "Prompt",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "text"
+     ]
+    },
+    {
+     "id": "lora",
+     "label": "LoRA preset",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "lora"
+     ]
+    }
+   ],
+   "keywords": [],
+   "label": "Text-to-Video",
+   "output_node": false,
+   "outputs": [
+    {
+     "id": "video",
+     "label": "Video",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "video"
+     ]
+    }
+   ],
+   "service": "video",
+   "type": "video.t2v",
+   "unavailable_reason": "",
+   "version": 1
+  },
+  {
+   "aliases": [
+    "gx-video"
+   ],
+   "available": true,
+   "backend": "gx-video i2v (ComfyUI on gx10-02)",
+   "cacheable": true,
+   "category": "video",
+   "description": "Animates a start image (Wan 2.2 i2v).",
+   "fields": [
+    {
+     "card": true,
+     "default": "",
+     "fills": "prompt",
+     "help": "Used when nothing is connected to the prompt input. {{name}} inserts a flow variable.",
+     "id": "prompt",
+     "kind": "textarea",
+     "label": "Motion prompt",
+     "max_length": 4000,
+     "options": [],
+     "placeholder": "the camera slowly pushes in",
+     "required": false
+    },
+    {
+     "card": true,
+     "default": "832x480",
+     "id": "size",
+     "kind": "select",
+     "label": "Resolution",
+     "options": [
+      {
+       "label": "Landscape 16:9 (832x480)",
+       "value": "832x480"
+      },
+      {
+       "label": "Portrait 9:16 (480x832)",
+       "value": "480x832"
+      },
+      {
+       "label": "Square (640)",
+       "value": "640x640"
+      },
+      {
+       "label": "Square (704)",
+       "value": "704x704"
+      },
+      {
+       "label": "Small square",
+       "value": "512x512"
+      }
+     ],
+     "required": false
+    },
+    {
+     "card": true,
+     "default": 3,
+     "id": "seconds",
+     "kind": "number",
+     "label": "Duration (s)",
+     "max": 10,
+     "min": 0.5,
+     "options": [],
+     "required": false,
+     "step": 0.5
+    },
+    {
+     "default": 16,
+     "id": "fps",
+     "integer": true,
+     "kind": "number",
+     "label": "Frame rate",
+     "max": 24,
+     "min": 8,
+     "options": [],
+     "required": false,
+     "step": 1
+    },
+    {
+     "default": null,
+     "help": "Empty = random. A fixed seed plus unchanged settings reproduces the result.",
+     "id": "seed",
+     "integer": true,
+     "kind": "seed",
+     "label": "Seed",
+     "max": 9007199254740991,
+     "options": [],
+     "required": false
+    },
+    {
+     "default": "",
+     "help": "Library title for the result (optional).",
+     "id": "title",
+     "kind": "text",
+     "label": "Title",
+     "max_length": 200,
+     "options": [],
+     "required": false
+    }
+   ],
+   "inputs": [
+    {
+     "id": "image",
+     "label": "Start image",
+     "multiple": false,
+     "required": true,
+     "same_as": null,
+     "types": [
+      "image"
+     ]
+    },
+    {
+     "id": "prompt",
+     "label": "Motion prompt",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "text"
+     ]
+    }
+   ],
+   "keywords": [
+    "animate"
+   ],
+   "label": "Image-to-Video",
+   "output_node": false,
+   "outputs": [
+    {
+     "id": "video",
+     "label": "Video",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "video"
+     ]
+    }
+   ],
+   "service": "video",
+   "type": "video.i2v",
+   "unavailable_reason": "",
+   "version": 1
+  },
+  {
+   "aliases": [
+    "gx-video"
+   ],
+   "available": true,
+   "backend": "FFmpeg last frame -> gx-video i2v -> FFmpeg concatenation",
+   "cacheable": true,
+   "category": "video",
+   "description": "Continues a clip: its last frame starts a new image-to-video shot, then both are joined.",
+   "fields": [
+    {
+     "card": true,
+     "default": "",
+     "fills": "prompt",
+     "help": "Used when nothing is connected to the prompt input. {{name}} inserts a flow variable.",
+     "id": "prompt",
+     "kind": "textarea",
+     "label": "Continuation prompt",
+     "max_length": 4000,
+     "options": [],
+     "required": false
+    },
+    {
+     "card": true,
+     "default": 3,
+     "id": "seconds",
+     "kind": "number",
+     "label": "Added seconds",
+     "max": 10,
+     "min": 0.5,
+     "options": [],
+     "required": false,
+     "step": 0.5
+    },
+    {
+     "default": null,
+     "help": "Empty = random. A fixed seed plus unchanged settings reproduces the result.",
+     "id": "seed",
+     "integer": true,
+     "kind": "seed",
+     "label": "Seed",
+     "max": 9007199254740991,
+     "options": [],
+     "required": false
+    },
+    {
+     "default": "",
+     "help": "Library title for the result (optional).",
+     "id": "title",
+     "kind": "text",
+     "label": "Title",
+     "max_length": 200,
+     "options": [],
+     "required": false
+    }
+   ],
+   "inputs": [
+    {
+     "id": "video",
+     "label": "Video",
+     "multiple": false,
+     "required": true,
+     "same_as": null,
+     "types": [
+      "video"
+     ]
+    },
+    {
+     "id": "prompt",
+     "label": "Continuation",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "text"
+     ]
+    }
+   ],
+   "keywords": [
+    "continue",
+    "longer"
+   ],
+   "label": "Extend Video",
+   "output_node": false,
+   "outputs": [
+    {
+     "id": "video",
+     "label": "Video",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "video"
+     ]
+    }
+   ],
+   "service": "video",
+   "type": "video.extend",
+   "unavailable_reason": "",
+   "version": 1
+  },
+  {
+   "aliases": [],
+   "available": true,
+   "backend": "Media Library",
+   "cacheable": true,
+   "category": "video",
+   "description": "A video from the Library or a new upload.",
+   "fields": [
+    {
+     "asset_type": "video",
+     "card": true,
+     "default": null,
+     "help": "Pick an item from the Library (or upload one).",
+     "id": "asset_id",
+     "kind": "asset",
+     "label": "Video",
+     "options": [],
+     "pattern": "^a_[0-9a-f]{24}$",
+     "required": true
+    }
+   ],
+   "inputs": [],
+   "keywords": [],
+   "label": "Video Input",
+   "output_node": false,
+   "outputs": [
+    {
+     "id": "video",
+     "label": "Video",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "video"
+     ]
+    }
+   ],
+   "service": "local",
+   "type": "video.input",
+   "unavailable_reason": "",
+   "version": 1
+  },
+  {
+   "aliases": [],
+   "available": true,
+   "backend": "Wan LoRA library (gx10-01 database, files on gx10-02)",
+   "cacheable": true,
+   "category": "video",
+   "description": "References a saved Wan 2.2 LoRA preset by id (no model files are copied).",
+   "fields": [
+    {
+     "card": true,
+     "default": "",
+     "id": "preset_id",
+     "kind": "select",
+     "label": "Preset",
+     "options": [
+      {
+       "label": "Choose a preset",
+       "value": ""
+      }
+     ],
+     "required": true,
+     "source": "lora_presets"
+    },
+    {
+     "default": 1.0,
+     "help": "Multiplies the preset's strengths.",
+     "id": "strength_scale",
+     "kind": "number",
+     "label": "Strength scale",
+     "max": 2,
+     "options": [],
+     "required": false,
+     "step": 0.05
+    }
+   ],
+   "inputs": [],
+   "keywords": [
+    "style",
+    "adapter"
+   ],
+   "label": "Wan LoRA",
+   "output_node": false,
+   "outputs": [
+    {
+     "id": "lora",
+     "label": "LoRA preset",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "lora"
+     ]
+    }
+   ],
+   "service": "local",
+   "type": "video.lora",
+   "unavailable_reason": "",
+   "version": 1
+  },
+  {
+   "aliases": [],
+   "available": true,
+   "backend": "Media Library",
+   "cacheable": true,
+   "category": "video",
+   "description": "Marks the final video(s) of the flow.",
+   "fields": [
+    {
+     "default": "",
+     "help": "Library title for the result (optional).",
+     "id": "title",
+     "kind": "text",
+     "label": "Title",
+     "max_length": 200,
+     "options": [],
+     "required": false
+    },
+    {
+     "default": false,
+     "id": "favourite",
+     "kind": "boolean",
+     "label": "Add to favourites",
+     "options": [],
+     "required": false
+    }
+   ],
+   "inputs": [
+    {
+     "id": "video",
+     "label": "Video",
+     "multiple": true,
+     "required": true,
+     "same_as": null,
+     "types": [
+      "video"
+     ]
+    }
+   ],
+   "keywords": [],
+   "label": "Video Output",
+   "output_node": true,
+   "outputs": [],
+   "service": "local",
+   "type": "video.output",
+   "unavailable_reason": "",
+   "version": 1
+  },
+  {
+   "aliases": [
+    "gx-voice"
+   ],
+   "available": true,
+   "backend": "gx-voice (Qwen3-TTS 1.7B on gx10-02)",
+   "cacheable": true,
+   "category": "voice",
+   "description": "Speaks a script with a saved or designed voice.",
+   "fields": [
+    {
+     "card": true,
+     "default": "",
+     "fills": "text",
+     "id": "text",
+     "kind": "textarea",
+     "label": "Script",
+     "max_length": 5000,
+     "options": [],
+     "required": false
+    },
+    {
+     "card": true,
+     "default": "",
+     "fills": "voice",
+     "help": "Used when no voice is connected.",
+     "id": "voice_id",
+     "kind": "select",
+     "label": "Voice",
+     "options": [],
+     "required": true,
+     "source": "voices"
+    },
+    {
+     "card": true,
+     "default": "",
+     "id": "style",
+     "kind": "text",
+     "label": "Style / emotion",
+     "max_length": 300,
+     "options": [],
+     "placeholder": "warm, reassuring, confident",
+     "required": false
+    },
+    {
+     "default": "auto",
+     "id": "language",
+     "kind": "select",
+     "label": "Language",
+     "options": [
+      {
+       "label": "Auto",
+       "value": "auto"
+      },
+      {
+       "label": "English",
+       "value": "english"
+      },
+      {
+       "label": "German",
+       "value": "german"
+      },
+      {
+       "label": "French",
+       "value": "french"
+      },
+      {
+       "label": "Spanish",
+       "value": "spanish"
+      },
+      {
+       "label": "Italian",
+       "value": "italian"
+      },
+      {
+       "label": "Portuguese",
+       "value": "portuguese"
+      },
+      {
+       "label": "Chinese",
+       "value": "chinese"
+      },
+      {
+       "label": "Japanese",
+       "value": "japanese"
+      },
+      {
+       "label": "Korean",
+       "value": "korean"
+      },
+      {
+       "label": "Russian",
+       "value": "russian"
+      }
+     ],
+     "required": false
+    },
+    {
+     "default": "",
+     "help": "Library title for the result (optional).",
+     "id": "title",
+     "kind": "text",
+     "label": "Title",
+     "max_length": 200,
+     "options": [],
+     "required": false
+    }
+   ],
+   "inputs": [
+    {
+     "id": "text",
+     "label": "Script",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "text"
+     ]
+    },
+    {
+     "id": "voice",
+     "label": "Voice",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "voice"
+     ]
+    }
+   ],
+   "keywords": [
+    "tts",
+    "narration"
+   ],
+   "label": "Text-to-Speech",
+   "output_node": false,
+   "outputs": [
+    {
+     "id": "audio",
+     "label": "Speech",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "audio"
+     ]
+    }
+   ],
+   "service": "voice",
+   "type": "voice.tts",
+   "unavailable_reason": "",
+   "version": 1
+  },
+  {
+   "aliases": [
+    "gx-voice"
+   ],
+   "available": true,
+   "backend": "gx-voice VoiceDesign (Qwen3-TTS 1.7B)",
+   "cacheable": true,
+   "category": "voice",
+   "description": "Creates a new voice from a description.",
+   "fields": [
+    {
+     "card": true,
+     "default": "",
+     "id": "description",
+     "kind": "textarea",
+     "label": "Voice description",
+     "max_length": 1000,
+     "options": [],
+     "placeholder": "A trustworthy female voice in her thirties, calm and clear",
+     "required": true
+    },
+    {
+     "default": "Hello, this is how I sound.",
+     "id": "sample_text",
+     "kind": "textarea",
+     "label": "Preview text",
+     "max_length": 500,
+     "options": [],
+     "required": false
+    },
+    {
+     "card": true,
+     "default": "",
+     "id": "name",
+     "kind": "text",
+     "label": "Voice name",
+     "max_length": 80,
+     "options": [],
+     "required": false
+    },
+    {
+     "default": "auto",
+     "id": "language",
+     "kind": "select",
+     "label": "Language",
+     "options": [
+      {
+       "label": "Auto",
+       "value": "auto"
+      },
+      {
+       "label": "English",
+       "value": "english"
+      },
+      {
+       "label": "German",
+       "value": "german"
+      },
+      {
+       "label": "French",
+       "value": "french"
+      },
+      {
+       "label": "Spanish",
+       "value": "spanish"
+      },
+      {
+       "label": "Italian",
+       "value": "italian"
+      },
+      {
+       "label": "Portuguese",
+       "value": "portuguese"
+      },
+      {
+       "label": "Chinese",
+       "value": "chinese"
+      },
+      {
+       "label": "Japanese",
+       "value": "japanese"
+      },
+      {
+       "label": "Korean",
+       "value": "korean"
+      },
+      {
+       "label": "Russian",
+       "value": "russian"
+      }
+     ],
+     "required": false
+    }
+   ],
+   "inputs": [],
+   "keywords": [],
+   "label": "Voice Design",
+   "output_node": false,
+   "outputs": [
+    {
+     "id": "voice",
+     "label": "Voice",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "voice"
+     ]
+    },
+    {
+     "id": "preview",
+     "label": "Preview",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "audio"
+     ]
+    }
+   ],
+   "service": "voice",
+   "type": "voice.design",
+   "unavailable_reason": "",
+   "version": 1
+  },
+  {
+   "aliases": [
+    "gx-voice"
+   ],
+   "available": true,
+   "backend": "gx-voice Base (Qwen3-TTS 1.7B voice cloning)",
+   "cacheable": true,
+   "category": "voice",
+   "description": "Creates a voice from a reference recording.",
+   "fields": [
+    {
+     "card": true,
+     "default": "",
+     "id": "name",
+     "kind": "text",
+     "label": "Voice name",
+     "max_length": 80,
+     "options": [],
+     "required": true
+    },
+    {
+     "default": "",
+     "id": "reference_text",
+     "kind": "textarea",
+     "label": "Transcript of the reference",
+     "max_length": 2000,
+     "options": [],
+     "required": false
+    },
+    {
+     "card": true,
+     "default": false,
+     "id": "consent",
+     "kind": "boolean",
+     "label": "I have the speaker's consent",
+     "options": [],
+     "required": false
+    }
+   ],
+   "inputs": [
+    {
+     "id": "reference",
+     "label": "Reference audio",
+     "multiple": false,
+     "required": true,
+     "same_as": null,
+     "types": [
+      "audio"
+     ]
+    }
+   ],
+   "keywords": [],
+   "label": "Voice Clone",
+   "output_node": false,
+   "outputs": [
+    {
+     "id": "voice",
+     "label": "Voice",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "voice"
+     ]
+    }
+   ],
+   "service": "voice",
+   "type": "voice.clone",
+   "unavailable_reason": "",
+   "version": 1
+  },
+  {
+   "aliases": [],
+   "available": true,
+   "backend": "gx-voice voice library",
+   "cacheable": true,
+   "category": "voice",
+   "description": "A voice from the Voice library.",
+   "fields": [
+    {
+     "card": true,
+     "default": "",
+     "id": "voice_id",
+     "kind": "select",
+     "label": "Voice",
+     "options": [
+      {
+       "label": "Choose a voice",
+       "value": ""
+      }
+     ],
+     "required": true,
+     "source": "voices"
+    }
+   ],
+   "inputs": [],
+   "keywords": [],
+   "label": "Saved Voice",
+   "output_node": false,
+   "outputs": [
+    {
+     "id": "voice",
+     "label": "Voice",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "voice"
+     ]
+    }
+   ],
+   "service": "local",
+   "type": "voice.saved",
+   "unavailable_reason": "",
+   "version": 1
+  },
+  {
+   "aliases": [
+    "gx-voice"
+   ],
+   "available": true,
+   "backend": "gx-voice dialogue (one segment per line)",
+   "cacheable": true,
+   "category": "voice",
+   "description": "Multi-speaker speech. Script lines look like 'NAME: text'; each name maps to a voice.",
+   "fields": [
+    {
+     "card": true,
+     "default": "",
+     "fills": "script",
+     "id": "script",
+     "kind": "textarea",
+     "label": "Script",
+     "max_length": 8000,
+     "options": [],
+     "placeholder": "ANNA: Hi!\nBEN: Hello Anna.",
+     "required": false
+    },
+    {
+     "default": [],
+     "help": "Speaker name -> saved voice id.",
+     "id": "speakers",
+     "kind": "keyvalue",
+     "label": "Speakers",
+     "max_length": 8,
+     "options": [],
+     "required": false,
+     "source": "voices"
+    },
+    {
+     "default": 350,
+     "id": "pause_ms",
+     "integer": true,
+     "kind": "number",
+     "label": "Pause between lines (ms)",
+     "max": 5000,
+     "options": [],
+     "required": false,
+     "step": 1
+    },
+    {
+     "default": "auto",
+     "id": "language",
+     "kind": "select",
+     "label": "Language",
+     "options": [
+      {
+       "label": "Auto",
+       "value": "auto"
+      },
+      {
+       "label": "English",
+       "value": "english"
+      },
+      {
+       "label": "German",
+       "value": "german"
+      },
+      {
+       "label": "French",
+       "value": "french"
+      },
+      {
+       "label": "Spanish",
+       "value": "spanish"
+      },
+      {
+       "label": "Italian",
+       "value": "italian"
+      },
+      {
+       "label": "Portuguese",
+       "value": "portuguese"
+      },
+      {
+       "label": "Chinese",
+       "value": "chinese"
+      },
+      {
+       "label": "Japanese",
+       "value": "japanese"
+      },
+      {
+       "label": "Korean",
+       "value": "korean"
+      },
+      {
+       "label": "Russian",
+       "value": "russian"
+      }
+     ],
+     "required": false
+    },
+    {
+     "default": "",
+     "help": "Library title for the result (optional).",
+     "id": "title",
+     "kind": "text",
+     "label": "Title",
+     "max_length": 200,
+     "options": [],
+     "required": false
+    }
+   ],
+   "inputs": [
+    {
+     "id": "script",
+     "label": "Script",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "text"
+     ]
+    }
+   ],
+   "keywords": [
+    "conversation",
+    "multi speaker"
+   ],
+   "label": "Dialogue",
+   "output_node": false,
+   "outputs": [
+    {
+     "id": "audio",
+     "label": "Dialogue",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "audio"
+     ]
+    }
+   ],
+   "service": "voice",
+   "type": "voice.dialogue",
+   "unavailable_reason": "",
+   "version": 1
+  },
+  {
+   "aliases": [],
+   "available": true,
+   "backend": "Media Library",
+   "cacheable": true,
+   "category": "voice",
+   "description": "Marks the final speech of the flow.",
+   "fields": [
+    {
+     "default": "",
+     "help": "Library title for the result (optional).",
+     "id": "title",
+     "kind": "text",
+     "label": "Title",
+     "max_length": 200,
+     "options": [],
+     "required": false
+    },
+    {
+     "default": false,
+     "id": "favourite",
+     "kind": "boolean",
+     "label": "Add to favourites",
+     "options": [],
+     "required": false
+    }
+   ],
+   "inputs": [
+    {
+     "id": "audio",
+     "label": "Audio",
+     "multiple": true,
+     "required": true,
+     "same_as": null,
+     "types": [
+      "audio"
+     ]
+    }
+   ],
+   "keywords": [],
+   "label": "Voice Output",
+   "output_node": true,
+   "outputs": [],
+   "service": "local",
+   "type": "voice.output",
+   "unavailable_reason": "",
+   "version": 1
+  },
+  {
+   "aliases": [
+    "gx-music"
+   ],
+   "available": true,
+   "backend": "gx-music (ACE-Step 1.5 XL on gx10-02)",
+   "cacheable": true,
+   "category": "music",
+   "description": "A full song or instrumental with gx-music.",
+   "fields": [
+    {
+     "card": true,
+     "default": "",
+     "fills": "description",
+     "id": "description",
+     "kind": "textarea",
+     "label": "Song description",
+     "max_length": 2000,
+     "options": [],
+     "placeholder": "subtle, hopeful corporate background music",
+     "required": false
+    },
+    {
+     "card": true,
+     "default": [],
+     "id": "style_tags",
+     "kind": "tags",
+     "label": "Style tags",
+     "max_length": 12,
+     "options": [],
+     "required": false
+    },
+    {
+     "default": "",
+     "id": "style_prompt",
+     "kind": "textarea",
+     "label": "Style prompt",
+     "max_length": 1000,
+     "options": [],
+     "required": false
+    },
+    {
+     "default": "",
+     "fills": "lyrics",
+     "id": "lyrics",
+     "kind": "textarea",
+     "label": "Lyrics",
+     "max_length": 6000,
+     "options": [],
+     "required": false
+    },
+    {
+     "card": true,
+     "default": 30,
+     "id": "duration",
+     "integer": true,
+     "kind": "number",
+     "label": "Duration (s)",
+     "max": 240,
+     "min": 10,
+     "options": [],
+     "required": false,
+     "step": 1
+    },
+    {
+     "card": true,
+     "default": true,
+     "id": "instrumental",
+     "kind": "boolean",
+     "label": "Instrumental",
+     "options": [],
+     "required": false
+    },
+    {
+     "default": "en",
+     "id": "vocal_language",
+     "kind": "select",
+     "label": "Vocal language",
+     "options": [
+      {
+       "label": "English",
+       "value": "en"
+      },
+      {
+       "label": "German",
+       "value": "de"
+      },
+      {
+       "label": "French",
+       "value": "fr"
+      },
+      {
+       "label": "Spanish",
+       "value": "es"
+      },
+      {
+       "label": "Italian",
+       "value": "it"
+      },
+      {
+       "label": "Portuguese",
+       "value": "pt"
+      },
+      {
+       "label": "Chinese",
+       "value": "zh"
+      },
+      {
+       "label": "Japanese",
+       "value": "ja"
+      },
+      {
+       "label": "Korean",
+       "value": "ko"
+      },
+      {
+       "label": "Russian",
+       "value": "ru"
+      }
+     ],
+     "required": false
+    },
+    {
+     "default": null,
+     "id": "bpm",
+     "integer": true,
+     "kind": "number",
+     "label": "BPM",
+     "max": 220,
+     "min": 40,
+     "options": [],
+     "required": false,
+     "step": 1
+    },
+    {
+     "default": null,
+     "help": "Empty = random. A fixed seed plus unchanged settings reproduces the result.",
+     "id": "seed",
+     "integer": true,
+     "kind": "seed",
+     "label": "Seed",
+     "max": 9007199254740991,
+     "options": [],
+     "required": false
+    },
+    {
+     "default": "",
+     "help": "Library title for the result (optional).",
+     "id": "title",
+     "kind": "text",
+     "label": "Title",
+     "max_length": 200,
+     "options": [],
+     "required": false
+    }
+   ],
+   "inputs": [
+    {
+     "id": "description",
+     "label": "Description",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "text"
+     ]
+    },
+    {
+     "id": "lyrics",
+     "label": "Lyrics",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "text"
+     ]
+    }
+   ],
+   "keywords": [
+    "song",
+    "soundtrack"
+   ],
+   "label": "Generate Music",
+   "output_node": false,
+   "outputs": [
+    {
+     "id": "audio",
+     "label": "Music",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "audio"
+     ]
+    }
+   ],
+   "service": "music",
+   "type": "music.generate",
+   "unavailable_reason": "",
+   "version": 1
+  },
+  {
+   "aliases": [
+    "gx-music"
+   ],
+   "available": true,
+   "backend": "gx-music (ACE-Step 1.5 XL)",
+   "cacheable": true,
+   "category": "music",
+   "description": "Music from a connected text prompt.",
+   "fields": [
+    {
+     "card": true,
+     "default": [],
+     "id": "style_tags",
+     "kind": "tags",
+     "label": "Style tags",
+     "max_length": 12,
+     "options": [],
+     "required": false
+    },
+    {
+     "card": true,
+     "default": 30,
+     "id": "duration",
+     "integer": true,
+     "kind": "number",
+     "label": "Duration (s)",
+     "max": 240,
+     "min": 10,
+     "options": [],
+     "required": false,
+     "step": 1
+    },
+    {
+     "card": true,
+     "default": true,
+     "id": "instrumental",
+     "kind": "boolean",
+     "label": "Instrumental",
+     "options": [],
+     "required": false
+    },
+    {
+     "default": null,
+     "help": "Empty = random. A fixed seed plus unchanged settings reproduces the result.",
+     "id": "seed",
+     "integer": true,
+     "kind": "seed",
+     "label": "Seed",
+     "max": 9007199254740991,
+     "options": [],
+     "required": false
+    },
+    {
+     "default": "",
+     "help": "Library title for the result (optional).",
+     "id": "title",
+     "kind": "text",
+     "label": "Title",
+     "max_length": 200,
+     "options": [],
+     "required": false
+    }
+   ],
+   "inputs": [
+    {
+     "id": "prompt",
+     "label": "Prompt",
+     "multiple": false,
+     "required": true,
+     "same_as": null,
+     "types": [
+      "text"
+     ]
+    }
+   ],
+   "keywords": [],
+   "label": "Music from Prompt",
+   "output_node": false,
+   "outputs": [
+    {
+     "id": "audio",
+     "label": "Music",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "audio"
+     ]
+    }
+   ],
+   "service": "music",
+   "type": "music.prompt",
+   "unavailable_reason": "",
+   "version": 1
+  },
+  {
+   "aliases": [
+    "gx-music"
+   ],
+   "available": true,
+   "backend": "gx-music (ACE-Step 1.5 XL)",
+   "cacheable": true,
+   "category": "music",
+   "description": "A sung song from connected lyrics.",
+   "fields": [
+    {
+     "card": true,
+     "default": "",
+     "id": "description",
+     "kind": "textarea",
+     "label": "Song description",
+     "max_length": 2000,
+     "options": [],
+     "required": false
+    },
+    {
+     "default": [],
+     "id": "style_tags",
+     "kind": "tags",
+     "label": "Style tags",
+     "max_length": 12,
+     "options": [],
+     "required": false
+    },
+    {
+     "card": true,
+     "default": 60,
+     "id": "duration",
+     "integer": true,
+     "kind": "number",
+     "label": "Duration (s)",
+     "max": 240,
+     "min": 10,
+     "options": [],
+     "required": false,
+     "step": 1
+    },
+    {
+     "default": "en",
+     "id": "vocal_language",
+     "kind": "select",
+     "label": "Vocal language",
+     "options": [
+      {
+       "label": "English",
+       "value": "en"
+      },
+      {
+       "label": "German",
+       "value": "de"
+      },
+      {
+       "label": "French",
+       "value": "fr"
+      },
+      {
+       "label": "Spanish",
+       "value": "es"
+      },
+      {
+       "label": "Italian",
+       "value": "it"
+      },
+      {
+       "label": "Portuguese",
+       "value": "pt"
+      },
+      {
+       "label": "Chinese",
+       "value": "zh"
+      },
+      {
+       "label": "Japanese",
+       "value": "ja"
+      },
+      {
+       "label": "Korean",
+       "value": "ko"
+      },
+      {
+       "label": "Russian",
+       "value": "ru"
+      }
+     ],
+     "required": false
+    },
+    {
+     "default": null,
+     "help": "Empty = random. A fixed seed plus unchanged settings reproduces the result.",
+     "id": "seed",
+     "integer": true,
+     "kind": "seed",
+     "label": "Seed",
+     "max": 9007199254740991,
+     "options": [],
+     "required": false
+    },
+    {
+     "default": "",
+     "help": "Library title for the result (optional).",
+     "id": "title",
+     "kind": "text",
+     "label": "Title",
+     "max_length": 200,
+     "options": [],
+     "required": false
+    }
+   ],
+   "inputs": [
+    {
+     "id": "lyrics",
+     "label": "Lyrics",
+     "multiple": false,
+     "required": true,
+     "same_as": null,
+     "types": [
+      "text"
+     ]
+    }
+   ],
+   "keywords": [
+    "sing",
+    "vocals"
+   ],
+   "label": "Music from Lyrics",
+   "output_node": false,
+   "outputs": [
+    {
+     "id": "audio",
+     "label": "Song",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "audio"
+     ]
+    }
+   ],
+   "service": "music",
+   "type": "music.lyrics",
+   "unavailable_reason": "",
+   "version": 1
+  },
+  {
+   "aliases": [
+    "gx-music"
+   ],
+   "available": true,
+   "backend": "gx-music (ACE-Step 1.5 XL, instrumental)",
+   "cacheable": true,
+   "category": "music",
+   "description": "Instrumental music without vocals.",
+   "fields": [
+    {
+     "card": true,
+     "default": "",
+     "fills": "description",
+     "id": "description",
+     "kind": "textarea",
+     "label": "Description",
+     "max_length": 2000,
+     "options": [],
+     "required": false
+    },
+    {
+     "default": [],
+     "id": "style_tags",
+     "kind": "tags",
+     "label": "Style tags",
+     "max_length": 12,
+     "options": [],
+     "required": false
+    },
+    {
+     "card": true,
+     "default": 30,
+     "id": "duration",
+     "integer": true,
+     "kind": "number",
+     "label": "Duration (s)",
+     "max": 240,
+     "min": 10,
+     "options": [],
+     "required": false,
+     "step": 1
+    },
+    {
+     "default": null,
+     "help": "Empty = random. A fixed seed plus unchanged settings reproduces the result.",
+     "id": "seed",
+     "integer": true,
+     "kind": "seed",
+     "label": "Seed",
+     "max": 9007199254740991,
+     "options": [],
+     "required": false
+    },
+    {
+     "default": "",
+     "help": "Library title for the result (optional).",
+     "id": "title",
+     "kind": "text",
+     "label": "Title",
+     "max_length": 200,
+     "options": [],
+     "required": false
+    }
+   ],
+   "inputs": [
+    {
+     "id": "description",
+     "label": "Description",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "text"
+     ]
+    }
+   ],
+   "keywords": [
+    "background"
+   ],
+   "label": "Instrumental",
+   "output_node": false,
+   "outputs": [
+    {
+     "id": "audio",
+     "label": "Music",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "audio"
+     ]
+    }
+   ],
+   "service": "music",
+   "type": "music.instrumental",
+   "unavailable_reason": "",
+   "version": 1
+  },
+  {
+   "aliases": [],
+   "available": true,
+   "backend": "Media Library",
+   "cacheable": true,
+   "category": "music",
+   "description": "Marks the final music of the flow.",
+   "fields": [
+    {
+     "default": "",
+     "help": "Library title for the result (optional).",
+     "id": "title",
+     "kind": "text",
+     "label": "Title",
+     "max_length": 200,
+     "options": [],
+     "required": false
+    },
+    {
+     "default": false,
+     "id": "favourite",
+     "kind": "boolean",
+     "label": "Add to favourites",
+     "options": [],
+     "required": false
+    }
+   ],
+   "inputs": [
+    {
+     "id": "audio",
+     "label": "Audio",
+     "multiple": true,
+     "required": true,
+     "same_as": null,
+     "types": [
+      "audio"
+     ]
+    }
+   ],
+   "keywords": [],
+   "label": "Music Output",
+   "output_node": true,
+   "outputs": [],
+   "service": "local",
+   "type": "music.output",
+   "unavailable_reason": "",
+   "version": 1
+  },
+  {
+   "aliases": [],
+   "available": false,
+   "backend": "none installed",
+   "cacheable": true,
+   "category": "sound",
+   "description": "Sound effects from a description.",
+   "fields": [
+    {
+     "card": true,
+     "default": "",
+     "id": "description",
+     "kind": "textarea",
+     "label": "Description",
+     "max_length": 500,
+     "options": [],
+     "required": false
+    }
+   ],
+   "inputs": [],
+   "keywords": [
+    "foley"
+   ],
+   "label": "Generate SFX",
+   "output_node": false,
+   "outputs": [
+    {
+     "id": "audio",
+     "label": "Sound",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "audio"
+     ]
+    }
+   ],
+   "service": "music",
+   "type": "sound.sfx",
+   "unavailable_reason": "No sound-effect generation model is installed on the cluster. ACE-Step is a music model and does not produce reliable one-shot effects, so this node is not faked. Use Audio Upload with a recorded effect instead.",
+   "version": 1
+  },
+  {
+   "aliases": [
+    "gx-music"
+   ],
+   "available": true,
+   "backend": "gx-music (ACE-Step 1.5 XL, instrumental ambient prompt)",
+   "cacheable": true,
+   "category": "sound",
+   "description": "Ambient background texture rendered by the music model as an instrumental (ACE-Step). It is music-like ambience, not field-recorded sound.",
+   "fields": [
+    {
+     "card": true,
+     "default": "calm airy ambient pad, soft texture, no drums",
+     "id": "description",
+     "kind": "textarea",
+     "label": "Ambience",
+     "max_length": 1000,
+     "options": [],
+     "required": false
+    },
+    {
+     "card": true,
+     "default": 30,
+     "id": "duration",
+     "integer": true,
+     "kind": "number",
+     "label": "Duration (s)",
+     "max": 240,
+     "min": 10,
+     "options": [],
+     "required": false,
+     "step": 1
+    },
+    {
+     "default": null,
+     "help": "Empty = random. A fixed seed plus unchanged settings reproduces the result.",
+     "id": "seed",
+     "integer": true,
+     "kind": "seed",
+     "label": "Seed",
+     "max": 9007199254740991,
+     "options": [],
+     "required": false
+    },
+    {
+     "default": "",
+     "help": "Library title for the result (optional).",
+     "id": "title",
+     "kind": "text",
+     "label": "Title",
+     "max_length": 200,
+     "options": [],
+     "required": false
+    }
+   ],
+   "inputs": [],
+   "keywords": [
+    "atmosphere",
+    "pad",
+    "room tone"
+   ],
+   "label": "Ambient Sound",
+   "output_node": false,
+   "outputs": [
+    {
+     "id": "audio",
+     "label": "Ambience",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "audio"
+     ]
+    }
+   ],
+   "service": "music",
+   "type": "sound.ambient",
+   "unavailable_reason": "",
+   "version": 1
+  },
+  {
+   "aliases": [],
+   "available": true,
+   "backend": "Media Library",
+   "cacheable": true,
+   "category": "sound",
+   "description": "Audio from the Library or a new upload.",
+   "fields": [
+    {
+     "asset_type": "audio",
+     "card": true,
+     "default": null,
+     "help": "Pick an item from the Library (or upload one).",
+     "id": "asset_id",
+     "kind": "asset",
+     "label": "Audio",
+     "options": [],
+     "pattern": "^a_[0-9a-f]{24}$",
+     "required": true
+    }
+   ],
+   "inputs": [],
+   "keywords": [
+    "input",
+    "sfx file"
+   ],
+   "label": "Audio Upload",
+   "output_node": false,
+   "outputs": [
+    {
+     "id": "audio",
+     "label": "Audio",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "audio"
+     ]
+    }
+   ],
+   "service": "local",
+   "type": "sound.upload",
+   "unavailable_reason": "",
+   "version": 1
+  },
+  {
+   "aliases": [],
+   "available": true,
+   "backend": "Media Library",
+   "cacheable": true,
+   "category": "sound",
+   "description": "Marks the final audio of the flow.",
+   "fields": [
+    {
+     "default": "",
+     "help": "Library title for the result (optional).",
+     "id": "title",
+     "kind": "text",
+     "label": "Title",
+     "max_length": 200,
+     "options": [],
+     "required": false
+    },
+    {
+     "default": false,
+     "id": "favourite",
+     "kind": "boolean",
+     "label": "Add to favourites",
+     "options": [],
+     "required": false
+    }
+   ],
+   "inputs": [
+    {
+     "id": "audio",
+     "label": "Audio",
+     "multiple": true,
+     "required": true,
+     "same_as": null,
+     "types": [
+      "audio"
+     ]
+    }
+   ],
+   "keywords": [],
+   "label": "Audio Output",
+   "output_node": true,
+   "outputs": [],
+   "service": "local",
+   "type": "sound.output",
+   "unavailable_reason": "",
+   "version": 1
+  },
+  {
+   "aliases": [],
+   "available": true,
+   "backend": "FFmpeg on gx10-01",
+   "cacheable": true,
+   "category": "compose",
+   "description": "Plays audio clips one after another.",
+   "fields": [
+    {
+     "card": true,
+     "default": 0,
+     "id": "gap",
+     "kind": "number",
+     "label": "Gap (s)",
+     "max": 10,
+     "options": [],
+     "required": false,
+     "step": 0.1
+    },
+    {
+     "default": "",
+     "help": "Library title for the result (optional).",
+     "id": "title",
+     "kind": "text",
+     "label": "Title",
+     "max_length": 200,
+     "options": [],
+     "required": false
+    }
+   ],
+   "inputs": [
+    {
+     "id": "audio",
+     "label": "Clips",
+     "multiple": true,
+     "required": true,
+     "same_as": null,
+     "types": [
+      "audio"
+     ]
+    }
+   ],
+   "keywords": [
+    "join",
+    "sequence"
+   ],
+   "label": "Merge Audio",
+   "output_node": false,
+   "outputs": [
+    {
+     "id": "audio",
+     "label": "Audio",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "audio"
+     ]
+    }
+   ],
+   "service": "ffmpeg",
+   "type": "compose.merge_audio",
+   "unavailable_reason": "",
+   "version": 1
+  },
+  {
+   "aliases": [],
+   "available": true,
+   "backend": "FFmpeg amix on gx10-01",
+   "cacheable": true,
+   "category": "compose",
+   "description": "Mixes audio clips on top of each other.",
+   "fields": [
+    {
+     "card": true,
+     "default": "longest",
+     "id": "length",
+     "kind": "select",
+     "label": "Length",
+     "options": [
+      {
+       "label": "Longest track",
+       "value": "longest"
+      },
+      {
+       "label": "First track",
+       "value": "first"
+      },
+      {
+       "label": "Shortest track",
+       "value": "shortest"
+      }
+     ],
+     "required": false
+    },
+    {
+     "default": -8,
+     "id": "volume_db",
+     "kind": "number",
+     "label": "Volume of added tracks (dB)",
+     "max": 12,
+     "min": -40,
+     "options": [],
+     "required": false,
+     "step": 0.5
+    },
+    {
+     "default": "",
+     "help": "Library title for the result (optional).",
+     "id": "title",
+     "kind": "text",
+     "label": "Title",
+     "max_length": 200,
+     "options": [],
+     "required": false
+    }
+   ],
+   "inputs": [
+    {
+     "id": "audio",
+     "label": "Tracks",
+     "multiple": true,
+     "required": true,
+     "same_as": null,
+     "types": [
+      "audio"
+     ]
+    }
+   ],
+   "keywords": [
+    "layer"
+   ],
+   "label": "Mix Audio",
+   "output_node": false,
+   "outputs": [
+    {
+     "id": "audio",
+     "label": "Mix",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "audio"
+     ]
+    }
+   ],
+   "service": "ffmpeg",
+   "type": "compose.mix_audio",
+   "unavailable_reason": "",
+   "version": 1
+  },
+  {
+   "aliases": [],
+   "available": true,
+   "backend": "FFmpeg on gx10-01",
+   "cacheable": true,
+   "category": "compose",
+   "description": "Puts a voice-over on a video.",
+   "fields": [
+    {
+     "card": true,
+     "default": 0,
+     "id": "volume_db",
+     "kind": "number",
+     "label": "Voice level (dB)",
+     "max": 12,
+     "min": -40,
+     "options": [],
+     "required": false,
+     "step": 0.5
+    },
+    {
+     "default": 0,
+     "id": "offset",
+     "kind": "number",
+     "label": "Start at (s)",
+     "max": 600,
+     "options": [],
+     "required": false,
+     "step": 0.1
+    },
+    {
+     "default": true,
+     "id": "keep_original",
+     "kind": "boolean",
+     "label": "Keep the video's own audio",
+     "options": [],
+     "required": false
+    },
+    {
+     "card": true,
+     "default": "longest",
+     "id": "fit",
+     "kind": "select",
+     "label": "Length",
+     "options": [
+      {
+       "label": "Keep video length",
+       "value": "video"
+      },
+      {
+       "label": "Extend to the voice (freeze last frame)",
+       "value": "longest"
+      }
+     ],
+     "required": false
+    },
+    {
+     "default": "",
+     "help": "Library title for the result (optional).",
+     "id": "title",
+     "kind": "text",
+     "label": "Title",
+     "max_length": 200,
+     "options": [],
+     "required": false
+    }
+   ],
+   "inputs": [
+    {
+     "id": "video",
+     "label": "Video",
+     "multiple": false,
+     "required": true,
+     "same_as": null,
+     "types": [
+      "video"
+     ]
+    },
+    {
+     "id": "audio",
+     "label": "Voice",
+     "multiple": false,
+     "required": true,
+     "same_as": null,
+     "types": [
+      "audio"
+     ]
+    }
+   ],
+   "keywords": [
+    "voiceover",
+    "narration"
+   ],
+   "label": "Add Voice to Video",
+   "output_node": false,
+   "outputs": [
+    {
+     "id": "video",
+     "label": "Video",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "video"
+     ]
+    }
+   ],
+   "service": "ffmpeg",
+   "type": "compose.add_voice",
+   "unavailable_reason": "",
+   "version": 1
+  },
+  {
+   "aliases": [],
+   "available": true,
+   "backend": "FFmpeg on gx10-01",
+   "cacheable": true,
+   "category": "compose",
+   "description": "A music bed under a video.",
+   "fields": [
+    {
+     "card": true,
+     "default": -14,
+     "id": "volume_db",
+     "kind": "number",
+     "label": "Music level (dB)",
+     "max": 12,
+     "min": -40,
+     "options": [],
+     "required": false,
+     "step": 0.5
+    },
+    {
+     "default": 1.5,
+     "id": "fade_out",
+     "kind": "number",
+     "label": "Fade out (s)",
+     "max": 30,
+     "options": [],
+     "required": false,
+     "step": 0.1
+    },
+    {
+     "default": true,
+     "id": "loop",
+     "kind": "boolean",
+     "label": "Loop music to the video length",
+     "options": [],
+     "required": false
+    },
+    {
+     "default": true,
+     "id": "keep_original",
+     "kind": "boolean",
+     "label": "Keep the video's own audio",
+     "options": [],
+     "required": false
+    },
+    {
+     "default": "",
+     "help": "Library title for the result (optional).",
+     "id": "title",
+     "kind": "text",
+     "label": "Title",
+     "max_length": 200,
+     "options": [],
+     "required": false
+    }
+   ],
+   "inputs": [
+    {
+     "id": "video",
+     "label": "Video",
+     "multiple": false,
+     "required": true,
+     "same_as": null,
+     "types": [
+      "video"
+     ]
+    },
+    {
+     "id": "audio",
+     "label": "Music",
+     "multiple": false,
+     "required": true,
+     "same_as": null,
+     "types": [
+      "audio"
+     ]
+    }
+   ],
+   "keywords": [
+    "soundtrack",
+    "bed"
+   ],
+   "label": "Add Music to Video",
+   "output_node": false,
+   "outputs": [
+    {
+     "id": "video",
+     "label": "Video",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "video"
+     ]
+    }
+   ],
+   "service": "ffmpeg",
+   "type": "compose.add_music",
+   "unavailable_reason": "",
+   "version": 1
+  },
+  {
+   "aliases": [],
+   "available": true,
+   "backend": "FFmpeg on gx10-01",
+   "cacheable": true,
+   "category": "compose",
+   "description": "Places a sound effect at a time in a video.",
+   "fields": [
+    {
+     "card": true,
+     "default": 0,
+     "id": "offset",
+     "kind": "number",
+     "label": "At (s)",
+     "max": 600,
+     "options": [],
+     "required": false,
+     "step": 0.1
+    },
+    {
+     "card": true,
+     "default": 0,
+     "id": "volume_db",
+     "kind": "number",
+     "label": "Level (dB)",
+     "max": 12,
+     "min": -40,
+     "options": [],
+     "required": false,
+     "step": 0.5
+    },
+    {
+     "default": "",
+     "help": "Library title for the result (optional).",
+     "id": "title",
+     "kind": "text",
+     "label": "Title",
+     "max_length": 200,
+     "options": [],
+     "required": false
+    }
+   ],
+   "inputs": [
+    {
+     "id": "video",
+     "label": "Video",
+     "multiple": false,
+     "required": true,
+     "same_as": null,
+     "types": [
+      "video"
+     ]
+    },
+    {
+     "id": "audio",
+     "label": "Effect",
+     "multiple": false,
+     "required": true,
+     "same_as": null,
+     "types": [
+      "audio"
+     ]
+    }
+   ],
+   "keywords": [],
+   "label": "Add SFX to Video",
+   "output_node": false,
+   "outputs": [
+    {
+     "id": "video",
+     "label": "Video",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "video"
+     ]
+    }
+   ],
+   "service": "ffmpeg",
+   "type": "compose.add_sfx",
+   "unavailable_reason": "",
+   "version": 1
+  },
+  {
+   "aliases": [],
+   "available": true,
+   "backend": "FFmpeg on gx10-01",
+   "cacheable": true,
+   "category": "compose",
+   "description": "Keeps a time range of a video or audio clip.",
+   "fields": [
+    {
+     "card": true,
+     "default": 0,
+     "id": "start",
+     "kind": "number",
+     "label": "Start (s)",
+     "max": 3600,
+     "options": [],
+     "required": false,
+     "step": 0.1
+    },
+    {
+     "card": true,
+     "default": null,
+     "help": "Empty = to the end.",
+     "id": "end",
+     "kind": "number",
+     "label": "End (s)",
+     "max": 3600,
+     "min": 0.1,
+     "options": [],
+     "required": false,
+     "step": 0.1
+    },
+    {
+     "default": "",
+     "help": "Library title for the result (optional).",
+     "id": "title",
+     "kind": "text",
+     "label": "Title",
+     "max_length": 200,
+     "options": [],
+     "required": false
+    }
+   ],
+   "inputs": [
+    {
+     "id": "media",
+     "label": "Clip",
+     "multiple": false,
+     "required": true,
+     "same_as": null,
+     "types": [
+      "video",
+      "audio"
+     ]
+    }
+   ],
+   "keywords": [
+    "cut"
+   ],
+   "label": "Trim",
+   "output_node": false,
+   "outputs": [
+    {
+     "id": "media",
+     "label": "Clip",
+     "multiple": false,
+     "required": false,
+     "same_as": "media",
+     "types": [
+      "any"
+     ]
+    }
+   ],
+   "service": "ffmpeg",
+   "type": "compose.trim",
+   "unavailable_reason": "",
+   "version": 1
+  },
+  {
+   "aliases": [],
+   "available": true,
+   "backend": "FFmpeg on gx10-01",
+   "cacheable": true,
+   "category": "compose",
+   "description": "Fades a clip in from black / silence.",
+   "fields": [
+    {
+     "card": true,
+     "default": 1.0,
+     "id": "duration",
+     "kind": "number",
+     "label": "Fade length (s)",
+     "max": 30,
+     "min": 0.1,
+     "options": [],
+     "required": false,
+     "step": 0.1
+    },
+    {
+     "default": "",
+     "help": "Library title for the result (optional).",
+     "id": "title",
+     "kind": "text",
+     "label": "Title",
+     "max_length": 200,
+     "options": [],
+     "required": false
+    }
+   ],
+   "inputs": [
+    {
+     "id": "media",
+     "label": "Clip",
+     "multiple": false,
+     "required": true,
+     "same_as": null,
+     "types": [
+      "video",
+      "audio"
+     ]
+    }
+   ],
+   "keywords": [],
+   "label": "Fade In",
+   "output_node": false,
+   "outputs": [
+    {
+     "id": "media",
+     "label": "Clip",
+     "multiple": false,
+     "required": false,
+     "same_as": "media",
+     "types": [
+      "any"
+     ]
+    }
+   ],
+   "service": "ffmpeg",
+   "type": "compose.fade_in",
+   "unavailable_reason": "",
+   "version": 1
+  },
+  {
+   "aliases": [],
+   "available": true,
+   "backend": "FFmpeg on gx10-01",
+   "cacheable": true,
+   "category": "compose",
+   "description": "Fades a clip out to black / silence.",
+   "fields": [
+    {
+     "card": true,
+     "default": 1.0,
+     "id": "duration",
+     "kind": "number",
+     "label": "Fade length (s)",
+     "max": 30,
+     "min": 0.1,
+     "options": [],
+     "required": false,
+     "step": 0.1
+    },
+    {
+     "default": "",
+     "help": "Library title for the result (optional).",
+     "id": "title",
+     "kind": "text",
+     "label": "Title",
+     "max_length": 200,
+     "options": [],
+     "required": false
+    }
+   ],
+   "inputs": [
+    {
+     "id": "media",
+     "label": "Clip",
+     "multiple": false,
+     "required": true,
+     "same_as": null,
+     "types": [
+      "video",
+      "audio"
+     ]
+    }
+   ],
+   "keywords": [],
+   "label": "Fade Out",
+   "output_node": false,
+   "outputs": [
+    {
+     "id": "media",
+     "label": "Clip",
+     "multiple": false,
+     "required": false,
+     "same_as": "media",
+     "types": [
+      "any"
+     ]
+    }
+   ],
+   "service": "ffmpeg",
+   "type": "compose.fade_out",
+   "unavailable_reason": "",
+   "version": 1
+  },
+  {
+   "aliases": [],
+   "available": true,
+   "backend": "FFmpeg on gx10-01",
+   "cacheable": true,
+   "category": "compose",
+   "description": "Changes the loudness of a clip.",
+   "fields": [
+    {
+     "card": true,
+     "default": 0,
+     "id": "gain_db",
+     "kind": "number",
+     "label": "Gain (dB)",
+     "max": 20,
+     "min": -40,
+     "options": [],
+     "required": false,
+     "step": 0.5
+    },
+    {
+     "default": "",
+     "help": "Library title for the result (optional).",
+     "id": "title",
+     "kind": "text",
+     "label": "Title",
+     "max_length": 200,
+     "options": [],
+     "required": false
+    }
+   ],
+   "inputs": [
+    {
+     "id": "media",
+     "label": "Clip",
+     "multiple": false,
+     "required": true,
+     "same_as": null,
+     "types": [
+      "video",
+      "audio"
+     ]
+    }
+   ],
+   "keywords": [
+    "gain",
+    "louder"
+   ],
+   "label": "Volume",
+   "output_node": false,
+   "outputs": [
+    {
+     "id": "media",
+     "label": "Clip",
+     "multiple": false,
+     "required": false,
+     "same_as": "media",
+     "types": [
+      "any"
+     ]
+    }
+   ],
+   "service": "ffmpeg",
+   "type": "compose.volume",
+   "unavailable_reason": "",
+   "version": 1
+  },
+  {
+   "aliases": [],
+   "available": true,
+   "backend": "FFmpeg loudnorm on gx10-01",
+   "cacheable": true,
+   "category": "compose",
+   "description": "EBU R128 loudness normalisation.",
+   "fields": [
+    {
+     "card": true,
+     "default": -16,
+     "id": "target_lufs",
+     "kind": "number",
+     "label": "Target (LUFS)",
+     "max": -9,
+     "min": -30,
+     "options": [],
+     "required": false,
+     "step": 0.5
+    },
+    {
+     "default": "",
+     "help": "Library title for the result (optional).",
+     "id": "title",
+     "kind": "text",
+     "label": "Title",
+     "max_length": 200,
+     "options": [],
+     "required": false
+    }
+   ],
+   "inputs": [
+    {
+     "id": "media",
+     "label": "Clip",
+     "multiple": false,
+     "required": true,
+     "same_as": null,
+     "types": [
+      "video",
+      "audio"
+     ]
+    }
+   ],
+   "keywords": [
+    "loudness"
+   ],
+   "label": "Normalize",
+   "output_node": false,
+   "outputs": [
+    {
+     "id": "media",
+     "label": "Clip",
+     "multiple": false,
+     "required": false,
+     "same_as": "media",
+     "types": [
+      "any"
+     ]
+    }
+   ],
+   "service": "ffmpeg",
+   "type": "compose.normalize",
+   "unavailable_reason": "",
+   "version": 1
+  },
+  {
+   "aliases": [],
+   "available": true,
+   "backend": "FFmpeg on gx10-01",
+   "cacheable": true,
+   "category": "compose",
+   "description": "Scales an image or video.",
+   "fields": [
+    {
+     "card": true,
+     "default": 1280,
+     "id": "width",
+     "integer": true,
+     "kind": "number",
+     "label": "Width",
+     "max": 4096,
+     "min": 16,
+     "options": [],
+     "required": false,
+     "step": 1
+    },
+    {
+     "card": true,
+     "default": 720,
+     "id": "height",
+     "integer": true,
+     "kind": "number",
+     "label": "Height",
+     "max": 4096,
+     "min": 16,
+     "options": [],
+     "required": false,
+     "step": 1
+    },
+    {
+     "card": true,
+     "default": "contain",
+     "id": "fit",
+     "kind": "select",
+     "label": "Fit",
+     "options": [
+      {
+       "label": "Fit inside (letterbox)",
+       "value": "contain"
+      },
+      {
+       "label": "Fill (crop)",
+       "value": "cover"
+      },
+      {
+       "label": "Stretch",
+       "value": "stretch"
+      }
+     ],
+     "required": false
+    },
+    {
+     "default": "",
+     "help": "Library title for the result (optional).",
+     "id": "title",
+     "kind": "text",
+     "label": "Title",
+     "max_length": 200,
+     "options": [],
+     "required": false
+    }
+   ],
+   "inputs": [
+    {
+     "id": "media",
+     "label": "Image or video",
+     "multiple": false,
+     "required": true,
+     "same_as": null,
+     "types": [
+      "image",
+      "video"
+     ]
+    }
+   ],
+   "keywords": [
+    "scale"
+   ],
+   "label": "Resize",
+   "output_node": false,
+   "outputs": [
+    {
+     "id": "media",
+     "label": "Result",
+     "multiple": false,
+     "required": false,
+     "same_as": "media",
+     "types": [
+      "any"
+     ]
+    }
+   ],
+   "service": "ffmpeg",
+   "type": "compose.resize",
+   "unavailable_reason": "",
+   "version": 1
+  },
+  {
+   "aliases": [],
+   "available": true,
+   "backend": "FFmpeg on gx10-01",
+   "cacheable": true,
+   "category": "compose",
+   "description": "Crops an image or video to an aspect ratio.",
+   "fields": [
+    {
+     "card": true,
+     "default": "9:16",
+     "id": "aspect",
+     "kind": "select",
+     "label": "Aspect",
+     "options": [
+      {
+       "label": "9:16 (Reels, Stories)",
+       "value": "9:16"
+      },
+      {
+       "label": "1:1",
+       "value": "1:1"
+      },
+      {
+       "label": "4:5 (Feed)",
+       "value": "4:5"
+      },
+      {
+       "label": "16:9",
+       "value": "16:9"
+      }
+     ],
+     "required": false
+    },
+    {
+     "default": "center",
+     "id": "anchor",
+     "kind": "select",
+     "label": "Keep",
+     "options": [
+      {
+       "label": "Centre",
+       "value": "center"
+      },
+      {
+       "label": "Left / top",
+       "value": "start"
+      },
+      {
+       "label": "Right / bottom",
+       "value": "end"
+      }
+     ],
+     "required": false
+    },
+    {
+     "default": "",
+     "help": "Library title for the result (optional).",
+     "id": "title",
+     "kind": "text",
+     "label": "Title",
+     "max_length": 200,
+     "options": [],
+     "required": false
+    }
+   ],
+   "inputs": [
+    {
+     "id": "media",
+     "label": "Image or video",
+     "multiple": false,
+     "required": true,
+     "same_as": null,
+     "types": [
+      "image",
+      "video"
+     ]
+    }
+   ],
+   "keywords": [
+    "aspect",
+    "reframe"
+   ],
+   "label": "Crop",
+   "output_node": false,
+   "outputs": [
+    {
+     "id": "media",
+     "label": "Result",
+     "multiple": false,
+     "required": false,
+     "same_as": "media",
+     "types": [
+      "any"
+     ]
+    }
+   ],
+   "service": "ffmpeg",
+   "type": "compose.crop",
+   "unavailable_reason": "",
+   "version": 1
+  },
+  {
+   "aliases": [],
+   "available": true,
+   "backend": "FFmpeg on gx10-01",
+   "cacheable": true,
+   "category": "compose",
+   "description": "Joins videos in connection order.",
+   "fields": [
+    {
+     "card": true,
+     "default": "first",
+     "id": "size",
+     "kind": "select",
+     "label": "Output size",
+     "options": [
+      {
+       "label": "Same as first clip",
+       "value": "first"
+      },
+      {
+       "label": "Landscape 16:9 (832x480)",
+       "value": "832x480"
+      },
+      {
+       "label": "Portrait 9:16 (480x832)",
+       "value": "480x832"
+      },
+      {
+       "label": "Square (640)",
+       "value": "640x640"
+      },
+      {
+       "label": "Square (704)",
+       "value": "704x704"
+      },
+      {
+       "label": "Small square",
+       "value": "512x512"
+      },
+      {
+       "label": "1280x720",
+       "value": "1280x720"
+      },
+      {
+       "label": "720x1280",
+       "value": "720x1280"
+      },
+      {
+       "label": "1920x1080",
+       "value": "1920x1080"
+      }
+     ],
+     "required": false
+    },
+    {
+     "default": 16,
+     "id": "fps",
+     "integer": true,
+     "kind": "number",
+     "label": "Frame rate",
+     "max": 60,
+     "min": 8,
+     "options": [],
+     "required": false,
+     "step": 1
+    },
+    {
+     "default": "",
+     "help": "Library title for the result (optional).",
+     "id": "title",
+     "kind": "text",
+     "label": "Title",
+     "max_length": 200,
+     "options": [],
+     "required": false
+    }
+   ],
+   "inputs": [
+    {
+     "id": "video",
+     "label": "Clips",
+     "multiple": true,
+     "required": true,
+     "same_as": null,
+     "types": [
+      "video"
+     ]
+    }
+   ],
+   "keywords": [
+    "join",
+    "sequence",
+    "stitch"
+   ],
+   "label": "Concatenate Clips",
+   "output_node": false,
+   "outputs": [
+    {
+     "id": "video",
+     "label": "Video",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "video"
+     ]
+    }
+   ],
+   "service": "ffmpeg",
+   "type": "compose.concat",
+   "unavailable_reason": "",
+   "version": 1
+  },
+  {
+   "aliases": [],
+   "available": true,
+   "backend": "FFmpeg on gx10-01",
+   "cacheable": true,
+   "category": "compose",
+   "description": "Places an image (logo, product) over a video.",
+   "fields": [
+    {
+     "card": true,
+     "default": "top-right",
+     "id": "position",
+     "kind": "select",
+     "label": "Position",
+     "options": [
+      {
+       "label": "Top right",
+       "value": "top-right"
+      },
+      {
+       "label": "Top left",
+       "value": "top-left"
+      },
+      {
+       "label": "Bottom right",
+       "value": "bottom-right"
+      },
+      {
+       "label": "Bottom left",
+       "value": "bottom-left"
+      },
+      {
+       "label": "Centre",
+       "value": "center"
+      }
+     ],
+     "required": false
+    },
+    {
+     "card": true,
+     "default": 20,
+     "id": "scale",
+     "integer": true,
+     "kind": "number",
+     "label": "Size (% of video width)",
+     "max": 100,
+     "min": 2,
+     "options": [],
+     "required": false,
+     "step": 1
+    },
+    {
+     "default": 1,
+     "id": "opacity",
+     "kind": "number",
+     "label": "Opacity",
+     "max": 1,
+     "min": 0.05,
+     "options": [],
+     "required": false,
+     "step": 0.05
+    },
+    {
+     "default": 0,
+     "id": "start",
+     "kind": "number",
+     "label": "From (s)",
+     "max": 3600,
+     "options": [],
+     "required": false,
+     "step": 0.1
+    },
+    {
+     "default": null,
+     "id": "end",
+     "kind": "number",
+     "label": "Until (s)",
+     "max": 3600,
+     "options": [],
+     "required": false,
+     "step": 0.1
+    },
+    {
+     "default": "",
+     "help": "Library title for the result (optional).",
+     "id": "title",
+     "kind": "text",
+     "label": "Title",
+     "max_length": 200,
+     "options": [],
+     "required": false
+    }
+   ],
+   "inputs": [
+    {
+     "id": "video",
+     "label": "Video",
+     "multiple": false,
+     "required": true,
+     "same_as": null,
+     "types": [
+      "video"
+     ]
+    },
+    {
+     "id": "image",
+     "label": "Overlay",
+     "multiple": false,
+     "required": true,
+     "same_as": null,
+     "types": [
+      "image"
+     ]
+    }
+   ],
+   "keywords": [
+    "logo",
+    "watermark"
+   ],
+   "label": "Overlay",
+   "output_node": false,
+   "outputs": [
+    {
+     "id": "video",
+     "label": "Video",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "video"
+     ]
+    }
+   ],
+   "service": "ffmpeg",
+   "type": "compose.overlay",
+   "unavailable_reason": "",
+   "version": 1
+  },
+  {
+   "aliases": [],
+   "available": true,
+   "backend": "FFmpeg drawtext on gx10-01",
+   "cacheable": true,
+   "category": "compose",
+   "description": "Draws a caption or call-to-action text on a video (title card / lower third).",
+   "fields": [
+    {
+     "card": true,
+     "default": "",
+     "fills": "text",
+     "id": "text",
+     "kind": "textarea",
+     "label": "Text",
+     "max_length": 300,
+     "options": [],
+     "required": false
+    },
+    {
+     "card": true,
+     "default": "bottom",
+     "id": "position",
+     "kind": "select",
+     "label": "Position",
+     "options": [
+      {
+       "label": "Bottom",
+       "value": "bottom"
+      },
+      {
+       "label": "Centre",
+       "value": "center"
+      },
+      {
+       "label": "Top",
+       "value": "top"
+      }
+     ],
+     "required": false
+    },
+    {
+     "default": 6,
+     "id": "font_size",
+     "kind": "number",
+     "label": "Font size (% of height)",
+     "max": 20,
+     "min": 2,
+     "options": [],
+     "required": false,
+     "step": 0.5
+    },
+    {
+     "default": 0,
+     "id": "start",
+     "kind": "number",
+     "label": "From (s)",
+     "max": 3600,
+     "options": [],
+     "required": false,
+     "step": 0.1
+    },
+    {
+     "default": null,
+     "help": "Empty = to the end.",
+     "id": "end",
+     "kind": "number",
+     "label": "Until (s)",
+     "max": 3600,
+     "options": [],
+     "required": false,
+     "step": 0.1
+    },
+    {
+     "default": null,
+     "help": "Shows the text at the end of the video (overrides From/Until).",
+     "id": "last_seconds",
+     "kind": "number",
+     "label": "Only the last N seconds",
+     "max": 60,
+     "min": 0.5,
+     "options": [],
+     "required": false,
+     "step": 0.5
+    },
+    {
+     "default": true,
+     "id": "box",
+     "kind": "boolean",
+     "label": "Background box",
+     "options": [],
+     "required": false
+    },
+    {
+     "default": "",
+     "help": "Library title for the result (optional).",
+     "id": "title",
+     "kind": "text",
+     "label": "Title",
+     "max_length": 200,
+     "options": [],
+     "required": false
+    }
+   ],
+   "inputs": [
+    {
+     "id": "video",
+     "label": "Video",
+     "multiple": false,
+     "required": true,
+     "same_as": null,
+     "types": [
+      "video"
+     ]
+    },
+    {
+     "id": "text",
+     "label": "Text",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "text"
+     ]
+    }
+   ],
+   "keywords": [
+    "cta",
+    "title",
+    "text"
+   ],
+   "label": "Captions",
+   "output_node": false,
+   "outputs": [
+    {
+     "id": "video",
+     "label": "Video",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "video"
+     ]
+    }
+   ],
+   "service": "ffmpeg",
+   "type": "compose.captions",
+   "unavailable_reason": "",
+   "version": 1
+  },
+  {
+   "aliases": [],
+   "available": true,
+   "backend": "FFmpeg subtitles filter on gx10-01",
+   "cacheable": true,
+   "category": "compose",
+   "description": "Burns timed subtitles into a video. Connected script text is split into sentences and spread over the video's duration (or use SRT text).",
+   "fields": [
+    {
+     "card": true,
+     "default": "",
+     "fills": "text",
+     "id": "text",
+     "kind": "textarea",
+     "label": "Script or SRT",
+     "max_length": 20000,
+     "options": [],
+     "required": false
+    },
+    {
+     "default": 22,
+     "id": "font_size",
+     "integer": true,
+     "kind": "number",
+     "label": "Font size",
+     "max": 72,
+     "min": 8,
+     "options": [],
+     "required": false,
+     "step": 1
+    },
+    {
+     "default": "",
+     "help": "Library title for the result (optional).",
+     "id": "title",
+     "kind": "text",
+     "label": "Title",
+     "max_length": 200,
+     "options": [],
+     "required": false
+    }
+   ],
+   "inputs": [
+    {
+     "id": "video",
+     "label": "Video",
+     "multiple": false,
+     "required": true,
+     "same_as": null,
+     "types": [
+      "video"
+     ]
+    },
+    {
+     "id": "text",
+     "label": "Script or SRT",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "text"
+     ]
+    }
+   ],
+   "keywords": [
+    "srt",
+    "captions"
+   ],
+   "label": "Burn Subtitles",
+   "output_node": false,
+   "outputs": [
+    {
+     "id": "video",
+     "label": "Video",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "video"
+     ]
+    }
+   ],
+   "service": "ffmpeg",
+   "type": "compose.subtitles",
+   "unavailable_reason": "",
+   "version": 1
+  },
+  {
+   "aliases": [],
+   "available": true,
+   "backend": "FFmpeg libx264 on gx10-01",
+   "cacheable": true,
+   "category": "compose",
+   "description": "Final render: H.264/AAC MP4 with fast start, optional audio track.",
+   "fields": [
+    {
+     "card": true,
+     "default": "source",
+     "id": "preset",
+     "kind": "select",
+     "label": "Format",
+     "options": [
+      {
+       "label": "Keep size",
+       "value": "source"
+      },
+      {
+       "label": "Vertical 1080x1920",
+       "value": "1080x1920"
+      },
+      {
+       "label": "Landscape 1920x1080",
+       "value": "1920x1080"
+      },
+      {
+       "label": "Square 1080x1080",
+       "value": "1080x1080"
+      },
+      {
+       "label": "Landscape 720p",
+       "value": "1280x720"
+      }
+     ],
+     "required": false
+    },
+    {
+     "card": true,
+     "default": "standard",
+     "id": "quality",
+     "kind": "select",
+     "label": "Quality",
+     "options": [
+      {
+       "label": "High (CRF 18)",
+       "value": "high"
+      },
+      {
+       "label": "Standard (CRF 22)",
+       "value": "standard"
+      },
+      {
+       "label": "Small (CRF 28)",
+       "value": "small"
+      }
+     ],
+     "required": false
+    },
+    {
+     "default": null,
+     "help": "Empty = keep.",
+     "id": "fps",
+     "integer": true,
+     "kind": "number",
+     "label": "Frame rate",
+     "max": 60,
+     "min": 8,
+     "options": [],
+     "required": false,
+     "step": 1
+    },
+    {
+     "default": "",
+     "help": "Library title for the result (optional).",
+     "id": "title",
+     "kind": "text",
+     "label": "Title",
+     "max_length": 200,
+     "options": [],
+     "required": false
+    },
+    {
+     "default": false,
+     "id": "favourite",
+     "kind": "boolean",
+     "label": "Add to favourites",
+     "options": [],
+     "required": false
+    }
+   ],
+   "inputs": [
+    {
+     "id": "video",
+     "label": "Video",
+     "multiple": false,
+     "required": true,
+     "same_as": null,
+     "types": [
+      "video"
+     ]
+    },
+    {
+     "id": "audio",
+     "label": "Audio track",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "audio"
+     ]
+    }
+   ],
+   "keywords": [
+    "render",
+    "final",
+    "mp4"
+   ],
+   "label": "Export Video",
+   "output_node": true,
+   "outputs": [
+    {
+     "id": "video",
+     "label": "Video",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "video"
+     ]
+    }
+   ],
+   "service": "ffmpeg",
+   "type": "compose.export",
+   "unavailable_reason": "",
+   "version": 1
+  },
+  {
+   "aliases": [],
+   "available": true,
+   "backend": "gx10-01",
+   "cacheable": false,
+   "category": "utility",
+   "description": "Waits before passing its input on.",
+   "fields": [
+    {
+     "card": true,
+     "default": 5,
+     "id": "seconds",
+     "integer": true,
+     "kind": "number",
+     "label": "Wait (s)",
+     "max": 300,
+     "options": [],
+     "required": false,
+     "step": 1
+    }
+   ],
+   "inputs": [
+    {
+     "id": "value",
+     "label": "Value",
+     "multiple": false,
+     "required": true,
+     "same_as": null,
+     "types": [
+      "text",
+      "json",
+      "image",
+      "video",
+      "audio",
+      "voice",
+      "lora"
+     ]
+    }
+   ],
+   "keywords": [],
+   "label": "Delay",
+   "output_node": false,
+   "outputs": [
+    {
+     "id": "value",
+     "label": "Value",
+     "multiple": false,
+     "required": false,
+     "same_as": "value",
+     "types": [
+      "any"
+     ]
+    }
+   ],
+   "service": "local",
+   "type": "util.delay",
+   "unavailable_reason": "",
+   "version": 1
+  },
+  {
+   "aliases": [],
+   "available": true,
+   "backend": "gx10-01",
+   "cacheable": true,
+   "category": "utility",
+   "description": "Sends its input to 'Yes' or 'No'. The branch that is not taken is skipped.",
+   "fields": [
+    {
+     "card": true,
+     "default": "not_empty",
+     "id": "test",
+     "kind": "select",
+     "label": "Condition",
+     "options": [
+      {
+       "label": "Is not empty",
+       "value": "not_empty"
+      },
+      {
+       "label": "Text contains",
+       "value": "contains"
+      },
+      {
+       "label": "Text equals",
+       "value": "equals"
+      },
+      {
+       "label": "Longer than (characters)",
+       "value": "longer"
+      },
+      {
+       "label": "Has at least N items",
+       "value": "count_at_least"
+      }
+     ],
+     "required": false
+    },
+    {
+     "card": true,
+     "default": "",
+     "id": "argument",
+     "kind": "text",
+     "label": "Value",
+     "max_length": 200,
+     "options": [],
+     "required": false
+    },
+    {
+     "default": false,
+     "id": "case_sensitive",
+     "kind": "boolean",
+     "label": "Case sensitive",
+     "options": [],
+     "required": false
+    }
+   ],
+   "inputs": [
+    {
+     "id": "value",
+     "label": "Value",
+     "multiple": false,
+     "required": true,
+     "same_as": null,
+     "types": [
+      "text",
+      "json",
+      "image",
+      "video",
+      "audio",
+      "voice",
+      "lora"
+     ]
+    }
+   ],
+   "keywords": [
+    "if",
+    "branch"
+   ],
+   "label": "Conditional",
+   "output_node": false,
+   "outputs": [
+    {
+     "id": "yes",
+     "label": "Yes",
+     "multiple": false,
+     "required": false,
+     "same_as": "value",
+     "types": [
+      "any"
+     ]
+    },
+    {
+     "id": "no",
+     "label": "No",
+     "multiple": false,
+     "required": false,
+     "same_as": "value",
+     "types": [
+      "any"
+     ]
+    }
+   ],
+   "service": "local",
+   "type": "util.conditional",
+   "unavailable_reason": "",
+   "version": 1
+  },
+  {
+   "aliases": [],
+   "available": true,
+   "backend": "gx10-01",
+   "cacheable": true,
+   "category": "utility",
+   "description": "Routes its input to the first matching route (text contains a keyword); others are skipped.",
+   "fields": [
+    {
+     "card": true,
+     "default": "",
+     "id": "route1",
+     "kind": "text",
+     "label": "Route 1 keyword",
+     "max_length": 80,
+     "options": [],
+     "required": false
+    },
+    {
+     "card": true,
+     "default": "",
+     "id": "route2",
+     "kind": "text",
+     "label": "Route 2 keyword",
+     "max_length": 80,
+     "options": [],
+     "required": false
+    },
+    {
+     "default": "",
+     "id": "route3",
+     "kind": "text",
+     "label": "Route 3 keyword",
+     "max_length": 80,
+     "options": [],
+     "required": false
+    },
+    {
+     "default": "value",
+     "id": "match_on",
+     "kind": "select",
+     "label": "Match on",
+     "options": [
+      {
+       "label": "The input text",
+       "value": "value"
+      },
+      {
+       "label": "A flow variable",
+       "value": "variable"
+      }
+     ],
+     "required": false
+    },
+    {
+     "default": "",
+     "id": "variable",
+     "kind": "text",
+     "label": "Variable name",
+     "max_length": 64,
+     "options": [],
+     "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$",
+     "required": false
+    }
+   ],
+   "inputs": [
+    {
+     "id": "value",
+     "label": "Value",
+     "multiple": false,
+     "required": true,
+     "same_as": null,
+     "types": [
+      "text",
+      "json",
+      "image",
+      "video",
+      "audio",
+      "voice",
+      "lora"
+     ]
+    }
+   ],
+   "keywords": [
+    "switch"
+   ],
+   "label": "Router",
+   "output_node": false,
+   "outputs": [
+    {
+     "id": "route1",
+     "label": "Route 1",
+     "multiple": false,
+     "required": false,
+     "same_as": "value",
+     "types": [
+      "any"
+     ]
+    },
+    {
+     "id": "route2",
+     "label": "Route 2",
+     "multiple": false,
+     "required": false,
+     "same_as": "value",
+     "types": [
+      "any"
+     ]
+    },
+    {
+     "id": "route3",
+     "label": "Route 3",
+     "multiple": false,
+     "required": false,
+     "same_as": "value",
+     "types": [
+      "any"
+     ]
+    },
+    {
+     "id": "fallback",
+     "label": "Otherwise",
+     "multiple": false,
+     "required": false,
+     "same_as": "value",
+     "types": [
+      "any"
+     ]
+    }
+   ],
+   "service": "local",
+   "type": "util.router",
+   "unavailable_reason": "",
+   "version": 1
+  },
+  {
+   "aliases": [],
+   "available": true,
+   "backend": "gx10-01",
+   "cacheable": true,
+   "category": "utility",
+   "description": "Picks one field of JSON (or one item of a list) as text: the explicit JSON-to-text conversion.",
+   "fields": [
+    {
+     "card": true,
+     "default": "headline",
+     "help": "e.g. scenes[0].visual_prompt",
+     "id": "path",
+     "kind": "text",
+     "label": "Path",
+     "max_length": 200,
+     "options": [],
+     "pattern": "^[A-Za-z0-9_\\-.\\[\\]]{1,200}$",
+     "required": false
+    },
+    {
+     "default": false,
+     "id": "each",
+     "kind": "boolean",
+     "label": "One item per list entry",
+     "options": [],
+     "required": false
+    }
+   ],
+   "inputs": [
+    {
+     "id": "json",
+     "label": "JSON",
+     "multiple": false,
+     "required": true,
+     "same_as": null,
+     "types": [
+      "json"
+     ]
+    }
+   ],
+   "keywords": [
+    "convert",
+    "extract",
+    "pick"
+   ],
+   "label": "Select",
+   "output_node": false,
+   "outputs": [
+    {
+     "id": "text",
+     "label": "Text",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "text"
+     ]
+    }
+   ],
+   "service": "local",
+   "type": "util.select",
+   "unavailable_reason": "",
+   "version": 1
+  },
+  {
+   "aliases": [],
+   "available": true,
+   "backend": "gx10-01",
+   "cacheable": true,
+   "category": "utility",
+   "description": "Repeats a text N times (optionally with numbered variations); downstream nodes run once per item.",
+   "fields": [
+    {
+     "card": true,
+     "default": 3,
+     "id": "count",
+     "integer": true,
+     "kind": "number",
+     "label": "Count",
+     "max": 8,
+     "min": 1,
+     "options": [],
+     "required": false,
+     "step": 1
+    },
+    {
+     "default": ", variation {{n}}",
+     "help": "Appended to each item; {{n}} is the item number. Empty = identical items.",
+     "id": "suffix",
+     "kind": "text",
+     "label": "Variation suffix",
+     "max_length": 120,
+     "options": [],
+     "required": false
+    }
+   ],
+   "inputs": [
+    {
+     "id": "text",
+     "label": "Text",
+     "multiple": false,
+     "required": true,
+     "same_as": null,
+     "types": [
+      "text"
+     ]
+    }
+   ],
+   "keywords": [
+    "repeat",
+    "multiple"
+   ],
+   "label": "Batch",
+   "output_node": false,
+   "outputs": [
+    {
+     "id": "text",
+     "label": "Items",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "text"
+     ]
+    }
+   ],
+   "service": "local",
+   "type": "util.batch",
+   "unavailable_reason": "",
+   "version": 1
+  },
+  {
+   "aliases": [],
+   "available": true,
+   "backend": "gx10-01",
+   "cacheable": true,
+   "category": "utility",
+   "description": "Splits text into lines (or a JSON list into items); downstream nodes run once per item.",
+   "fields": [
+    {
+     "card": true,
+     "default": "lines",
+     "id": "split",
+     "kind": "select",
+     "label": "Split on",
+     "options": [
+      {
+       "label": "Lines",
+       "value": "lines"
+      },
+      {
+       "label": "Blank lines",
+       "value": "paragraphs"
+      },
+      {
+       "label": "JSON list items",
+       "value": "json"
+      }
+     ],
+     "required": false
+    },
+    {
+     "default": 8,
+     "id": "limit",
+     "integer": true,
+     "kind": "number",
+     "label": "Max items",
+     "max": 16,
+     "min": 1,
+     "options": [],
+     "required": false,
+     "step": 1
+    }
+   ],
+   "inputs": [
+    {
+     "id": "value",
+     "label": "List",
+     "multiple": false,
+     "required": true,
+     "same_as": null,
+     "types": [
+      "text",
+      "json"
+     ]
+    }
+   ],
+   "keywords": [
+    "each",
+    "loop",
+    "map"
+   ],
+   "label": "Iterator",
+   "output_node": false,
+   "outputs": [
+    {
+     "id": "text",
+     "label": "Items",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "text"
+     ]
+    }
+   ],
+   "service": "local",
+   "type": "util.iterator",
+   "unavailable_reason": "",
+   "version": 1
+  },
+  {
+   "aliases": [],
+   "available": true,
+   "backend": "Media Library",
+   "cacheable": true,
+   "category": "utility",
+   "description": "Any Library item (image, video or audio).",
+   "fields": [
+    {
+     "card": true,
+     "default": "image",
+     "id": "asset_type",
+     "kind": "select",
+     "label": "Kind",
+     "options": [
+      {
+       "label": "Image",
+       "value": "image"
+      },
+      {
+       "label": "Video",
+       "value": "video"
+      },
+      {
+       "label": "Audio",
+       "value": "audio"
+      }
+     ],
+     "required": true
+    },
+    {
+     "card": true,
+     "default": null,
+     "help": "Must match the kind above.",
+     "id": "asset_id",
+     "kind": "asset",
+     "label": "Library item",
+     "options": [],
+     "pattern": "^a_[0-9a-f]{24}$",
+     "required": true
+    }
+   ],
+   "inputs": [],
+   "keywords": [
+    "asset"
+   ],
+   "label": "File Input",
+   "output_node": false,
+   "outputs": [
+    {
+     "id": "file",
+     "label": "File",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "any"
+     ]
+    }
+   ],
+   "service": "local",
+   "type": "util.file_input",
+   "unavailable_reason": "",
+   "version": 1
+  },
+  {
+   "aliases": [],
+   "available": true,
+   "backend": "Media Library",
+   "cacheable": true,
+   "category": "utility",
+   "description": "Marks any media result as a final output.",
+   "fields": [
+    {
+     "default": "",
+     "help": "Library title for the result (optional).",
+     "id": "title",
+     "kind": "text",
+     "label": "Title",
+     "max_length": 200,
+     "options": [],
+     "required": false
+    },
+    {
+     "default": false,
+     "id": "favourite",
+     "kind": "boolean",
+     "label": "Add to favourites",
+     "options": [],
+     "required": false
+    }
+   ],
+   "inputs": [
+    {
+     "id": "file",
+     "label": "File",
+     "multiple": true,
+     "required": true,
+     "same_as": null,
+     "types": [
+      "image",
+      "video",
+      "audio"
+     ]
+    }
+   ],
+   "keywords": [],
+   "label": "File Output",
+   "output_node": true,
+   "outputs": [],
+   "service": "local",
+   "type": "util.file_output",
+   "unavailable_reason": "",
+   "version": 1
+  },
+  {
+   "aliases": [],
+   "available": true,
+   "backend": "netguard (SSRF-safe) from gx10-01",
+   "cacheable": false,
+   "category": "utility",
+   "description": "POSTs a JSON summary of its input to an external URL (public addresses only).",
+   "fields": [
+    {
+     "card": true,
+     "default": "",
+     "id": "url",
+     "kind": "text",
+     "label": "URL",
+     "max_length": 2048,
+     "options": [],
+     "placeholder": "https://hooks.example.com/...",
+     "required": true
+    },
+    {
+     "default": [],
+     "help": "Header -> stored secret name (Settings > Flow secrets). Values are never shown.",
+     "id": "headers",
+     "kind": "headers",
+     "label": "Headers",
+     "max_length": 8,
+     "options": [],
+     "required": false
+    },
+    {
+     "default": 15,
+     "id": "timeout",
+     "integer": true,
+     "kind": "number",
+     "label": "Timeout (s)",
+     "max": 60,
+     "min": 1,
+     "options": [],
+     "required": false,
+     "step": 1
+    }
+   ],
+   "inputs": [
+    {
+     "id": "value",
+     "label": "Payload",
+     "multiple": true,
+     "required": true,
+     "same_as": null,
+     "types": [
+      "text",
+      "json",
+      "image",
+      "video",
+      "audio",
+      "voice",
+      "lora"
+     ]
+    }
+   ],
+   "keywords": [
+    "notify",
+    "http"
+   ],
+   "label": "Webhook",
+   "output_node": false,
+   "outputs": [
+    {
+     "id": "response",
+     "label": "Response",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "json"
+     ]
+    }
+   ],
+   "service": "http",
+   "type": "util.webhook",
+   "unavailable_reason": "",
+   "version": 1
+  },
+  {
+   "aliases": [],
+   "available": true,
+   "backend": "netguard (SSRF-safe) from gx10-01",
+   "cacheable": false,
+   "category": "utility",
+   "description": "Calls an external HTTP API (public addresses only) and returns the JSON response.",
+   "fields": [
+    {
+     "card": true,
+     "default": "GET",
+     "id": "method",
+     "kind": "select",
+     "label": "Method",
+     "options": [
+      {
+       "label": "GET",
+       "value": "GET"
+      },
+      {
+       "label": "POST",
+       "value": "POST"
+      },
+      {
+       "label": "PUT",
+       "value": "PUT"
+      },
+      {
+       "label": "PATCH",
+       "value": "PATCH"
+      },
+      {
+       "label": "DELETE",
+       "value": "DELETE"
+      }
+     ],
+     "required": false
+    },
+    {
+     "card": true,
+     "default": "",
+     "id": "url",
+     "kind": "text",
+     "label": "URL",
+     "max_length": 2048,
+     "options": [],
+     "required": true
+    },
+    {
+     "default": [],
+     "help": "Header -> stored secret name. Values are never shown.",
+     "id": "headers",
+     "kind": "headers",
+     "label": "Headers",
+     "max_length": 8,
+     "options": [],
+     "required": false
+    },
+    {
+     "default": 15,
+     "id": "timeout",
+     "integer": true,
+     "kind": "number",
+     "label": "Timeout (s)",
+     "max": 60,
+     "min": 1,
+     "options": [],
+     "required": false,
+     "step": 1
+    }
+   ],
+   "inputs": [
+    {
+     "id": "body",
+     "label": "Body",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "json",
+      "text"
+     ]
+    }
+   ],
+   "keywords": [
+    "http",
+    "rest",
+    "fetch"
+   ],
+   "label": "API Request",
+   "output_node": false,
+   "outputs": [
+    {
+     "id": "response",
+     "label": "Response",
+     "multiple": false,
+     "required": false,
+     "same_as": null,
+     "types": [
+      "json"
+     ]
+    }
+   ],
+   "service": "http",
+   "type": "util.api_request",
+   "unavailable_reason": "",
+   "version": 1
+  }
+ ],
+ "port_types": [
+  "text",
+  "json",
+  "image",
+  "video",
+  "audio",
+  "voice",
+  "lora"
+ ],
+ "version": 1
+}

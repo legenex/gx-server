@@ -102,7 +102,7 @@ test.describe('phone viewport', () => {
     await expect(rail).toBeVisible();
     const box = await rail.boundingBox();
     expect(box.y).toBeGreaterThan(700); // docked to the bottom
-    await expect(page.locator('#rail a[data-page="music"]')).toBeVisible();
+    await expect(page.locator('.rail-group[data-group="create"] .rail-group-btn')).toBeVisible();
     await noHorizontalOverflow(page);
     for (const name of ['images', 'video', 'music', 'library', 'history', 'dashboard']) {
       await gotoPage(page, name);

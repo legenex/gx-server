@@ -28,7 +28,7 @@ FLOW = r"(?P<flow_id>flow_[0-9a-f]{24})"
 RUN = r"(?P<run_id>frun_[0-9a-f]{24})"
 NODE = r"(?P<node_id>[A-Za-z0-9_\-]{1,40})"
 TPL = r"(?P<tid>tpl_[0-9a-f]{24}|builtin_[a-z0-9_]{2,40})"
-SECRET = r"(?P<name>[A-Za-z][A-Za-z0-9_\-]{0,63})"
+SECRET = r"(?P<name>[A-Za-z][A-Za-z0-9_\-]{0,63})"  # noqa: S105 - a route pattern
 Route = Callable[..., None]
 
 

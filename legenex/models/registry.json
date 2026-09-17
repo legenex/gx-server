@@ -274,6 +274,59 @@
           "licence": "openrail++"
         },
         {
+          "role": "VisionmasterPro_V3 checkpoint (SDXL UNet, diffusers format)",
+          "kind": "checkpoint",
+          "image_model": "visionmaster-pro-v3",
+          "label": "VisionmasterPro_V3",
+          "repository": "votepurchase/pornmasterPro_noobV3VAE",
+          "revision": "75f59d136b165d48f3e678bb057af99f7cf1a71e",
+          "file": "image/diffusion_models/pornmasterPro_noobV3VAE/unet.safetensors",
+          "source_file": "unet/diffusion_pytorch_model.safetensors",
+          "bytes": 10270077736,
+          "sha256": "16fd4046cde36ae85b28361a6a16402c0bc3a63f6338b44828bb7e945ae8f5da",
+          "dtype": "F32 (cast by ComfyUI at load)",
+          "prediction_type": "epsilon (scheduler_config.json)",
+          "base_match": "SDXL / NoobAI eps; upstream Civitai model 1045588 version 1767015 (Pornmaster Pro noob V3 VAE)",
+          "licence": "creativeml-openrail-m",
+          "manifest": "/srv/models/image/pornmasterPro_noobV3VAE/.gx-manifest.json (gx10-02)"
+        },
+        {
+          "role": "VisionmasterPro_V3 text encoder 1 (CLIP-L)",
+          "kind": "text_encoder",
+          "image_model": "visionmaster-pro-v3",
+          "repository": "votepurchase/pornmasterPro_noobV3VAE",
+          "revision": "75f59d136b165d48f3e678bb057af99f7cf1a71e",
+          "file": "image/text_encoders/pornmasterPro_noobV3VAE/clip_l.safetensors",
+          "source_file": "text_encoder/model.safetensors",
+          "bytes": 492265168,
+          "sha256": "911844f911fd5234569d78977ce87047037e46a9c3574465f65b70892562d2f6",
+          "licence": "creativeml-openrail-m"
+        },
+        {
+          "role": "VisionmasterPro_V3 text encoder 2 (CLIP-G)",
+          "kind": "text_encoder",
+          "image_model": "visionmaster-pro-v3",
+          "repository": "votepurchase/pornmasterPro_noobV3VAE",
+          "revision": "75f59d136b165d48f3e678bb057af99f7cf1a71e",
+          "file": "image/text_encoders/pornmasterPro_noobV3VAE/clip_g.safetensors",
+          "source_file": "text_encoder_2/model.safetensors",
+          "bytes": 2778702264,
+          "sha256": "7556aaa76d818f0db543230f7cefc68284be543c7f31623e6a2286ce150340ce",
+          "licence": "creativeml-openrail-m"
+        },
+        {
+          "role": "VisionmasterPro_V3 VAE",
+          "kind": "vae",
+          "image_model": "visionmaster-pro-v3",
+          "repository": "votepurchase/pornmasterPro_noobV3VAE",
+          "revision": "75f59d136b165d48f3e678bb057af99f7cf1a71e",
+          "file": "image/vae/pornmasterPro_noobV3VAE/vae.safetensors",
+          "source_file": "vae/diffusion_pytorch_model.safetensors",
+          "bytes": 334643268,
+          "sha256": "98a14dc6fe8d71c83576f135a87c61a16561c9c080abba418d2cc976ee034f88",
+          "licence": "creativeml-openrail-m"
+        },
+        {
           "role": "text encoder",
           "kind": "text_encoder",
           "file": "shared/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors"
@@ -286,9 +339,35 @@
         {
           "role": "workflows",
           "kind": "comfyui_workflow",
-          "file": "legenex/media/workflows/qwen-image-2512-uncensored, qwen-image-edit-2511, qwen-image-2512-lightning, qwen-image-2512-quality"
+          "file": "legenex/media/workflows/qwen-image-2512-uncensored, qwen-image-2512-lightning, qwen-image-2512-quality, qwen-image-edit-2511, qwen-image-edit-2511-masked, qwen-image-edit-2511-transform, sdxl-visionmaster-pro-v3, sdxl-visionmaster-pro-v3-img2img, sdxl-visionmaster-pro-v3-inpaint"
         }
-      ]
+      ],
+      "variants": {
+        "visionmaster-pro-v3": {
+          "label": "VisionmasterPro_V3",
+          "operations": [
+            "generate",
+            "edit"
+          ],
+          "family": "sdxl",
+          "footprint": "measured live; see coordination/build-v3/img.md"
+        },
+        "qwen-image-2512": {
+          "label": "Qwen Image 2512",
+          "operations": [
+            "generate"
+          ],
+          "family": "qwen-image"
+        },
+        "qwen-image-edit-2511": {
+          "label": "Qwen Image Edit 2511",
+          "operations": [
+            "edit",
+            "variation"
+          ],
+          "family": "qwen-image"
+        }
+      }
     },
     "gx-video": {
       "runtime": "ComfyUI 0.35.0 behind gx-media-router 2.3 on gx10-02 (asynchronous jobs)",

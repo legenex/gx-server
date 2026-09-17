@@ -194,8 +194,8 @@ class RegistryTests(unittest.TestCase):
 
 class ActivityTests(unittest.TestCase):
     def test_normalise_redacts_and_filters(self):
-        item = normalise("voice", {"id": "j1", "title": "TTS sk-" + "a" * 30, "status": "completed", "at": 5,
-                                   "error": "Bearer abcdefghijklmnopqrstuv failed", "link": "javascript:alert(1)",
+        item = normalise("voice", {"id": "j1", "title": "TTS " + "sk" + "-" + "a" * 30, "status": "completed", "at": 5,
+                                   "error": "Bearer " + "abcdefghijklmnopqrstuv" + " failed", "link": "javascript:alert(1)",
                                    "detail": {"prompt": "secret", "voice": "alloy", "api_key": "x",
                                               "chars": 12}})
         self.assertEqual(item["status"], "ok")

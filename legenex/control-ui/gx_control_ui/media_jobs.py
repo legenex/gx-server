@@ -85,6 +85,8 @@ class MediaJob:
     router_phase: str | None = None
     #: machine-readable failure reason (JobError.code), shown with the message
     error_code: str | None = None
+    #: a readable explanation of error_code, set by the feature that owns the job
+    error_hint: str | None = None
     cold: bool | None = None
     #: edit mask PNG (white = may change); never part of public()/params
     mask: bytes | None = field(default=None, repr=False)
@@ -110,7 +112,7 @@ class MediaJob:
                 "detail": self.detail, "created": self.created, "started": self.started, "ended": self.ended,
                 "elapsed_seconds": round((self.ended or time.time()) - (self.started or self.created), 1),
                 "router_job": self.router_job, "assets": list(self.assets), "error": self.error,
-                "error_code": self.error_code,
+                "error_code": self.error_code, "error_hint": self.error_hint,
                 "prompt": (self.params.get("prompt") or "")[:300], "source_id": self.params.get("source_id"),
                 "params": {k: v for k, v in self.params.items() if k != "prompt"}}
 

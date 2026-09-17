@@ -196,6 +196,42 @@ starts only if
 * **Configuration:** `GX_MEDIA_RESERVE_GIB` can raise the reserve (never
   below 30); the `GX_MEDIA_FOOTPRINT_*_GIB` values can only be raised.
 
+### Wan 2.2 LoRAs (router 2.5.0, D-040)
+
+The router lists the LoRA files ComfyUI can load and inserts user LoRAs into
+the vetted text-to-video graph itself.
+
+* **Roots (read-only mounts):** `/srv/models/shared/loras` and
+  `/srv/models/video/loras` (`GX_MEDIA_LORA_ROOTS`, in ComfyUI's search
+  order). `deploy-node2.sh` creates `video/loras/wan22/{paired,high_noise,
+  low_noise,general}`; nothing is ever moved or renamed.
+* **`GET /v1/loras`** returns each `.safetensors` file with its ComfyUI name
+  (path below the root), host path, size, a bounded safetensors header check
+  (8-byte length + JSON, at most 64 MiB, tensor data never read), the model
+  family and Wan 2.2 A14B compatibility (hidden size 5120, at most 40 blocks),
+  the high/low noise class (folder, file name, header metadata; conflicts →
+  unknown), and whether ComfyUI lists it (`/object_info/LoraLoaderModelOnly`).
+* **`POST /v1/loras/rescan`** walks the roots again (allowed during holds; it
+  runs no model). The janitor also rescans every 5 minutes.
+* **Text-to-video `loras`:** `{"high": [{"name", "strength"}], "low": [...]}`.
+  The template declares its branches in `_gx.lora_chains`; the generator
+  (`lora_chain.py`) inserts `LoraLoaderModelOnly` nodes `1000+i` after the
+  base LoRA 5 (high) and `2000+i` after 6 (low), before ModelSamplingSD3 7/8.
+  A high-noise file is refused on the low branch and vice versa, one file on
+  both branches needs `"shared": true` on both, incompatible files are
+  refused, unknown ones need `"allow_unknown": true`. Zero LoRAs leave the
+  graph unchanged. Node ids are deterministic.
+* **Also:** `shift`, `cfg`, `steps`, `boundary`, `sampler_name`,
+  `scheduler`; `POST /v1/videos/workflow` (build, do not run);
+  `GET /v1/videos/{id}/workflow` (the graph a job ran, with
+  `workflow_version` `gx-wan-lora/1+<template>@<sha12>` and the ComfyUI
+  prompt id); `POST /v1/videos/{id}/cancel` (queued or waiting only, 409
+  otherwise).
+* **Error codes** on failed jobs: `lora_*`, `comfy_unavailable`,
+  `workflow_rejected`, `model_unavailable`, `node_unavailable`,
+  `out_of_memory`, `execution_error`, `output_missing`, `timeout_error`,
+  `cancelled`.
+
 ### Other routes
 
 `GET /health` (no auth) · `GET /v1/models` · `GET /v1/images/{id}/content/{i}` ·
@@ -240,6 +276,21 @@ and video roots via `comfyui/extra_model_paths.yaml`.
 | `shared/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors` | 9.38 GB | Qwen-Image text encoder |
 | `shared/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors` | 6.74 GB | Wan text encoder |
 | `shared/vae/{qwen_image_vae,wan_2.1_vae}.safetensors` | 254 MB each | |
+| `image/diffusion_models/pornmasterPro_noobV3VAE/unet.safetensors` | 10.27 GB (F32) | **VisionmasterPro_V3** UNet; creativeml-openrail-m |
+| `image/text_encoders/pornmasterPro_noobV3VAE/{clip_l,clip_g}.safetensors` | 0.49 / 2.78 GB | VisionmasterPro_V3 CLIP-L / CLIP-G |
+| `image/vae/pornmasterPro_noobV3VAE/vae.safetensors` | 0.33 GB | VisionmasterPro_V3 VAE |
+
+**VisionmasterPro_V3** (Build V3): `votepurchase/pornmasterPro_noobV3VAE` @
+`75f59d136b165d48f3e678bb057af99f7cf1a71e`, a diffusers-format SDXL / NoobAI
+checkpoint with `prediction_type: epsilon` (scheduler_config.json), so no
+v-prediction sampling node is needed. The four weight files were downloaded
+once each (the `.fp16.` twins are the same LFS objects), verified with
+`legenex/scripts/hf-verify.py` and moved into the ComfyUI folders above. They
+load **unconverted**: UNETLoader reads the diffusers UNet, DualCLIPLoader
+(`sdxl`) the two transformers-format CLIPs, VAELoader the diffusers VAE.
+The manifest with every sha256 and local path is
+`/srv/models/image/pornmasterPro_noobV3VAE/.gx-manifest.json`. The name shown
+to users is always "VisionmasterPro_V3".
 
 **`Lightricks/LTX-2.3` is deliberately absent.** It is under the LTX-2 Community
 Licence, not Apache/MIT. That is a human decision, not an agent's — Wan 2.2 is
@@ -257,6 +308,25 @@ taken from the installed ComfyUI source, not from memory.
 | `qwen-image-2512-lightning` | Qwen-Image-2512 fp8 + 4-step Lightning LoRA | **12.6 s** @ 1328², 4 steps, cfg 1.0 |
 | `qwen-image-2512-quality` | Qwen-Image-2512 fp8, full sampling | ~251 s @ 1328², 50 steps |
 | `wan22-t2v-a14b-lightning` | Wan 2.2 T2V-A14B fp8, two experts + 4-step LoRAs | **56.7 s** @ 640², 49 frames |
+| `qwen-image-edit-2511` | Qwen-Image-Edit-2511 fp8mixed + Lightning; reference latent `index_timestep_zero`, CFGNorm, full denoise | see `coordination/build-v3/img.md` |
+| `qwen-image-edit-2511-masked` | as above + SetLatentNoiseMask, DifferentialDiffusion, composite over the source | ″ |
+| `qwen-image-edit-2511-transform` | as above without the reference latent (vision tokens only) | ″ |
+| `sdxl-visionmaster-pro-v3` / `-img2img` / `-inpaint` | VisionmasterPro_V3, Euler a, 28 steps, CFG 5 | ″ |
+
+### gx-image models and edit planning (Build V3)
+
+`gx_media_router/image_models.py` is the single catalogue of gx-image models
+(`GET /v1/image-models`; the Control Center reads the same module). A caller
+picks a model with `image_model` (or `gx.image_model`); without it nothing
+changes for existing clients. An edit is planned from (model, `edit_mode`,
+`strength`, mask) into a template and parameters. **The caller's `strength` is
+never bound directly to the sampler denoise**: that was the cause of edits
+returning the source (partial denoise of the encoded source on a 4-step
+schedule). Qwen instruction modes always run a full denoise; only Full
+transformation, variations and the SDXL modes map strength into a measured
+denoise range. The optional `mask` upload (PNG, white = may change) selects the
+masked template. Admission uses `GX_MEDIA_FOOTPRINT_SDXL_GIB` for the SDXL
+family, which is measured separately from the Qwen footprint.
 
 The Lightning LoRA is a ~20× speedup at visually comparable quality, so it is the
 default. It **requires** `steps=4` and `cfg=1.0`: raising cfg re-enables the
@@ -330,10 +400,12 @@ component is never the slow one to patch.
 
 * One generation at a time, cluster-wide. That is a property of ComfyUI, not a
   router limitation.
-* No cancellation endpoint yet: a submitted job runs to completion or timeout.
+* Only a queued or waiting video can be cancelled; a job already in ComfyUI
+  runs to completion or timeout.
 * Job state is in memory. A router restart loses job ids; the output files remain
   under `/srv/models/comfy-output/{gx-image,gx-video}`.
 * `response_format: "url"` returns a **relative** path. LiteLLM resolves it
   against the configured `api_base`; a direct caller must prepend the host.
-* Image-to-image, inpainting and ControlNet are not exposed. Adding one means
-  adding a vetted template, not widening the API.
+* Image-to-image and inpainting exist for VisionmasterPro_V3, and masked edits
+  exist for Qwen-Image-Edit-2511 (Build V3). ControlNet is not exposed; adding
+  it means adding a vetted template, not widening the API.

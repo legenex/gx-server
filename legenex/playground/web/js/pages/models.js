@@ -72,8 +72,9 @@ function modelCard(m) {
   const caps = (m.capabilities || []).slice(0, 24);
   const body = h('div', { class: 'stack' },
     h('p', { class: 'model-purpose' }, m.purpose),
-    h('p', { class: `status status-${tone}` }, statusDot(tone), h('span', {}, m.state_label),
-      m.state_detail ? h('span', { class: 'muted small' }, ` · ${m.state_detail}`) : null),
+    h('div', { class: 'stack-sm' },
+      h('p', { class: `status status-${tone}` }, statusDot(tone), h('span', {}, m.state_label)),
+      m.state_detail ? h('p', { class: 'muted small model-detail' }, m.state_detail) : null),
     kv([
       ['Node', m.node],
       ['Model', repoLine(m.repository, m.revision)],
@@ -88,7 +89,7 @@ function modelCard(m) {
       ['Endpoint', m.endpoint],
       ['Licence', m.licence],
     ]),
-    caps.length ? h('ul', { class: 'cap-list', 'aria-label': `${m.alias} capabilities` }, caps.map((c) => h('li', { class: 'chip chip-static' }, c))) : null,
+    caps.length ? h('ul', { class: 'caps-chips', 'aria-label': `${m.alias} capabilities` }, caps.map((c) => h('li', { class: 'chip chip-static' }, c))) : null,
     (m.not_supported || []).length ? h('p', { class: 'muted small' }, `Not supported: ${m.not_supported.join(', ')}`) : null,
     (m.variants || []).length ? disclosure(`Model variants (${m.variants.length})`, componentList(m.variants), { ic: 'layers' }) : null,
     (m.components || []).length ? disclosure(`Components (${m.components.length})`, componentList(m.components), { ic: 'layers' }) : null,
@@ -164,7 +165,14 @@ export default {
           [button('Try again', { icon: 'refresh', size: 'sm', onClick: () => load(true) })]));
         if (!data) replace(grid);
       }
-      if (alive) timer = setTimeout(() => { if (!document.hidden) load(); else timer = setTimeout(load, REFRESH_MS); }, REFRESH_MS);
+      if (alive) timer = setTimeout(tick, REFRESH_MS);
+    }
+
+    // live state refresh only while the tab is visible
+    function tick() {
+      if (!alive) return;
+      if (document.hidden) timer = setTimeout(tick, REFRESH_MS);
+      else load();
     }
 
     await load();

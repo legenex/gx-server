@@ -622,6 +622,7 @@ class MediaLibrary:
         d["settings"] = settings
         d["url"] = f"/api/media/assets/{d['id']}/file"
         d["thumbnail_url"] = f"/api/media/assets/{d['id']}/thumbnail"
+        d["has_thumbnail"] = d["type"] == "image" or self.thumb_path(d["id"]).is_file()
         d["download_url"] = f"/api/media/assets/{d['id']}/file?download=1"
         if d["type"] == "audio":
             d["stream_url"] = (f"/api/media/assets/{d['id']}/file?format=mp3" if "mp3" in d["variants"]

@@ -19,15 +19,14 @@ test('controls follow the model capabilities', async ({ page, request }) => {
   await page.locator('#form-create summary', { hasText: 'Advanced' }).click();
   await expect(page.getByLabel('Planner CFG (language model)')).toBeVisible();
   // Time signature labels and values.
-  const ts = page.getByLabel('Time signature');
+  const ts = page.getByLabel('Time signature', { exact: true });
   await expect(ts.locator('option')).toHaveText(['Auto', '2/4', '3/4', '4/4', '6/8']);
   expect(await ts.locator('option').evaluateAll((o) => o.map((x) => x.value))).toEqual(['', '2', '3', '4', '6']);
-  // A song description hides the structured fields and explains why.
+  // Description and the structured controls are used together (MUS build V3).
   await page.fill('#music-description', 'a happy birthday song');
-  await expect(page.getByLabel('BPM')).toBeHidden();
-  await expect(page.getByText('The language model writes the song')).toBeVisible();
+  await expect(page.getByLabel('BPM', { exact: true })).toBeVisible();
+  await expect(page.locator('#music-conditioning')).toContainText('the music planner');
   await page.fill('#music-description', '');
-  await expect(page.getByLabel('BPM')).toBeVisible();
   await axeCheck(page, 'music create');
   for (const name of ['Remix/Cover', 'Repaint', 'Extend']) {
     await page.getByRole('tab', { name }).click();
@@ -64,22 +63,22 @@ test('generate an instrumental track, then remix and repaint it', async ({ page 
   await gotoPage(page, 'music');
   const form = page.locator('#form-create');
   await page.fill('#music-prompt', 'e2e warm synthwave groove');
-  const tagInput = form.getByLabel('Custom style tag');
+  const tagInput = form.getByLabel('Add a style tag');
   await tagInput.fill('synthwave');
   await tagInput.press('Enter');
-  await form.locator('summary', { hasText: 'Browse tags' }).click();
+  await form.locator('summary', { hasText: 'More tags from the model vocabulary' }).click();
   await form.getByRole('group', { name: 'Genre' }).getByRole('button', { name: 'jazz' }).click();
-  await expect(form.locator('.tag-selected .tag')).toHaveText(['synthwave', 'jazz']);
+  await expect(form.locator('#music-tags .token-text')).toHaveText(['synthwave', 'jazz']);
   await form.getByRole('button', { name: 'Remove tag synthwave' }).click();
   await tagInput.fill('synthwave');
   await form.getByRole('button', { name: 'Add', exact: true }).click();
   await page.getByText('Instrumental (no vocals)').click();
-  await form.getByLabel('Duration').fill('30');
-  await form.getByLabel('BPM').fill('100');
+  await form.getByLabel('Duration', { exact: true }).fill('30');
+  await form.getByLabel('BPM', { exact: true }).fill('100');
   await form.getByLabel('Key', { exact: true }).fill('C major');
-  await form.getByLabel('Time signature').selectOption('3');
+  await form.getByLabel('Time signature', { exact: true }).selectOption('3');
   await form.getByRole('group', { name: 'Tracks per run' }).getByRole('button', { name: '1' }).click();
-  await form.getByLabel('Title').fill('E2E Groove');
+  await form.getByLabel('Title', { exact: true }).fill('E2E Groove');
   const [req] = await Promise.all([postMusic(page), page.click('#music-submit')]);
   const body = req.postDataJSON();
   expect(body).toMatchObject({

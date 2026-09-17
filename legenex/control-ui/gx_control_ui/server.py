@@ -52,6 +52,7 @@ from .media_jobs import IMAGE_SIZES, KIND_LABEL, VIDEO_SIZES, JobError, MediaJob
 from .media_library import LibraryError, MediaLibrary, MediaTools, read_range
 from .model_manager import ManagerError, ModelManager, gateway_probe
 from .music import MusicClient, MusicError, MusicJobs
+from .voice import VoiceError
 from .owui_identity import OpenWebUIIdentity
 from .resources import AdmissionBlocked, ResourceController, ResourceError
 from .storage import StorageError, StorageManager
@@ -161,8 +162,10 @@ class App:
                                cfg.state_dir / "music-jobs.json", audit=self.actions.audit, results=self.results,
                                explain=lambda alias: self.resources.explain(alias),
                                start_worker=not cfg.offline)
+        from . import node2_services
         self.resources = ResourceController(cfg, self.cluster, self.actions, music=self.music, media=self.media,
-                                            audit=self.actions.audit)
+                                            audit=self.actions.audit, services=node2_services.build(cfg),
+                                            registry=self.manager.registry)
         self.media.gate = None if cfg.offline else self.resources.creative_gate
         self.actions.maintenance = self.resources.maintenance
         self.storage = StorageManager(cfg, self.cluster, self.manager, self.library, audit=self.actions.audit,
@@ -199,6 +202,25 @@ class App:
         from .flows.wiring import build_flows
         self.flows = build_flows(self)
         self.activity.register("flows", self.flows.activity)
+        # --- Build V3 MUS: Build with AI, Improve My Prompt, lyric writing, reference analysis (routes_mus.py)
+        from .music_ai import GatewayChat, MusicAI
+        from .music_reference import ReferenceAnalyzer
+        self.music_ai = MusicAI(GatewayChat(cfg.litellm_base, self.cluster.litellm_headers),
+                                audit=self.actions.audit)
+        self.music.lyricist = lambda req, user: self.music_ai.write_lyrics(req, user=user)
+        self.music_reference = ReferenceAnalyzer(self.music, self.music_ai, audit=self.actions.audit,
+                                                 start_threads=True)
+        # --- Build V3 CAL: Call Agents and gx-call sessions (call_agents.py, calls.py, routes_cal.py)
+        from .call_agents import AgentStore
+        from .calls import CallClient, CallManager, IntegrationSecrets
+        self.call_agents = AgentStore(self.library.connect, audit=self.actions.audit)
+        self.call_secrets = IntegrationSecrets(cfg.secrets_root / "gx-call" / "integrations")
+        self.calls = CallManager(connect=self.library.connect, agents=self.call_agents,
+                                 client=CallClient(f"http://{cfg.rt_call_target}",
+                                                   cfg.secrets_root / "gx-call" / "api-key"),
+                                 realtime=self.realtime, library=self.library, secrets_store=self.call_secrets,
+                                 audit=self.actions.audit, metric=metric, start_threads=not cfg.offline)
+        self.activity.register("call", self.calls.activity)
         #: name -> fn(app) -> small JSON dict shown in the Playground Models page (plt.md section 8)
         self.catalog_extras: dict[str, Callable[[App], dict]] = {}
 
@@ -500,6 +522,8 @@ class Handler(BaseHTTPRequestHandler):
         except (LibraryError, JobError, ManagerError, HFError, KeyError_, ResourceError, StorageError) as exc:
             self._error(exc.status, str(exc), type(exc).__name__.lower().rstrip("_"))
         except MusicError as exc:
+            self._error(exc.status, str(exc), exc.code)
+        except VoiceError as exc:  # Build V3 VOI
             self._error(exc.status, str(exc), exc.code)
         except (BrokenPipeError, ConnectionResetError):
             pass
@@ -1219,8 +1243,10 @@ class Server(ThreadingHTTPServer):
 from . import routes_v2  # noqa: E402,F401  (registers the D-037 routes)
 from . import routes_wan  # noqa: E402,F401  (Build V3 WAN: Wan LoRAs, presets, video history)
 from . import routes_plt  # noqa: E402,F401  (Build V3 platform: realtime, activity, catalogue)
+from . import routes_mus  # noqa: E402,F401  (Build V3 MUS: music AI builder, reference analysis)
 from . import routes_voi  # noqa: E402,F401  (Build V3 VOI: Voice Studio and /v1/voice)
 from . import routes_flo  # noqa: E402,F401  (Build V3 FLO: Creative Flows, /v1/flows, /v1/assets)
+from . import routes_cal  # noqa: E402,F401  (Build V3 CAL: Call Agents, /v1/call)
 
 
 def build(cfg: UIConfig) -> tuple[App, list[Server]]:

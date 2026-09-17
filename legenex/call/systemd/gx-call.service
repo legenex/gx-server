@@ -1,0 +1,31 @@
+# gx-call supervisor -- node 2 (gx10-02) ONLY. systemd --user unit.
+#
+# Lightweight (stdlib Python). Safe to start at boot: it does NOT load the
+# model. NemotronLabs VoiceChat is started when a call session is created,
+# through the node-2 admission guard, and stopped after GX_CALL_IDLE_UNLOAD_S
+# without calls, in Maintenance, or as soon as gx-max claims the node.
+#
+# Install:
+#   ln -sf <checkout>/legenex/call/systemd/gx-call.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now gx-call
+[Unit]
+Description=gx-call supervisor (NemotronLabs VoiceChat 11B realtime voice agents, node 2)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=GX_CALL_HOME=%h/Documents/Projects/Server/gx-cluster/legenex/call
+EnvironmentFile=-%h/.config/gx-call/gx-call.env
+WorkingDirectory=/tmp
+ExecStart=/usr/bin/env python3 -P -c "import os,sys,runpy; sys.path.insert(0, os.environ['GX_CALL_HOME']); runpy.run_module('gx_call', run_name='__main__')"
+Restart=on-failure
+RestartSec=10
+# Ending calls and unloading the engine on stop takes up to ~60 s.
+TimeoutStopSec=120
+KillMode=mixed
+MemoryMax=1G
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any
 
 from . import setup as client_setup
 from .music import OPERATIONS, MusicError
+from .music_ai import MusicAIError
 from .owui_identity import IdentityError
 from .redact import redact
 from .resources import GENERATIVE, POLICIES, PROFILE_IDS, ResourceError
@@ -29,7 +30,7 @@ from .util import HTTPError, bearer, http_json
 if TYPE_CHECKING:  # pragma: no cover
     pass
 
-ALIAS_RE = "gx-(?:mini|fast|reason|image|video|music|max)"
+ALIAS_RE = "gx-(?:mini|fast|reason|image|video|music|voice|call|live|max)"
 
 
 # ============================================================ resources
@@ -114,7 +115,8 @@ def resource_summary(h: Handler) -> dict:
     max_state = {"UNLOADED": "Idle", "LOADING": "Starting", "READY": "Running", "DRAINING": "Releasing"}.get(
         rt["gx-max"]["state"], "Unavailable")
     creative = h.app.media.snapshot()
-    music_queue = rt["gx-music"].get("queue") or 0
+    music_queue = (rt["gx-music"].get("queue") or 0) + sum(int(rt[a].get("queue") or 0)
+                                                           for a in ("gx-voice", "gx-call", "gx-live"))
     return {
         "profile": snap["profile"]["profile"],
         "profile_label": snap["profile"]["label"],
@@ -126,6 +128,9 @@ def resource_summary(h: Handler) -> dict:
             {"key": "image", "label": "Image", "status": word("gx-image"), "detail": rt["gx-image"]["detail"]},
             {"key": "video", "label": "Video", "status": word("gx-video"), "detail": rt["gx-video"]["detail"]},
             {"key": "music", "label": "Music", "status": word("gx-music"), "detail": rt["gx-music"]["detail"]},
+            *({"key": a.removeprefix("gx-"), "label": label, "status": word(a), "detail": rt[a]["detail"]}
+              for a, label in (("gx-voice", "Voice"), ("gx-call", "Call agents"), ("gx-live", "Live"))
+              if h.app.resources.services.get(a) is not None and h.app.resources.services[a].configured),
             {"key": "max", "label": "Max", "status": max_state, "detail": "takes over both nodes"},
         ],
         "queued": sum(v for k, v in creative["counts"].items() if k in ("queued", "waiting")) + int(music_queue),
@@ -448,6 +453,9 @@ def public_music(h: Handler, method: str, path: str) -> None:  # noqa: C901 - fl
                 tmp.unlink(missing_ok=True)
             h._json(201, up)
             return
+        if method == "POST" and path == "/v1/music/preview":
+            h._json(200, music.preview(h._body(MAX_BODY)))
+            return
         op = {"/v1/music/generations": "generate", "/v1/music/remix": "remix", "/v1/music/edits": "edit",
               "/v1/music/extend": "extend"}.get(path)
         if method == "POST" and op:
@@ -500,6 +508,8 @@ def public_music(h: Handler, method: str, path: str) -> None:  # noqa: C901 - fl
             _api_error(h, 405, "method not allowed", "method_not_allowed")
     except MusicError as exc:
         _api_error(h, exc.status, str(exc), exc.code)
+    except MusicAIError as exc:
+        _api_error(h, exc.status, f"Write with AI failed: {exc}", exc.code)
     except (ValueError, json.JSONDecodeError) as exc:
         _api_error(h, 400, str(exc), "invalid_request")
     except OverflowError as exc:

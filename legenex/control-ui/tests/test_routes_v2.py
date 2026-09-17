@@ -419,7 +419,7 @@ class ResourcesApiTests(V2Base):
 
     def test_compatibility_admission_explain_plan(self):
         status, _, comp = self.req("GET", "/api/resources/compatibility")
-        self.assertEqual((status, len(comp["pairs"])), (200, 21))
+        self.assertEqual((status, len(comp["pairs"])), (200, 45))
         status, _, view = self.req("GET", "/api/resources/admission/gx-video?variant=keyframe_edit")
         self.assertEqual((status, view["need_gib"], view["code"], view["terminal"]),
                          (200, 137.0, "exceeds_node", True))

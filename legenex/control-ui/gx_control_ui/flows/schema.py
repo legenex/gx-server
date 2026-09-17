@@ -362,6 +362,7 @@ def validate_document(doc: Any) -> dict[str, Any]:
         if target_port is None:
             ctx.add(f"{d_nt.label} has no input {str(dport)[:40]!r}", edge=eid, code="bad_port")
             continue
+        src, sport, dst, dport = str(src), str(sport), str(dst), str(dport)
         link = (src, sport, dst, dport)
         if link in seen_links:
             ctx.add("duplicate connection", edge=eid, code="duplicate")

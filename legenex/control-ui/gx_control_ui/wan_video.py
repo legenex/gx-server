@@ -246,7 +246,8 @@ def build_library(files: list[dict], pairs: list[dict], unpaired: set[str], sett
         entries.append({
             "id": eid, "kind": r["kind"], "pair_state": r["state"], "pair_source": r["source"],
             "pair_id": r["pair_id"],
-            "display_name": st.get("display_name") or _derived_name(r["high"], r["low"] or r.get("file")),
+            "display_name": st.get("display_name") or (_derived_name(r["high"], r["low"]) if r["kind"] == "pair"
+                                                        else _stem(r.get("file") or r["high"] or r["low"] or "")),
             "description": st.get("description") or "", "tags": st.get("tags") or [],
             "high_file": r["high"], "low_file": r["low"], "file": r.get("file"),
             "files": efiles, "size": sum(int(f.get("size") or 0) for f in efiles),
@@ -927,11 +928,32 @@ class WanVideo:
         return job
 
     # ------------------------------------------------------------ history
+    @staticmethod
+    def _plain_video(job: MediaJob) -> dict:
+        """History fields for a video job submitted without the Wan extras
+        (image to video, video edit, or text to video from another page)."""
+        p = job.params
+        width, _, height = str(p.get("size") or "x").partition("x")
+        seconds = float(p.get("seconds") or 0) or None
+        fps = p.get("fps")
+        frames = snap_frames(seconds, fps) if seconds and fps else None
+        model = {"t2v": MODEL_ID, "i2v": "wan22-i2v-a14b", "v2v": "wan22-v2v-a14b"}[job.kind]
+        request = {k: v for k, v in p.items() if k != "wan"}
+        return {"workflow": None, "model": model, "preset_id": None, "loras": [], "advanced": {}, "flow": {},
+                "request": request, "frames": frames, "width": int(width) if width.isdigit() else None,
+                "height": int(height) if height.isdigit() else None}
+
     def observe(self, job: MediaJob, event: str) -> None:
+        if job.kind not in ("t2v", "i2v", "v2v"):
+            return
         wan = job.params.get("wan")
         if not isinstance(wan, dict):
-            return
+            wan = self._plain_video(job)
         now = time.time()
+        if event in ("failed", "cancelled") and job.error_hint is None:
+            code = job.error_code or ("cancelled" if event == "cancelled" else None)
+            if code in ERROR_TEXT:
+                job.error_hint = ERROR_TEXT[code]
         if event == "submitted":
             p = job.params
             with self._db() as con:
@@ -1003,7 +1025,8 @@ class WanVideo:
         d["size"] = f"{d['width']}x{d['height']}" if d.get("width") else None
         if d.get("asset_id"):
             d["asset_url"] = f"/api/media/assets/{d['asset_id']}/file"
-            d["thumbnail_url"] = f"/api/media/assets/{d['asset_id']}/thumbnail"
+            d["has_thumbnail"] = self.library.thumb_path(d["asset_id"]).is_file()
+            d["thumbnail_url"] = f"/api/media/assets/{d['asset_id']}/thumbnail" if d["has_thumbnail"] else None
             d["flows_url"] = f"#/flows?asset={d['asset_id']}"
         d["workflow_url"] = f"/api/video/generations/{d['id']}/workflow" if wf else None
         live = None

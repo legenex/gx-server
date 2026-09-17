@@ -1,0 +1,31 @@
+# gx-live supervisor -- node 2 (gx10-02) ONLY. systemd --user unit.
+#
+# Lightweight (stdlib Python). Safe to start at boot: it does NOT load the
+# model. MiniCPM-o 4.5 is started when a live session is created, through the
+# node-2 admission guard, and stopped after GX_LIVE_IDLE_UNLOAD_S without a
+# session, on Maintenance, or as soon as gx-max claims the node.
+#
+# Install (from the node-2 checkout):
+#   ln -sf <checkout>/legenex/live/systemd/gx-live.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now gx-live
+[Unit]
+Description=gx-live supervisor (MiniCPM-o 4.5 realtime assistant, node 2)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=GX_LIVE_HOME=%h/Documents/Projects/Server/gx-cluster/legenex/live
+EnvironmentFile=-%h/.config/gx-live/gx-live.env
+WorkingDirectory=/tmp
+ExecStart=/usr/bin/env python3 -P -c "import os,sys,runpy; sys.path.insert(0, os.environ['GX_LIVE_HOME']); runpy.run_module('gx_live', run_name='__main__')"
+Restart=on-failure
+RestartSec=10
+# Ending a session and unloading the engine (verified) takes up to ~40 s.
+TimeoutStopSec=120
+KillMode=mixed
+MemoryMax=512M
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

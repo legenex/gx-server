@@ -143,7 +143,8 @@ def normalise(answer: Any, *, voices: list[str]) -> tuple[dict[str, Any], list[s
         new = old if ID_RE.fullmatch(old) and old not in used else _slug(old, used)
         used.add(new)
         idmap[old] = new
-        config = raw.get("config") if isinstance(raw.get("config"), dict) else {}
+        raw_config = raw.get("config")
+        config: dict[str, Any] = raw_config if isinstance(raw_config, dict) else {}
         known = {f.id for f in nt.fields}
         dropped = sorted(set(config) - known)
         if dropped:
@@ -153,7 +154,8 @@ def normalise(answer: Any, *, voices: list[str]) -> tuple[dict[str, Any], list[s
         if voice_field is not None and clean.get("voice_id") and clean["voice_id"] not in voices:
             warnings.append(f"{nt.label}: voice {str(clean['voice_id'])[:40]!r} does not exist; choose one")
             clean.pop("voice_id")
-        label = raw.get("label") if isinstance(raw.get("label"), str) else ""
+        raw_label = raw.get("label")
+        label = raw_label if isinstance(raw_label, str) else ""
         nodes.append({"id": new, "type": nt.type, "label": label[:80], "config": clean,
                       "position": {"x": 0.0, "y": 0.0}, "disabled": False, "locked": False, "notes": ""})
     edges = []
@@ -170,8 +172,9 @@ def normalise(answer: Any, *, voices: list[str]) -> tuple[dict[str, Any], list[s
     for item in answer.get("variables") or []:
         if isinstance(item, dict) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,63}", str(item.get("key"))):
             variables[str(item["key"])] = str(item.get("value", ""))[:2000]
-    name = answer.get("name") if isinstance(answer.get("name"), str) and answer["name"].strip() else "AI flow"
-    description = answer.get("description") if isinstance(answer.get("description"), str) else ""
+    raw_name, raw_desc = answer.get("name"), answer.get("description")
+    name = raw_name if isinstance(raw_name, str) and raw_name.strip() else "AI flow"
+    description = raw_desc if isinstance(raw_desc, str) else ""
     return {"schema": 1, "name": name.strip()[:120], "description": description[:2000], "nodes": nodes,
             "edges": edges, "variables": variables, "viewport": {"x": 40.0, "y": 40.0, "zoom": 0.7}}, warnings
 

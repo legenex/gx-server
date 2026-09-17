@@ -385,10 +385,6 @@ def _repair(settings: dict, problems: list[str]) -> tuple[dict, list[str]]:
 
 
 # ------------------------------------------------------------------ merge
-def _empty(value: Any) -> bool:
-    return value in (None, "", []) or value is False and False
-
-
 def _is_empty(field: str, value: Any) -> bool:
     if field in ("instrumental", "thinking"):
         return value is None
@@ -580,7 +576,8 @@ class MusicAI:
 
     # ---------------------------------------------------------------- API
     def build(self, prompt: Any, current: Any, locked: Any, *, write_lyrics: bool, user: str) -> dict:
-        text = clean_text(prompt, PROMPT_MAX, "prompt", problems := [])
+        problems: list[str] = []
+        text = clean_text(prompt, PROMPT_MAX, "prompt", problems)
         if problems:
             raise MusicAIError(problems[0], 400, "invalid_request")
         if len(text) < 3:
@@ -596,8 +593,8 @@ class MusicAI:
 
         def check(obj: Any) -> tuple[dict, list[str]]:
             s, p = validate_settings(obj, require_lyrics=write_lyrics and not (obj or {}).get("instrumental"))
-            if not write_lyrics and s.get("lyrics"):
-                s["lyrics"] = ""
+            if not write_lyrics:
+                s["lyrics"] = "" if s.get("instrumental") else cur["lyrics"]
             if wants_vocals and s.get("instrumental") and not re.search(r"instrumental", text, re.I):
                 p.append("the request asks for vocals, so instrumental must be false")
             return s, p
@@ -618,7 +615,8 @@ class MusicAI:
     def improve(self, current: Any, locked: Any, *, improve_lyrics: bool, instruction: Any, user: str) -> dict:
         cur = normalize_form(current)
         lock = _locked(locked)
-        note = clean_text(instruction, 600, "instruction", problems := [])
+        problems: list[str] = []
+        note = clean_text(instruction, 600, "instruction", problems)
         if problems:
             raise MusicAIError(problems[0], 400, "invalid_request")
         if not any(cur.get(k) for k in ("description", "style_prompt", "style_tags", "lyrics")):

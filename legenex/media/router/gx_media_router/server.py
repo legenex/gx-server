@@ -460,7 +460,10 @@ class Handler(BaseHTTPRequestHandler):
         data = self._source_bytes(body, files, ("mask",), "image")
         if data is None:
             return None
-        info = self._validated(data, "image")
+        try:
+            info = self._validated(data, "image")
+        except ValidationError as exc:
+            raise ValidationError(f"mask: {exc.message}", param="mask") from None
         if info.ext != "png":
             raise ValidationError("the mask must be a PNG (white = area to change, black = keep)", param="mask")
         src_ratio = (source.width or 1) / (source.height or 1)

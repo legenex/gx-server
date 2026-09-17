@@ -166,6 +166,8 @@ class Tracker:
     def _agent_audio(self, level: float, out_ms: int) -> None:
         audible = out_ms > 0 and level > AGENT_DBFS
         now = self.clock()
+        # this step's agent audio covers [stream_ms - out_ms, stream_ms] of the timeline
+        start_ms = self.stream_ms - out_ms
         if audible:
             self.agent_quiet = 0
             self.agent_last_audible_ms = self.stream_ms
@@ -178,13 +180,13 @@ class Tracker:
                     self.first_audio_wall_ms = round((now - self.started_wall) * 1000)
                     fields["first_audio_wall_ms"] = self.first_audio_wall_ms
                 if self.pending_turn is not None:
-                    lat = self.stream_ms - self.pending_turn["end_ms"]
+                    lat = max(0, start_ms - self.pending_turn["end_ms"])
                     lat_wall = round((now - self.pending_turn["end_wall"]) * 1000)
                     self.turn_latencies.append(lat)
                     self.turn_latencies_wall.append(lat_wall)
                     fields.update(turn_latency_ms=lat, turn_latency_wall_ms=lat_wall)
                     self.pending_turn = None
-                self._event("agent.speech.started", **fields)
+                self._event("agent.speech.started", at_ms=start_ms, **fields)
         elif out_ms > 0 and self.agent_speaking:
             self.agent_quiet += 1
             if self.agent_quiet >= self.cfg.agent_offset_frames:
@@ -193,7 +195,7 @@ class Tracker:
                 extra: dict = {}
                 if self.pending_interrupt is not None:
                     reason = "interrupted"
-                    stop_ms = self.agent_last_audible_ms + self.cfg.frame_ms
+                    stop_ms = self.agent_last_audible_ms
                     lat = max(0, stop_ms - self.pending_interrupt["at_ms"])
                     lat_wall = round((now - self.pending_interrupt["wall"]) * 1000)
                     self.interruptions += 1

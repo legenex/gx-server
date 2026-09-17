@@ -25,10 +25,74 @@ bulk favourite, bulk delete and bulk ZIP.
 
 | Operation | Model |
 |---|---|
-| text → image | Qwen-Image-2512 fp8 + Lightning 4-step + NSFW-capable adapter (perpetual3x Tumblr-NudeShot, non-commercial licence) |
-| image edit / variation | Qwen-Image-Edit-2511 fp8mixed + Lightning 4-step (optional NSFW edit adapter) |
-| text → video, image → video | Wan 2.2 A14B T2V / I2V fp8 + rzgar uncensored 4-step LoRAs |
+| text → image | **Qwen Image 2512** (default): Qwen-Image-2512 fp8 + Lightning 4-step + NSFW-capable adapter (perpetual3x Tumblr-NudeShot, non-commercial licence) |
+| text → image | **VisionmasterPro_V3**: an SDXL (NoobAI, epsilon-prediction) photoreal checkpoint, `votepurchase/pornmasterPro_noobV3VAE` @75f59d1, creativeml-openrail-m |
+| image edit / variation | **Qwen Image Edit 2511** (default): Qwen-Image-Edit-2511 fp8mixed + Lightning 4-step (optional NSFW edit adapter), reference-latent conditioning, optional mask |
+| image edit | **VisionmasterPro_V3**: image-to-image (Restyle, Full transformation) and masked inpainting |
+
+`gx-image` is still one alias. The model is an internal choice inside it:
+request field `image_model` (`qwen-image-2512`, `qwen-image-edit-2511`,
+`visionmaster-pro-v3`). Without it, generation uses Qwen Image 2512 and edits
+use Qwen Image Edit 2511, exactly as before.
+
+## Image edits (Build V3)
+
+**Why edits used to come back unchanged.** Qwen-Image-Edit-2511 sees the
+source through its reference latent and needs a *full* denoise. The Images
+page sent `strength` 0.6, and the router used it as the sampler denoise on
+a 4-step schedule that started from the source itself, so the result was
+almost the source (measured: see `coordination/build-v3/img.md`). Edits now
+always run the full denoise with the official 2511 reference method
+(`index_timestep_zero`) and CFGNorm.
+
+**Edit modes** (`edit_mode`) change what is sent to the model:
+
+| Mode | Qwen Image Edit 2511 | VisionmasterPro_V3 |
+|---|---|---|
+| Change / replace | instruction + "keep everything else" | inpaint; **needs a mask** |
+| Add | "add … with matching light and scale" | inpaint; **needs a mask** |
+| Remove | "remove … and fill the gap" (mask grown more) | inpaint; **needs a mask** |
+| Restyle | "redraw the whole image in this style" | image-to-image, strength = denoise 0.45-0.85 |
+| Background | "replace the background, keep the subject" | inpaint; **needs a mask** (paint the background) |
+| Subject | "change the subject, keep the background" | inpaint; **needs a mask** |
+| Full transformation | no reference latent (the source reaches the model only through vision tokens); strength = denoise 0.8-1.0 | image-to-image, strength = denoise 0.7-1.0 |
+| `instruct` (API default) | the instruction exactly as sent | treated as Restyle |
+
+`strength` only applies where the table names a range; for the other Qwen
+modes it is ignored and the response says `strength: null`.
+`edit_quality: "quality"` (Qwen only) turns off the Lightning LoRA and runs
+20 steps with CFG 4, so the negative prompt matters; `fast` (default) is 4
+steps.
+
+**Masks.** `mask` is a PNG with the same aspect ratio as the source; white
+= may change. The router samples only inside the (grown, feathered) mask and
+pastes the result over the source, so pixels outside it are the source's
+own. Full transformation does not take a mask.
+| text → video, image → video | Wan 2.2 A14B T2V / I2V fp8 + rzgar uncensored 4-step LoRAs; text → video also takes your own Wan 2.2 LoRAs (see **Video LoRAs**) |
 | video edit | keyframe propagation: the first frame is edited with Qwen-Image-Edit, then Wan 2.2 I2V re-renders the clip |
+
+## Wan 2.2 LoRAs
+
+Text-to-video in GX-Playground can stack your own Wan 2.2 LoRAs, one chain per
+expert (high noise and low noise), with presets, a workflow preview and a
+video history. The files live on gx10-02 under `/srv/models/video/loras/`
+(and `/srv/models/shared/loras/`); the media router lists them read-only
+(`GET /v1/loras`, `POST /v1/loras/rescan`) and inserts them into the vetted
+graph itself. Details: **Video LoRAs**.
+
+Router 2.5.0 additions for text-to-video (JSON body):
+
+| Field | Meaning |
+|---|---|
+| `loras` | `{"high": [{"name", "strength"}], "low": [...]}`; names from `GET /v1/loras`, strengths 0.0-1.5, at most 8 per branch; `"shared": true` on both sides for one general file on both experts; `"allow_unknown": true` for a file of unknown compatibility |
+| `shift`, `cfg`, `steps`, `boundary` | ModelSamplingSD3 shift (0.5-20), CFG (1-10), total steps (2-40), step where the low-noise expert takes over |
+| `sampler_name`, `scheduler` | allow-listed sampler and scheduler |
+
+`GET /v1/videos/{id}/workflow` returns the exact graph a job ran,
+`POST /v1/videos/workflow` builds one without running it, and
+`POST /v1/videos/{id}/cancel` cancels a video that has not reached ComfyUI.
+Failed jobs carry `error.code` (for example `lora_not_found`,
+`out_of_memory`, `workflow_rejected`, `cancelled`).
 
 ## API
 
@@ -41,8 +105,16 @@ curl -s "$GX_BASE/images/generations" -H "Authorization: Bearer $GX_API_KEY" \
 
 # image edit (source image + instruction -> new image)
 curl -s "$GX_BASE/images/edits" -H "Authorization: Bearer $GX_API_KEY" \
-  -F model=gx-image -F image=@photo.png \
-  -F prompt="Change the background to a sunset beach and make the shirt black."
+  -F model=gx-image -F image=@photo.png -F edit_mode=background \
+  -F prompt="a sunset beach with palm trees"
+# ... limited to a painted area (white = may change)
+curl -s "$GX_BASE/images/edits" -H "Authorization: Bearer $GX_API_KEY" \
+  -F model=gx-image -F image=@photo.png -F mask=@mask.png -F edit_mode=remove -F prompt="the bicycle"
+
+# text to image with VisionmasterPro_V3 (the OpenAI SDK sends it with extra_body)
+curl -s "$GX_BASE/images/generations" -H "Authorization: Bearer $GX_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "gx-image", "image_model": "visionmaster-pro-v3", "prompt": "portrait photo, window light", "size": "832x1216"}'
 
 # text to video (asynchronous)
 curl -s "$GX_BASE/videos" -H "Authorization: Bearer $GX_API_KEY" \
@@ -69,8 +141,13 @@ curl -s "$GX_BASE/videos/$VIDEO_ID/remix" -H "Authorization: Bearer $GX_API_KEY"
 | `size` | all | `WxH`, multiples of 16 |
 | `seed` | all | reproducible results |
 | `negative_prompt` | all | what to avoid |
-| `uncensored` | images | `false` disables the NSFW adapter |
-| `strength` | edits | image: 0.05–1 (1 = follow the instruction fully); video: ≥ 0.75 instruction edit, 0.5–0.75 keeps more structure, lower = light restyle |
+| `image_model` | images | `qwen-image-2512` (generate default), `qwen-image-edit-2511` (edit default), `visionmaster-pro-v3`; also accepted as `gx.image_model` |
+| `edit_mode` | image edits | `instruct` (default), `change`, `add`, `remove`, `restyle`, `background`, `subject`, `transform` |
+| `edit_quality` | Qwen edits | `fast` (4 steps) or `quality` (20 steps, CFG 4) |
+| `mask` | image edits | PNG, white = may change, same aspect ratio as the image |
+| `quality_tags` | VisionmasterPro_V3 | `false` stops the router appending the checkpoint's quality tags |
+| `uncensored` | Qwen images | `false` disables the NSFW adapter |
+| `strength` | edits | image: 0–1 where the edit mode uses it (see above); variation: below 0.5 keeps the scene, higher re-imagines it; video: ≥ 0.75 instruction edit, 0.5–0.75 keeps more structure, lower = light restyle |
 | `seconds` | video | 0.5–10 (frames are snapped to Wan's 4k+1 rule) |
 
 Status objects follow OpenAI's video API: `status` is `queued`,

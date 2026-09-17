@@ -13,8 +13,11 @@ test('text to video completes and plays in the viewer; edit again submits v2v', 
   await page.getByRole('slider', { name: 'Length' }).fill('2');
   await page.getByRole('slider', { name: 'Frame rate' }).fill('12');
   await page.locator('.chips-size .chip[data-value="832x480"]').click();
-  const [req] = await Promise.all([postJob(page), page.click('#generate-btn')]);
-  expect(req.postDataJSON()).toMatchObject({ kind: 't2v', prompt: 'e2e slow pan over a misty lake', seconds: 2, fps: 12, size: '832x480' });
+  // text to video goes through the Wan video API (LoRAs, presets, history)
+  const [req] = await Promise.all([
+    page.waitForRequest((r) => r.url().endsWith('/api/video/generate') && r.method() === 'POST'),
+    page.click('#generate-btn')]);
+  expect(req.postDataJSON()).toMatchObject({ prompt: 'e2e slow pan over a misty lake', seconds: 2, fps: 12, size: '832x480', loras: [] });
   expect((await req.response()).status()).toBe(202);
   await expectPhase(page.locator('#ws-jobs'), 'COMPLETE', 90_000);
   const video = page.locator('#viewer video');

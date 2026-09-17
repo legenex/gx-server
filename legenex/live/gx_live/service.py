@@ -19,14 +19,15 @@ import threading
 import time
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 
 from . import PROTOCOL, __version__
 from . import protocol as proto
 from . import tools as toolspec
 from .config import Config
 from .engine import LOADING, READY, UNLOADED, UNLOADING, WAITING, EngineController, meminfo
-from .errors import (ConflictError, EngineError, GoneError, LiveError, NotFoundError, ResourceWait,
+from .errors import (ConflictError, EngineError, ForbiddenError, GoneError, NotFoundError, ResourceWait,
                      UnavailableError, ValidationError)
 
 log = logging.getLogger("gx_live.service")
@@ -285,7 +286,19 @@ class LiveService:
                     call.result = {"ok": False, "error": {"code": "session_ended",
                                                           "message": "the session ended"}}
             sess.cond.notify_all()
+        if client is not None and not getattr(client, "_gx_counted", False):
+            sess.stats["bytes_in"] += getattr(client, "bytes_in", 0)
+            sess.stats["bytes_out"] += getattr(client, "bytes_out", 0)
+            client._gx_counted = True
         summary = sess.summary()
+        self.engine.touch()
+        log.info("session %s ended (%s): %s", sid, reason, json.dumps(
+            {k: summary[k] for k in ("duration_s", "turns", "responses", "interrupted")}))
+        self._metric("realtime.session", service="gx-live", session_id=sid, disposition=reason,
+                     outcome="ok" if reason in ("completed", "abandoned", "timeout") else "failed",
+                     duration_ms=int(summary["duration_s"] * 1000), owner=sess.owner,
+                     bytes_in=summary["transport"]["bytes_in"], bytes_out=summary["transport"]["bytes_out"],
+                     turns=summary["turns"])
         if client is not None:
             self._send_json(sess, client, {"type": "session.ended", "reason": reason,
                                            "duration_s": summary["duration_s"], "turns": summary["turns"]})
@@ -294,23 +307,15 @@ class LiveService:
             try:
                 engine.send_text(json.dumps({"type": "engine.session.end", "reason": reason}))
             except Exception:  # noqa: BLE001
-                pass
+                log.debug("engine link already closed")
             _close(engine, 1000, "session ended")
-        self.engine.touch()
-        log.info("session %s ended (%s): %s", sid, reason, json.dumps(
-            {k: summary[k] for k in ("duration_s", "turns", "responses", "interrupted")}))
-        self._metric("realtime.session", service="gx-live", session_id=sid, disposition=reason,
-                     outcome="ok" if reason in ("completed", "abandoned", "timeout") else "failed",
-                     duration_ms=int(summary["duration_s"] * 1000), user=f"key:{sess.owner}",
-                     bytes_in=summary["transport"]["bytes_in"], bytes_out=summary["transport"]["bytes_out"],
-                     turns=summary["turns"])
         return summary
 
     # ------------------------------------------------------------- attach --
     def check_join(self, sid: str, token: str) -> Session:
         sess = self.get(sid)
         if not token or not hmac.compare_digest(token.encode(), sess.join_token.encode()):
-            raise LiveError("invalid join token for this session", code="forbidden") from None
+            raise ForbiddenError("invalid join token for this session") from None
         if sess.state == ENDED:
             raise GoneError("this live session has ended")
         if self.clock() > sess.expires_at:
@@ -354,8 +359,10 @@ class LiveService:
                     if sess.state != ENDED:
                         sess.state = "detached"
                         sess.detached_at = self.clock()
-                sess.stats["bytes_in"] += getattr(ws, "bytes_in", 0)
-                sess.stats["bytes_out"] += getattr(ws, "bytes_out", 0)
+                if not getattr(ws, "_gx_counted", False):
+                    sess.stats["bytes_in"] += getattr(ws, "bytes_in", 0)
+                    sess.stats["bytes_out"] += getattr(ws, "bytes_out", 0)
+                    ws._gx_counted = True
             if current and sess.state != ENDED:
                 self._engine_send(sess, {"type": "client.detached"})
                 log.info("session %s: client detached (grace %ss)", sess.id, self.cfg.reconnect_grace_s)
@@ -409,7 +416,7 @@ class LiveService:
                     try:
                         sess.engine.send_binary(msg.data)
                     except Exception:  # noqa: BLE001
-                        pass
+                        log.debug("engine link send failed (media frame dropped)")
             except proto.FrameError as exc:
                 self._send_json(sess, ws, {"type": "error", "code": exc.code, "message": exc.message, "fatal": True})
                 _close(ws, exc.close_code, exc.message[:100])
@@ -512,7 +519,7 @@ class LiveService:
                     try:
                         client.send_binary(msg.data)
                     except Exception:  # noqa: BLE001
-                        pass
+                        log.debug("client send failed (audio frame dropped)")
                 continue
             try:
                 ev = json.loads(msg.text())
@@ -587,7 +594,7 @@ class LiveService:
         try:
             ws.send_text(json.dumps(ev, separators=(",", ":")))
         except Exception:  # noqa: BLE001
-            pass
+            log.debug("session %s: event %s not delivered", sess.id, ev.get("type"))
 
     def _on_engine_state(self, view: dict) -> None:
         sess = self.active_session()
@@ -763,9 +770,7 @@ class LiveService:
         if sess is not None:
             if now > sess.expires_at:
                 self.end(sess.id, "timeout", close_code=1001)
-            elif sess.state == "created" and now - sess.created_at > self.cfg.attach_timeout_s:
-                self.end(sess.id, "abandoned")
-            elif sess.state == "detached" and sess.detached_at and now - sess.detached_at > self.cfg.reconnect_grace_s:
+            elif self._abandoned(sess, now):
                 self.end(sess.id, "abandoned")
             else:
                 self._expire_tools(sess, now)
@@ -776,7 +781,7 @@ class LiveService:
                             try:
                                 ws.ping(b"gx")
                             except Exception:  # noqa: BLE001
-                                pass
+                                log.debug("ping failed")
         # --- gx-max always wins, Maintenance stops new work
         block = eng.policy_block()
         sess = self.active_session()
@@ -785,9 +790,9 @@ class LiveService:
             if code == "gx_max_active":
                 if sess is not None:
                     self.end(sess.id, "gx_max", close_code=1001)
-                if eng.state in (READY, LOADING, WAITING) or eng.docker.exists(self.cfg.engine_container):
-                    if eng.state != UNLOADING:
-                        eng.unload("gxmax: gx-max claimed gx10-02")
+                holding = eng.state in (READY, LOADING, WAITING) or eng.docker.exists(self.cfg.engine_container)
+                if holding and eng.state != UNLOADING:
+                    eng.unload("gxmax: gx-max claimed gx10-02")
                 return
             if sess is None and eng.state == READY:
                 eng.unload("maintenance: Maintenance mode")
@@ -804,6 +809,13 @@ class LiveService:
             self._last_reconcile = now
             eng.reconcile()
 
+    def _abandoned(self, sess: Session, now: float) -> bool:
+        if sess.state == "created":
+            return now - sess.created_at > self.cfg.attach_timeout_s
+        if sess.state == "detached" and sess.detached_at:
+            return now - sess.detached_at > self.cfg.reconnect_grace_s
+        return False
+
     def _expire_tools(self, sess: Session, now: float) -> None:
         for call in list(sess.tool_calls.values()):
             if call.state != "done" and now > call.deadline:
@@ -816,4 +828,4 @@ def _close(ws: Any, code: int, reason: str) -> None:
     try:
         ws.close(code, reason[:100])
     except Exception:  # noqa: BLE001
-        pass
+        log.debug("close failed")
