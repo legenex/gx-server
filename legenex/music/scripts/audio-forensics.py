@@ -42,7 +42,18 @@ SR_TARGET = 16000  # Whisper's rate; the DSP runs at the file's own rate
 
 # --------------------------------------------------------------------- io
 def read_wav(path: Path) -> tuple[np.ndarray, int]:
-    """Mono float32 in [-1, 1] plus the sample rate. Handles PCM16/24/32 and float32."""
+    """Mono float32 in [-1, 1] plus the sample rate.
+
+    ACE-Step writes IEEE-float WAV (format tag 3), which the stdlib `wave`
+    module refuses, so soundfile reads it; `wave` stays as the fallback for
+    plain PCM files on a host without soundfile.
+    """
+    try:
+        import soundfile as sf
+        data, sr = sf.read(str(path), dtype="float32", always_2d=True)
+        return data.mean(axis=1).astype(np.float32), int(sr)
+    except ImportError:
+        pass
     with wave.open(str(path), "rb") as w:
         sr, ch, width, n = w.getframerate(), w.getnchannels(), w.getsampwidth(), w.getnframes()
         raw = w.readframes(n)

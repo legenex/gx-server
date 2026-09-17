@@ -62,7 +62,7 @@ class TunnelTests(unittest.TestCase):
         cls.stub = StubService(cls.key)
         for svc in ("call", "live"):
             d = root / "secrets" / f"gx-{svc}"
-            d.mkdir(parents=True)
+            d.mkdir(parents=True, exist_ok=True)
             (d / "api-key").write_text(cls.key + "\n")
             os.chmod(d / "api-key", 0o600)
         store = auth.PasswordStore(cls.env.cfg.password_file)

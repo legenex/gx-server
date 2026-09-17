@@ -1898,6 +1898,9 @@ Four real generations on gx10-02 through media router **2.5.0**. Evidence
 | flows-ui `npm run qa` | tsc clean, **eslint 0 problems** (was 30 errors), vitest **13/13** |
 | Deployed-site navigation (`live.navigation.spec.js`) | **14/14** |
 | Deployed-site viewer regression (`live.viewer-playback.spec.js`, new) | **1/1** |
+| Deployed Control Center HF access (`live.hf-access.spec.js`, new) | **2/2** |
+| Control Center full suite, final | **713 passed, OK** |
+| Repository secret scan (`gitleaks git .`, tracked history) | **clean, 0 findings** |
 
 ### 22.6 Real defects found in shared code and fixed
 
@@ -1919,6 +1922,28 @@ Four real generations on gx10-02 through media router **2.5.0**. Evidence
    gx-call's own authoritative response, single-shot.
 5. **An `aria-label` on an xyflow handle** (a plain `<div>`, where that attribute
    is prohibited) — a serious axe WCAG 2.2 AA violation on Creative Flows.
+6. **`gx-voice` was unreachable through the gateway, and a restart could not have
+   fixed it.** `litellm/config.yaml` referenced
+   `api_key: os.environ/GX_VOICE_API_KEY`, but `docker-compose.gateway.yml`
+   never passed that variable and `.env` never defined it. Wired through both
+   and recreated with the B-027 procedure. Proven end to end:
+   `POST /v1/audio/speech {"model":"gx-voice"}` → 200, 184 364 bytes, and
+   ffmpeg reports `00:00:03.84, pcm_s16le 24000 Hz mono, mean_volume -24.2 dB`.
+   Evidence `/srv/logs/acceptance/build-v3/voi/gateway-20260917T1939Z/`.
+7. **`config.py` declared `voice_base` twice**, the second definition silently
+   winning, and `TempEnv` wrote the voice key to a path the node-2 service
+   clients do not read — so the Voice capability row appeared in production but
+   never in the offline fixture.
+8. **`offline.f-history-resources.spec.js` depended on other spec files having
+   left jobs behind**, so it failed whenever it ran first or alone. It now seeds
+   its own media and music jobs and waits for real terminal phases; it passes
+   standalone in 4 s.
+
+A regression the lead introduced and caught by re-running the **full** suite
+rather than trusting targeted runs: pre-creating the per-alias secret
+directories in `TempEnv` collided with `mkdir(parents=True)` in
+`tests/test_calls.py`, turning CAL's 15/15 into 6 errors. Both call sites are
+now idempotent and the suite is back to 713 OK.
 
 ### 22.7 Hugging Face access diagnosis (B-030)
 

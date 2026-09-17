@@ -108,6 +108,19 @@ gx-reason (≈32 GiB): 71.3 + 32 + 30 > 121.6 GiB.
 Resource profile **auto**; no maintenance hold, no gx-max hold, no pins.
 gx-max has not been started at any point in this pass.
 
+### What each Build V3 workstream proved
+
+| WS | State |
+|---|---|
+| **IMG** | Model selector traced end to end (`image_model` is the real field); VisionmasterPro_V3 verified free of Qwen-specific prompt rewriting, filtering and adapters; the edit-strength suspect was already fixed and is pinned by a regression test; migration 070 added; near-duplicate detection added. Live generation acceptance is scripted and ready but **not yet run**. |
+| **WAN** | Router 2.5.0 deployed; **real LoRA acceptance**: 4 generations, branch placement traced on the real graph (no shared nodes), same seed with/without the pair gives different sha256 and +34 % bitrate, ffprobe confirms 49 decoded frames. |
+| **VOI** | **Deployed and accepted**: 7 real generations, 56/56 checks, verified independently with ffprobe (matching the service's own loudness to 0.1 dB) and offline ASR (WER 0.0-0.167). Measured 9.45 GiB cold / 6.5 GiB resident / 35.0 s. Unload 13/13 including 409-while-busy and 409-while-pinned. Gateway hop proven with real audio. |
+| **LIV** | Control Center integration, Live page, migration 060, supervisor running. Live GPU acceptance in progress. |
+| **CAL** | `test_calls.py` 3 failures + 1 error → **15/15 OK**; two were real bugs (a falsy audit sink, and `end_session` waiting on a poller that never runs offline). Call Agents page deployed and axe-clean. Engine image build outstanding. |
+| **FLO** | Backend was real (58 tests); the **editor had no entry point at all** — no `main.tsx`, no app shell, no stylesheet. Written, built, deployed, 9/9 offline E2E including a real end-to-end flow run and axe-clean on all three views. |
+| **MUS** | Page was dead on arrival (`aiPanel is not defined`) and is now live. Music acceptance in progress. |
+| **PLT/LEAD** | Deployment contract, HTTPS, the realtime tunnel, registry, migrations, the Hugging Face diagnosis, and the deployed-site gates. |
+
 ### gx-reason: unchanged, and the blocker is now precise (B-030)
 
 gx-reason still serves the interim `nvidia/Qwen3.6-27B-NVFP4`, which is **not
