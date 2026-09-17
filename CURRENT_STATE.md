@@ -3,7 +3,72 @@
 **This file must always reflect reality.** If you are a new agent resuming this
 work, read this first, then ARCHITECTURE.md (what is locked), then BLOCKERS.md.
 
-## LATEST UPDATE — 2026-09-16 ~18:30-20:40 SAST — read this section first
+## LATEST UPDATE — 2026-09-17 (V2 migration) — read this section first
+
+**The cluster runs the V2 model set, and the Control UI can now create media,
+manage models and issue API keys.** Everything below was measured on the live
+cluster. Evidence is in `TEST_RESULTS.md` §18 and `/srv/logs/acceptance/`.
+
+### Models now bound (source of truth: `legenex/models/registry.json`)
+
+| Alias | Model (pinned revision) | Node / runtime | State |
+|---|---|---|---|
+| gx-mini | `HauhauCS/Qwen3.5-4B-Uncensored-HauhauCS-Aggressive` @c09cdbcd, Q4_K_M + mmproj | gx10-01 llama.cpp | accepted, preloaded |
+| gx-fast | `kyaky/Qwen3.6-35B-A3B-Uncensored-NVFP4` @33d5cf83 | gx10-01 vLLM 0.28 | accepted, preloaded, ttl 0 |
+| gx-reason | **interim** `nvidia/Qwen3.6-27B-NVFP4` @0893e160 | gx10-02 vLLM 0.28 | the required `iSkye/Qwen3.8-Flash-Next-NVFP4-ablit-a070` is gated and neither node has an HF token (**B-025**) |
+| gx-max | `dealignai/DeepSeek-V4-Flash-0731-CRACK-NVFP4` @c66fe384 | both nodes, SGLang TP=2, cookbook cell `fp4` (b12x MoE runner) | accepted (D-032); rollback is `GXMAX_MODEL_DIR=…/DeepSeek-V4-Flash-0731-NVFP4 GXMAX_QUANT_CELL=nvfp4` |
+| gx-auto | deterministic classifier (D-030) | gx10-01 orchestrator | Kilo-aware; never starts gx-max |
+| gx-image | Qwen-Image-2512 + tumblr LoRA; Qwen-Image-Edit-2511 | gx10-02 ComfyUI via media router 2.0 | generate / edit / variation |
+| gx-video | Wan 2.2 A14B T2V / I2V + uncensored LightX2V LoRAs; keyframe video edit | gx10-02 ComfyUI via media router 2.0 | t2v / i2v / video edit |
+
+### Control UI additions (D-034, D-035)
+
+New pages: **Create**, **Media Library**
+(`/srv/projects/gx-cluster/media`, SQLite), **Model Manager** (HF search and
+lookup, stage, verify, test-serve, assign with automatic rollback,
+accept, delete-if-unused) and **API Keys** (LiteLLM virtual keys; the secret
+is shown once and the master key never reaches the browser). New docs pages:
+Kilo Code, Open WebUI, Clients, Media, Model Manager. The unit now has
+`MemoryMax=1G`. A local-only `acceptance` account exists for automated live
+tests (password in `…/secrets/control-ui/acceptance-password`, 0600; login
+only from 127.0.0.1).
+
+### What changed in the running system
+
+* **LiteLLM** was recreated with the new context/output limits and gx-video
+  `mode: video_generation`. **llama-swap node01** preloads gx-mini and gx-fast.
+  gx-fast has `gpu_memory_utilization 0.34` (the resident process measured at
+  0.40 was restarted with 0.34, see §18).
+* **Orchestrator** restarted. It has the new classifier and a routing journal in
+  `/srv/logs/gx-auto-routing.jsonl` (`GET /routing/decisions`). It returns 503
+  `gx_max_not_running` instead of silently downgrading.
+* **Media router 2.0.0** is deployed on gx10-02 with `legenex/media/deploy-node2.sh`.
+  It adds uploads, edits, variations, i2v and video edit, and frees ComfyUI
+  after 600 s idle. **ComfyUI** now runs with `--reserve-vram 40`.
+* **B-024 resolved:** the media router key is rotated on both nodes. The hashes
+  match, and it was not printed.
+
+### Open
+
+* **B-025:** gx-reason still uses the interim 27B model. Fix: accept the
+  model terms at huggingface.co/iSkye/Qwen3.8-Flash-Next-NVFP4-ablit-a070,
+  save a read token in Settings → Model Manager (or
+  `/srv/projects/gx-cluster/secrets/hf/token`, 0600), then stage it on
+  gx10-02 from the Model Manager.
+* **B-026:** deleting obsolete checkpoints was refused by the agent
+  permission layer. The exact paths are listed in BLOCKERS.md. gx10-02 is at
+  **98 % disk (≈20 GB free)**.
+* **Concurrent work:** a separate session on gx10-02 is building and testing a
+  `gx-music` engine under `/srv/projects/gx-music-staging` (container
+  `gx-music`). It is not part of this repo yet. It uses about 28 GB of models
+  plus about 23 GB of images on the node-2 disk.
+* **B-023** (thin node-1 memory margin during gx-max load) remains. The
+  CRACK run measured 8.6 GiB minimum MemAvailable and 64/64 GiB swap on
+  node 1.
+
+---
+
+## PREVIOUS UPDATE — 2026-09-16 ~18:30-20:40 SAST
 
 **The cluster passed a full live acceptance, and it now has a management web
 UI.** All seven aliases served real output. gx-max completed a full
