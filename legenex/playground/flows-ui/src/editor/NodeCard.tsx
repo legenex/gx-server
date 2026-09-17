@@ -75,10 +75,14 @@ function PortRow({ port, dir, nodeId, type, connected, nodeLabel }: {
   const many = dir === 'in' && port.multiple ? ', accepts several' : '';
   return (
     <div className={`gxf-port gxf-port-${dir}`} data-port={port.id}>
+      {/* The handle is the pointer target only: @xyflow renders a plain <div>,
+          where aria-label is prohibited (WCAG / aria-prohibited-attr). The port
+          is named by the visible text next to it, and connecting without a
+          pointer goes through the Outline's Connect dialog. */}
       <Handle type={dir === 'in' ? 'target' : 'source'} position={dir === 'in' ? Position.Left : Position.Right}
         id={port.id} className={`gxf-handle gxf-type-${shown.split('/')[0] ?? 'any'}${connected ? ' is-connected' : ''}`}
-        aria-label={`${nodeLabel} ${dir === 'in' ? 'input' : 'output'} ${port.label} (${shown}${req}${many})`}
-        title={`${port.label}: ${shown}`} data-node={nodeId} />
+        title={`${nodeLabel} ${dir === 'in' ? 'input' : 'output'} ${port.label} (${shown}${req}${many})`}
+        aria-hidden="true" data-node={nodeId} />
       <span className="gxf-port-label">
         {port.label}
         {dir === 'in' && port.required ? <span aria-hidden="true">*</span> : null}

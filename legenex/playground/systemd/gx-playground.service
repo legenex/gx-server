@@ -26,8 +26,18 @@ Environment=PYTHONUNBUFFERED=1
 Environment=GX_PG_HOSTS=127.0.0.1,tailscale
 Environment=GX_PG_PORT=8090
 Environment=GX_PG_UPSTREAM=http://127.0.0.1:8088
+# HTTPS listener (plt.md section 2). A secure browser context is REQUIRED for
+# getUserMedia, so the Live and Call Agents pages only work over https:// or on
+# http://127.0.0.1. Certificates come from a local private CA under
+# /srv/projects/gx-cluster/secrets/playground-tls (keys 0600); create or renew
+# them with `python3 -m gx_playground.tls ensure`. The listener binds the same
+# hosts as the HTTP one (loopback + Tailscale), never a wildcard. 0 disables it.
+Environment=GX_PG_TLS_PORT=8443
 Environment=GX_PG_CONTROL_URL=http://100.105.214.61:8088/
 ExecStartPre=@REPO@/legenex/control-ui/scripts/wait-for-tailscale.sh
+# Idempotent: creates the private CA and the server certificate on a fresh node,
+# renews the server certificate within 30 days of expiry, otherwise does nothing.
+ExecStartPre=/usr/bin/python3 -m gx_playground.tls ensure
 ExecStart=/usr/bin/python3 -m gx_playground
 Restart=always
 RestartSec=5
