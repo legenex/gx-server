@@ -32,9 +32,34 @@ files nothing uses any more.
    and SHA-256 of every file, then writes `.gx-manifest.json`. Progress is
    shown live.
 
-Gated models need a Hugging Face read token from an account that accepted the
-model's terms: **Hugging Face access → Save token**. The token is stored on
-gx10-01 (0600) and never shown again.
+## Hugging Face access: two gates, not one
+
+A gated repository gates its **metadata** and its **files** separately. It will
+answer a look-up perfectly well and still refuse every file until your account
+has been granted access. Reading the model card therefore proves nothing about
+whether the download will work, which is why the look-up reports a separate
+**File access** row.
+
+The token panel shows only live state: configured or not, valid or rejected,
+the Hugging Face user it authenticates as, the token type and name, when it was
+created, and whether it **can read gated repos**. The token itself is stored on
+gx10-01 at `/srv/projects/gx-cluster/secrets/hf/token` (0600), is never shown
+again and is never sent to the browser. A token file that is not 0600 is
+reported as invalid, with the reason.
+
+**File access** on a look-up says one of:
+
+| Row | What it means | What to do |
+|---|---|---|
+| *public — no gate* | Not gated. | Nothing. |
+| *granted for this account* | Your token's account may download the files. | Nothing. |
+| *REFUSED — no usable token* | No token, or the token was not accepted. | **Save token**. A fine-grained token also needs *"Read access to contents of all public gated repos you can access"*. |
+| *REFUSED — this account is not on the authorized list* | The token works and identifies you; the **account** has not been granted access to this repository. | Open the model page in a browser signed in as that user and accept its terms. **A new token cannot fix this.** |
+
+Hugging Face's own message is shown verbatim underneath, with the exact action.
+Watch for the difference between the third and fourth rows: they look alike and
+need opposite responses, and confusing them is how an afternoon disappears into
+minting tokens for a gate no token can open (B-030).
 
 ## Test, assign, roll back
 
