@@ -109,7 +109,7 @@ class PromptTests(unittest.TestCase):
         p = oi.router_prompt(REGISTRY)
         self.assertIn("answering through gx-auto", p)
         self.assertIn("routing journal", p)
-        self.assertIn("57,344", p)
+        self.assertIn("98,304", p)
         self.assertNotIn("HauhauCS", p)
 
     def test_missing_repository_is_an_error(self):
