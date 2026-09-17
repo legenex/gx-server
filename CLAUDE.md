@@ -21,7 +21,7 @@
 | L-3 | **Tailscale is management only.** Model and NCCL traffic run ONLY on the ConnectX/RoCE fabric (192.168.100.x / 192.168.101.x). |
 | L-4 | **Kernel pinned to `6.17.0-1032-nvidia` on both nodes. NEVER upgrade to 7.0** — it breaks RDMA memory registration and kills gx-max. |
 | L-5 | Do **not** attempt GPUDirect RDMA, `nvidia-peermem`, GDRCopy, or `NCCL_NET_GDR_LEVEL` hacks. DGX Spark does not support it in this topology. |
-| L-6 | **gx-max = SGLang, TP=2, 2 nodes, `nvidia/DeepSeek-V4-Flash-0731-NVFP4`.** Never vLLM, never another model, never a silent downgrade. |
+| L-6 | **gx-max = SGLang, TP=2, 2 nodes, DeepSeek-V4-Flash-0731 NVFP4.** Served checkpoint since D-032: `dealignai/DeepSeek-V4-Flash-0731-CRACK-NVFP4` (cell `fp4`); rollback `nvidia/DeepSeek-V4-Flash-0731-NVFP4` (cell `nvfp4`). Never vLLM, never another model family, never a silent downgrade. |
 | L-7 | Do **not** modify MTU, Netplan, RDMA setup, ConnectX firmware, or routing without concrete evidence of a fault. |
 | L-8 | Keep `/swapfile-sglang` (48 G) on both nodes. |
 | L-9 | Stack is LiteLLM + llama-swap + llama.cpp + vLLM + SGLang + ComfyUI. **Do not replace it with Ollama.** |

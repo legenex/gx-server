@@ -7,7 +7,7 @@ work, read this first, then ARCHITECTURE.md (what is locked), then BLOCKERS.md.
 
 **The cluster runs the V2 model set, and the Control UI can now create media,
 manage models and issue API keys.** Everything below was measured on the live
-cluster. Evidence is in `TEST_RESULTS.md` §18 and `/srv/logs/acceptance/`.
+cluster. Evidence is in `TEST_RESULTS.md` §19 and `/srv/logs/acceptance/`.
 
 ### Models now bound (source of truth: `legenex/models/registry.json`)
 
@@ -37,8 +37,9 @@ only from 127.0.0.1).
 
 * **LiteLLM** was recreated with the new context/output limits and gx-video
   `mode: video_generation`. **llama-swap node01** preloads gx-mini and gx-fast.
-  gx-fast has `gpu_memory_utilization 0.34` (the resident process measured at
-  0.40 was restarted with 0.34, see §18).
+  gx-fast has `gpu_memory_utilization 0.34`. It was reloaded through the UI
+  at that value; with mini and fast loaded, node 1 has 58 GiB MemAvailable
+  (§19.1).
 * **Orchestrator** restarted. It has the new classifier and a routing journal in
   `/srv/logs/gx-auto-routing.jsonl` (`GET /routing/decisions`). It returns 503
   `gx_max_not_running` instead of silently downgrading.

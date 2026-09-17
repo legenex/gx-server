@@ -1262,3 +1262,87 @@ so no new gx-max cycle was run. The section 17 cycle stands.
 The gx-max rank1 evidence (the log, the deadman log and memory samples
 from the 20:06 release) is kept at
 `/srv/logs/gx-max-evidence-node2-20260916T2006/`.
+
+## 19. V2 migration (2026-09-16/17, run from gx10-01; gx10-02 over SSH)
+
+Only observed results are listed here. The evidence is under `/srv/logs/acceptance/`.
+
+### 19.1 Models (real output, pinned revisions, sha256 manifests)
+
+| Alias | Result |
+|---|---|
+| gx-mini (HauhauCS 4B Q4_K_M @c09cdbcd) | `gx_tier_acceptance.py`: **9/9** (text, math, stream, tools, vision, code, long, kilo); 52 tok/s; TTFT 0.1 s |
+| gx-fast (kyaky 35B-A3B NVFP4 @33d5cf83, 20.99 GiB) | first run **9/10**: one answer said "Sydney" for Australia's capital, recorded as is. The recheck was correct in 14 of 15 samples. 55 tok/s; TTFT 0.08 s; cold load about 4 min |
+| gx-fast memory | at `gpu_memory_utilization` 0.40: KV 22.4 GiB, node 1 MemAvailable 46.5–48 GiB with mini + fast. **At 0.34 (UI UNLOAD → LOAD, 259.5 s):** KV cache 1 274 627 tokens (9.72× at 131k); MemAvailable 58 GiB with mini + fast; warm replies 0.10–0.22 s |
+| gx-reason (interim nvidia 27B) | gateway: bat-and-ball "5 cents", correct, with reasoning split (963 reasoning tokens, 142 s while node 2 was shared with a music-engine test) |
+| Refusal probe (3 harmless "commonly refused" prompts) | gx-mini 0/3, gx-fast 0/3, gx-reason 0/3, gx-max 0/3 refusals |
+
+### 19.2 gx-auto with Kilo Code traffic (D-030)
+
+`gx_tier_acceptance.py gx-auto-kilo`: **10/10**. Each routing decision was
+matched to its own request by fingerprint in `/srv/logs/gx-auto-routing.jsonl`:
+
+* presence check with 20 tool schemas → **gx-mini** (11 s cold, about 3 s warm);
+* coding tasks → **gx-fast** (2–5 s);
+* hard debugging → **gx-reason** (376 s, cold interim load);
+* the gx-max-only context case returns 503 `gx_max_not_running` while gx-max
+  is down (behavioural unit test), and routes to the READY gx-max while it
+  runs (live, §19.3).
+
+The orchestrator unit suite passes **167** tests (includes `test_kilo_routing.py`).
+
+### 19.3 gx-max: CRACK checkpoint, full UI cycle (D-032)
+
+Evidence: `/srv/logs/acceptance/gxmax-20260916T235821Z/`.
+
+| Check | Result |
+|---|---|
+| Checkpoint | `dealignai/DeepSeek-V4-Flash-0731-CRACK-NVFP4` @c66fe384, 155.44 GiB. sha256 verified on both nodes; node 2 copy made over the fabric |
+| UI LOAD | 595 s. Phases: preflight → draining → admission → loading_rank1 → loading_rank0 → warming → ready → serving |
+| Engine | TP 2, nnodes 2; both ranks mount the CRACK dir; `--moe-runner-backend b12x` |
+| UI checks | "Canberra"; bat-and-ball $0.05; `is_prime` correct; long generation 46.4 tok/s; streaming OK |
+| Direct engine | **8/8**, 40.4 tok/s, TTFT 0.206 s, RDMA 5 966 MiB |
+| Gateway | **8/8**, 46.95 tok/s, TTFT 1.418 s, RDMA 5 146 MiB |
+| gx-auto | used the READY gx-max |
+| RDMA during load / serve | 4.4–4.6 GiB per port |
+| Memory (UI samples) | minimum MemAvailable 8.61 GiB (node 1) and 12.4 GiB (node 2); maximum swap 63.98 GiB (node 1) and 40.84 GiB (node 2) |
+| UI RELEASE | **2/2** checks: no ranks, watcher or deadman; ledgers empty; locks free. MemAvailable back to 101 GiB (node 1) and 114 GiB (node 2). Services restored; gx-mini "42", gx-auto "Jupiter" |
+
+### 19.4 Media v2 through the gateway (D-031)
+
+Evidence: `/srv/logs/acceptance/media-run1/`. All results were inspected
+visually (contact sheets are included).
+
+| Operation | Result |
+|---|---|
+| t2i 1024 px | 29 s |
+| image edit ("sunset beach, black shirt") | 31 s; edit applied, source unchanged |
+| variation | 16 s |
+| t2v | 45 s; h264, 3.06 s, **49/49 distinct frames** |
+| i2v | 70 s |
+| video edit ("make it night"), keyframe start 0 | 75 s; consistent night clip, 49 distinct frames, source unchanged. Partial denoise at start step 1 had drifted back to daylight, so the strength mapping was changed |
+
+The router QA passes: templates, compose, **74** tests and the secret scan.
+ComfyUI runs with `--reserve-vram 40` after `deploy-node2.sh --with-comfyui`.
+
+### 19.5 Control UI (D-034, D-035)
+
+| Suite | Result |
+|---|---|
+| `npm run qa` (hermetic) | ruff, mypy, **155** unit/API tests, build check, **15** Playwright tests with axe (0 serious or critical violations on 13 pages), security checks: **QA PASSED** |
+| `gx_ui_live_check.py keys` | **9/9**: create → `/v1/models` → gx-mini chat → gx-max 403 → UI test → revoke → 401; master key absent from 8 API responses |
+| `gx_ui_live_check.py manager` | **17/17** |
+| `gx_ui_live_check.py library` | run 1 8/10 (fixed: t2v stored as "generate"); run 2 **34/34** (real generate / edit / t2v / v2v, lineage, range streaming, ZIP single-use, delete) |
+| Playwright live pages (as `acceptance`) | all passed. Heads n1 = GitHub = n2 = `3800f10f`; kernel verifier 13/0/0 on both nodes; integrity audit gx10-01 PASS=16 FAIL=0, gx10-02 PASS=29 FAIL=0 |
+
+### 19.6 Regression
+
+orchestrator 167 OK · lifecycle 22 OK · media router 74 OK · control UI 155 OK + 15 e2e · `sync-regression.sh` PASS=19 FAIL=0.
+
+### 19.7 Honest notes
+
+* The first gx-reason live UI test (temperature 0, 4 000 tokens) returned
+  an empty answer after 478 s: the whole budget went to reasoning under
+  greedy decoding while node 2 was shared. The test now uses the model
+  card's sampling (temperature 0.6, 6 000 tokens).
+* Obsolete checkpoints were **not** deleted (B-026).

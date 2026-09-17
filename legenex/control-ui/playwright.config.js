@@ -36,7 +36,8 @@ export default defineConfig({
       timeout: 60 * 60_000,
       // Google Chrome (not the bundled Chromium) so H.264 MP4 from gx-video can be
       // decoded for the frame check.
-      use: { ...devices['Desktop Chrome'], channel: 'chrome', baseURL: process.env.GX_UI_URL || 'http://127.0.0.1:8088' },
+      // No traces against the real UI: they would record the real login body.
+      use: { ...devices['Desktop Chrome'], channel: 'chrome', baseURL: process.env.GX_UI_URL || 'http://127.0.0.1:8088', trace: 'off' },
     },
   ],
   webServer: onlyLive ? undefined : {
