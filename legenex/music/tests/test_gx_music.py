@@ -33,7 +33,7 @@ from gx_music import audio, validation as v  # noqa: E402
 from gx_music import config as config_mod  # noqa: E402
 from gx_music import store as st  # noqa: E402
 from gx_music.engine import READY, UNLOADED, EngineController  # noqa: E402
-from gx_music.errors import ConflictError, NotFoundError, ResourceWait, ValidationError  # noqa: E402
+from gx_music.errors import ConflictError, EngineError, NotFoundError, ResourceWait, ValidationError  # noqa: E402
 from gx_music.server import TagIndex, build_servers  # noqa: E402
 from gx_music.service import MusicService  # noqa: E402
 
