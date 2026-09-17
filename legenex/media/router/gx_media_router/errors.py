@@ -64,3 +64,13 @@ class UpstreamError(RouterError):
 class TimeoutError_(RouterError):
     status = 504
     code = "timeout_error"
+
+
+class PolicyBlockedError(RouterError):
+    """Cluster policy (gx-max hold, Maintenance mode) forbids starting a new job now."""
+
+    status = 503
+
+    def __init__(self, message: str, code: str) -> None:
+        super().__init__(message)
+        self.code = code

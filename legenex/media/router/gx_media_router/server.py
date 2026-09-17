@@ -244,6 +244,9 @@ class Handler(BaseHTTPRequestHandler):
         try:
             path = urllib.parse.unquote(self.path.split("?", 1)[0])
             self._authenticate()
+            if path != "/v1/admin/free":
+                # Refuse before any upload is staged (D-036: gx-max hold / Maintenance).
+                self.service.check_policy()
             if path == "/v1/images/generations":
                 self._images()
                 return

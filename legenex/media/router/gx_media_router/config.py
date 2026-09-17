@@ -83,6 +83,12 @@ class Config:
     need_video_gib: float = 76.0
     need_keyframe_gib: float = 110.0
     need_warm_gib: float = 8.0
+    #: gx10-02's guard directory (read-only mount): holds and pins (D-036).
+    #: Empty disables the cluster policy (tests, development).
+    guard_dir: str = ""
+    #: A pinned model set is kept past the idle timer only while at least this
+    #: much memory stays available (the cluster's 30 GiB reserve).
+    pin_reserve_gib: float = 30.0
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -111,4 +117,5 @@ class Config:
             free_on_model_switch=os.environ.get("GX_MEDIA_FREE_ON_SWITCH", "1") != "0",
             idle_free_seconds=_int("GX_MEDIA_IDLE_FREE", 600, 0, 86400),
             meminfo_path=os.environ.get("GX_MEDIA_MEMINFO", "/proc/meminfo"),
+            guard_dir=os.environ.get("GX_MEDIA_GUARD_DIR", ""),
         )

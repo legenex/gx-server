@@ -13,10 +13,13 @@ import threading
 import time
 import uuid
 
+from . import __version__
 from .comfy import Artefact, ComfyClient
 from .config import Config
-from .errors import InsufficientMemoryError, NotFoundError, RouterError, UpstreamError, ValidationError
+from .errors import (InsufficientMemoryError, NotFoundError, PolicyBlockedError, RouterError, UpstreamError,
+                     ValidationError)
 from .jobs import GenerationSlot, Job, JobStore
+from .policy import Policy
 from .uploads import InputStore, MediaInfo
 from .workflows import WorkflowRegistry
 
@@ -35,12 +38,27 @@ class MediaService:
         self._client_id = f"gx-media-router-{uuid.uuid4().hex[:8]}"
         #: model files of the last generation (see _switch_models)
         self._resident_models: frozenset[str] = frozenset()
+        #: which public alias the resident weights serve (gx-image / gx-video)
+        self._resident_kind: str | None = None
         self._last_activity = time.monotonic()
+        self.policy = Policy(cfg.guard_dir)
+        self.last_refusal: dict | None = None
         self._video_queue: "queue.Queue[str]" = queue.Queue()
         self._worker = threading.Thread(target=self._video_worker, name="video-worker", daemon=True)
         self._worker.start()
         self._janitor = threading.Thread(target=self._purge_loop, name="input-janitor", daemon=True)
         self._janitor.start()
+
+    # -- cluster policy ----------------------------------------------------
+    def check_policy(self) -> None:
+        """Refuse a NEW job while gx-max holds node 2 or Maintenance is on."""
+        block = self.policy.block()
+        if block is not None:
+            raise PolicyBlockedError(block.message, block.code)
+
+    def _set_resident(self, models: frozenset[str], kind: str | None) -> None:
+        self._resident_models = models
+        self._resident_kind = kind if models else None
 
     # -- staging -----------------------------------------------------------
     def stage(self, data: bytes, info: MediaInfo) -> str:
@@ -81,20 +99,33 @@ class MediaService:
     def free_if_idle(self) -> bool:
         """Hand the node back after media work: free ComfyUI's models when idle."""
         idle = self.cfg.idle_free_seconds
-        if not idle or not self._resident_models:
+        if not self._resident_models or not self._video_queue.empty():
             return False
-        if time.monotonic() - self._last_activity < idle or not self._video_queue.empty():
-            return False
+        maintenance = self.policy.maintenance()
+        if not maintenance:
+            if not idle or time.monotonic() - self._last_activity < idle:
+                return False
+            if self.pin_honoured():
+                return False
         if not self.slot.acquire("idle-free", 0.0):
             return False
         try:
-            log.info("idle for %ss: freeing ComfyUI models %s", idle, sorted(self._resident_models))
+            why = "maintenance mode" if maintenance else f"idle for {idle}s"
+            log.info("%s: freeing ComfyUI models %s", why, sorted(self._resident_models))
             self.comfy.free(unload_models=True, free_memory=True)
-            self._resident_models = frozenset()
+            self._set_resident(frozenset(), None)
             self._freed_at = time.monotonic()
             return True
         finally:
             self.slot.release()
+
+    def pin_honoured(self) -> bool:
+        """A pin keeps the resident set past the idle timer, never past the reserve."""
+        kind = self._resident_kind
+        if not kind or kind not in self.policy.pinned() or self.policy.block() is not None:
+            return False
+        avail = self._mem_available_gib()
+        return avail is None or avail >= self.cfg.pin_reserve_gib
 
     def free_now(self, wait_seconds: float = 2.0) -> dict:
         """Hand node 2 to another tenant now (gx-reason's start calls this).
@@ -111,7 +142,7 @@ class MediaService:
             models = sorted(self._resident_models)
             log.info("free requested: freeing ComfyUI models %s", models)
             self.comfy.free(unload_models=True, free_memory=True)
-            self._resident_models = frozenset()
+            self._set_resident(frozenset(), None)
             self._freed_at = time.monotonic()
             return {"freed": True, "models": models}
         finally:
@@ -121,6 +152,7 @@ class MediaService:
     def generate_image(self, workflow_name: str, params: dict, *, staged: tuple[str, ...] = (),
                        operation: str | None = None) -> Job:
         workflow = self.workflows.get(workflow_name)
+        self.check_policy()
         job = self.jobs.create("image", workflow.name, str(params.get("prompt", "")), params,
                                operation=operation or workflow.operation, staged=staged)
         try:
@@ -135,6 +167,7 @@ class MediaService:
     def submit_video(self, workflow_name: str, params: dict, *, staged: tuple[str, ...] = (),
                      source_job: str | None = None) -> Job:
         workflow = self.workflows.get(workflow_name)
+        self.check_policy()
         job = self.jobs.create("video", workflow.name, str(params.get("prompt", "")), params,
                                operation=workflow.operation, staged=staged, source_job=source_job)
         self._video_queue.put(job.id)
@@ -166,6 +199,12 @@ class MediaService:
 
     # -- shared execution --------------------------------------------------
     def _switch_models(self, workflow_name: str) -> bool:
+        cold = self._switch_model_set(workflow_name)
+        self._resident_kind = ("gx-video" if self.workflows.get(workflow_name).kind == "video" else "gx-image") \
+            if self._resident_models else None
+        return cold
+
+    def _switch_model_set(self, workflow_name: str) -> bool:
         """Free ComfyUI's cached models before a job that needs different weights.
 
         ComfyUI keeps every model it has loaded. On this 121 GiB unified-memory
@@ -233,12 +272,15 @@ class MediaService:
             return
         if job.cold_start:
             # The job's weights were never loaded; do not remember them as resident.
-            self._resident_models = held_before if not self.cfg.free_on_model_switch else frozenset()
+            kind_before = self._resident_kind
+            self._set_resident(held_before if not self.cfg.free_on_model_switch else frozenset(), kind_before)
         log.warning("job %s refused: %.1f GiB available on gx10-02, about %.0f GiB needed", job.id, avail, need)
+        self.last_refusal = {"at": time.time(), "job": job.id, "kind": job.kind, "workflow": job.workflow,
+                             "cold": job.cold_start, "need_gib": round(need, 1), "available_gib": round(avail, 1)}
         raise InsufficientMemoryError(
             f"gx10-02 has {avail:.0f} GiB free and this {job.kind} job needs about {need:.0f} GiB. "
-            "gx-reason is probably loaded: unload it in the Control UI (Models > gx-reason > UNLOAD) "
-            "or retry after it idles out (15 minutes).")
+            "Another tenant on gx10-02 (gx-reason or gx-music) holds the rest: unload it in the "
+            "Control Center (Resource Control) or retry after it idles out.")
 
     #: how long after a free the admission waits for memory to come back
     _settle_seconds = 30.0
@@ -306,12 +348,22 @@ class MediaService:
         status: dict = {
             "status": "ok",
             "service": "gx-media-router",
+            "version": __version__,
             "busy": holder is not None,
             "held_by": holder,
             "held_for_seconds": round(time.time() - since, 1) if since else 0.0,
             "video_queue_depth": self._video_queue.qsize(),
             "workflows": self.workflows.names(),
             "uploads_enabled": self.inputs.available,
+            "resident_models": sorted(self._resident_models),
+            "resident_alias": self._resident_kind,
+            "idle_seconds": round(time.monotonic() - self._last_activity, 1),
+            "idle_free_seconds": self.cfg.idle_free_seconds,
+            "memory": {"available_gib": _round(self._mem_available_gib()),
+                       "need_gib": {"image": self.cfg.need_image_gib, "video": self.cfg.need_video_gib,
+                                    "keyframe_edit": self.cfg.need_keyframe_gib, "warm": self.cfg.need_warm_gib}},
+            "policy": {**self.policy.state(), "pin_honoured": self.pin_honoured()},
+            "last_refusal": self.last_refusal,
         }
         try:
             stats = self.comfy.system_stats()
@@ -329,3 +381,7 @@ class MediaService:
             status["status"] = "degraded"
             status["comfyui"] = {"reachable": False, "error": exc.message}
         return status
+
+
+def _round(value: float | None) -> float | None:
+    return None if value is None else round(value, 1)
