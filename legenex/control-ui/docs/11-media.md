@@ -4,19 +4,22 @@
 reach them only through the gateway with a key that allows those aliases.
 Nothing is filtered: the image and video stacks are uncensored.
 
-## In the Control UI
+## In GX-Playground
 
-**Create** has five tabs: Generate Image, Edit Image, Generate Video,
-Image to Video and Edit Video. Each job shows its phase
-(queued → loading model → generating → saving → ready, or failed). Results go
-to the **Media Library**, which stores every item permanently on gx10-01 in
-`/srv/projects/gx-cluster/media` with its prompt, seed, model, revision and
-lineage. Edits never overwrite: an edit is a new item linked to its source.
+Creative work lives in **GX-Playground** (`http://100.105.214.61:8090/`,
+same sign-in as the Control Center). The Images and Video workspaces run
+generate, edit, variation, text-to-video, image-to-video and video edit. The
+Music studio runs gx-music. Each job shows its phase (queued → waiting for
+resource → loading model → generating → saving → complete, or failed /
+cancelled) and, while it waits, **why** it is waiting (for example "Waiting
+for gx-reason to unload", with the memory needed and available).
 
-Library actions: preview, search, filter by type/model/operation, sort,
-select / select all / unselect all, favourite, rename, copy prompt, download,
-download selected as a ZIP, delete (with confirmation), Edit with AI,
-Generate variation, Make video, open parent / versions.
+Results go to the **Library**, which stores every item permanently on
+gx10-01 in `/srv/projects/gx-cluster/media` with its full recipe and lineage.
+Edits never overwrite: an edit is a new item linked to its source. Library
+actions: grid/list, search, filters, sort, preview/play, open in editor,
+rename, favourite, duplicate, download, lineage, select / select all / clear,
+bulk favourite, bulk delete and bulk ZIP.
 
 ## Models
 

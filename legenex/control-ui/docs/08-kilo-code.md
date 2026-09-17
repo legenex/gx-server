@@ -1,14 +1,26 @@
 # Kilo Code setup
 
 Connect Kilo Code (VS Code extension or CLI) to the cluster as a custom
-OpenAI-compatible provider. You need a gateway key first:
-**Control UI → API Keys → Create key** (allow `gx-mini`, `gx-fast`,
-`gx-reason`, `gx-auto`, and `gx-max` only if this client may take over both
-nodes). The key is shown once; copy it into Kilo.
+OpenAI-compatible provider. The **Setup → Kilo Code** page in the Control
+Center shows the same values live, with copy buttons and a connection test.
+
+**Use `gx-auto`.** It is the recommended Kilo model: simple or trivial
+requests go to gx-mini, coding, action and tool work goes to gx-fast, and hard
+reasoning goes to gx-reason. gx-auto never starts gx-max.
+
+You need a gateway key first: **Setup → Kilo Code → Create API key** (or
+**API Keys**). It pre-selects `gx-auto`, `gx-mini`, `gx-fast` and
+`gx-reason`; add `gx-max` only if this client may take over both nodes. The
+key is shown once; copy it into Kilo.
+
+Verified against Kilo Code 7.7.2 (VS Code extension) and the 7.5.14 CLI on
+gx10-01. Kilo 7 is built on opencode; older Roo-style settings
+(`apiProvider`, `openAiBaseUrl`) no longer exist.
 
 ## Provider fields
 
-In Kilo: **Settings → Providers → Add custom provider**.
+In Kilo: **Settings → Providers**, then on the **Custom provider** card
+("Add a custom provider by base URL.") click **Connect**.
 
 | Field | Value |
 |---|---|
@@ -16,9 +28,14 @@ In Kilo: **Settings → Providers → Add custom provider**.
 | Display name | `GX Cluster` |
 | Provider API | `OpenAI Compatible` |
 | Base URL | `http://100.105.214.61:4000/v1` |
-| API key | the key from Control UI → API Keys |
-| Headers | leave empty |
-| Models | pick from the fetched list (Kilo reads `GET /v1/models`) or add the five below |
+| API key | the key from API Keys (optional in the form; `{env:GX_API_KEY}` also works) |
+| Headers (optional) | leave empty |
+| Models | **Add model** for each alias: ID and Name `gx-auto`, `gx-mini`, `gx-fast`, `gx-reason` (and `gx-max` if allowed). Tick **Image** for all except gx-max, **Reasoning** for gx-reason and gx-max. |
+
+Click **Submit** and choose `gx-cluster / gx-auto`. The form has only the
+**Reasoning** and **Image** toggles; tool calling and the context and output
+limits are set in the JSON config ("Edit advanced settings in the JSON config
+file", or the file below).
 
 Copy these values one at a time:
 
@@ -60,19 +77,23 @@ What each one does:
 
 ## Config file (optional)
 
-Kilo can also read the provider from `kilo.jsonc`. Keep the key in an
-environment variable, not in the file:
+Kilo reads `~/.config/kilo/kilo.jsonc` (global) or `.kilo/kilo.jsonc` in a
+project. Keep the key in the environment variable `GX_API_KEY` (set before
+VS Code or `kilo` starts), not in the file. The Setup page has a copy button
+for the complete file:
 
 ```json
 {
   "$schema": "https://app.kilo.ai/config.json",
-  "model": "gx-cluster/gx-fast",
+  "model": "gx-cluster/gx-auto",
   "provider": {
     "gx-cluster": {
       "name": "GX Cluster",
+      "npm": "@ai-sdk/openai-compatible",
       "options": {
         "baseURL": "http://100.105.214.61:4000/v1",
-        "apiKey": "{env:GX_API_KEY}"
+        "apiKey": "{env:GX_API_KEY}",
+        "timeout": 900000
       },
       "models": {
         "gx-mini":   { "name": "gx-mini",   "tool_call": true, "attachment": true,  "reasoning": false, "limit": { "context": 57344,  "output": 8192 } },
@@ -86,8 +107,8 @@ environment variable, not in the file:
 }
 ```
 
-If your Kilo version does not accept a custom provider id in the file, use
-the settings form above: it produces the same configuration.
+The settings form writes the same structure (it adds `"npm":
+"@ai-sdk/openai-compatible"`, which is also the default).
 
 ## Check it works
 
@@ -95,9 +116,10 @@ the settings form above: it produces the same configuration.
 curl -s http://100.105.214.61:4000/v1/models -H "Authorization: Bearer $GX_API_KEY"
 ```
 
-You should see the seven `gx-*` aliases your key allows. In Kilo, send
-"are you there?" with `gx-auto`: the answer comes from gx-mini within a few
-seconds.
+You should see the `gx-*` aliases your key allows. In Kilo, send "are you
+there?" with `gx-auto`: the answer comes from gx-mini within a few seconds.
+**Setup → Kilo Code → Test connection** does the same through the gateway and
+shows which tier gx-auto chose.
 
 ## Problems
 

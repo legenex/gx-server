@@ -1,39 +1,47 @@
 # Open WebUI setup
 
-Open WebUI connects to the gateway as an OpenAI-compatible connection.
+Open WebUI connects to the gateway as an OpenAI-compatible connection. The
+**Setup → Open WebUI** page shows these values live, with copy buttons and a
+connection test. Verified against Open WebUI 0.11.3 (the container on
+gx10-01).
 
-1. Create a key: **Control UI → API Keys → Create key**. Allow the aliases
-   you want in Open WebUI (for example `gx-mini`, `gx-fast`, `gx-reason`,
-   `gx-auto`, `gx-image`). Copy the key; it is shown once.
-2. In Open WebUI: **Admin Panel → Settings → Connections → OpenAI API → +**
-   (add connection).
-3. Fill in:
+1. Create a key: **Setup → Open WebUI → Create API key** (or **API Keys**).
+   Allow `gx-auto`, `gx-mini`, `gx-fast`, `gx-reason` (and `gx-max` only if
+   Open WebUI users may take over both nodes). Copy the key; it is shown once.
+   Never use the gateway master key.
+2. In Open WebUI: user menu → **Admin Panel** → **Settings** (a settings
+   window opens), then in its sidebar **Admin → AI → Connections**.
+3. Switch on **OpenAI API**. Under **Manage OpenAI API Connections** click
+   **+** (Add Connection).
+4. Fill in the **Add Connection** dialog:
 
    | Field | Value |
    |---|---|
-   | URL | `http://100.105.214.61:4000/v1` |
-   | Key | the key from step 1 |
-   | Connection type | External |
+   | Connection Type | External |
+   | URL | `http://100.105.214.61:4000/v1` (Open WebUI on gx10-01 itself may use `http://127.0.0.1:4000/v1`) |
+   | Auth | Bearer, then paste the key into **API Key** |
+   | API Type | Chat Completions |
+   | Advanced → Provider | Default |
+   | Model IDs | `gx-auto`, `gx-mini`, `gx-fast`, `gx-reason` |
 
-4. Save, then use the connection's refresh / verify button. Open WebUI lists
-   models with `GET /v1/models`, so exactly the aliases your key allows
-   appear in the model picker.
-5. Optional, images: **Admin Panel → Settings → Images** → engine
-   *OpenAI*, API base URL `http://100.105.214.61:4000/v1`, the same key,
-   model `gx-image`, size `1024x1024`.
+5. Click **Verify Connection**, then **Save**. Open WebUI lists models with
+   `GET /v1/models`, so exactly the aliases your key allows appear.
 
 ```text
 http://100.105.214.61:4000/v1
 ```
 
-Model discovery is automatic: never hunt for a master key in `.env` files.
-If you revoke a key in the Control UI, Open WebUI starts receiving 401 until
-you paste a new one.
+Leave **Provider** on Default: the LiteLLM option only changes how Open
+WebUI proxies Anthropic-style requests. If you revoke a key, Open WebUI
+receives 401 until you paste a new one.
 
 | Model | Good for |
 |---|---|
+| `gx-auto` | let the cluster pick (recommended) |
 | `gx-mini` | quick chat, summaries, simple image questions |
 | `gx-fast` | code, longer answers, tool use |
 | `gx-reason` | hard problems (slower to start) |
-| `gx-auto` | let the cluster pick |
-| `gx-image` | image generation (Images settings) |
+| `gx-max` | the hardest work; takes over both nodes |
+
+Images, video and music are made in **GX-Playground**
+(`http://100.105.214.61:8090/`). This setup connects Open WebUI for chat.
