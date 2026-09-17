@@ -143,7 +143,7 @@
         "repository": "nvidia/Qwen3.6-27B-NVFP4",
         "revision": "0893e1606ff3d5f97a441f405d5fc541a6bdf404",
         "base_model": "Qwen/Qwen3.6-27B",
-        "derivation": "NVIDIA's NVFP4 quantization of Qwen/Qwen3.6-27B, serving as gx-reason for now; the planned model is still waiting for its download (B-025)",
+        "derivation": "NVIDIA's NVFP4 quantization of Qwen/Qwen3.6-27B, serving as gx-reason until the planned model can be downloaded",
         "parameters": "27B dense",
         "weights": "NVIDIA ModelOpt NVFP4; not full precision",
         "modalities": "text and image input, text output, tool calls, reasoning",
