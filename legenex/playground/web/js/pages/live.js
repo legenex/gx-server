@@ -262,17 +262,28 @@ export default {
       levelMeter.setAttribute('aria-valuenow', String(pct));
     }
 
-    function line(speaker, text, { interrupted = false, turn = null } = {}) {
+    function line(speaker, text, { interrupted = false, turn = null, before = null } = {}) {
       emptyLog.remove();
       const body = h('p', { class: 'live-line-text' }, text);
       const el = h('li', { class: `live-line live-line-${speaker}`, 'data-speaker': speaker },
         h('span', { class: 'live-line-who' }, speaker === 'user' ? 'You' : 'Assistant'), body);
       if (interrupted) el.append(h('span', { class: 'live-line-note xsmall muted' }, 'interrupted'));
-      log.append(el);
+      // A spoken turn's transcript only arrives once the reply is already
+      // running (PROTOCOL.md section 4), so it has to be put back in front of
+      // the answer it belongs to or the conversation reads backwards.
+      const entry = { speaker, text, turn, interrupted };
+      el.gxEntry = entry;
+      if (before && before.parentNode === log) {
+        log.insertBefore(el, before);
+        const at = session.transcript.indexOf(before.gxEntry);
+        if (at >= 0) session.transcript.splice(at, 0, entry); else session.transcript.push(entry);
+      } else {
+        log.append(el);
+        session.transcript.push(entry);
+      }
       log.scrollTop = log.scrollHeight;
-      session.transcript.push({ speaker, text, turn, interrupted });
       saveBtn.disabled = session.transcript.length === 0;
-      return { el, body };
+      return { el, body, entry };
     }
 
     function toolRow(callId, name) {
@@ -379,9 +390,14 @@ export default {
         case 'input.speech.stopped':
           setState('busy', 'Thinking…');
           break;
-        case 'transcript.user':
-          if (ev.source === 'speech') line('user', ev.text, { turn: ev.turn });
+        case 'transcript.user': {
+          if (ev.source !== 'speech') break;
+          // put it in front of the answer that is already being spoken
+          const open = [...session.responses.values()].map((r) => r.entry.el)
+            .filter((el) => el.parentNode === log);
+          line('user', ev.text, { turn: ev.turn, before: open.length ? open[0] : null });
           break;
+        }
         case 'response.started': {
           const entry = line('assistant', '');
           session.responses.set(ev.response, { entry, text: '', turn: ev.turn, trigger: ev.trigger });
@@ -413,8 +429,8 @@ export default {
             if (ev.status === 'interrupted') {
               r.entry.el.append(h('span', { class: 'live-line-note xsmall muted' }, 'interrupted'));
             }
-            const stored = session.transcript.find((t) => t.speaker === 'assistant' && t.text === '');
-            if (stored) { stored.text = r.text; stored.interrupted = ev.status === 'interrupted'; }
+            r.entry.entry.text = r.text;
+            r.entry.entry.interrupted = ev.status === 'interrupted';
             queueTurn({
               response: ev.response, turn: r.turn || null, trigger: r.trigger || null, status: ev.status,
               first_audio_ms: m.first_audio_ms ?? null, first_text_ms: m.first_text_ms ?? null,

@@ -23,7 +23,11 @@ that is stated explicitly.
 
 Do not re-download.
 
-## gx-fast — `nvidia/Qwen3.6-35B-A3B-NVFP4`
+## gx-fast — `kyaky/Qwen3.6-35B-A3B-Uncensored-NVFP4`
+
+> Re-engined to the uncensored checkpoint in the V2 model set (2026-09-17).
+> `legenex/models/registry.json` is the source of truth; the table below
+> describes the superseded `nvidia/Qwen3.6-35B-A3B-NVFP4`.
 
 | Field | Value |
 |---|---|
@@ -52,10 +56,22 @@ Alternatives considered:
   repo recipes referenced. Note the repo's `Alibaba/Qwen3.5-35B-A3B-Uncensored-HauhauCS-*`
   path was a **local folder, not an upstream ID** — fetching it returns HTTP 401.
 
-## gx-reason — `nvidia/Qwen3.6-27B-NVFP4`
+## gx-reason — interim `nvidia/Qwen3.6-27B-NVFP4`; approved target `iSkye/Qwen3.8-Flash-Next-NVFP4-ablit-a070`
 
-**LIVE since 2026-09-16.** This tier was re-engined after B-011; see the
-"superseded" note below for what it replaced and why.
+**LIVE since 2026-09-16 on the interim checkpoint.** This tier was re-engined
+after B-011; see the "superseded" note below for what it replaced and why.
+
+> **The approved target is `iSkye/Qwen3.8-Flash-Next-NVFP4-ablit-a070` @
+> `91c3e3d4daf14f8e9389b95f43112410f06ed3d5`** — 92.68 B parameters, 98.66 GiB,
+> NVFP4/MXFP8, vision, abliterated, base `Mia-AiLab/Qwen3.8-Flash-Next-NVFP4`.
+> Both figures confirmed against the live Hugging Face API on 2026-09-17.
+> It is **not installed**: the repository is gated per user and the account
+> `legenex` is not on its authorized list (**B-030** — a human must accept the
+> terms in a browser; no token can fix it). The interim model keeps serving and
+> is deleted only after the new one passes a full acceptance.
+>
+> Do not confuse this with the retired `gx10-vllm/Qwen3.8-27B-Uncensored`
+> runtime, which is a different model and stays retired.
 
 | Field | Value |
 |---|---|
@@ -93,7 +109,13 @@ real and still true, but it stopped mattering once the tier was re-scoped from
 "biggest model that fits" to "most compute per token on an engine that is
 actually correct here". See `coordination/DECISIONS.md` D-021.
 
-## gx-max — `nvidia/DeepSeek-V4-Flash-0731-NVFP4`
+## gx-max — `dealignai/DeepSeek-V4-Flash-0731-CRACK-NVFP4`
+
+> Since D-032 (2026-09-17) the served checkpoint is the abliterated CRACK
+> build (cookbook cell `fp4`). The former rollback
+> `nvidia/DeepSeek-V4-Flash-0731-NVFP4` (cell `nvfp4`) was **deleted from both
+> nodes** on 2026-09-17 (B-026), so rolling back needs a fresh download.
+> The table below describes that deleted checkpoint.
 
 | Field | Value |
 |---|---|
@@ -177,6 +199,28 @@ Terms. Wan 2.2 A14B (Apache-2.0) covers video on its own, so nothing was
 downloaded or accepted under the LTX licence. If LTX is wanted later, a human
 should read both licences first — especially for commercial ad-creative work.
 
+## gx-voice / gx-call / gx-live — node-2 tenant services (Build V3, D-040)
+
+| Alias | Repository | Revision | Runtime | Footprint |
+|---|---|---|---|---|
+| `gx-voice` | `Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice` (+ VoiceDesign, Base, Tokenizer-12Hz, `openai/whisper-large-v3-turbo`) | `0c0e3051…` | transformers on torch 2.14/cu130, `gx-voice-engine:qwen3tts-022e286-t214` | **measured**: 9.45 GiB cold, 6.5 GiB resident, 35.0 s start, RTF 0.72-1.00 |
+| `gx-live` | `openbmb/MiniCPM-o-4_5` | `503e7542…` | transformers 4.51 remote code, SDPA (no flash-attn on sm_121), `gx-live-engine:minicpmo45-503e754-t214` | **measured**: 34 GiB cold, 31 GiB resident, ~102-132 s start |
+| `gx-call` | `nvidia/NVIDIA-NemotronLabs-VoiceChat-11B` | `a4c40ca5…` | NeMo Speech `StreamingS2SPipeline`, `gx-call-engine` | **not measured** — the model has never been loaded |
+
+Notes that cost time to learn:
+
+* **Native full-duplex is not realtime on GB10.** MiniCPM-o's `as_duplex` mode
+  costs 0.74 s per 1 s unit while listening but 1.5-1.6 s while speaking. gx-live
+  therefore ships VAD turn-taking with barge-in over a full-duplex transport.
+  Measured barge-in latency on the deployed stack: **169 ms**.
+* **`mamba-ssm` needs C++20 against torch 2.14.** Its CUDA extension defaults to
+  `-std=c++17`, and torch 2.14's ATen headers refuse to compile under it
+  (`#error C++20 or later compatible compiler is required to use ATen`). Build it
+  with C++20, and restrict `TORCH_CUDA_ARCH_LIST` — the default builds nine
+  architectures we will never run.
+* Every one of these services is fabric-only, bearer-key authenticated, starts
+  its engine on demand through the admission guard and unloads when idle.
+
 ## Measured media performance (node 2, direct against ComfyUI)
 
 | Workflow | Setting | Measured |
@@ -228,7 +272,16 @@ the admission guard reads.
 | `gx-image` / `gx-video` | ComfyUI | node 2 | ~57-73 GiB peak | MemAvailable min 59.7 GiB (image) / 42.8 GiB (video) |
 | `gx-max` rank0/rank1 | SGLang TP=2 | both | **~117 GiB peak per rank** | eight runs; nodes driven to 437 MiB–0 MiB |
 
-### Why gx-max does not fit
+### Why gx-max was once thought not to fit — SUPERSEDED, gx-max serves
+
+> **This section's conclusion was wrong and is kept only as the record of what
+> was measured and how it was misread.** gx-max has served since D-025
+> (2026-09-16) and was accepted again on 2026-09-17 through the Control Center
+> MAX profile (acquire 671 s, release 50 s). B-022 is RESOLVED. The arithmetic
+> below is real; what it does not capture is the load path that makes it work.
+> Do not quote this section as a reason not to run gx-max.
+
+The original (superseded) reasoning:
 
 The checkpoint is **163.48 GiB** on disk over 48 shards, of which **155.77 GiB
 is MoE expert weights**. At the locked `--tp 2` each rank holds roughly half —
@@ -240,5 +293,5 @@ load-phase trough is *identical*, because the trough is weights landing in
 driver-held memory, not the KV/static pool. It moves only the steady state
 (0.80 → 0.70 buys back 12.2 GiB of a hypothetical steady state).
 
-See `coordination/BLOCKERS.md` B-022 for the decision this forces, and
+See `coordination/BLOCKERS.md` B-022 (**RESOLVED**, with the correction) and
 `TEST_RESULTS.md` §15.1 for the full run table.

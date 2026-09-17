@@ -60,6 +60,11 @@ matplotlib
 pesq
 pystoi
 # --- lightning (transformers pin replaced by the model card's 4.56.0)
+# wandb is NOT optional even though nothing here trains: importing
+# nemo.collections.speechlm2 pulls in nemo.collections.tts, whose __init__
+# imports every TTS model, and mixer_tts.py does a module-level `import wandb`.
+# It is neutered at run time by WANDB_DISABLED/WANDB_MODE in the Dockerfile.
+wandb
 cloudpickle
 fiddle
 hydra-core>1.3,<=1.3.2
