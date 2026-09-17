@@ -1333,7 +1333,7 @@ ComfyUI runs with `--reserve-vram 40` after `deploy-node2.sh --with-comfyui`.
 | `gx_ui_live_check.py keys` | **9/9**: create → `/v1/models` → gx-mini chat → gx-max 403 → UI test → revoke → 401; master key absent from 8 API responses |
 | `gx_ui_live_check.py manager` | **17/17** |
 | `gx_ui_live_check.py library` | run 1 8/10 (fixed: t2v stored as "generate"); run 2 **34/34** (real generate / edit / t2v / v2v, lineage, range streaming, ZIP single-use, delete) |
-| Playwright live pages (as `acceptance`) | all passed. Heads n1 = GitHub = n2 = `3800f10f`; kernel verifier 13/0/0 on both nodes; integrity audit gx10-01 PASS=16 FAIL=0, gx10-02 PASS=29 FAIL=0 |
+| Playwright live models + pages (as `acceptance`), one uninterrupted run after the fixes below | **14/14 passed** (21.6 min). gx-mini "391" (0.26 s), vision "red circle / blue square / 7" (0.87 s), streaming OK. gx-fast tool call (0.88 s), "Tokyo" (0.26 s), UI UNLOAD→LOAD 252.5 s. gx-reason bat-and-ball correct with reasoning shown (694 s including cold load). gx-auto "Bonjour" (0.24 s), hard prompt 201 s. gx-reason UI unload OK. gx-image 1024×1024 with 781 distinct colours (27 s). gx-video 640×640, 2.06 s, 6/6 sampled frames distinct (52.5 s). Media UNLOAD OK. Heads n1 = GitHub = n2 = `5b1f8524`; kernel verifier 13/0/0 on both; integrity audit gx10-01 PASS=17 FAIL=0, gx10-02 PASS=29 FAIL=0; reconcile match |
 
 ### 19.6 Regression
 
