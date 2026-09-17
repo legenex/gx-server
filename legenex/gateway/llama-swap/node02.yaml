@@ -278,5 +278,6 @@ models:
       --enable-auto-tool-choice
       --tool-call-parser qwen3_xml
       --reasoning-parser qwen3
+      --speculative-config "{\"method\":\"mtp\",\"num_speculative_tokens\":2}"
       --trust-remote-code'
     cmdStop: "docker stop -t 150 gx-reason"

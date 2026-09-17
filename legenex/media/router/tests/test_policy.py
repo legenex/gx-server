@@ -157,7 +157,7 @@ class ServicePolicyTests(unittest.TestCase):
 
     def test_health_reports_policy_and_memory(self):
         h = self.svc.health()
-        self.assertEqual(h["version"], "2.4.0")
+        self.assertEqual(h["version"], "2.4.1")
         self.assertTrue(h["policy"]["guard_dir_mounted"])
         self.assertEqual(h["policy"]["profile"], "auto")
         self.assertEqual(h["memory"]["reserve_gib"], 30.0)
