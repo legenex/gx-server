@@ -103,10 +103,10 @@ class FakeMusic:
         return {"engine": {"state": self.state, "detail": "", "blocked_by": None, "last_load_seconds": 85.0,
                            "idle_seconds": 3.0}, "queue": self.queue, "jobs": {"completed": 1}}
 
-    def lifecycle(self, op, *, user):
-        self.calls.append(op)
+    def lifecycle(self, op, *, user, if_idle=False):
+        self.calls.append(op if not if_idle else f"{op}:if_idle")
         self.state = "ready" if op == "load" else "unloaded"
-        return {"state": self.state}
+        return {"state": self.state, "container_gone": op == "unload"}
 
 
 class FakeMedia:
@@ -128,12 +128,15 @@ class EnforcedNeedTests(unittest.TestCase):
         self.assertEqual(enforced_need("gx-music", resident=False), 62.0)
         self.assertEqual(enforced_need("gx-mini", resident=False), 40.0)
         self.assertEqual(enforced_need("gx-max", resident=False), 100.0)
-        self.assertEqual(enforced_need("gx-image", resident=False), 60.0)
-        self.assertEqual(enforced_need("gx-image", resident=True), 8.0)
-        self.assertEqual(enforced_need("gx-video", resident=False), 76.0)
-        self.assertEqual(enforced_need("gx-video", resident=False, variant="keyframe_edit"), 110.0)
-        self.assertEqual(enforced_need("gx-video", resident=True, variant="keyframe_edit"), 8.0)
-        self.assertEqual(enforced_need("gx-image", resident=False, variant="unknown"), 60.0)
+        # D-038: media now keeps the same 30 GiB reserve as everything else
+        self.assertEqual(enforced_need("gx-image", resident=False), 87.0)
+        self.assertEqual(enforced_need("gx-video", resident=False), 102.0)
+        self.assertEqual(enforced_need("gx-video", resident=False, variant="keyframe_edit"), 137.0)
+        self.assertEqual(enforced_need("gx-image", resident=False, variant="unknown"), 87.0)
+        # warm: the router's measured growth; unknown -> the full footprint
+        self.assertEqual(enforced_need("gx-image", resident=True), 87.0)
+        self.assertEqual(enforced_need("gx-image", resident=True, warm_growth=12.0), 42.0)
+        self.assertEqual(enforced_need("gx-video", resident=True, variant="keyframe_edit", warm_growth=8.0), 38.0)
 
 
 class AdmissionViewTests(unittest.TestCase):
@@ -145,18 +148,51 @@ class AdmissionViewTests(unittest.TestCase):
         self.assertEqual(v["reserve_gib"], 30.0)
         self.assertEqual(v["node"], "node2")
 
-    def test_image_and_video_have_no_extra_reserve(self):
-        self.assertIsNone(admission_view("gx-image", 100.0, {})["reserve_gib"])
-        self.assertIsNone(admission_view("gx-video", 100.0, {})["reserve_gib"])
+    def test_image_and_video_keep_the_30_gib_reserve(self):
+        v = admission_view("gx-image", 100.0, {})
+        self.assertEqual((v["reserve_gib"], v["growth_gib"], v["need_gib"], v["allowed"]), (30.0, 57.0, 87.0, True))
+        v = admission_view("gx-video", 100.0, {})
+        self.assertEqual((v["reserve_gib"], v["need_gib"], v["allowed"]), (30.0, 102.0, False))
+        self.assertIsNone(admission_view("gx-max", 110.0, {})["reserve_gib"])
+
+    def test_the_18_gib_case_video_next_to_music_is_not_admitted(self):
+        # music loaded: 88 GiB left; a cold video would leave ~16 GiB
+        v = admission_view("gx-video", 88.0, {"gx-music": {"active": False, "pending_gib": 6.0}})
+        self.assertFalse(v["allowed"])
+        self.assertEqual((v["code"], v["pending_gib"], v["short_gib"]), ("insufficient_memory", 6.0, 20.0))
+        self.assertEqual(v["actions"][0]["unload"], ["gx-music"])
+        self.assertIn("gx-video needs 72 GiB plus the 30 GiB reserve plus 6 GiB", v["reason"])
+        # music busy: no plan, it waits
+        v = admission_view("gx-video", 88.0, {"gx-music": {"active": True, "pending_gib": 6.0}})
+        self.assertEqual(v["actions"], [])
+        self.assertIn("busy", v["reason"])
+
+    def test_coexistence_is_admitted_when_the_reserve_holds(self):
+        v = admission_view("gx-image", 100.0, {"gx-music": {"active": False, "pending_gib": 6.0}})
+        self.assertTrue(v["allowed"])
+        self.assertIn("6 GiB still to be taken", v["reason"])
+
+    def test_a_loading_tenant_counts_with_what_it_has_not_taken_yet(self):
+        v = admission_view("gx-image", 110.0, {"gx-music": {"active": True, "pending_gib": 32.0}})
+        self.assertFalse(v["allowed"])
+        self.assertEqual(v["actions"], [], "a load in progress is never interrupted")
+
+    def test_keyframe_edit_can_never_run_and_is_terminal(self):
+        v = admission_view("gx-video", 116.0, {}, variant="keyframe_edit")
+        self.assertEqual((v["allowed"], v["code"], v["terminal"], v["need_gib"]), (False, "exceeds_node", True, 137.0))
+        self.assertIn("B-028", v["reason"])
 
     def test_already_resident_text_model(self):
         v = admission_view("gx-reason", 10.0, {"gx-reason": {"active": False}})
         self.assertEqual((v["allowed"], v["code"], v["need_gib"]), (True, "resident", 0.0))
 
-    def test_warm_media_needs_only_warm_headroom(self):
-        v = admission_view("gx-image", 10.0, {"gx-image": {"active": False}})
+    def test_warm_media_needs_its_measured_growth_plus_the_reserve(self):
+        v = admission_view("gx-image", 40.0, {"gx-image": {"active": False}}, warm_growth=8.0)
         self.assertTrue(v["allowed"])
-        self.assertEqual(v["need_gib"], 8.0)
+        self.assertEqual(v["need_gib"], 38.0)
+        self.assertFalse(admission_view("gx-image", 10.0, {"gx-image": {"active": False}}, warm_growth=8.0)["allowed"])
+        # growth unknown: judged like a cold job
+        self.assertEqual(admission_view("gx-image", 40.0, {"gx-image": {"active": False}})["need_gib"], 87.0)
 
     def test_unknown_memory_is_refused(self):
         v = admission_view("gx-music", None, {})
@@ -178,11 +214,12 @@ class AdmissionViewTests(unittest.TestCase):
         v = admission_view("gx-video", 50.0, residents)
         self.assertFalse(v["allowed"])
         self.assertEqual(v["code"], "insufficient_memory")
-        self.assertEqual(v["short_gib"], 26.0)
+        self.assertEqual(v["short_gib"], 52.0)
         self.assertEqual(v["blocking"], ["gx-image", "gx-music"])
         self.assertEqual(v["actions"][0]["id"], "unload_and_continue")
         self.assertEqual(v["actions"][0]["unload"], ["gx-image"])
-        self.assertIn("gx-video needs about 76 GiB available on gx10-02", v["reason"])
+        self.assertIn("gx-video needs 72 GiB plus the 30 GiB reserve on gx10-02, so 102 GiB must be available",
+                      v["reason"])
 
     def test_plan_accumulates_until_the_gap_closes(self):
         residents = {"gx-music": {"active": False}, "gx-image": {"active": False}}
@@ -198,8 +235,8 @@ class AdmissionViewTests(unittest.TestCase):
         self.assertEqual(v["blocking"], ["gx-image", "gx-music"])
 
     def test_no_action_when_freeing_everything_is_not_enough(self):
-        v = admission_view("gx-video", 1.0, {"gx-music": {"active": False}}, variant="keyframe_edit")
-        self.assertEqual(v["need_gib"], 110.0)
+        v = admission_view("gx-reason", 1.0, {"gx-music": {"active": False}})
+        self.assertEqual(v["need_gib"], 75.0)
         self.assertEqual(v["actions"], [])
 
     def test_residents_outside_the_policy_table_are_ignored(self):
@@ -236,13 +273,17 @@ class PairVerdictTests(unittest.TestCase):
     def test_node2_pairs(self):
         self.assertEqual(self.verdict("gx-reason", "gx-music")["verdict"], "coexist")
         self.assertEqual(self.verdict("gx-reason", "gx-video")["verdict"], "exclusive")
-        v = self.verdict("gx-reason", "gx-image", profile="text")
-        self.assertEqual(v["verdict"], "scheduled")
-        self.assertIn("gx-image can join gx-reason", v["summary"])
-        self.assertIn("Text / Agent", v["why"][-1])
+        # D-038: with the 30 GiB reserve an image no longer fits next to gx-reason (113 - 44 < 57 + 30)
+        self.assertEqual(self.verdict("gx-reason", "gx-image", profile="text")["verdict"], "exclusive")
+        # the 18.6 GiB case: a cold video never joins music, music never joins a video
         v = self.verdict("gx-video", "gx-music")
+        self.assertEqual(v["verdict"], "exclusive")
+        self.assertIn("does not fit", v["why"][1])
+        # an image can join music (113 - 26 >= 87), not the other way round
+        v = self.verdict("gx-image", "gx-music", profile="music")
         self.assertEqual(v["verdict"], "scheduled")
-        self.assertIn("gx-video can join gx-music", v["summary"])
+        self.assertIn("gx-image can join gx-music", v["summary"])
+        self.assertIn("Music", v["why"][-1])
 
     def test_missing_capacity_falls_back_to_idle_capacity(self):
         self.assertEqual(pair_verdict("gx-reason", "gx-music", capacity={}, residents={}, profile="auto")["verdict"],
@@ -404,7 +445,7 @@ class SnapshotTests(ControllerBase):
         self.assertEqual(view["actions"][0]["unload"], ["gx-image"])
         explained = self.ctrl.explain("gx-video")
         self.assertEqual(explained["reason"], "Waiting for gx-image to unload")
-        self.assertEqual(explained["need_gib"], 76.0)
+        self.assertEqual((explained["need_gib"], explained["reserve_gib"]), (102.0, 30.0))
         self.assertNotIn("eta", explained)
         self.assertNotIn("eta_seconds", explained)
 
@@ -661,8 +702,46 @@ class SchedulingTests(ControllerBase):
         self.set_svc(media={"resident_alias": "gx-image", "held_by": "", "busy": False})
 
     def test_gate_allows_when_it_fits(self):
-        self.cluster.node2.value = facts(100)
+        self.cluster.node2.value = facts(110)
         self.assertIsNone(self.ctrl.creative_gate("gx-video"))
+        # 100 GiB is no longer enough for a cold video (72 + 30)
+        self.cluster.node2.value = facts(100)
+        self.assertEqual(self.ctrl.creative_gate("gx-video")["code"], "freeing")
+
+    def test_gate_unloads_idle_music_for_a_video_with_if_idle(self):
+        self.set_svc(media={"resident_alias": None, "held_by": "", "busy": False})
+        self.music.state = "ready"
+        self.cluster.node2.value = facts(88)
+        out = self.ctrl.creative_gate("gx-video")
+        self.assertEqual(out["code"], "freeing")
+        self.assertEqual(self.music.calls, ["unload:if_idle"])
+        self.assertIn("gx-music", out["reason"])
+
+    def test_gate_waits_for_active_music_with_a_specific_reason(self):
+        self.set_svc(media={"resident_alias": None, "held_by": "", "busy": False})
+        self.music.state = "ready"
+        self.music.queue = {"active": 1, "current_job": "mus-1"}
+        self.cluster.node2.value = facts(88)
+        out = self.ctrl.creative_gate("gx-video")
+        self.assertEqual(out["reason"], "Waiting for gx-music to release enough gx10-02 memory")
+        self.assertIn("working", out["next"])
+        self.assertEqual((out["need_gib"], out["available_gib"], out["reserve_gib"]), (102.0, 88.0, 30.0))
+        self.assertEqual(self.music.calls, [])
+
+    def test_gate_waits_for_pinned_music(self):
+        self.set_svc(media={"resident_alias": None, "held_by": "", "busy": False})
+        self.music.state = "ready"
+        self.cluster.node2.value = facts(88, pins={"gx-music": {"by": "admin"}})
+        out = self.ctrl.creative_gate("gx-video")
+        self.assertEqual(out["reason"], "Waiting for gx-music to release enough gx10-02 memory")
+        self.assertIn("pinned", out["next"])
+        self.assertEqual(self.music.calls, [])
+
+    def test_keyframe_edit_is_terminal(self):
+        self.cluster.node2.value = facts(116)
+        out = self.ctrl.creative_gate("gx-video", "keyframe_edit")
+        self.assertTrue(out["terminal"])
+        self.assertEqual(out["code"], "exceeds_node")
 
     def test_gate_frees_idle_weights_in_auto(self):
         out = self.ctrl.creative_gate("gx-video")
@@ -680,10 +759,25 @@ class SchedulingTests(ControllerBase):
         self.cluster.node2.value = facts(120, holds={"maintenance": {"active": True}})
         self.assertEqual(self.ctrl.creative_gate("gx-image")["code"], "maintenance")
 
-    def test_router_busy_is_not_a_memory_question(self):
+    def test_router_busy_means_wait_for_the_memory_decision(self):
         self.set_svc(media={"resident_alias": "gx-image", "held_by": "video-x", "busy": True})
-        self.cluster.node2.value = facts(5)
-        self.assertIsNone(self.ctrl.creative_gate("gx-image"))
+        self.cluster.node2.value = facts(113)
+        out = self.ctrl.creative_gate("gx-image")
+        self.assertEqual(out["code"], "engine_busy")
+        self.assertIn("video-x", out["detail"])
+
+    def test_router_pending_growth_is_subtracted(self):
+        self.set_svc(media={"resident_alias": "gx-video", "held_by": "", "busy": False,
+                            "memory": {"pending_gib": 0.0, "warm_growth_gib": 14.0}})
+        self.cluster.node2.value = facts(50)
+        view = self.ctrl.admission("gx-video")
+        self.assertEqual((view["need_gib"], view["allowed"]), (44.0, True))
+        self.set_svc(media={"resident_alias": "gx-image", "held_by": "image-y", "busy": True,
+                            "memory": {"pending_gib": 40.0}})
+        self.cluster.node2.value = facts(100)
+        self.assertEqual(self.ctrl.snapshot()["runtimes"]["gx-image"]["pending_gib"], 40.0)
+        view = self.ctrl.admission("gx-music")
+        self.assertEqual((view["pending_gib"], view["allowed"]), (40.0, False))
 
     def test_preemptable_rules(self):
         snap = {"pins": {"gx-image": {}}}
@@ -704,7 +798,7 @@ class SchedulingTests(ControllerBase):
         done = self.ctrl.free_tenants(["gx-reason", "gx-mini", "gx-music"], user="scheduler", reason="t")
         self.assertEqual(done, ["gx-reason", "gx-music"])
         self.assertEqual(self.cluster.unloaded, ["gx-reason"])
-        self.assertEqual(self.music.calls, ["unload"])
+        self.assertEqual(self.music.calls, ["unload:if_idle"])
         outcomes = {a["action"]: a["outcome"] for a in self.audits}
         self.assertEqual(outcomes["resources.free.gx-mini"], "failed")
 

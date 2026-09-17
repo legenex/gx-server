@@ -382,7 +382,8 @@ class ResourcesApiTests(V2Base):
         status, _, comp = self.req("GET", "/api/resources/compatibility")
         self.assertEqual((status, len(comp["pairs"])), (200, 21))
         status, _, view = self.req("GET", "/api/resources/admission/gx-video?variant=keyframe_edit")
-        self.assertEqual((status, view["need_gib"], view["code"]), (200, 110.0, "unknown"))
+        self.assertEqual((status, view["need_gib"], view["code"], view["terminal"]),
+                         (200, 137.0, "exceeds_node", True))
         status, _, body = self.req("GET", "/api/resources/admission/gx-video?variant=../../x")
         self.assertEqual((status, body["error"]["code"]), (400, "invalid_request"))
         self.assertEqual(self.req("GET", "/api/resources/explain/gx-music")[0], 200)

@@ -132,10 +132,13 @@ POLICIES: dict[str, RuntimePolicy] = {
         ("unload", "pin", "unpin"), "114 -> 42 GiB available for t2v/i2v; 7 GiB for keyframe edit (2026-09-17)",
         "weights load with the first job", {"keyframe_edit": 107.0}),
     "gx-music": RuntimePolicy(
-        "gx-music", "node2", "music", "ACE-Step 1.5 XL (gx-music supervisor)", 32.0, 28.0, 600, "on-demand", 50, True,
-        True, "coexists with gx-reason (measured); hands idle ComfyUI weights over through the router",
-        "resource guard (32 GiB estimate + 30 GiB reserve)", ("load", "unload", "drain", "pin", "unpin"),
-        "24-28 GiB loaded; minimum 37.7 GiB available next to gx-reason (Stage A)", "82-92 s"),
+        "gx-music", "node2", "music", "ACE-Step 1.5 XL (gx-music supervisor)", 32.0, 26.0, 600, "on-demand", 50, True,
+        True, "coexists with gx-reason (measured); never with a cold video (the 30 GiB reserve); hands idle "
+        "ComfyUI weights over through the router, and the router unloads it when idle for a video",
+        "resource guard (32 GiB estimate + 30 GiB reserve + the media router's pending growth)",
+        ("load", "unload", "drain", "pin", "unpin"),
+        "24-27 GiB loaded (115 -> 88-90 GiB available, 2026-09-17); minimum 37.7 GiB available next to "
+        "gx-reason (Stage A)", "82-107 s"),
     "gx-max": RuntimePolicy(
         "gx-max", "both", "cluster", "SGLang TP=2 across both nodes", 100.0, 105.0, None, "takeover", 100, False,
         True, "takes over BOTH nodes; everything else is drained first", "gx-max takeover policy (>= 100 GiB per node)",
@@ -206,7 +209,7 @@ def admission_view(alias: str, avail_gib: float | None, residents: dict[str, dic
         return {**out, "allowed": True, "code": "resident", "reason": f"{alias} is already loaded",
                 "need_gib": 0.0, "available_gib": avail_gib, "blocking": [], "actions": []}
     growth = growth_gib(alias, resident=resident, variant=variant, warm_growth=warm_growth)
-    need = growth + RESERVE_GIB
+    need = enforced_need(alias, resident=resident, variant=variant, warm_growth=warm_growth)
     out.update(need_gib=round(need, 1), growth_gib=round(growth, 1),
                available_gib=None if avail_gib is None else round(avail_gib, 1))
     if alias in ("gx-image", "gx-video") and need > NODE2_MAX_AVAILABLE_GIB:
@@ -228,7 +231,8 @@ def admission_view(alias: str, avail_gib: float | None, residents: dict[str, dic
         return {**out, "allowed": True, "code": "fits",
                 "reason": f"{avail_gib:.0f} GiB available"
                           + (f" ({pending:.0f} GiB still to be taken by a running load)" if pending else "")
-                          + f", {growth:.0f} GiB + {RESERVE_GIB:.0f} GiB reserve needed",
+                          + (f", {growth:.0f} GiB + {RESERVE_GIB:.0f} GiB reserve needed" if alias != "gx-max"
+                             else f", {need:.0f} GiB needed (takeover policy)"),
                 "blocking": [], "actions": []}
     short = need - effective
     # Smallest set of idle, unpinned, preemptible tenants that closes the gap.
