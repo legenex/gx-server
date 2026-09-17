@@ -333,8 +333,8 @@ textarea.input { resize: vertical; line-height: 1.5; }
 .chips-size .chip { flex-direction: column; gap: 0; border-radius: 10px; padding: 6px 10px; line-height: 1.2; }
 
 .tabs {
-  display: flex; gap: 2px; padding: 4px; border-radius: 12px; background: var(--surface-2); border: 1px solid var(--border);
-  overflow-x: auto; scrollbar-width: none;
+  display: flex; flex-wrap: wrap; gap: 2px; padding: 4px; border-radius: 12px; background: var(--surface-2);
+  border: 1px solid var(--border);
 }
 .tab {
   flex: 1 0 auto; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 7px 12px;
