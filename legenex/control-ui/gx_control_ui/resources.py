@@ -519,7 +519,8 @@ class ResourceController:
                                             and not j.get("done"))}
         if media is not None and media.get("video_queue_depth"):
             runtimes["gx-video"]["queue"] = runtimes["gx-video"].get("queue", 0) + int(media["video_queue_depth"])
-        media_mem = (media or {}).get("memory") if isinstance((media or {}).get("memory"), dict) else {}
+        raw_media_mem = (media or {}).get("memory")
+        media_mem: dict = raw_media_mem if isinstance(raw_media_mem, dict) else {}
         if media is not None:
             owner = "gx-video" if busy_holder.startswith("video") else "gx-image" if busy_holder.startswith("image") \
                 else resident_alias
@@ -548,7 +549,8 @@ class ResourceController:
             st, dt = "WAITING", "queued music job is waiting for memory or the model"
         if music.get("error"):
             st, dt = "ERROR", "music service unreachable"
-        m_mem = engine.get("memory") if isinstance(engine.get("memory"), dict) else {}
+        raw_m_mem = engine.get("memory")
+        m_mem: dict = raw_m_mem if isinstance(raw_m_mem, dict) else {}
         runtimes["gx-music"] = {"state": st, "detail": dt, "queue": queue.get("active", 0),
                                 "last_load_seconds": engine.get("last_load_seconds"),
                                 "idle_seconds": engine.get("idle_seconds"), "jobs": jobs,

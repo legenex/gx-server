@@ -269,9 +269,7 @@ class OpenWebUIIdentity:
                 state = "missing"
             elif not (cur.get("meta") or {}).get(MARKER):
                 state = "foreign"  # someone else's row: reported, never overwritten without adopt
-            elif (cur.get("params") or {}).get("system") != row["params"]["system"] \
-                    or cur.get("name") != row["name"] or cur.get("base_model_id") is not None \
-                    or ((cur.get("meta") or {}).get(MARKER) or {}).get("repository") != row["meta"][MARKER]["repository"]:
+            elif self._differs(cur, row):
                 state = "drift"
             elif not cur.get("is_active"):
                 state = "inactive"
@@ -285,6 +283,13 @@ class OpenWebUIIdentity:
                 "version_ok": version == VERIFIED_OWUI, "items": items,
                 "in_sync": all(i["state"] == "ok" for i in items)}
 
+    @staticmethod
+    def _differs(cur: dict, row: dict) -> bool:
+        stored = (cur.get("meta") or {}).get(MARKER) or {}
+        return ((cur.get("params") or {}).get("system") != row["params"]["system"]
+                or cur.get("name") != row["name"] or cur.get("base_model_id") is not None
+                or stored.get("repository") != row["meta"][MARKER]["repository"])
+
     def check(self) -> dict:
         return self.plan()
 
@@ -295,7 +300,7 @@ class OpenWebUIIdentity:
                                 f"{VERIFIED_OWUI}; re-verify before writing")
         stamp = time.strftime("%Y-%m-%dT%H:%M:%S%z")
         rows = desired_rows(self.registry(), synced_at=stamp)
-        todo = [r for r, i in zip(rows, plan["items"]) if i["state"] != "ok"]
+        todo = [r for r, i in zip(rows, plan["items"], strict=True) if i["state"] != "ok"]
         if not todo:
             return {**plan, "written": [], "skipped": []}
         out = self._exec({"op": "upsert", "rows": todo, "adopt": adopt})
