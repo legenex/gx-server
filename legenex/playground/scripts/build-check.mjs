@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 const here = dirname(fileURLToPath(import.meta.url));
 process.env.GX_BUILD_ROOT = process.env.GX_PG_STATIC_DIR
   ? resolve(process.env.GX_PG_STATIC_DIR) : resolve(here, '..', 'web');
-process.env.GX_BUILD_PAGES = 'dashboard,images,video,music,voice,live,call,library,history,models,logs,settings';
+process.env.GX_BUILD_PAGES = 'dashboard,flows,images,video,music,voice,live,call,library,history,models,logs,settings';
 process.env.GX_BUILD_NAV_IN_HTML = '0';
 // Build V3 adds four pages (Creative Flows, Voice, Call Agents, Live). Pages
 // are lazy-loaded, so the aggregate is a hygiene number, not what a visitor

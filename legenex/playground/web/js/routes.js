@@ -3,6 +3,7 @@
 // SPA_ROUTE (gx_playground/server.py) and GX_BUILD_PAGES (scripts/build-check.mjs).
 export const PAGE_LOADERS = {
   dashboard: () => import('./pages/dashboard.js'),
+  flows: () => import('./pages/flows.js'),
   images: () => import('./pages/images.js'),
   video: () => import('./pages/video.js'),
   music: () => import('./pages/music.js'),

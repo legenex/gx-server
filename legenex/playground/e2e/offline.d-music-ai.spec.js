@@ -9,7 +9,11 @@ const postMusic = (page) => page.waitForRequest((r) => r.url().endsWith('/api/mu
 async function openCreate(page) {
   await login(page);
   await gotoPage(page, 'music');
-  return page.locator('#form-create');
+  // The page replaces its skeleton once GET /api/music/model and /api/music/tags
+  // answer; gotoPage only waits for the heading, so wait for the built form.
+  const form = page.locator('#form-create');
+  await expect(form.locator('#music-conditioning')).toBeAttached();
+  return form;
 }
 
 test('create form follows the conditioning order and tags are real tokens', async ({ page }) => {

@@ -8,10 +8,10 @@ Owner: CAL specialist. Contract: `coordination/BUILD_V3.md`, PLT interfaces in
 | Item | State |
 |---|---|
 | Model | `nvidia/NVIDIA-NemotronLabs-VoiceChat-11B` @ `a4c40ca5b4fe77db13e9840ca4a2b91becf030c8` (openmdw-1.1, public). **Downloaded and verified** on gx10-02: `/srv/models/voicechat/NVIDIA-NemotronLabs-VoiceChat-11B`, 41.35 GiB, 17 files, 6 sha256-checked (`/srv/logs/gx-call/hf-verify.log`) |
-| Runtime | image `gx-call-engine:voicechat-097dfe9-t214` **not built yet** — the build was cancelled mid-way on 2026-09-17 17:15. No inference has happened. Evidence below. |
+| Runtime | image `gx-call-engine:voicechat-097dfe9-t214`: build **restarted 2026-09-17 21:26** on gx10-02 (see "Image build"). No inference has happened and the engine has never been started. |
 | Service | `gx-call.service` (node 2, `192.168.100.11:18840` + `127.0.0.1:18840`), key `secrets/gx-call/api-key`. Unit file written; **not installed or started** |
 | Control Center | complete: `calls.py`, `call_agents.py`, `call_intake.py`, `routes_cal.py`, 15/15 tests green |
-| Playground page | `web/js/pages/call.js` complete, 5/5 offline Playwright specs green (5 axe WCAG 2.2 AA checks). **Waiting on the lead's four integration lines** (below) |
+| Playground page | `web/js/pages/call.js` complete and **integrated by the lead**; live on the deployed Playground. 5/5 offline Playwright specs green **in the repo, unchanged** (5 axe WCAG 2.2 AA checks) |
 | Footprint | **not measured** — no FOOTPRINT line can be published yet (PLT section 7) |
 
 ## Interfaces other workstreams need (PLT, LIV, LEAD)
@@ -212,10 +212,16 @@ Running `offline.a-shell` in that overlay also shows `#page-music h1` never
 appearing — `web/js/pages/music.js` is currently modified by the MUS
 workstream. Reported, not touched.
 
-## Integration requests for the lead
+## Integration requests for the lead — DONE (lead, 2026-09-17 ~21:20)
 
-Four one-line additions plus one ALLOW block. All five were exercised together
-in the overlay described above.
+All five landed and were verified on the deployed Playground
+(`scripts/deploy.sh`: "43 files served match the checkout; 0 stale, 0 not served";
+the lead's `e2e/live.navigation.spec.js` passes for Call Agents with no axe
+WCAG 2.2 AA violations). `offline.h-call.spec.js` now passes **in the repo,
+unchanged**: 5 passed (10.4 s) — the scratch overlay is no longer needed and
+has been abandoned. Kept below for the record.
+
+Four one-line additions plus one ALLOW block.
 
 **1. `legenex/playground/web/js/routes.js`** — after the `voice` line:
 
@@ -294,19 +300,50 @@ to share more code; I can trim `call.js` if you would rather keep 600 KiB.
 
 ## Blockers
 
-* **B-CAL-1 (lead): the four integration lines + the ALLOW block above.**
-  Until they land, the Call Agents page is unreachable in the repo checkout and
-  `offline.h-call.spec.js` cannot pass there.
-* **B-CAL-2 (lead): a slot on gx10-02 to finish the engine image build.** It is
-  CPU/disk only, but it is long and this wave is reserved for the node-2 memory
-  measurement. Nothing about gx-call's runtime can be proven before it.
+* ~~**B-CAL-1**: the integration lines~~ — **CLEARED** by the lead 2026-09-17 ~21:20.
+  The page is live and `offline.h-call.spec.js` passes in the repo unchanged.
+* **B-CAL-2: the engine image build** — **IN PROGRESS** since 2026-09-17 21:26
+  (see "Image build"). Not cleared until the image exists.
 * **B-CAL-3 (lead): a GPU slot for the first cold load** to produce the
   FOOTPRINT line; Resource Control shows "not measured yet" until then.
-* **B-CAL-4 (lead/PLT): the `web/` 600 KiB budget** is at 580.4 KiB before
-  LIV's page lands.
+* ~~**B-CAL-4**: the `web/` asset budget~~ — **CLEARED** by the lead: the budget is
+  now 700 KiB with a 64 KiB per-module cap (`GX_BUILD_MODULE_KB`) and
+  `GX_BUILD_EXCLUDE=flows`. `call.js` is 38.9 KiB, well under the module cap, and
+  the lead asked that it **not** be trimmed.
 * **Not a blocker, reported:** `web/js/pages/music.js` currently does not render
   in the offline harness (MUS work in progress), which fails
   `offline.a-shell.spec.js`.
+
+## Image build (B-CAL-2)
+
+Started **2026-09-17 21:26 SAST** on gx10-02, detached with `setsid nohup` so it
+survives the SSH session. GPU is untouched: this is a `docker build`, and the
+CUDA kernels of mamba-ssm / causal-conv1d are compiled by `nvcc` on the CPU.
+
+```
+ssh legenex-02@gx10-02
+cd ~/Documents/Projects/Server/gx-cluster        # commit 70dba5a
+docker build --progress=plain \
+  -t gx-call-engine:voicechat-097dfe9-t214 legenex/call/engine
+```
+
+Log: **`/srv/logs/gx-call/build-20260917T192556Z.log`** on gx10-02.
+
+Node-2 state when it was started (VOI's voice acceptance was running, so the
+build was checked not to crowd it): `gx-voice-engine` up, media router and
+ComfyUI healthy, **MemAvailable 104.6 GiB**, load average 1.19, 219 GB free on
+`/`. The Dockerfile already pins `MAX_JOBS=2` and `NVCC_THREADS=1`, so the wheel
+build stays bounded. MemAvailable was 111 GiB two minutes in.
+
+**Nothing was started.** The engine container was not run and the model was not
+loaded, per the lead's instruction: gx10-02's GPU is held by the VOI acceptance
+with a music acceptance queued behind it.
+
+**`--selftest-cache` cannot be run yet — it needs the GPU.** Evidence:
+`engine/gx_call_engine.py:610` `selftest_cache()` calls `VoiceChatEngine()` then
+`engine.load()` (the full pipeline load), and then builds tensors on
+`emb.device`, which is the CUDA device the pipeline was loaded onto. It is
+deferred to the GPU slot and is step 2 of the acceptance plan above.
 
 ## Log
 
@@ -323,3 +360,9 @@ to share more code; I can trim `call.js` if you would rather keep 600 KiB.
 - 2026-09-17 21:45: final verification: `tests.test_calls` 15/15 OK, full control-ui
   suite **708 tests OK**, `legenex/call/qa.sh` 28/28 OK, playground build-check OK,
   `offline.h-call.spec.js` 5/5 green in the integration overlay.
+- 2026-09-17 21:26: lead applied all five integration lines; `offline.h-call.spec.js`
+  **5/5 green in the repo unchanged**. `gx-call-engine` image build restarted on gx10-02
+  (`/srv/logs/gx-call/build-20260917T192556Z.log`).
+- 2026-09-17 21:30: re-ran on the current checkout (other workstreams have landed
+  changes): `tests.test_calls` **15/15 OK**, `legenex/call/qa.sh` **28/28 OK**,
+  all five gate steps pass.

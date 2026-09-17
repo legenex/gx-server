@@ -100,6 +100,24 @@ ALLOW: tuple[tuple[frozenset[str], re.Pattern[str]], ...] = tuple(
         ("GET", r"/v1/voice/voices/(vc_[0-9a-f]{24}|preset:[a-z_]{2,16})"),
         ("GET,POST", r"/v1/voice/jobs/vj_[0-9a-f]{32}(/cancel|/takes/[0-3]/(content|save))?"),
         ("GET,POST,DELETE", r"/v1/music(/[A-Za-z0-9_\-]+){0,2}"),
+        # Build V3 FLO: Creative Flows (the browser island uses GET/POST only)
+        ("GET,POST", r"/api/flows"),
+        ("GET", r"/api/flows/(catalog|options)"),
+        ("POST", r"/api/flows/(validate|ai/generate)"),
+        ("GET,POST", r"/api/flows/(templates|secrets)"),
+        ("GET", r"/api/flows/templates/(tpl_[0-9a-f]{24}|builtin_[a-z0-9_]{2,40})"),
+        ("POST", r"/api/flows/templates/(tpl_[0-9a-f]{24}|builtin_[a-z0-9_]{2,40})/(duplicate|delete)"),
+        ("POST", r"/api/flows/secrets/[A-Za-z][A-Za-z0-9_\-]{0,63}/delete"),
+        ("GET,POST", r"/api/flows/flow_[0-9a-f]{24}"),
+        ("POST", r"/api/flows/flow_[0-9a-f]{24}/(delete|duplicate|run)"),
+        ("GET", r"/api/flows/flow_[0-9a-f]{24}/(versions|runs)"),
+        ("GET", r"/api/flows/flow_[0-9a-f]{24}/versions/[0-9]{1,7}"),
+        ("POST", r"/api/flows/flow_[0-9a-f]{24}/versions/[0-9]{1,7}/restore"),
+        ("GET", r"/api/flow-runs"),
+        ("GET", r"/api/flow-runs/frun_[0-9a-f]{24}"),
+        ("POST", r"/api/flow-runs/frun_[0-9a-f]{24}/cancel"),
+        ("GET", r"/api/flow-runs/frun_[0-9a-f]{24}/nodes/[A-Za-z0-9_\-]{1,40}"),
+        ("POST", r"/api/flow-runs/frun_[0-9a-f]{24}/nodes/[A-Za-z0-9_\-]{1,40}/cancel"),
         # Build V3 LIV: the Live page (session) and the public gx-live API (gateway key)
         ("GET,POST", r"/api/live/(model|sessions)"),
         ("GET,POST", r"/api/live/sessions/live_[0-9a-f]{32}(/(end|events|turns|transcript|delete-content))?"),
@@ -122,7 +140,7 @@ REQUEST_HEADERS = ("cookie", "content-type", "content-length", "x-csrf-token", "
 RESPONSE_HEADERS = ("content-type", "content-length", "content-encoding", "content-range", "accept-ranges",
                     "content-disposition", "cache-control", "set-cookie", "etag", "vary", "location",
                     "retry-after", "last-modified")
-SPA_ROUTE = re.compile(r"/(dashboard|images|video|music|voice|live|call|library|history|models|logs|settings)"
+SPA_ROUTE = re.compile(r"/(dashboard|flows|images|video|music|voice|live|call|library|history|models|logs|settings)"
                        r"(/[a-z0-9_\-]{0,64}){0,2}")
 
 CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; "

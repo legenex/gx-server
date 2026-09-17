@@ -319,8 +319,18 @@ class MusicJobs:
     def preview(self, body: Any) -> dict:
         """The exact ACE-Step conditioning for a Create request (nothing is queued).
 
+        The body is the same body ``POST /api/music/jobs`` accepts, so a client
+        can preview exactly what it is about to submit. ``operation`` is
+        therefore tolerated here as it is there, but only ``generate`` has a
+        conditioning preview.
+
         With ``lyrics_source: assistant`` and empty lyrics the words do not exist
         yet; the preview then uses a placeholder verse and says so."""
+        if isinstance(body, dict) and "operation" in body:
+            body = dict(body)
+            operation = body.pop("operation")
+            if operation != "generate":
+                raise MusicError("only a Create (generate) request has a conditioning preview")
         req = clean_request("generate", body)
         req.pop("source_asset_id", None)
         req.pop("reference_asset_id", None)
