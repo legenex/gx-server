@@ -20,6 +20,7 @@ routes exactly the payloads the unit tests pin.
 from __future__ import annotations
 
 import copy
+import json
 from typing import Any
 
 _TOOL_SPECS: tuple[tuple[str, str], ...] = (
@@ -229,3 +230,110 @@ KILO_ROUTING_CASES: tuple[tuple[str, str, str], ...] = (
         "architecture + proof",
     ),
 )
+
+
+# ---------------------------------------------------------------------------
+# Claude-Code-shaped continuation (D-039 regression: 2026-09-17 15:05 SAST)
+# ---------------------------------------------------------------------------
+# The observed request, as recorded by the routing journal: 22 tools,
+# ~17 946 estimated schema tokens, ~46 163 estimated input tokens (33 537 by
+# the engine's tokenizer), max_tokens 32 000, an agent loop whose human work
+# order (~2 450 tokens) was full of generic words the old classifier scored:
+# prove, derive, architecture, agent, orchestrate, implement.
+
+_CC_TOOL_NAMES = (
+    "Task", "Bash", "Glob", "Grep", "Read", "Edit", "MultiEdit", "Write", "NotebookEdit",
+    "WebFetch", "TodoWrite", "WebSearch", "BashOutput", "KillShell", "ExitPlanMode",
+    "SlashCommand", "ListMcpResources", "ReadMcpResource", "AskUserQuestion", "Skill",
+    "EnterWorktree", "Monitor",
+)
+
+#: Tool descriptions carry the trap words too: they must never count as
+#: evidence (fixture 9).
+_CC_TOOL_TEXT = (
+    "Use this tool to implement changes. It helps you prove a theorem about the codebase, "
+    "derive the architecture, orchestrate agents and design the system architecture. "
+    "Always read before you edit and verify the result with tests. "
+)
+
+
+def _cc_tool(name: str) -> dict[str, Any]:
+    return {
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": _CC_TOOL_TEXT * 10 + _CC_TOOL_TEXT[:60],
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "command": {"type": "string", "description": "The command or path to operate on."},
+                    "content": {"type": "string", "description": "Content, pattern or prompt."},
+                },
+                "required": ["command"],
+            },
+        },
+    }
+
+
+CLAUDE_CODE_TOOLS: list[dict[str, Any]] = [_cc_tool(n) for n in _CC_TOOL_NAMES]
+
+CLAUDE_CODE_SYSTEM = (
+    "You are Claude Code, an interactive agent that helps users with software engineering tasks. "
+    "Prove your claims with evidence, derive conclusions from logs, orchestrate subagents when "
+    "useful and respect the architecture. " * 150
+)
+
+_CLAUDE_MD = (
+    "<system-reminder>\nContents of CLAUDE.md (project instructions):\n"
+    + ("Locked architecture: never change the theorem-proving agent orchestration without asking. "
+       "Derive every decision from evidence. " * 120)
+    + "\n</system-reminder>\n"
+)
+
+#: A long, ordinary engineering work order (~2 400 tokens) that MENTIONS
+#: proofs, derivations, architecture and orchestration.
+CLAUDE_CODE_WORK_ORDER = (
+    "FIX THE CLUSTER LATENCY FIRST, THEN FINISH THE CLEANUP.\n"
+    + (
+        "Inspect the orchestrator, implement authoritative context budgeting and refactor the "
+        "classifier. Prove via the routing journal that coding requests reach gx-fast; do not "
+        "derive conclusions from a container merely starting. Review the architecture, the agent "
+        "orchestration and the retry policy, update the documentation and run the tests.\n"
+    )
+    * 22
+    + "Do not try to prove that the scheduler is optimal or derive the closed form of the latency "
+    "bound. Think step by step about the race condition in the retry path before you change it.\n"
+)
+
+
+def claude_code_continuation(*, max_tokens: int = 32_000, work_order: str = CLAUDE_CODE_WORK_ORDER,
+                             tool_turns: int = 8) -> dict[str, Any]:
+    """A mid-loop Claude-Code request shaped like the 2026-09-17 failure."""
+    messages: list[dict[str, Any]] = [
+        {"role": "system", "content": CLAUDE_CODE_SYSTEM},
+        {"role": "user", "content": [
+            {"type": "text", "text": _CLAUDE_MD},
+            {"type": "text", "text": work_order},
+        ]},
+    ]
+    for i in range(tool_turns):
+        messages.append({
+            "role": "assistant",
+            "content": "Checking the next file.",
+            "tool_calls": [{
+                "id": f"call_{i}", "type": "function",
+                "function": {"name": "Read", "arguments": json.dumps({"command": f"legenex/file_{i}.py"})},
+            }],
+        })
+        messages.append({
+            "role": "tool", "tool_call_id": f"call_{i}",
+            "content": "\n".join(f"{n} | def function_{n}(value):  return value * {n}" for n in range(90)),
+        })
+    return {
+        "model": "gx-auto",
+        "stream": True,
+        "max_tokens": max_tokens,
+        "messages": messages,
+        "tools": copy.deepcopy(CLAUDE_CODE_TOOLS),
+        "tool_choice": "auto",
+    }
