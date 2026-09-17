@@ -1061,6 +1061,16 @@ number nobody approved.
 ## B-023 (S3) — node 1's gx-max load transient reaches the swap ceiling
 
 **Status:** OPEN, monitored, not blocking. **Found:** 2026-09-16.
+**Retested 2026-09-17** (real gx-max + gx-music takeover through the
+Control Center MAX profile, evidence
+`/srv/logs/acceptance/final-20260917T075129Z/gxmax-takeover*`): acquire took
+671 s, and inference answered through the gateway. Minimum MemAvailable was
+9356 MiB on node 1 and 11 695 MiB on node 2. Peak swap use was 65 531 MiB
+on node 1 (the ceiling) and 40 895 MiB on node 2. Steady state was
+16.2 GiB / 17.6 GiB available. Release took 50 s and restored normal
+operation. The node-1 load transient still touches the swap ceiling briefly.
+The safety monitor did not trip, and SSH and Tailscale stayed responsive.
+Unchanged: this stays monitored, and the drain decision below is still open.
 
 During the verified gx-max load, node 1 used all 64 GiB of swap for about
 5 s. MemAvailable was 2.6 GiB at that point, and PSI full peaked at 22%.
@@ -1128,6 +1138,23 @@ credential hygiene shows `GX_MEDIA_API_KEY: set`.
 ## B-025 (S2) — gx-reason's required model is gated and no Hugging Face token exists
 
 **Status:** OPEN, needs a human. **Found:** 2026-09-17 (V2 migration).
+**Re-checked 2026-09-17 10:25 (final integration pass), still blocked.**
+The user reported saving a token in the Control Center, but it never reached
+gx10-01:
+* `/srv/projects/gx-cluster/secrets/hf/` is empty (no `token`), and there is
+  no `~/.cache/huggingface/token` on either node;
+* the Control Center access log has no `POST /api/manager/hf-token`. The
+  admin session that signed in at 08:39 made no POST requests and never
+  opened Model Manager. The audit log has no `hf.token.set` event;
+* anonymous access to the model's `config.json` still returns HTTP 401.
+
+The gx10-02 disk is no longer a constraint (328 GiB free, B-026). The
+interim `nvidia/Qwen3.6-27B-NVFP4` keeps serving gx-reason and passed the
+real Kilo reasoning case in this pass. **Action:** sign in at
+http://100.105.214.61:8088 → Model Manager → *Hugging Face token* → paste the
+read token → *Save*. The page should then show "token saved". Then run
+look-up → Stage → Verify → Test-serve → Assign as below. Nothing else is
+needed from the human.
 
 `iSkye/Qwen3.8-Flash-Next-NVFP4-ablit-a070` is `gated: auto`. The HF API
 returns 401 for its files from both nodes, and neither node has a token
@@ -1147,8 +1174,25 @@ are absent). gx-reason therefore stays on the interim `nvidia/Qwen3.6-27B-NVFP4`
    *Test-serve* → *Assign to gx-reason*. The assignment restarts llama-swap on
    node 2, runs a real completion and rolls back automatically on failure.
 
-**Disk:** node 2 needs about 99 GiB free for this download. It currently has
-about 20 GB (see B-026).
+**Disk:** node 2 needs about 99 GiB free for this download. It had about
+20 GB when this was written; it now has 328 GiB (B-026 resolved).
+
+## B-027 (S2) — RESOLVED 2026-09-17 — a gx-max release recreated gx-litellm with the media-key placeholder
+
+**Found by** the integrity audit during the final integration pass. **Cause:**
+gx-orchestrator started at 00:48, before `legenex/gateway/.env` received
+the rotated media key at 01:27 (B-024). It therefore held
+`GX_MEDIA_API_KEY=not-required` in its environment. `gx-max-stop.sh` →
+`restore-normal.sh` ran from it and executed `docker compose --env-file .env
+up -d`, and a caller's variable overrides `--env-file`. gx-litellm was
+recreated with the placeholder at 10:03 (image and video through the
+gateway would have been refused; the Control Center and Playground talk to
+the router directly and were unaffected).
+**Fix:** `restore-normal.sh` now unsets every name defined in `.env` before
+running compose, so the file always wins. Regression test:
+`legenex/lifecycle/tests/test_restore_normal_sh.py`. gx-litellm was
+recreated from `.env`, and gx-orchestrator was restarted (it now holds the
+current key). The audit check `gx-litellm media key matches .env` passes.
 
 ## B-026 (S2) — RESOLVED 2026-09-17 — obsolete checkpoints were not deleted; gx10-02 disk was at 98 %
 

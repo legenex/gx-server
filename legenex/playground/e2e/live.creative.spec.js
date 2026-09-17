@@ -10,7 +10,8 @@ import { join } from 'node:path';
 import { axeCheck, gotoPage, watchPage } from './helpers.js';
 
 const PASSWORD_FILE = '/srv/projects/gx-cluster/secrets/control-ui/acceptance-password';
-const TAG = `live-accept-${Date.now()}`;
+// GX_LIVE_TAG re-runs only the Library test against an earlier run's assets.
+const TAG = process.env.GX_LIVE_TAG || `live-accept-${Date.now()}`;
 const EVIDENCE = process.env.GX_EVIDENCE_DIR;
 const created = [];
 const report = { tag: TAG, steps: [] };
@@ -283,10 +284,24 @@ test('video: text to video completes, plays and downloads; image to video comple
   expect(problems).toEqual([]);
 });
 
+// Every asset of a run: the tagged roots plus all of their descendants.
+async function runAssets(page) {
+  const ids = new Set();
+  const walk = (nodes) => nodes.forEach((n) => { ids.add(n.id); walk(n.children || []); });
+  const roots = await getJson(page, `/api/media/assets?q=${encodeURIComponent(TAG)}&limit=200`);
+  for (const a of roots.items) {
+    ids.add(a.id);
+    walk((await getJson(page, `/api/media/assets/${a.id}/lineage`)).tree);
+  }
+  return [...ids];
+}
+
 test('library: search, filter, sort, bulk ZIP, cross-links, then delete the test assets', async ({ page, context }) => {
   test.setTimeout(10 * 60_000);
   const problems = watchPage(page, { allow: ALLOW });
   await signIn(page);
+  if (!created.length) created.push(...await runAssets(page));
+  expect(created.length, `assets tagged ${TAG}`).toBeGreaterThan(0);
   await gotoPage(page, 'library');
   await page.fill('#lib-search', TAG);
   await expect.poll(() => page.locator('.item-check').count(), { timeout: 30_000 }).toBeGreaterThanOrEqual(1);

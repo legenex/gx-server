@@ -52,7 +52,10 @@ test('top bar: Control Center link, resource pill, activity tray, command bar', 
   const cfg = await (await request.get('/pg/config')).json();
   const cc = page.locator('#cc-link');
   await expect(cc).toBeVisible();
-  await expect(cc).toHaveAttribute('href', cfg.control_center_url);
+  // Same host as the Playground page, the configured Control Center port.
+  const want = new URL(cfg.control_center_url);
+  want.hostname = new URL(page.url()).hostname;
+  await expect(cc).toHaveAttribute('href', want.href);
   await expect(cc).toHaveAttribute('target', '_blank');
   await expect(cc).toHaveAttribute('rel', /noopener/);
   await expect(page.locator('#res-pill .res-profile')).toHaveText(/Auto|Text|Media|Music|Max/);

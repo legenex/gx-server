@@ -65,7 +65,11 @@ function showApp() {
   getConfig().then((cfg) => {
     const link = $('cc-link');
     if (cfg && /^https?:\/\//.test(cfg.control_center_url || '')) {
-      link.href = cfg.control_center_url;
+      // Same host as this page (only the port differs), so the host-scoped
+      // session cookie carries over and one sign-in covers both apps.
+      const url = new URL(cfg.control_center_url);
+      url.hostname = location.hostname;
+      link.href = url.href;
       link.hidden = false;
     }
     $('app-version').textContent = cfg && cfg.version ? `v${cfg.version}` : '';
