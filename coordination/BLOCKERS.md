@@ -1150,9 +1150,24 @@ are absent). gx-reason therefore stays on the interim `nvidia/Qwen3.6-27B-NVFP4`
 **Disk:** node 2 needs about 99 GiB free for this download. It currently has
 about 20 GB (see B-026).
 
-## B-026 (S2) — obsolete checkpoints were not deleted; gx10-02 disk is at 98 %
+## B-026 (S2) — RESOLVED 2026-09-17 — obsolete checkpoints were not deleted; gx10-02 disk was at 98 %
 
-**Status:** OPEN, needs a human. **Found:** 2026-09-17.
+**Status: RESOLVED.** The user deleted the obsolete checkpoints. Re-checked on
+the filesystem on 2026-09-17 at 09:10:
+
+* **Gone:** both `DeepSeek-V4-Flash-0731-NVFP4` copies, `Qwen3.6-35B-A3B-NVFP4`
+  (gx10-01), the gx10-02 122B GGUF and the gx10-02 122B NVFP4.
+* **Disk now:** gx10-01 has 492 GB free (44 %). gx10-02 has 328 GB free
+  (63 %), which Storage & Cleanup rates HEALTHY. Disk no longer blocks
+  anything, including the gx-reason replacement.
+* **Still on disk, offered only as REVIEW in Storage & Cleanup:**
+  * `/srv/models/gguf/Qwen3.5-4B` (3.2 GB, the gx-mini rollback);
+  * `hidream_i1_full_fp8.safetensors` (16 GB on gx10-02, referenced by no
+    workflow).
+* **Registry:** it records the gx-max and gx-fast rollbacks as deleted
+  (`on_disk: false`). A gx-max rollback now needs a fresh download.
+
+**Found:** 2026-09-17. Original entry below.
 
 The migration request asked for superseded weights to be removed after
 acceptance. The agent's permission layer refused the delete (irreversible

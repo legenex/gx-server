@@ -979,3 +979,142 @@ master key is absent from 8 API responses. A second account, `acceptance`,
 exists for live automated tests. Its password is in
 `secrets/control-ui/acceptance-password` (0600). It can log in only from
 127.0.0.1, and `gx-ui-passwd --remove-acceptance` deletes it.
+
+## D-036 — gx-music is the eighth permanent alias (amends L-10)
+
+**Date:** 2026-09-17. **Status:** ACCEPTED. The user explicitly approved
+growing the alias list from seven to eight.
+
+The public aliases are now `gx-mini`, `gx-fast`, `gx-reason`, `gx-max`,
+`gx-auto`, `gx-image`, `gx-video` and `gx-music`. There is still no
+`gx-vision`, and no alias was repurposed.
+
+**Model and runtime.** gx-music is ACE-Step 1.5 XL turbo on gx10-02:
+
+| Component | Revision |
+|---|---|
+| `ACE-Step/acestep-v15-xl-turbo` | `d4a0b288` |
+| `ACE-Step/acestep-5Hz-lm-4B` | `0a3ec94b` |
+| `ACE-Step/Ace-Step1.5` (VAE / text encoder) | `19671f40` |
+| Runtime `ace-step/ACE-Step-1.5` | `ca1e85fe` |
+
+It runs in image `gx-music-engine:acestep15-ca1e85f-t214`, which uses torch
+2.14/cu130; upstream's torch 2.10 fails cuBLAS on GB10. It is not a LiteLLM
+chat model.
+
+**Access path.** The node-2 supervisor is private (fabric
+192.168.100.11:18820, bearer key). gx10-01 exposes it:
+
+* to the browser through GX-Playground;
+* to API clients at `http://100.105.214.61:8090/v1/music/*`, with a gateway
+  key that allows `gx-music`.
+
+**Source and deployment.** `legenex/music/` is the canonical source,
+integrated from the Stage A handoff. It includes the router-mediated eviction
+patch. The node-2 unit is a symlink into the checkout; `GX_MUSIC_HOME` is no
+longer overridden. `/srv/projects/gx-music-staging` is Review-class history.
+
+**gx-max drain (`legenex/lifecycle/node2-holds.sh`).**
+
+* **Before rank 1:** gx-max-start sets `state/guard/node2.gxmax-hold`, then
+  waits for the supervisor to unload the engine. It stops the engine container
+  itself only as a fallback. It verifies that the container is gone, that
+  gx-music is not in the ledger and that no ACE-Step process remains, and only
+  then starts rank 1.
+* **On release:** stop, unwind and restore-normal clear the hold and make sure
+  the supervisor runs.
+* **Jobs:** music jobs submitted while gx-max owns the cluster wait with a
+  gx-max reason. A render interrupted by the reclaim is re-queued (bounded)
+  instead of failed.
+
+**ComfyUI eviction.** Music frees idle ComfyUI weights only through
+`docker exec gx-media-router python -m gx_media_router.free_node`, the path
+gx-reason's start already uses. The router clears its resident-model record,
+so its next job is admitted as cold (60/76 GiB), never as warm (8 GiB).
+`GX_MUSIC_EVICT_COMFY_WEIGHTS` is back to its default (on) after the live
+proof (TEST_RESULTS §20).
+
+**Media router 2.3.0.**
+
+* It mounts node 2's guard directory read-only.
+* It refuses new jobs while the gx-max hold or Maintenance is active.
+* It honours pins only above the 30 GiB reserve.
+* It reports the resident alias and its last memory refusal.
+* The refusal message names both possible tenants.
+
+## D-037 — GX-Playground, Resource Control, Storage & Cleanup, client Setup
+
+**Date:** 2026-09-17. **Status:** ACCEPTED.
+
+**GX-Playground (`legenex/playground/`, `gx-playground.service`).**
+
+* **Host and binds:** gx10-01 only, port 8090, bound to 127.0.0.1 and the
+  Tailscale address.
+* **Architecture:** a static single-page app plus an allow-listed streaming
+  reverse proxy to the Control Center backend. That keeps one Library (SQLite
+  schema 2 adds audio), one job queue and one session store. The session
+  cookie is host-scoped, so one sign-in covers both ports.
+* **Proxy trust:** the proxy adds `X-GX-Proxy-Token` (0600 file
+  `secrets/control-ui/proxy-token`) and `X-GX-Forwarded-For`. The backend
+  trusts the forwarded address only with that token and only from loopback.
+* **Refused through the Playground:** runtime controls, storage cleanup and
+  Maintenance.
+* **Control Center:** Create and Media Library moved out of it and are
+  replaced by a link.
+
+**Resource Control (`gx_control_ui/resources.py`).** It explains and
+coordinates the components that already enforce memory safety; it replaces
+none of them.
+
+* **Profiles:** Auto (default), Text, Media, Music, Max and Maintenance. They
+  are priority and preemption preferences, persisted in
+  `state/guard/profile.json` on both nodes.
+* **Max** runs the existing gx-max acquire. Leaving Max releases gx-max, and
+  the profile returns to Auto once gx-max is down.
+* **Maintenance** writes `state/guard/node{1,2}.maintenance-hold`. The hold is
+  honoured by:
+  * `resource_guard.check_admission` and the takeover check;
+  * gx-reason's start command, with the guard directory mounted into node 2's
+    llama-swap;
+  * media router 2.3;
+  * the music supervisor;
+  * the Control Center creative queue.
+* **Pins** live in `state/guard/pins.json`:
+  * music and media honour them only above the reserve;
+  * gx-reason is kept alive by a proxied health request while it is READY and
+    the pin is honoured;
+  * a pin never overrides admission, gx-max or Maintenance.
+* **Manual controls:** LOAD, UNLOAD, DRAIN, PIN and UNPIN go through
+  ActionRunner, the router's free path or the supervisor's load/unload. None
+  of them issues an arbitrary docker command.
+* **Creative queue:** it asks the controller before submitting. Jobs wait with
+  a plain-language reason, and the queue may free idle, unpinned tenants as
+  the profile allows.
+* **Compatibility:** computed from placement, live MemAvailable, the measured
+  footprints and the enforced admission numbers. It is not a static matrix.
+
+**Storage & Cleanup (`storage.py`, `storage_scan.py`).**
+
+* **Classes:** a two-node scanner sorts candidates into SAFE, REVIEW and
+  PROTECTED.
+* **Opaque ids:** the browser sends only ids, which are HMACs over the scan
+  result.
+* **Re-check:** the owning node re-classifies each item right before it
+  deletes it.
+* **REVIEW items** need a typed confirmation and Maintenance.
+* **Never offered:** a Docker `prune -a`, anything inside the Git checkout, or
+  Library assets.
+* **Health thresholds:** CRITICAL below 30 GiB free, LOW below 75 GiB, WATCH
+  below 150 GiB.
+* **Model Manager disk preflight:** download, staging, peak and headroom
+  (50 GiB). An install that would not fit is blocked before it starts.
+
+**Client Setup.** Kilo Code, Open WebUI and generic OpenAI clients each get a
+page:
+
+* the labels come from the installed Kilo Code 7.7.2 and Open WebUI 0.11.3;
+* the page shows live values and a complete Kilo config file;
+* its connection test uses a pasted key and reports the gx-auto routing
+  decision;
+* gx-auto is the recommended Kilo model;
+* API keys may now also allow gx-music.
