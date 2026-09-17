@@ -1606,3 +1606,168 @@ regression tests:
 | orchestrator | 170 tests |
 | lifecycle | 38 tests (including the new `test_restore_normal_sh`) |
 | git-sync `sync-regression.sh` | 19/19 |
+
+## 21. Final cleanup pass: production Open WebUI identity and the 30 GiB reserve (2026-09-17, gx10-01)
+
+**Evidence directories** (all under `/srv/logs/acceptance/`):
+
+| What | Where |
+|---|---|
+| Open WebUI identity | `owui-identity-20260917T095845Z/`, `owui-identity-browser-20260917T100020Z/` (JSON and screenshot) |
+| Reserve, live runs | `reserve-live-20260917T101532Z/` (run 1), `reserve-live-20260917T103728Z/` (run 2) |
+| QA, kernel checks, logs | `cleanup-20260917/` |
+
+The production database backup taken before the first write is
+`/srv/projects/gx-cluster/backups/open-webui/webui-20260917T095038Z.db`
+(0600, integrity ok).
+
+### 21.1 Production Open WebUI (the real `open-webui` container behind chat.legenex.co)
+
+**Path traced, live:**
+
+1. **Front end:** chat.legenex.co → cloudflared (token tunnel) → `open-webui`
+   (host network :3000, Open WebUI 0.11.3; `/api/version` is identical on
+   both URLs).
+2. **Connection:** Open WebUI's connection #1, `http://100.105.214.61:4000/v1`
+   (connection #0, Nous, is disabled).
+   * The key is the LiteLLM virtual key `kilo-code`, matched by sha256 prefix
+     `1d6e027fdf68`. It is not the master key (see B-029).
+3. **Gateway:** LiteLLM `gx-mini` → `http://gx-llama-swap-node01:8080/v1`.
+   The mounted `config.yaml` has the same md5 as the checkout.
+4. **llama-swap node01:** `node01.yaml`, also the same md5 as the checkout →
+   container `gx-mini` (network `container:gx-llama-swap-node01`).
+5. **gx-mini process:** `/app/llama-server -m
+   /models/gguf/Qwen3.5-4B-Uncensored-HauhauCS-Aggressive/Qwen3.5-4B-Uncensored-HauhauCS-Aggressive-Q4_K_M.gguf
+   --mmproj …/mmproj-Qwen3.5-4B-Uncensored-HauhauCS-Aggressive-BF16.gguf
+   --ctx-size 131072 --parallel 2`.
+   * `/props` reports that `model_path`, vision `true`, 2 slots × `n_ctx`
+     65536, build b10948.
+6. **Files:** sha256 `79e28eca…2741` (GGUF) and `a1e32e86…0f22` (mmproj),
+   equal to `.gx-manifest.json` and to the live Hugging Face LFS hashes at
+   revision `c09cdbcdb1fefad6d335809d445621b5f5ba0c6e`. The GGUF reports
+   4 205 751 296 parameters, and the card says "Based on Qwen3.5-4B, 4B
+   dense".
+
+**Root cause.**
+* Open WebUI had **no model entries** for the gx aliases: 398 stale
+  OpenRouter/Nous rows, none for gx-*, no system prompt anywhere, no user
+  memories. The aliases came straight from the connection.
+* The user's two chats ("Model Identity", "Model Information", 07:33-07:40
+  UTC) show gx-mini answering "Qwen3.5 … Tongyi Lab … official,
+  full-precision" and, in the other chat, "Grok-3 Mini".
+* The direct LiteLLM control **without** a system prompt reproduces this
+  ("My full underlying model name is **Qwen3.5** … developed by Tongyi
+  Lab"). Routing was correct.
+
+**Change.** Five Open WebUI model entries (gx-mini, gx-fast, gx-reason,
+gx-max, gx-auto) were written through Open WebUI's own model layer:
+* owned by the admin, no grants;
+* each with a registry-generated system prompt (D-038).
+
+Nothing else changed: chats 18 → 18, users 1 → 1, grants 0.
+
+**API acceptance** (disposable `user` account signed in through the public
+URL; `owui_identity_acceptance.py`): **33/33.**
+
+| Question (gx-mini, conversation and fresh chat) | Answer |
+|---|---|
+| What model are you? | "I am **gx-mini**, and my underlying model is **HauhauCS/Qwen3.5-4B-Uncensored-HauhauCS-Aggressive**, derived from Qwen/Qwen3.5-4B." |
+| Full underlying model name? | "…**HauhauCS/Qwen3.5-4B-Uncensored-HauhauCS-Aggressive**." |
+| Are you HauhauCS/…? | "Yes." |
+| Parameters of the base model? | "Qwen/Qwen3.5-4B … about **4 billion** parameters." |
+| Runtime? | "**llama.cpp** on **gx10-01**, behind **llama-swap** and a **LiteLLM** gateway." |
+| Context per request? | "up to **65,536 tokens** per request (prompt and reply together)." |
+
+No answer claimed a larger model, another product, full precision or an
+official release.
+
+**Proof that the requests reached the verified backend** (same run):
+* **LiteLLM:** all 12 test requests are in the spend log. Each has the Open
+  WebUI key hash, `model_group=gx-mini`,
+  `api_base=http://gx-llama-swap-node01:8080/v1/` and the exact
+  (prompt, completion) token pairs Open WebUI returned, for example
+  `chatcmpl-GwyD6y…` with 451/49.
+* **llama-swap node01:** 12 `POST /v1/chat/completions` lines from
+  `172.21.0.4` (gx-litellm).
+* **gx-mini llama-server:** 12 slot releases with `n_tokens` equal to
+  prompt + completion − 1.
+* **Earlier attempts:** they also saw concurrent real user traffic under
+  the same key, which is excluded by token matching.
+
+**Controls and other aliases:**
+* A direct LiteLLM call with the identity prompt names the HauhauCS model;
+  without a prompt the model says "Qwen3.5".
+* **gx-fast:** "42" in 1.1 s; "I am gx-fast … kyaky/Qwen3.6-35B-A3B-Uncensored-NVFP4,
+  derived from Qwen/Qwen3.6-35B-A3B."
+* **gx-auto:** "42" in 1.5 s; "I am answering through gx-auto … recorded in the
+  cluster's routing journal".
+* **gx-max:** visible, not cold-started.
+
+**Browser acceptance** (system Chrome through https://chat.legenex.co,
+`owui_identity_browser.py`): **6/6.**
+* Signed in on the public login page, opened a new chat with `?models=gx-mini`,
+  and the UI showed "I am gx-mini. My underlying model is
+  HauhauCS/Qwen3.5-4B-Uncensored-HauhauCS-Aggressive, derived from
+  Qwen/Qwen3.5-4B."
+* Open WebUI stored that chat on model gx-mini.
+* The account, its chat and its grants were deleted afterwards (verified).
+
+**What the first attempts found.** They needed prompt and harness fixes,
+and all of them are in the committed code:
+* "Keep the alias and the underlying model distinct" made the model answer
+  "No" to "Are you HauhauCS/…?";
+* a missing base-model size made it say "I do not know";
+* the listing hides system prompts from non-owners.
+
+### 21.2 gx-video + gx-music keep the 30 GiB reserve (router 2.4.0, gx-music 1.1.0)
+
+**Root cause of the 18.6 GiB case (§20.4).**
+* Router 2.3 admitted a cold t2v when MemAvailable ≥ 76 GiB. That is the
+  measured 72 GiB footprint plus 4 GiB, with no reserve. With music loaded
+  (about 88 GiB left) the video fit that check and took the node to about
+  16-19 GiB.
+* The Control Center used the same numbers and skipped its check while the
+  router was busy.
+* The music supervisor could not see a router load in progress, and the
+  router could not see a music load in progress.
+
+**Live run 2** (final code; real generations; gx10-02 sampled every second;
+`reserve-live-20260917T103728Z`): **20/20.**
+
+| Step | Result |
+|---|---|
+| S1 music | 15 s track saved in 103.8 s (82.3 s load, 20.2 s generation). Resident size measured **26.2 GiB**; pending 5.8 GiB |
+| S2 video next to idle music | The Control Center gate unloaded gx-music with `if_idle`, and the release was verified: engine unloaded, container gone, ledger clean; 88.3 → 113.8 GiB. The video then ran (45.6 s, 33/33 distinct frames) |
+| S3 second (warm) video + music | Warm growth was measured (held 67.9 GiB, so 8 GiB growth); the video ran in 30.6 s. The music job submitted meanwhile waited 109.6 s with "Waiting for gx-video to finish on gx10-02: gx-music needs about 32 GiB plus the 30 GiB reserve plus 6 GiB that the running media job has not taken yet, so 68 GiB must be available; 45 GiB is". It then asked the router to free ComfyUI, loaded (89.4 s) and completed |
+| S4 router API, music pinned | `POST /v1/videos` 202. `GET` showed `status: queued, phase: waiting` with blocker gx-music, required 107.8 / available 88.1 / reserve 30 GiB, projected 10.3 GiB, next "gx-music is pinned…". The engine stayed loaded for 20 s. After unpin, the router's eviction was verified (released 25.4 GiB in 4.1 s), and the video completed (48.3 s, 33 frames, 246 174 B) |
+| S5 keyframe edit | Failed after 2.0 s: "…needs about 107 GiB plus the 30 GiB reserve (137 GiB)… (B-028)" |
+| Memory | 403 samples: **minimum MemAvailable 41.97 GiB**, 0 s below 30 GiB. SwapFree 59.22 GiB at start, minimum and end (flat) |
+| Cleanup | 4 test assets deleted, pin removed, Library search for the run tag = 0 |
+
+**Live run 1** (same day, before two fixes, `reserve-live-20260917T101532Z`):
+* S0-S2 passed, with the same unload-then-video sequence.
+* Over 1 189 samples the minimum MemAvailable was **41.63 GiB**, 0 s below
+  30 GiB, and swap was flat.
+* It found two real defects, both fixed and covered by tests:
+  1. **A recreated router forgot what ComfyUI still held.** gx10-02 showed
+     46 GiB with a record of nothing loaded. The router now frees once
+     after a start.
+  2. **The Control Center gate ignored the router's own resident weights
+     while its tile showed WAITING.** A warm video waited for memory that
+     only an idle timer would free. The gate now reads residency from the
+     router and counts the router's own reclaimable weights.
+* It also found two harness faults: the pin API returns 202, and a cold
+  video has phase `loading` rather than `generating`.
+
+### 21.3 Suites (final code)
+
+| Suite | Result |
+|---|---|
+| Control Center `npm run qa` | ruff, mypy, **419** unit/API/auth tests, performance budget, build, **17/17** browser E2E + axe, gitleaks + npm audit: QA PASSED |
+| GX-Playground `npm run qa` | ruff, **9** proxy tests, build (258.1 KiB), **19/19** browser E2E + axe, gitleaks: QA PASSED |
+| gx-music `qa.sh` | **60** tests (54 + 6 reserve-coordination tests), no literal credentials |
+| media router `qa.sh` | **111** tests (87 + 21 reserve tests + 2 restart-reconcile tests + updated admission tests), templates, compose, secret scan: QA PASSED |
+| orchestrator | **170** |
+| lifecycle | **38** |
+| git-sync `sync-regression.sh` | **19/19** |
+| kernel lock verifier | gx10-01 **13/13**, gx10-02 **13/13** (`6.17.0-1032-nvidia`) |
