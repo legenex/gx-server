@@ -16,10 +16,11 @@ import uuid
 from . import __version__
 from .comfy import Artefact, ComfyClient
 from .config import Config
-from .errors import (InsufficientMemoryError, NotFoundError, PolicyBlockedError, RouterError, UpstreamError,
-                     ValidationError)
+from .errors import (ExceedsNodeError, InsufficientMemoryError, NotFoundError, PolicyBlockedError, RouterError,
+                     UpstreamError, ValidationError)
 from .jobs import GenerationSlot, Job, JobStore
 from .policy import Policy
+from .tenants import MUSIC_LOADED_FLOOR_GIB, MusicState, MusicTenant
 from .uploads import InputStore, MediaInfo
 from .workflows import WorkflowRegistry
 
@@ -28,7 +29,7 @@ log = logging.getLogger("gx-media.service")
 
 class MediaService:
     def __init__(self, cfg: Config, comfy: ComfyClient, workflows: WorkflowRegistry,
-                 inputs: InputStore | None = None) -> None:
+                 inputs: InputStore | None = None, music: MusicTenant | None = None) -> None:
         self.cfg = cfg
         self.comfy = comfy
         self.workflows = workflows
@@ -42,7 +43,16 @@ class MediaService:
         self._resident_kind: str | None = None
         self._last_activity = time.monotonic()
         self.policy = Policy(cfg.guard_dir)
+        self.music = music if music is not None else MusicTenant(cfg.music_url, cfg.music_key_file)
         self.last_refusal: dict | None = None
+        self.last_eviction: dict | None = None
+        #: GiB the resident weights hold between jobs (measured after a cold job;
+        #: None = unknown, so a warm job is judged by its full footprint)
+        self._held_gib: float | None = None
+        #: the admitted job whose growth may not be in MemAvailable yet (D-038)
+        self._inflight: dict | None = None
+        self._admissions = 0
+        self._mem_lock = threading.Lock()
         self._video_queue: "queue.Queue[str]" = queue.Queue()
         self._worker = threading.Thread(target=self._video_worker, name="video-worker", daemon=True)
         self._worker.start()
@@ -57,6 +67,8 @@ class MediaService:
             raise PolicyBlockedError(block.message, block.code)
 
     def _set_resident(self, models: frozenset[str], kind: str | None) -> None:
+        if models != self._resident_models:
+            self._held_gib = None
         self._resident_models = models
         self._resident_kind = kind if models else None
 
@@ -215,6 +227,8 @@ class MediaService:
         models = frozenset(self.workflows.get(workflow_name).models)
         cold = not models <= self._resident_models
         if not self.cfg.free_on_model_switch or not models:
+            if cold:
+                self._held_gib = None
             self._resident_models = self._resident_models | models
             return cold
         if self._resident_models and not models <= self._resident_models:
@@ -222,6 +236,7 @@ class MediaService:
                      sorted(self._resident_models), sorted(models))
             self.comfy.free(unload_models=True, free_memory=True)
             self._resident_models = frozenset()
+            self._held_gib = None
             self._freed_at = time.monotonic()
         # A subset of what is already loaded reuses it; the loaded set is unchanged.
         self._resident_models = self._resident_models | models

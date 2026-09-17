@@ -7,6 +7,8 @@ and the gx-max lifecycle write:
     node2.gxmax-hold        gx-max is draining/owning node 2 (fresh = < 20 min)
     node2.maintenance-hold  Maintenance mode: no new heavy jobs
     pins.json               {"gx-image": {...}, "gx-video": {...}} keep-resident preferences
+    profile.json            {"profile": "auto" | "music" | ...}   Resource Control profile
+    node2-residency.json    the resource guard's ledger (gx-music is recorded there)
 
 The router only READS them. A missing directory disables every rule, so the
 router behaves exactly like 2.2 when the mount is absent (tests, dev).
@@ -57,18 +59,32 @@ class Policy:
                                         "Maintenance ends")
         return None
 
-    def pinned(self) -> list[str]:
+    def _json(self, name: str) -> dict:
         if self.dir is None:
-            return []
+            return {}
         try:
-            data = json.loads((self.dir / "pins.json").read_text(encoding="utf-8"))
+            data = json.loads((self.dir / name).read_text(encoding="utf-8"))
         except (OSError, ValueError):
-            return []
-        if not isinstance(data, dict):
-            return []
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    def pinned(self) -> list[str]:
+        data = self._json("pins.json")
         return sorted(a for a in ("gx-image", "gx-video") if isinstance(data.get(a), dict))
+
+    def music_pinned(self) -> bool:
+        return isinstance(self._json("pins.json").get("gx-music"), dict)
+
+    def profile(self) -> str:
+        """The Resource Control profile (auto when unknown)."""
+        value = self._json("profile.json").get("profile")
+        return value if isinstance(value, str) and value else "auto"
+
+    def ledger_has(self, name: str) -> bool:
+        """Is `name` in gx10-02's residency ledger (written by the resource guard)?"""
+        return name in self._json("node2-residency.json")
 
     def state(self) -> dict:
         return {"guard_dir_mounted": bool(self.dir and self.dir.is_dir()),
                 "maintenance": self.maintenance(), "gxmax_hold": self.gxmax_hold(),
-                "pinned": self.pinned()}
+                "pinned": self.pinned(), "profile": self.profile()}
