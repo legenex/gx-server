@@ -228,11 +228,29 @@ function renderLookup(info) {
         repository: info.repository, revision: info.revision, node: node.value, category: cat.value, name: name.value,
         include: include.value,
       });
+      const pf = plan.preflight || {};
+      const pfClass = { SAFE: 'ok', TIGHT: 'warn', BLOCKED: 'crit' }[pf.status] || 'unknown';
       clear(planOut).append(kv([
-        ['Target', `${plan.target} on ${plan.node}`], ['Download', bytes(plan.download_bytes)],
-        ['Free disk', bytes(plan.free_bytes)], ['Memory estimate', `${plan.memory_estimate_gib} GiB`],
+        ['Target', `${plan.target} on ${plan.node}`], ['Task', plan.task || '—'],
+        ['Memory estimate', `${plan.memory_estimate_gib} GiB`],
         ['Runtime', (plan.runtimes || []).join(', ') || '—'], ['trust_remote_code', yes(plan.trust_remote_code)],
-      ]), plan.warnings.length ? h('ul', { class: 'problems' }, plan.warnings.map((w) => h('li', {}, w))) : null,
+      ]), h('section', { class: 'card preflight', 'aria-label': 'Disk preflight', id: 'mm-preflight' },
+        h('div', { class: 'card-head' }, h('h3', {}, 'Disk preflight'),
+          h('span', { class: `badge badge-${pfClass}`, id: 'mm-preflight-status' }, pf.status || '—')),
+        kv([
+          ['Current free', bytes(pf.current_free_bytes)],
+          ['Download', bytes(pf.download_bytes)],
+          ['Staging copy', pf.staging_bytes ? bytes(pf.staging_bytes) : 'none (written in place)'],
+          ['Final installed size', bytes(pf.final_installed_bytes)],
+          ['Cache duplication', pf.cache_duplication ? 'yes' : 'no'],
+          ['Peak requirement', bytes(pf.peak_bytes)],
+          ['Free afterwards', bytes(pf.free_after_bytes)],
+          ['Required headroom', bytes(pf.required_headroom_bytes)],
+        ]),
+        h('p', { class: 'small' }, pf.explanation || ''),
+        pf.status && pf.status !== 'SAFE'
+          ? h('p', {}, h('a', { class: 'btn btn-sm', href: '#/storage', id: 'mm-open-storage' }, 'Open Storage Cleanup')) : null),
+      plan.warnings.length ? h('ul', { class: 'problems' }, plan.warnings.map((w) => h('li', {}, w))) : null,
       h('button', {
         type: 'button', class: 'btn btn-primary', disabled: !plan.ok, id: 'mm-stage',
         onclick: () => runJob('/api/manager/stage', plan, `Install ${info.repository}`),
