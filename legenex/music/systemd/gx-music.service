@@ -1,0 +1,32 @@
+# gx-music supervisor -- node 2 (gx10-02) ONLY. systemd --user unit.
+#
+# Lightweight (stdlib Python, <100 MB). Safe to start at boot: it does NOT load
+# the model. ACE-Step is started on the first job, through the node-2
+# admission guard, and stopped after GX_MUSIC_IDLE_UNLOAD_S of inactivity or
+# as soon as gx-max claims the node.
+#
+# Install:
+#   ln -sf <checkout>/legenex/music/systemd/gx-music.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now gx-music
+[Unit]
+Description=gx-music supervisor (ACE-Step 1.5 XL music generation, node 2)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+# GX_MUSIC_HOME is the directory that contains gx_music/ (legenex/music).
+Environment=GX_MUSIC_HOME=%h/Documents/Projects/Server/gx-cluster/legenex/music
+EnvironmentFile=-%h/.config/gx-music/gx-music.env
+WorkingDirectory=/tmp
+ExecStart=/usr/bin/env python3 -P -c "import os,sys,runpy; sys.path.insert(0, os.environ['GX_MUSIC_HOME']); runpy.run_module('gx_music', run_name='__main__')"
+Restart=on-failure
+RestartSec=10
+# Unloading the engine on stop takes up to ~45 s.
+TimeoutStopSec=120
+KillMode=mixed
+MemoryMax=1G
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

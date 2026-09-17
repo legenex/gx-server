@@ -1,0 +1,27 @@
+# =============================================================================
+# DISK-CONSTRAINED VARIANT, used on gx10-02 on 2026-09-17 (root fs 98% full).
+#
+# `Dockerfile` is canonical: it installs the GB10 torch override in the same
+# layer as `uv sync`. Building it needs ~20 GB free at peak, and node 2 had
+# 22 GB, so the build was aborted at 9 GB free. This overlay applies the SAME
+# override on top of an existing base build (upstream lock, torch 2.10) and
+# costs only the new wheels. Prefer `Dockerfile` whenever disk allows.
+#
+#   docker build -f Dockerfile.gb10-overlay \
+#     --build-arg BASE=gx-music-engine:acestep15-ca1e85f-base \
+#     -t gx-music-engine:acestep15-ca1e85f-t214 .
+# =============================================================================
+ARG BASE=gx-music-engine:acestep15-ca1e85f-base
+FROM ${BASE}
+USER 0
+ARG TORCH_SPEC="torch==2.14.0+cu130 torchaudio==2.11.0+cu130 torchvision==0.29.0+cu130"
+RUN uv pip install --no-cache --python /app/.venv/bin/python --index-strategy unsafe-best-match \
+        --index-url https://download.pytorch.org/whl/cu130 --extra-index-url https://pypi.org/simple \
+        ${TORCH_SPEC} \
+    && python -c "import torch; assert torch.__version__.startswith('2.14'); print('torch', torch.__version__)" \
+    && python -c "import acestep.api_server, acestep.handler, acestep.llm_inference; print('acestep import ok')"
+COPY gx_engine_entry.py /app/gx_engine_entry.py
+# The checks above ran as root with HOME=/work and left root-owned caches.
+RUN rm -rf /work/cache /work/.cache /work/.config /work/tmp \
+    && mkdir -p /work/cache && chown -R 1000:1000 /work
+USER 1000:1000
