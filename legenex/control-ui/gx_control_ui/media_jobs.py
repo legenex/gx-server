@@ -6,8 +6,15 @@ time anyway), calls the router over the RoCE fabric with the media key,
 downloads the result and registers it in the media library with its full
 metadata and lineage.
 
-Job phases shown to the user:
-    queued -> loading (model weights cold) | generating -> saving -> ready | failed
+Job phases shown to the user (D-037):
+    queued -> waiting (resource) -> generating -> saving -> ready
+                                                           | failed | cancelled
+
+Before a job is sent, the Resource Controller's gate is asked whether
+gx10-02 can take it now (maintenance, gx-max, memory). A job that cannot
+start waits with a human-readable reason instead of failing, and the gate
+may free idle tenants when the active profile allows it. A job the router
+still refuses for memory goes back to waiting (bounded).
 
 "ready" is only set after the output file was downloaded, validated
 (PNG/MP4 magic, non-trivial size) and committed to the library.
@@ -34,6 +41,11 @@ from .util import HTTPError, bearer, http
 log = logging.getLogger("gx.ui.media")
 
 KINDS = ("t2i", "edit", "variation", "t2v", "i2v", "v2v")
+ALIAS = {"t2i": "gx-image", "edit": "gx-image", "variation": "gx-image",
+         "t2v": "gx-video", "i2v": "gx-video", "v2v": "gx-video"}
+TERMINAL = ("ready", "failed", "cancelled")
+WAIT_LIMIT_S = 3600
+WAIT_POLL_S = 10
 KIND_LABEL = {"t2i": "Generate image", "edit": "Edit image", "variation": "Image variation",
               "t2v": "Generate video", "i2v": "Image to video", "v2v": "Edit video"}
 IMAGE_SIZES = ("1328x1328", "1024x1024", "1328x800", "800x1328", "1664x928", "928x1664", "768x768", "512x512")
@@ -63,9 +75,24 @@ class MediaJob:
     assets: list[str] = field(default_factory=list)
     error: str | None = None
     elapsed_generation: float | None = None
+    waiting: dict | None = None
+    cancel_requested: bool = False
+    cold: bool | None = None
+
+    @property
+    def alias(self) -> str:
+        return ALIAS[self.kind]
+
+    @property
+    def variant(self) -> str | None:
+        if self.kind == "v2v" and float(self.params.get("strength") or 0.85) >= 0.5:
+            return "keyframe_edit"
+        return None
 
     def public(self) -> dict:
         return {"id": self.id, "kind": self.kind, "label": KIND_LABEL[self.kind], "phase": self.phase,
+                "alias": self.alias, "waiting": self.waiting, "cancel_requested": self.cancel_requested,
+                "cold_start": self.cold,
                 "detail": self.detail, "created": self.created, "started": self.started, "ended": self.ended,
                 "elapsed_seconds": round((self.ended or time.time()) - (self.started or self.created), 1),
                 "router_job": self.router_job, "assets": list(self.assets), "error": self.error,
@@ -208,13 +235,18 @@ class RouterClient:
 
 class MediaJobs:
     def __init__(self, library: MediaLibrary, router: RouterClient, *, results=None,
-                 model_identity=None, audit=None, poll_interval: float = 3.0) -> None:
+                 model_identity=None, audit=None, poll_interval: float = 3.0, gate=None,
+                 wait_poll: float = WAIT_POLL_S, wait_limit: float = WAIT_LIMIT_S) -> None:
         self.library = library
         self.router = router
         self.results = results
         self.model_identity: Any = model_identity or (lambda workflow: {})
         self.audit = audit or (lambda **kw: None)
         self.poll_interval = poll_interval
+        #: gate(alias, variant) -> None (go) | wait-reason dict (Resource Control)
+        self.gate = gate
+        self.wait_poll = wait_poll
+        self.wait_limit = wait_limit
         self._jobs: collections.OrderedDict[str, MediaJob] = collections.OrderedDict()
         self._queue: collections.deque[str] = collections.deque()
         self._cv = threading.Condition()
@@ -234,12 +266,12 @@ class MediaJobs:
                                f"{source_id} is a {source['type']}")
         job = MediaJob(id=secrets.token_hex(8), kind=params["kind"], params=params, user=user)
         with self._cv:
-            if sum(1 for j in self._jobs.values() if j.phase not in ("ready", "failed")) >= 20:
+            if sum(1 for j in self._jobs.values() if j.phase not in TERMINAL) >= 20:
                 raise JobError("20 media jobs are already queued; wait for some to finish", 429)
             self._jobs[job.id] = job
             while len(self._jobs) > 200:
                 oldest = next(iter(self._jobs))
-                if self._jobs[oldest].phase not in ("ready", "failed"):
+                if self._jobs[oldest].phase not in TERMINAL:
                     break
                 self._jobs.pop(oldest)
             self._queue.append(job.id)
@@ -266,7 +298,61 @@ class MediaJobs:
 
     def busy(self) -> bool:
         with self._cv:
-            return any(j.phase not in ("ready", "failed") for j in self._jobs.values())
+            return any(j.phase not in TERMINAL for j in self._jobs.values())
+
+    def cancel(self, job_id: str, *, user: str) -> dict:
+        """Cancel a job that has not been sent to gx10-02 yet. A running
+        generation cannot be interrupted (ComfyUI has one slot)."""
+        with self._cv:
+            job = self._jobs.get(job_id)
+            if job is None:
+                raise JobError("no such media job", 404)
+            if job.phase in TERMINAL:
+                raise JobError(f"the job is already {job.phase}", 409)
+            if job.phase not in ("queued", "waiting"):
+                raise JobError("the job is already running on gx10-02 and finishes on its own", 409)
+            job.cancel_requested = True
+            if job_id in self._queue:
+                self._queue.remove(job_id)
+                job.phase, job.detail, job.ended = "cancelled", "cancelled before it started", time.time()
+        self.audit(user=user, ip="", action=f"media.{job.kind}", outcome="cancel", job=job_id)
+        return self.get(job_id)
+
+    def snapshot(self) -> dict:
+        with self._cv:
+            jobs = [{"id": j.id, "alias": j.alias, "kind": j.kind, "phase": j.phase, "waiting": j.waiting,
+                     "done": j.phase in TERMINAL} for j in self._jobs.values()]
+        counts: dict[str, int] = {}
+        for j in jobs:
+            if not j["done"]:
+                counts[j["phase"]] = counts.get(j["phase"], 0) + 1
+        return {"jobs": jobs, "counts": counts}
+
+    def _wait_for_resources(self, job: MediaJob) -> bool:
+        """True when the job may go; False when it was cancelled or gave up."""
+        if self.gate is None:
+            return True
+        started = time.time()
+        while True:
+            if job.cancel_requested:
+                job.phase, job.detail = "cancelled", "cancelled while waiting"
+                return False
+            try:
+                reason = self.gate(job.alias, job.variant)
+            except Exception as exc:  # noqa: BLE001 - never lose a job to a probe error
+                log.warning("resource gate failed: %s", exc)
+                reason = None
+            if reason is None:
+                job.waiting = None
+                return True
+            job.phase = "waiting"
+            job.waiting = reason
+            job.detail = reason.get("reason", "waiting for resources")
+            if time.time() - started > self.wait_limit:
+                job.phase = "failed"
+                job.error = f"Gave up after {int(self.wait_limit // 60)} minutes: {job.detail}. Retry later."
+                return False
+            time.sleep(self.wait_poll)
 
     # ------------------------------------------------------------- worker
     def _loop(self) -> None:
@@ -275,9 +361,25 @@ class MediaJobs:
                 while not self._queue:
                     self._cv.wait()
                 job = self._jobs[self._queue.popleft()]
+            if not self._wait_for_resources(job):
+                job.ended = time.time()
+                self.audit(user=job.user, ip="", action=f"media.{job.kind}", outcome=job.phase, job=job.id)
+                continue
             job.started = time.time()
             try:
-                self._run(job)
+                for attempt in range(3):
+                    try:
+                        self._run(job)
+                        break
+                    except JobError as exc:
+                        # The router re-checks memory itself; a refusal sends the job back to waiting.
+                        if ("insufficient_memory" in str(exc) or "HTTP 503" in str(exc)) and attempt < 2 \
+                                and self.gate is not None and not job.assets:
+                            job.phase, job.detail = "waiting", f"gx10-02 refused: {exc}"
+                            if not self._wait_for_resources(job):
+                                raise
+                            continue
+                        raise
                 job.phase = "ready"
                 job.detail = f"{len(job.assets)} asset(s) saved"
                 if self.results:
@@ -285,6 +387,9 @@ class MediaJobs:
                     self.results.record(alias, "inference", True, f"{KIND_LABEL[job.kind]} ok",
                                         seconds=round(time.time() - job.started, 1))
             except Exception as exc:  # noqa: BLE001 - reported to the user
+                if job.phase == "cancelled":
+                    job.ended = time.time()
+                    continue
                 job.phase = "failed"
                 job.error = redact(exc.message if isinstance(exc, HTTPError) else
                                    str(exc) if isinstance(exc, (JobError, LibraryError)) else
@@ -316,6 +421,13 @@ class MediaJobs:
         kind = job.kind
         job.phase = "generating"
         job.detail = "submitted to gx10-02"
+        try:
+            health = self.router.get_json("/health", timeout=5)
+            job.cold = health.get("resident_alias") != job.alias
+            if job.cold:
+                job.detail = "loading the model on gx10-02, then generating"
+        except JobError:
+            job.cold = None
         if kind == "t2i":
             body = {**self._common_fields(p), "size": p["size"], "n": p.get("n", 1), "quality": p["quality"],
                     "steps": p.get("steps"), "cfg": p.get("guidance"), "response_format": "b64_json",
