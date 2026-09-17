@@ -51,6 +51,10 @@ from .hf import HFClient, HFError
 from .media_jobs import IMAGE_SIZES, KIND_LABEL, VIDEO_SIZES, JobError, MediaJobs, RouterClient, import_upload
 from .media_library import LibraryError, MediaLibrary, MediaTools, read_range
 from .model_manager import ManagerError, ModelManager, gateway_probe
+from .music import MusicClient, MusicError, MusicJobs
+from .resources import AdmissionBlocked, ResourceController, ResourceError
+from .storage import StorageError, StorageManager
+from .auth import write_private_file
 
 log = logging.getLogger("gx.ui")
 
@@ -58,13 +62,17 @@ MAX_BODY = 64 * 1024
 #: Client-side routes that fall back to index.html. Anything else that is not
 #: a known asset is a plain 404.
 _SPA_ROUTE = re.compile(
-    r"/(dashboard|models|create|library|manager|keys|runtime|cluster|jobs|logs|playground|docs|settings)"
+    r"/(dashboard|models|create|library|manager|keys|runtime|cluster|jobs|logs|playground|docs|settings|"
+    r"resources|storage|setup)"
     r"(/[a-z0-9_\-]{0,64}){0,2}"
 )
 ACCESS_LOG = os.environ.get("GX_UI_ACCESS_LOG", "1") != "0"
 MAX_BODY_PLAYGROUND = 12 * 1024 * 1024
 MAX_UPLOAD = 150 * 1024 * 1024
 UPLOAD_PATH = "/api/media/upload"
+#: Raw-body uploads, streamed by their route after authentication.
+UPLOAD_PATHS = frozenset({UPLOAD_PATH, "/api/music/upload", "/v1/music/uploads"})
+_IP_RE = re.compile(r"^[0-9a-fA-F:.]{2,45}$")
 
 CSP = (
     "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; "
@@ -138,10 +146,44 @@ class App:
         self.hf = HFClient(cfg.hf_token_file)
         self.manager = ModelManager(cfg, self.cluster, self.hf, audit=self.actions.audit)
         self.keys = KeyManager(cfg.litellm_base, lambda: cfg.secret("LITELLM_MASTER_KEY"))
+        self.proxy_token = self._proxy_token()
+        self.music = MusicJobs(MusicClient(cfg.music_base, cfg.music_key_file), self.library,
+                               cfg.state_dir / "music-jobs.json", audit=self.actions.audit, results=self.results,
+                               explain=lambda alias: self.resources.explain(alias),
+                               start_worker=not cfg.offline)
+        self.resources = ResourceController(cfg, self.cluster, self.actions, music=self.music, media=self.media,
+                                            audit=self.actions.audit)
+        self.media.gate = None if cfg.offline else self.resources.creative_gate
+        self.actions.maintenance = self.resources.maintenance
+        self.storage = StorageManager(cfg, self.cluster, self.manager, self.library, audit=self.actions.audit,
+                                      maintenance=self.resources.maintenance)
+        self.manager.storage_free = self._free_bytes
+        self.api_keys_cache: dict[str, tuple[float, dict | None]] = {}
+        self.api_rate: dict[str, list[float]] = {}
         self.zips: dict[str, tuple[Path, float, str]] = {}
         self._zip_lock = threading.Lock()
         self._gen_seen: int | None = None
         self._gen_lock = threading.Lock()
+
+    def _proxy_token(self) -> str:
+        path = self.cfg.proxy_token_file
+        try:
+            token = path.read_text(encoding="utf-8").strip()
+            if len(token) >= 32:
+                return token
+        except OSError:
+            pass
+        token = secrets.token_urlsafe(32)
+        try:
+            write_private_file(path, token + "\n")
+        except OSError:
+            log.warning("could not write %s; the Playground proxy cannot forward client addresses", path)
+        return token
+
+    def _free_bytes(self, node: str) -> int | None:
+        facts = self.cluster.node1.get() if node == "node1" else self.cluster.node2.get()
+        disk = (facts or {}).get("disk") or {}
+        return disk.get("free")
 
     def workflow_identity(self, workflow: str) -> dict:
         """Which model repository/revision produced media from `workflow`."""
@@ -183,7 +225,19 @@ class Handler(BaseHTTPRequestHandler):
         pass  # replaced by structured access logging in _finish()
 
     def _client_ip(self) -> str:
-        return self.client_address[0] if self.client_address else "?"
+        peer = self.client_address[0] if self.client_address else "?"
+        if peer in ("127.0.0.1", "::1") and self.via_playground():
+            fwd = (self.headers.get("X-GX-Forwarded-For") or "").strip()
+            if _IP_RE.match(fwd):
+                return fwd
+        return peer
+
+    def via_playground(self) -> bool:
+        """True when GX-Playground's local proxy sent this request (shared token)."""
+        peer = self.client_address[0] if self.client_address else ""
+        token = self.headers.get("X-GX-Proxy-Token") or ""
+        return peer in ("127.0.0.1", "::1") and bool(token) and secrets.compare_digest(
+            token.encode(), self.app.proxy_token.encode())
 
     def _cookie_token(self) -> str | None:
         raw = self.headers.get("Cookie") or ""
@@ -248,7 +302,7 @@ class Handler(BaseHTTPRequestHandler):
             self.close_connection = True
             self._body_error = ValueError("invalid Content-Length")
             return
-        if path == UPLOAD_PATH:
+        if path in UPLOAD_PATHS:
             # Uploads are streamed to a temp file by the route itself (after
             # authentication and CSRF), never read into memory here. The body
             # may stay unread (refused request), so never reuse the socket.
@@ -305,7 +359,13 @@ class Handler(BaseHTTPRequestHandler):
     def do_PUT(self) -> None:  # noqa: N802
         self._reject_method()
 
-    do_DELETE = do_PATCH = do_PUT
+    do_PATCH = do_PUT
+
+    def do_DELETE(self) -> None:  # noqa: N802
+        if urllib.parse.urlsplit(self.path).path.startswith("/v1/music/"):
+            self._dispatch("DELETE")
+        else:
+            self._reject_method()
 
     def do_OPTIONS(self) -> None:  # noqa: N802
         self._reject_method()
@@ -328,6 +388,10 @@ class Handler(BaseHTTPRequestHandler):
         if method == "POST":
             self._consume_body(path)
         try:
+            if path.startswith("/v1/music"):
+                from .routes_v2 import public_music
+                public_music(self, method, path)
+                return
             if not path.startswith("/api/"):
                 self._static(path)
                 return
@@ -364,8 +428,13 @@ class Handler(BaseHTTPRequestHandler):
             self._error(exc.status, str(exc), "playground")
         except ActionRefused as exc:
             self._error(exc.status, str(exc), "refused")
-        except (LibraryError, JobError, ManagerError, HFError, KeyError_) as exc:
+        except AdmissionBlocked as exc:
+            self._json(exc.status, {"error": {"message": redact(str(exc)), "code": "admission"},
+                                    "admission": exc.view})
+        except (LibraryError, JobError, ManagerError, HFError, KeyError_, ResourceError, StorageError) as exc:
             self._error(exc.status, str(exc), type(exc).__name__.lower().rstrip("_"))
+        except MusicError as exc:
+            self._error(exc.status, str(exc), exc.code)
         except (BrokenPipeError, ConnectionResetError):
             pass
         except Exception as exc:  # noqa: BLE001
@@ -731,10 +800,19 @@ def api_media_file(h: Handler, asset_id: str) -> None:
     if not path.is_file():
         h._error(404, "the file is missing from the library store", "not_found")
         return
+    fmt = _q(h, "format")
+    ext, ctype = asset["ext"], asset["media_type"]
+    if fmt and fmt != asset["ext"]:
+        path = h.app.library.file_path(asset, fmt)
+        if not path.is_file():
+            h._error(404, f"no {fmt} version of this asset", "not_found")
+            return
+        ext = fmt
+        ctype = {"wav": "audio/wav", "flac": "audio/flac", "mp3": "audio/mpeg"}[fmt]
     disposition = "attachment" if _q(h, "download") == "1" else "inline"
     base = re.sub(r"[^A-Za-z0-9._-]+", "-", (asset.get("title") or asset_id))[:60] or asset_id
-    h._send_file(path, asset["media_type"], {
-        "Content-Disposition": f'{disposition}; filename="{base}.{asset["ext"]}"',
+    h._send_file(path, ctype, {
+        "Content-Disposition": f'{disposition}; filename="{base}.{ext}"',
         "Cache-Control": "private, max-age=86400"})
 
 
@@ -814,16 +892,14 @@ def api_media_zip_get(h: Handler, token: str) -> None:
         path.unlink(missing_ok=True)
 
 
-@route("POST", r"/api/media/upload")
-def api_media_upload(h: Handler) -> None:
+def read_upload(h: Handler, limit: int = MAX_UPLOAD) -> Path:
+    """Stream the (already size-checked) raw body into a Library temp file."""
     if h._body_error is not None:
         raise h._body_error
-    ctype = (h.headers.get("Content-Type") or "").split(";")[0].strip().lower()
-    if not (ctype.startswith("image/") or ctype.startswith("video/")):
-        raise ValueError("upload an image or a video")
-    title = urllib.parse.unquote(h.headers.get("X-Title") or "")[:200] or None
-    tmp = h.app.library.tmp_file(".upload")
     remaining = getattr(h, "_upload_length", 0)
+    if remaining > limit:
+        raise OverflowError(f"upload must be at most {limit // 2**20} MiB")
+    tmp = h.app.library.tmp_file(".upload")
     try:
         with tmp.open("wb") as fh:
             while remaining > 0:
@@ -832,6 +908,22 @@ def api_media_upload(h: Handler) -> None:
                     raise ValueError("the upload was interrupted")
                 fh.write(chunk)
                 remaining -= len(chunk)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+    return tmp
+
+
+@route("POST", r"/api/media/upload")
+def api_media_upload(h: Handler) -> None:
+    if h._body_error is not None:
+        raise h._body_error
+    ctype = (h.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+    if not (ctype.startswith("image/") or ctype.startswith("video/")):
+        raise ValueError("upload an image or a video")
+    title = urllib.parse.unquote(h.headers.get("X-Title") or "")[:200] or None
+    tmp = read_upload(h)
+    try:
         asset = import_upload(h.app.library, tmp, ctype, title)
     finally:
         tmp.unlink(missing_ok=True)
@@ -849,11 +941,9 @@ def api_media_options(h: Handler) -> None:
 
 @route("POST", r"/api/media/jobs")
 def api_media_job_submit(h: Handler) -> None:
+    # gx-max, Maintenance and memory are handled by the queue itself: the job
+    # waits with an explanation instead of being refused (D-037).
     assert h.session is not None  # noqa: S101
-    if h.app.cluster.gxmax_state() in ("acquiring", "ready", "releasing"):
-        h._error(409, "gx-max holds the cluster; media generation is available again after it is released",
-                 "refused")
-        return
     h._json(202, h.app.media.submit(h._body(MAX_BODY), user=h.session.username, ip=h._client_ip()))
 
 
@@ -980,6 +1070,20 @@ def api_keys_test(h: Handler) -> None:
     h._json(200, key_probe(h.app.cfg.litellm_base, secret, model))
 
 
+@route("POST", r"/api/media/jobs/(?P<job_id>[0-9a-f]{16})/cancel")
+def api_media_job_cancel(h: Handler, job_id: str) -> None:
+    assert h.session is not None  # noqa: S101
+    h._json(200, h.app.media.cancel(job_id, user=h.session.username))
+
+
+@route("GET", r"/api/media/assets/(?P<asset_id>a_[0-9a-f]{24})/lineage")
+def api_media_lineage(h: Handler, asset_id: str) -> None:
+    asset = h.app.library.get(asset_id, lineage=True)
+    root = asset["ancestors"][-1]["id"] if asset.get("ancestors") and not asset["ancestors"][-1].get("deleted") \
+        else asset_id
+    h._json(200, {"asset": asset, "root": root, "tree": h.app.library.tree(root)})
+
+
 def parse_range(header: str | None, size: int):
     """Single `bytes=` range -> (start, end) inclusive; None = whole body;
     "invalid" = unsatisfiable. Multi-range requests get the whole body."""
@@ -1023,6 +1127,9 @@ class Server(ThreadingHTTPServer):
         if ":" in addr[0]:
             self.address_family = socket.AF_INET6
         super().__init__(addr, handler)
+
+
+from . import routes_v2  # noqa: E402,F401  (registers the D-037 routes)
 
 
 def build(cfg: UIConfig) -> tuple[App, list[Server]]:

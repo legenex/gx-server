@@ -24,6 +24,8 @@ from support import StubUpstream, TempEnv  # noqa: E402
 from gx_control_ui import auth  # noqa: E402
 from gx_control_ui import server as srv  # noqa: E402
 
+from music_stub import MusicStub  # noqa: E402
+
 GIB = 2**30
 
 
@@ -89,6 +91,11 @@ def node_facts(role: str, avail: float) -> dict:
         "guard_lock": "free",
         "gxmax_watcher": {"present": False, "alive": False},
         "ssh_ms": 900,
+        "guard": {"dir": "/srv/projects/gx-cluster/state/guard", "ledger": {}, "holds": {}, "pins": {},
+                  "profile": None},
+        "disk": {"path": "/", "total": 916 * 10**9, "used": (377 if role == "node1" else 541) * 10**9,
+                 "free": (492 if role == "node1" else 328) * 10**9, "percent": 44.0 if role == "node1" else 63.0},
+        "music_engine_procs": 0,
     }
 
 
@@ -132,7 +139,11 @@ def main() -> int:
         ("GET", "/v1/videos/e2e-video-1"): (200, {"id": "e2e-video-1", "status": "completed"}),
         ("GET", "/v1/videos/e2e-video-1/content"): (200, b"\x00\x00\x00\x18ftypmp42"),
     })
-    env = TempEnv(litellm_base=stub.url, media_base=stub.url, port=port)
+    music_key = "m" * 40
+    music = MusicStub(music_key)
+    env = TempEnv(litellm_base=stub.url, media_base=stub.url, port=port, music_base=music.url,
+                  orchestrator_base=stub.url)
+    env.cfg.music_key_file.write_text(music_key)
     auth.PasswordStore(env.cfg.password_file).set_password("admin", password, n=2**12)
     app, servers = srv.build(env.cfg)
     cl = app.cluster
@@ -169,8 +180,17 @@ def main() -> int:
                                                 "comfyui": {"reachable": True, "comfyui_version": "0.35.0",
                                                             "vram_free_bytes": 80 * GIB, "device": "cuda:0",
                                                             "queue_depth": 0}}},
+        "music": {"ok": True, "ms": 3, "body": {"status": "ok", "engine": music.engine, "active_jobs": 0}},
         "sglang": {"ok": False, "status": 0},
     }
+    app.resources.probe_music = True
+    token_file = os.environ.get("GX_E2E_PROXY_TOKEN_FILE")
+    if token_file:  # the Playground proxy under test reads the same shared token
+        Path(token_file).parent.mkdir(parents=True, exist_ok=True)
+        Path(token_file).write_text(app.proxy_token + "\n")
+        os.chmod(token_file, 0o600)
+    threading.Thread(target=app.music._loop, daemon=True).start()
+    app.music.poll_interval = 1.0
     app._fabric_cache = {"at": time.time() + 10**9, "192.168.100.11": "open", "192.168.101.11": "open"}
     # API keys: the stub upstream plays LiteLLM; a dummy admin credential stands in.
     app.keys._master = lambda: "e2e-dummy-admin"
@@ -192,6 +212,12 @@ def main() -> int:
     for i, prompt in enumerate(("e2e seeded lighthouse", "e2e seeded bicycle")):
         app.library.add(NewAsset(type="image", ext="png", operation="generate", data=big, prompt=prompt,
                                  model_alias="gx-image", seed=i, title=f"Seed {i}"))
+    from music_stub import sine_wav  # noqa: PLC0415
+    app.library.add(NewAsset(type="audio", ext="wav", operation="generate", data=sine_wav(1.5, 330.0),
+                             prompt="e2e seeded chill piano loop", model_alias="gx-music", title="Seeded loop",
+                             duration=1.5, bpm=90, music_key="A minor", time_signature="4/4",
+                             tags=["lo-fi", "piano"], lyrics="[Instrumental]", sample_rate=48000, channels=2,
+                             waveform=[[-0.3, 0.3]] * 64, settings={"track_index": 0}))
     for s in servers:
         threading.Thread(target=s.serve_forever, daemon=True).start()
     print(f"e2e fixture server on http://127.0.0.1:{port}", flush=True)
@@ -202,6 +228,7 @@ def main() -> int:
         pass
     finally:
         stub.close()
+        music.close()
         env.cleanup()
     return 0
 

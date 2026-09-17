@@ -97,7 +97,7 @@ class LibraryTests(unittest.TestCase):
             self.lib.build_zip(["a_" + "2" * 24])
 
     def test_schema_version(self):
-        self.assertEqual(self.lib.schema_version, 1)
+        self.assertEqual(self.lib.schema_version, 2)
         MediaLibrary(self.env.cfg.media_dir, MediaTools(enabled=False))  # re-open: migrations idempotent
 
 

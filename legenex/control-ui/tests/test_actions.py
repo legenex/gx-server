@@ -211,16 +211,47 @@ class TestSwapAndInfra(Base):
         wait_done(self.runner, job.id)
         self.cluster.swap_load = original
 
-    def test_media_unload_uses_fixed_ssh_command(self):
+    def test_media_unload_goes_through_the_router_never_comfyui(self):
+        # D-036: a direct ComfyUI /free leaves the router believing weights are
+        # resident (next job admitted as warm). The action must use the router.
         seen = []
-        def fake_run(args, timeout=0, **k):
-            seen.append(args)
-            return CmdResult(0, "freed", 1)
-        with mock.patch.object(actions_mod, "run", fake_run):
+
+        class Res:
+            status = 200
+
+            def text(self, n=500):
+                return '{"freed": true, "models": []}'
+
+        def fake_http(method, url, **kw):
+            seen.append((method, url, kw.get("headers")))
+            return Res()
+        with mock.patch.object(actions_mod, "http", fake_http), \
+                mock.patch.object(actions_mod, "run", lambda *a, **k: self.fail("no shell command expected")):
             job = self.runner.submit("model.gx-image.unload", user="a", ip="t", confirm=True)
             self.assertEqual(wait_done(self.runner, job.id)["state"], "succeeded")
-        self.assertIn("http://127.0.0.1:8188/free", seen[0][-1])
-        self.assertEqual(seen[0][0], "ssh")
+        self.assertEqual(seen[0][0], "POST")
+        self.assertTrue(seen[0][1].endswith("/v1/admin/free"))
+        self.assertNotIn("8188", seen[0][1])
+
+    def test_media_unload_refused_by_busy_router_fails(self):
+        class Res:
+            status = 409
+
+            def text(self, n=500):
+                return '{"freed": false, "reason": "busy (image-1)"}'
+        with mock.patch.object(actions_mod, "http", lambda *a, **k: Res()):
+            job = self.runner.submit("model.gx-video.unload", user="a", ip="t", confirm=True)
+            self.assertEqual(wait_done(self.runner, job.id)["state"], "failed")
+
+    def test_maintenance_refuses_gx_reason_and_music_loads(self):
+        self.runner.maintenance = lambda: True
+        with mock.patch.object(ActionRunner, "require_gxmax_quiet", lambda self: None), \
+                mock.patch.object(ActionRunner, "require_node2", lambda self: None):
+            for name in ("model.gx-reason.load", "model.gx-music.load"):
+                with self.assertRaises(ActionRefused) as ctx:
+                    self.runner.submit(name, user="a", ip="t")
+                self.assertIn("Maintenance", str(ctx.exception))
+        self.runner.maintenance = lambda: False
 
     def test_infra_restart_litellm_command(self):
         seen = []

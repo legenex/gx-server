@@ -28,6 +28,8 @@ services:
       # llama-swap launches sibling containers through the host daemon.
       - /var/run/docker.sock:/var/run/docker.sock
       - ${GX_MODELS_ROOT:-/srv/models}:/srv/models:ro
+      # D-037: Maintenance hold (read-only); gx-reason's start command checks it.
+      - ${GX_GUARD_ROOT:-/srv/projects/gx-cluster/state/guard}:/srv/guard:ro
     environment:
       GX_SWAP_API_KEY: ${GX_SWAP_API_KEY:?GX_SWAP_API_KEY is required}
     mem_limit: ${GX_SWAP_MEM_LIMIT:-512m}

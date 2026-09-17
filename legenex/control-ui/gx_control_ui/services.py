@@ -23,7 +23,8 @@ from .util import HTTPError, TTLCache, bearer, http, http_json, run, ssh_args, t
 
 TEXT_ALIASES = ("gx-mini", "gx-fast", "gx-reason", "gx-max", "gx-auto")
 MEDIA_ALIASES = ("gx-image", "gx-video")
-ALL_ALIASES = ("gx-mini", "gx-fast", "gx-reason", "gx-max", "gx-auto", "gx-image", "gx-video")
+#: The eight permanent aliases (L-10 as amended by D-036).
+ALL_ALIASES = ("gx-mini", "gx-fast", "gx-reason", "gx-max", "gx-auto", "gx-image", "gx-video", "gx-music")
 SWAP_MODELS = {"gx-mini": "node1", "gx-fast": "node1", "gx-reason": "node2"}
 
 
@@ -114,6 +115,7 @@ class Cluster:
             "swap_node2": _probe(http_json, "GET", f"{c.node2_swap_base}/v1/models", headers=swap_h, timeout=3),
             "swap_node2_running": _probe(http_json, "GET", f"{c.node2_swap_base}/running", headers=swap_h, timeout=3),
             "media": _probe(http_json, "GET", f"{c.media_base}/health", timeout=4),
+            "music": _probe(http_json, "GET", f"{c.music_base}/health", timeout=4),
             "sglang": _probe(http_json, "GET", f"{c.gxmax_base}/health", timeout=3),
         }
         if out["sglang"]["ok"]:

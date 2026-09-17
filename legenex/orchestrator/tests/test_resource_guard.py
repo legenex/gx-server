@@ -576,3 +576,51 @@ class TakeoverAdmissionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class MaintenanceHoldTests(unittest.TestCase):
+    """D-037: a node in Maintenance refuses every sanctioned launch."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.state = Path(self.tmp.name)
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def test_hold_refuses_ordinary_admission(self):
+        from gx_orchestrator.resource_guard import WorkloadClass, check_admission
+
+        ok = check_admission("node2", "gx-music", WorkloadClass.MEDIUM, 32, state_dir=self.state,
+                             mem_available_gib=110, is_running=lambda c: False)
+        self.assertTrue(ok.allowed)
+        (self.state / "node2.maintenance-hold").write_text("x")
+        refused = check_admission("node2", "gx-music", WorkloadClass.MEDIUM, 32, state_dir=self.state,
+                                  mem_available_gib=110, is_running=lambda c: False)
+        self.assertFalse(refused.allowed)
+        self.assertIn("maintenance", refused.reason)
+        # a hold on the other node does not matter
+        self.assertTrue(check_admission("node1", "x", WorkloadClass.SMALL, 1, state_dir=self.state,
+                                        mem_available_gib=110, is_running=lambda c: False).allowed)
+
+    def test_hold_refuses_guard_launch_without_running_the_body(self):
+        from gx_orchestrator.resource_guard import AdmissionRefused, WorkloadClass, guard_launch
+
+        (self.state / "node2.maintenance-hold").write_text("x")
+        ran = []
+        with self.assertRaises(AdmissionRefused):
+            with guard_launch("node2", "gx-music", WorkloadClass.MEDIUM, 32, state_dir=self.state,
+                              mem_available_gib=110, is_running=lambda c: False):
+                ran.append(1)
+        self.assertEqual(ran, [])
+
+    def test_hold_refuses_gxmax_takeover(self):
+        from gx_orchestrator.resource_guard import NodeFacts, check_takeover_admission
+
+        facts = NodeFacts(avail_mib=115_000, swap_free_mib=60_000, swap_total_mib=64_000,
+                          swapfile_active=True, psi_full10=0.0)
+        self.assertTrue(check_takeover_admission("node1", "gx-max-rank0", facts, state_dir=self.state,
+                                                 is_running=lambda c: False).allowed)
+        (self.state / "node1.maintenance-hold").write_text("x")
+        self.assertFalse(check_takeover_admission("node1", "gx-max-rank0", facts, state_dir=self.state,
+                                                  is_running=lambda c: False).allowed)

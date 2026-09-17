@@ -96,6 +96,8 @@ class ActionRunner:
         self._jobs: collections.OrderedDict[str, Job] = collections.OrderedDict()
         self._lock = threading.Lock()
         self._groups: dict[str, str] = {}   # group -> running job id
+        #: Resource Control's Maintenance flag (set by the App; D-037)
+        self.maintenance: Callable[[], bool] = lambda: False
         self.registry = build_registry(self)
         self.audit_path = cfg.log_dir / "audit.log"
 
@@ -202,6 +204,11 @@ class ActionRunner:
         ranks = self.rank_containers()
         if ranks:
             return f"refused: gx-max rank container present: {', '.join(ranks)}"
+        return None
+
+    def require_no_maintenance(self) -> str | None:
+        if self.maintenance():
+            return "refused: Maintenance mode is on; new heavy work starts again when it ends"
         return None
 
     def require_no_transition(self) -> str | None:
@@ -313,7 +320,7 @@ def build_registry(r: ActionRunner) -> dict[str, ActionSpec]:
             return "gx-max is already READY"
         if state != "down":
             return f"refused: gx-max is {state}"
-        return r.require_node2() or r.media_busy()
+        return r.require_no_maintenance() or r.require_node2() or r.media_busy()
 
     def pre_gxmax_unload() -> str | None:
         state = r.gxmax_state()
@@ -386,7 +393,7 @@ def build_registry(r: ActionRunner) -> dict[str, ActionSpec]:
         def inner() -> str | None:
             checks = [r.require_gxmax_quiet]
             if SWAP_MODELS[alias] == "node2":
-                checks += [r.require_node2]
+                checks += [r.require_node2, r.require_no_maintenance]
             reason = _all_checks(*checks)()
             if reason:
                 return reason
@@ -413,13 +420,19 @@ def build_registry(r: ActionRunner) -> dict[str, ActionSpec]:
 
     # ================================ media ===============================
     def media_unload(job: Job) -> bool:
-        job.log("gx10-02: POST ComfyUI /free {unload_models, free_memory} (loopback on node 2)")
-        cmd = ("curl -fsS -m 60 -X POST http://127.0.0.1:8188/free -H 'Content-Type: application/json' "
-               "-d '{\"unload_models\": true, \"free_memory\": true}' && echo freed")
-        ok, out = r.ssh(cmd, 90)
-        job.log(out.strip()[-500:])
+        # Through the router (never ComfyUI directly): the router refuses while a
+        # job runs and resets its resident-model record, so the next job is
+        # admitted as cold (D-036).
+        job.log("POST media router /v1/admin/free (router-mediated ComfyUI free)")
+        try:
+            res = http("POST", f"{cfg.media_base}/v1/admin/free", body={}, headers=cl.media_headers(), timeout=60)
+            text = res.text(500)
+            ok = res.status == 200
+        except HTTPError as exc:
+            ok, text = False, exc.message
+        job.log(text)
         for alias in ("gx-image", "gx-video"):
-            r.results.record(alias, "unload", ok, "ComfyUI models freed" if ok else "free failed")
+            r.results.record(alias, "unload", ok, "ComfyUI models freed" if ok else "free refused")
         return ok
 
     for alias in ("gx-image", "gx-video"):
@@ -428,6 +441,36 @@ def build_registry(r: ActionRunner) -> dict[str, ActionSpec]:
             "Frees ComfyUI's loaded image AND video weights on gx10-02 (they share one engine). "
             "The next generation reloads them.",
             "caution", "media", media_unload, _all_checks(r.require_node2, r.media_busy)))
+
+    # ================================ music ===============================
+    def music_op(op: str) -> Callable[[Job], bool]:
+        def inner(job: Job) -> bool:
+            key = cfg.music_key_file.read_text(encoding="utf-8").strip() if cfg.music_key_file.exists() else ""
+            job.log(f"POST gx-music supervisor /v1/music/{op} (fabric)")
+            t0 = time.time()
+            try:
+                res = http("POST", f"{cfg.music_base}/v1/music/{op}", body={},
+                           headers={"Authorization": f"Bearer {key}"}, timeout=1200 if op == "load" else 120)
+                text, ok = res.text(800), res.status == 200
+            except HTTPError as exc:
+                text, ok = exc.message, False
+            secs = round(time.time() - t0, 1)
+            job.log(f"{text} ({secs}s)")
+            job.result = {"seconds": secs}
+            r.results.record("gx-music", op, ok, text[:200], seconds=secs)
+            return ok
+        return inner
+
+    specs += [
+        ActionSpec("model.gx-music.load", "Load gx-music",
+                   "Asks the gx-music supervisor on gx10-02 to load ACE-Step now (admission-guarded; about "
+                   "90 s). Refused while gx-max owns the cluster or in Maintenance.",
+                   "safe", "music", music_op("load"),
+                   _all_checks(r.require_gxmax_quiet, r.require_node2, r.require_no_maintenance)),
+        ActionSpec("model.gx-music.unload", "Unload gx-music",
+                   "Stops the ACE-Step engine on gx10-02 and returns its memory. Refused while a track is "
+                   "generating.", "caution", "music", music_op("unload"), r.require_node2),
+    ]
 
     # ================================ system ==============================
     def refresh(job: Job) -> bool:

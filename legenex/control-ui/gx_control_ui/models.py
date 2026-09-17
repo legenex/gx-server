@@ -1,4 +1,4 @@
-"""The seven public aliases: static facts plus live state.
+"""The eight public aliases: static facts plus live state.
 
 Static facts are taken from the reviewed configuration files
 (`legenex/gateway/litellm/config.yaml`, `llama-swap/node0{1,2}.yaml`,
@@ -57,6 +57,13 @@ ALIAS_ROLE: dict[str, dict[str, Any]] = {
         "endpoint": "LiteLLM /v1/videos, /v1/videos/edits -> 192.168.100.11:18800 (fabric)",
         "controls": ["unload"],
     },
+    "gx-music": {
+        "purpose": "Music: songs with lyrics and vocals, instrumentals, style tags, remix, repaint and extend "
+                   "(ACE-Step 1.5 XL, asynchronous jobs).",
+        "endpoint": "GX-Playground / music API on gx10-01 -> 192.168.100.11:18820 (fabric) -> ACE-Step",
+        "controls": ["load", "unload"],
+        "task": "music-generation",
+    },
 }
 
 REGISTRY_PATH = Path(__file__).resolve().parents[2] / "models" / "registry.json"
@@ -102,6 +109,13 @@ def catalog(path: Path | None = None) -> dict[str, dict[str, Any]]:
             "target": spec.get("target"),
             "previous": spec.get("previous"),
             "components": components,
+            "task": spec.get("task") or role.get("task") or ("chat" if alias not in ("gx-image", "gx-video")
+                                                              else "media-generation"),
+            "capabilities": spec.get("capabilities"),
+            "not_supported": spec.get("not_supported"),
+            "image": spec.get("image"),
+            "runtime_repository": spec.get("runtime_repository"),
+            "runtime_revision": spec.get("runtime_revision"),
         }
     return out
 
@@ -232,6 +246,23 @@ def live_state(cluster: Cluster, results: ResultLog) -> list[dict]:
             else:
                 state, detail = "unavailable", "orchestrator unreachable"
             extra["orchestrator_view"] = tiers
+        elif alias == "gx-music":
+            music = svc.get("music") or {}
+            mbody = music.get("body") if isinstance(music.get("body"), dict) else {}
+            engine = mbody.get("engine")
+            if gxmax_state in ("ready", "acquiring", "releasing"):
+                state, detail = "unavailable", f"engine held off: gx-max is {gxmax_state}"
+            elif not music.get("ok"):
+                state, detail = "unavailable", "music supervisor on gx10-02 unreachable"
+            elif engine == "ready":
+                state, detail = "loaded", "ACE-Step loaded"
+            elif engine in ("loading", "unloading"):
+                state, detail = "loading" if engine == "loading" else "unloading", engine
+            elif engine == "failed":
+                state, detail = "error", "the last engine load failed"
+            else:
+                state, detail = "ready", "on demand (loads with the next job, ~90 s)"
+            extra["music"] = {"supervisor": mbody, "container": c2.get("gx-music")}
         else:  # media
             comfy = (media_body or {}).get("comfyui") or {}
             if gxmax_state in ("ready", "acquiring", "releasing"):

@@ -432,6 +432,11 @@ def check_takeover_admission(
     """Reconcile the ledger, then apply the takeover policy. No locking."""
     ledger = ResidencyLedger(Path(state_dir) / f"{node}-residency.json", is_running=is_running)
     others = ledger.exclusive_residents(node, exclude=name)
+    if maintenance_hold(state_dir, node) is not None:
+        result = AdmissionResult(False, f"refused: {node} is in maintenance mode; gx-max waits until it ends",
+                                 node, {"policy": "gx-max-takeover", "maintenance": True})
+        log.warning("gx.guard: %s", json.dumps({"name": name, **result.as_log_dict()}))
+        return result
     result = compute_takeover_admission(node, facts, other_exclusive_residents=others, policy=policy)
     level = log.info if result.allowed else log.warning
     level("gx.guard: %s", json.dumps({"name": name, **result.as_log_dict()}))
@@ -554,6 +559,18 @@ class ResidencyLedger:
 # ---------------------------------------------------------------------------
 
 
+def maintenance_hold(state_dir: "str | os.PathLike[str]", node: str) -> "Path | None":
+    """The node's Maintenance hold file (D-037), if Maintenance mode is on.
+
+    Written by the Control Center's Resource Control. While it exists no
+    sanctioned launch may start on the node: storage cleanup and model installs
+    must not race a model load. There is deliberately no TTL: Maintenance ends
+    only when an operator ends it.
+    """
+    path = Path(state_dir) / f"{node}.maintenance-hold"
+    return path if path.exists() else None
+
+
 def check_admission(
     node: str,
     name: str,
@@ -579,6 +596,17 @@ def check_admission(
     ledger = ResidencyLedger(Path(state_dir) / f"{node}-residency.json", is_running=is_running)
     alive = ledger.reconcile()
     current = sum(e["estimated_gib"] for n, e in alive.items() if e.get("node") == node and n != name)
+
+    hold = maintenance_hold(state_dir, node)
+    if hold is not None:
+        result = AdmissionResult(
+            False,
+            f"refused: {node} is in maintenance mode ({hold.name}); new launches wait until it ends",
+            node,
+            {"current_residency_gib": round(current, 1), "maintenance": True},
+        )
+        log.warning("gx.guard: %s", json.dumps({"name": name, "class": workload_class.value, **result.as_log_dict()}))
+        return result
 
     if workload_class in NODE_EXCLUSIVE_CLASSES:
         conflicting = [

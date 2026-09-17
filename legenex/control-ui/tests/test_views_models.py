@@ -99,6 +99,7 @@ class TestLiveState(unittest.TestCase):
                                                          {"id": "gx-fast", "status": {"value": "unloaded"}}]}},
             "swap_node2": {"ok": True, "body": {"data": [{"id": "gx-reason", "status": {"value": "loading"}}]}},
             "media": {"ok": True, "body": {"busy": False, "comfyui": {"reachable": True}}},
+            "music": {"ok": True, "body": {"status": "ok", "engine": "unloaded", "active_jobs": 0}},
             "sglang": {"ok": False},
         }
         self.state = "down"
@@ -118,14 +119,20 @@ class TestLiveState(unittest.TestCase):
     def test_normal(self):
         self.assertEqual(self.states(), {
             "gx-mini": "loaded", "gx-fast": "unloaded", "gx-reason": "loading", "gx-max": "unloaded",
-            "gx-auto": "loaded", "gx-image": "ready", "gx-video": "ready"})
+            "gx-auto": "loaded", "gx-image": "ready", "gx-video": "ready", "gx-music": "ready"})
+
+    def test_music_states(self):
+        self.svc["music"]["body"]["engine"] = "ready"
+        self.assertEqual(self.states()["gx-music"], "loaded")
+        self.svc["music"] = {"ok": False}
+        self.assertEqual(self.states()["gx-music"], "unavailable")
 
     def test_gxmax_ready_drains_others(self):
         self.state = "ready"
         self.svc["sglang"] = {"ok": True}
         s = self.states()
         self.assertEqual(s["gx-max"], "loaded")
-        for alias in ("gx-mini", "gx-fast", "gx-reason", "gx-image", "gx-video"):
+        for alias in ("gx-mini", "gx-fast", "gx-reason", "gx-image", "gx-video", "gx-music"):
             self.assertEqual(s[alias], "unavailable", alias)
 
     def test_gxmax_ready_without_health_is_error(self):

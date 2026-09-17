@@ -222,10 +222,17 @@ class TestAuthenticatedApi(ServerBase):
             self.assertEqual(status, 200, (path, body))
             self.assertEqual(headers.get("Cache-Control"), "no-store")
 
-    def test_models_lists_exactly_seven_aliases(self):
+    def test_models_lists_exactly_eight_aliases(self):
+        # L-10 as amended by D-036: gx-music is the eighth permanent alias.
         _, _, body = self.req("GET", "/api/models")
         aliases = [m["alias"] for m in body["models"]]
-        self.assertEqual(aliases, ["gx-mini", "gx-fast", "gx-reason", "gx-max", "gx-auto", "gx-image", "gx-video"])
+        self.assertEqual(aliases, ["gx-mini", "gx-fast", "gx-reason", "gx-max", "gx-auto", "gx-image", "gx-video",
+                                   "gx-music"])
+        music = next(m for m in body["models"] if m["alias"] == "gx-music")
+        self.assertEqual(music["repository"], "ACE-Step/acestep-v15-xl-turbo")
+        self.assertEqual(music["revision"], "d4a0b288b83ebb7e25a8c0b32c573c22e134e8ee")
+        self.assertEqual(music["task"], "music-generation")
+        self.assertEqual(set(music["actions"]), {"load", "unload"})
         gx = next(m for m in body["models"] if m["alias"] == "gx-max")
         self.assertEqual(gx["model"], "dealignai/DeepSeek-V4-Flash-0731-CRACK-NVFP4")  # D-032
         self.assertEqual(gx["topology"]["tp"], 2)

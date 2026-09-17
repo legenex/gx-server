@@ -1,0 +1,52 @@
+# ==============================================================================
+# gx-playground.service — GX-Playground (creative web app), node 1 (gx10-01).
+#
+# INSTALL / REPAIR (no root; idempotent):
+#   legenex/playground/scripts/install.sh
+#
+# VERIFY:
+#   systemctl --user status gx-playground.service
+#   curl -sS http://127.0.0.1:8090/pg/health
+#
+# Light (stdlib Python, static files + a local reverse proxy), so it starts at
+# boot. It never loads a model: generation requests go to gx-control-ui, whose
+# queues and Resource Control decide when anything loads on gx10-02.
+# @REPO@ is replaced by install.sh with the checkout path.
+# ==============================================================================
+[Unit]
+Description=GX-Playground (creative web app), node 1
+After=network-online.target gx-control-ui.service
+Wants=network-online.target gx-control-ui.service
+
+[Service]
+Type=simple
+WorkingDirectory=@REPO@/legenex/playground
+Environment=PYTHONUNBUFFERED=1
+# Loopback + this host's Tailscale address. Never a wildcard (enforced in code).
+Environment=GX_PG_HOSTS=127.0.0.1,tailscale
+Environment=GX_PG_PORT=8090
+Environment=GX_PG_UPSTREAM=http://127.0.0.1:8088
+Environment=GX_PG_CONTROL_URL=http://100.105.214.61:8088/
+ExecStartPre=@REPO@/legenex/control-ui/scripts/wait-for-tailscale.sh
+ExecStart=/usr/bin/python3 -m gx_playground
+Restart=always
+RestartSec=5
+TimeoutStopSec=15
+StandardOutput=append:/srv/logs/gx-playground/playground.log
+StandardError=append:/srv/logs/gx-playground/playground.log
+
+# Uploads and downloads are streamed; the process never holds a file.
+MemoryMax=256M
+MemoryHigh=200M
+CPUQuota=100%
+TasksMax=128
+
+# Hardening: reads its own checkout and the proxy token; writes only its log.
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/srv/logs/gx-playground
+PrivateTmp=true
+UMask=0077
+
+[Install]
+WantedBy=default.target

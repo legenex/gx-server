@@ -45,6 +45,7 @@ from pathlib import Path
 from typing import Any
 
 from .hf import HFClient, HFError, SHA_RE, REPO_RE
+from .storage import install_preflight
 from .redact import redact
 from .util import HTTPError, bearer, http, http_json, run, ssh_args
 
@@ -87,6 +88,13 @@ for cat in ("gguf", "vllm", "deepseek", "staging"):
         out["dirs"].append({"category": cat, "name": d.name, "path": str(d), "size": size,
                             "manifest": {k: man.get(k) for k in ("repository", "revision", "verified_at", "gated")}
                             if man else None})
+music = root / "music" / "acestep" / "checkpoints"
+if music.is_dir():
+    for d in sorted(music.iterdir()):
+        if d.is_dir():
+            size = sum(p.stat().st_size for p in d.rglob("*") if p.is_file())
+            out["dirs"].append({"category": "music", "name": d.name, "path": str(d), "size": size,
+                                "manifest": None})
 mdir = root / "manifests"
 if mdir.is_dir():
     for f in sorted(mdir.glob("*.json")):
@@ -215,6 +223,8 @@ class ModelManager:
         self._jobs: collections.OrderedDict[str, MMJob] = collections.OrderedDict()
         self._lock = threading.Lock()
         self._busy: str | None = None
+        #: live free-bytes lookup per node (App wires the host facts in)
+        self.storage_free: Any = None
 
     # ============================================================== state
     def registry(self) -> dict:
@@ -364,8 +374,23 @@ class ModelManager:
         refs = self.references()
         reg = self.registry()
         installed = []
+        music_spec = (reg.get("aliases") or {}).get("gx-music") or {}
+        music_components = {Path(c.get("file") or "").name: c for c in music_spec.get("components") or []}
         for node, data in (("node1", n1), ("node2", n2)):
             for d in data.get("dirs", []):
+                if d.get("category") == "music":
+                    comp = music_components.get(d["name"]) or next(
+                        (c for c in music_components.values() if d["name"] in (c.get("file") or "")), {})
+                    installed.append({
+                        "node": node, "category": "music", "name": d["name"], "path": d["path"],
+                        "size": d["size"], "repository": comp.get("repository"), "revision": comp.get("revision"),
+                        "verified": bool(comp.get("revision")), "verified_at": None, "aliases": ["gx-music"],
+                        "referenced_by": [f"gx-music {comp.get('role', 'component')}"], "deletable": False,
+                        "runtime": music_spec.get("runtime"), "task": "music-generation",
+                        "kind": "music component",
+                        "url": f"https://huggingface.co/{comp['repository']}" if comp.get("repository") else None,
+                    })
+                    continue
                 used_by = refs.get(d["path"], [])
                 man = d.get("manifest") or {}
                 aliases = [a for a, spec in (reg.get("aliases") or {}).items() if spec.get("path") == d["path"]]
@@ -403,9 +428,13 @@ class ModelManager:
     def lookup(self, ref: str) -> dict:
         info = self.hf.info(ref)
         category, name = default_target(info)
+        if info.get("kind") == "music_model":
+            category = "staging"
         info["suggested_target"] = {"category": category, "name": name,
                                     "path": str(validate_target(category, name))}
         info["suggested_node"] = {"gguf": "node1", "vllm": "node1", "deepseek": "both"}.get(category, "node1")
+        if info.get("kind") == "music_model":
+            info["suggested_node"] = "node2"
         info["memory_estimate_gib"] = round(info["size_bytes"] / GIB * 1.25 + 6, 1) if info["size_bytes"] else None
         readme = self.hf.readme(info["repository"], info["revision"]) if info.get("accessible") else ""
         info["readme_excerpt"] = readme[:6000]
@@ -431,10 +460,13 @@ class ModelManager:
                             "in Settings > Hugging Face.")
         if info["kind"] not in ("checkpoint", "comfyui_model"):
             warnings.append(f"This is a '{info['kind']}', not a servable checkpoint.")
-        fits = size + 20 * GIB < free
+        if info.get("kind") == "music_model" and node != "node2":
+            warnings.append("Music models are staged on gx10-02, where gx-music runs.")
+        preflight = install_preflight(int(free), int(size))
+        fits = preflight["ok"]
         if not fits:
-            warnings.append(f"Not enough disk on {node}: needs {size / GIB:.1f} GiB + 20 GiB margin, "
-                            f"{free / GIB:.1f} GiB free.")
+            warnings.append(f"Disk preflight {preflight['status']} on {node}: {preflight['explanation']} "
+                            "Free space first (Storage & Cleanup).")
         exists = any(d["path"] == str(target) for d in inv.get("dirs", []))
         if exists:
             warnings.append(f"{target} already exists on {node}; staging resumes into it and re-verifies.")
@@ -444,7 +476,9 @@ class ModelManager:
                 "memory_estimate_gib": round(size / GIB * 1.25 + 6, 1), "runtimes": info.get("runtimes"),
                 "candidate_aliases": info.get("candidate_aliases"), "trust_remote_code": info.get("trust_remote_code"),
                 "gated": info.get("gated"), "accessible": info.get("accessible", True), "warnings": warnings,
-                "ok": fits and info.get("accessible", True)}
+                "preflight": preflight, "task": info.get("task"), "kind": info.get("kind"),
+                "ok": fits and info.get("accessible", True)
+                and not (info.get("kind") == "music_model" and node != "node2")}
 
     # ============================================================== stage
     def stage(self, body: dict, *, user: str) -> dict:
@@ -691,6 +725,9 @@ class ModelManager:
     # ============================================================== assign
     def assign(self, body: dict, *, user: str) -> dict:
         alias = body.get("alias")
+        if alias == "gx-music":
+            raise ManagerError("gx-music is a music-generation model: its components are switched with the "
+                               "documented gx-music procedure, never by assigning a text model")
         if alias not in ("gx-mini", "gx-fast", "gx-reason"):
             raise ManagerError("the Model Manager assigns gx-mini, gx-fast and gx-reason; gx-max uses the "
                                "two-node procedure (see Docs > Model Manager)")

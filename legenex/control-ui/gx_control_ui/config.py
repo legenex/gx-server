@@ -122,10 +122,23 @@ class UIConfig:
     node2_swap_base: str = field(default_factory=lambda: _env("GX_NODE2_SWAP_BASE", "http://192.168.100.11:28080"))
     media_base: str = field(default_factory=lambda: _env("GX_UI_MEDIA_BASE", "http://192.168.100.11:18800"))
     gxmax_base: str = field(default_factory=lambda: _env("GX_UI_GXMAX_BASE", "http://127.0.0.1:30000"))
+    #: gx-music supervisor on gx10-02 (fabric only, L-3) and its bearer key file (0600).
+    music_base: str = field(default_factory=lambda: _env("GX_UI_MUSIC_BASE", "http://192.168.100.11:18820"))
+    music_key_file: Path = field(
+        default_factory=lambda: Path(_env("GX_MUSIC_KEY_FILE", "/srv/projects/gx-cluster/secrets/gx-music/api-key"))
+    )
 
     #: What clients should use; shown in docs and code snippets only.
     public_gateway_url: str = field(
         default_factory=lambda: _env("GX_UI_PUBLIC_GATEWAY", "http://100.105.214.61:4000/v1")
+    )
+
+    #: GX-Playground (D-037): the creative app on port 8090 that proxies to this backend.
+    public_playground_url: str = field(
+        default_factory=lambda: _env("GX_UI_PUBLIC_PLAYGROUND", "http://100.105.214.61:8090/")
+    )
+    public_control_url: str = field(
+        default_factory=lambda: _env("GX_UI_PUBLIC_CONTROL", "http://100.105.214.61:8088/")
     )
 
     node2_ssh: str = field(default_factory=lambda: _env("GX_NODE2_SSH", "legenex-02@gx10-02"))
@@ -170,6 +183,12 @@ class UIConfig:
     @property
     def acceptance_file(self) -> Path:
         return self.secret_dir / "acceptance.json"
+
+    @property
+    def proxy_token_file(self) -> Path:
+        """Shared with gx-playground (same user): lets the Playground proxy pass
+        the real client address. Created by this service at start (0600)."""
+        return self.secret_dir / "proxy-token"
 
     @property
     def acceptance_password_file(self) -> Path:

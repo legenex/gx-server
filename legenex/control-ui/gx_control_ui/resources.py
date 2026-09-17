@@ -302,6 +302,8 @@ class ResourceController:
         self._reason_activity: dict[str, float] = {}
         self._keepalive_at = 0.0
         self._music_model: tuple[float, dict] = (0.0, {})
+        #: tests/E2E point the music client at a stub and switch this on
+        self.probe_music = not cfg.offline
         self.last_tick_error: str | None = None
         if start_thread and not cfg.offline:
             threading.Thread(target=self._loop, name="resource-control", daemon=True).start()
@@ -376,7 +378,7 @@ class ResourceController:
     # ============================================================ live data
     def _music_info(self) -> dict:
         now = time.time()
-        if self.music is None or self.cfg.offline:
+        if self.music is None or not self.probe_music:
             return {}
         if now - self._music_model[0] < 4:
             return self._music_model[1]

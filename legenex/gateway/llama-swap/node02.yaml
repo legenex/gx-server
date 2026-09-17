@@ -233,12 +233,15 @@ models:
     checkEndpoint: /health
     ttl: 900
     unloadTimeout: 180
-    # The first line hands node 2 over from ComfyUI (frees its models unless a
+    # The first line refuses a start while gx10-02 is in Maintenance mode
+    # (D-037: the Control Center's hold file, mounted read-only at /srv/guard).
+    # The second hands node 2 over from ComfyUI (frees its models unless a
     # generation is running; gx-media-router refuses then). Without it a cold
     # start in the 10 minutes after a media job failed vLLM's free-memory
     # check (2026-09-17, TEST_RESULTS §19.7).
     cmd: >
-      sh -c 'docker exec gx-media-router python -m gx_media_router.free_node >/dev/null 2>&1;
+      sh -c 'if [ -e /srv/guard/node2.maintenance-hold ]; then echo "gx-reason refused: gx10-02 is in Maintenance mode" >&2; exit 1; fi;
+      docker exec gx-media-router python -m gx_media_router.free_node >/dev/null 2>&1;
       docker rm -f gx-reason >/dev/null 2>&1;
       exec docker run --rm --name gx-reason
       --network ${swap_netns}
