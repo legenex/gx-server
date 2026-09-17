@@ -21,6 +21,7 @@ from gx_orchestrator.classifier import (  # noqa: E402
     extract_features,
     route,
 )
+from gx_orchestrator import budget as B  # noqa: E402
 from gx_orchestrator.tiers import MAX_SINGLE_NODE_CONTEXT, TIERS, Tier  # noqa: E402
 
 
@@ -65,6 +66,19 @@ def text_for_tokens(target: int) -> str:
     text = "x" * length
     assert estimate_tokens(text) == target, (estimate_tokens(text), target)
     return text
+
+
+def text_for_input_total(target: int) -> str:
+    """A single-user-message text whose full request estimate is `target`."""
+    overhead = B.REQUEST_OVERHEAD + B.PER_MESSAGE_OVERHEAD
+    text = text_for_tokens(target - overhead)
+    assert B.estimate_input(msg(text)).total_tokens == target
+    return text
+
+
+def impossible_prompt() -> str:
+    """Even the optimistic estimate exceeds gx-max's window."""
+    return "x" * int((TIERS[Tier.MAX].max_context + 10_000) * B.CHARS_PER_TOKEN_LOWER)
 
 
 #: Filler that keeps a crafted prompt inside the 30-2000 token band, so the
@@ -193,11 +207,20 @@ class TestAvailabilityFallback(unittest.TestCase):
         self.assertIsNot(d.tier, Tier.REASON)
 
     def test_fallback_never_breaks_context_constraint(self):
-        # A prompt that only gx-max can hold must stay on gx-max even when busy:
-        # there is nowhere smaller for it to go. Degrading here would silently
-        # truncate the user's input.
-        d = route(msg(oversized_prompt()), busy={Tier.MAX: True})
+        # An input that cannot fit anywhere stays marked as no-fit: the server
+        # refuses it with a context error instead of sending it anywhere.
+        d = route(msg(impossible_prompt()), busy={Tier.MAX: True})
         self.assertIs(d.tier, Tier.MAX)
+        self.assertTrue(d.no_fit)
+
+    def test_fallback_from_busy_max_is_tight_on_the_largest_window(self):
+        # Pessimistically too big for gx-fast, optimistically not: with gx-max
+        # unusable the request goes to the LARGEST single-node window and the
+        # engine's exact count decides (D-039). Never to gx-reason's 65k.
+        d = route(msg(oversized_prompt()), busy={Tier.MAX: True})
+        self.assertIs(d.tier, Tier.FAST)
+        self.assertTrue(d.tight_fit)
+        self.assertFalse(d.no_fit)
 
     def test_fallback_preserves_vision(self):
         payload = {
@@ -231,66 +254,63 @@ class TestDecisionLogging(unittest.TestCase):
 
 
 class TestComplexityBoundaries(unittest.TestCase):
-    """COMPLEXITY_FAST (>=1 -> gx-fast) and COMPLEXITY_REASON (>=4 -> gx-reason)."""
+    """REASONING_FAST (>=1 -> gx-fast) and REASONING_REASON (>=4 -> gx-reason)."""
 
-    def test_complexity_zero_stays_mini(self):
+    def test_no_evidence_stays_mini(self):
         text = "Give me the weekly sales figures for the north region please." + NEUTRAL_PAD
         f = extract_features(msg(text))
-        self.assertEqual(f.complexity_score, 0)
+        self.assertEqual(f.reasoning_score, 0)
         self.assertIs(route(msg(text)).tier, Tier.MINI)
 
-    def test_complexity_exactly_at_fast_threshold(self):
-        # A single weight-1 reasoning pattern ("why does").
+    def test_evidence_exactly_at_fast_threshold(self):
         text = "Why does this configuration break on restart?" + NEUTRAL_PAD
         f = extract_features(msg(text))
-        self.assertEqual(f.complexity_score, COMPLEXITY_FAST)
+        self.assertEqual(f.reasoning_score, COMPLEXITY_FAST)
         self.assertIs(route(msg(text)).tier, Tier.FAST)
 
-    def test_complexity_one_below_reason_threshold_stays_fast(self):
-        # debug/root-cause (+2) + why-does (+1) = 3, one short of COMPLEXITY_REASON.
-        text = (
-            "Please debug this issue and explain why does it happen." + NEUTRAL_PAD
-        )
+    def test_evidence_one_below_reason_threshold_stays_fast(self):
+        # race condition (+2) + explain why (+1) = 3
+        text = "Explain why a race condition can happen in a queue consumer." + NEUTRAL_PAD
         f = extract_features(msg(text))
-        self.assertEqual(f.complexity_score, COMPLEXITY_REASON - 1)
+        self.assertEqual(f.reasoning_score, COMPLEXITY_REASON - 1)
         self.assertIs(route(msg(text)).tier, Tier.FAST)
 
-    def test_complexity_exactly_at_reason_threshold(self):
-        # Same as above plus "implement" (+1) = 4 = COMPLEXITY_REASON exactly.
-        text = (
-            "Please debug this issue, explain why does it happen, and "
-            "implement a fix." + NEUTRAL_PAD
-        )
+    def test_evidence_exactly_at_reason_threshold(self):
+        # race condition (+2) + time complexity (+2) = 4
+        text = "What is the time complexity of this lock, and where is the race condition?" + NEUTRAL_PAD
         f = extract_features(msg(text))
-        self.assertEqual(f.complexity_score, COMPLEXITY_REASON)
+        self.assertEqual(f.reasoning_score, COMPLEXITY_REASON)
         self.assertIs(route(msg(text)).tier, Tier.REASON)
+
+    def test_generic_engineering_vocabulary_is_not_evidence(self):
+        text = ("Implement the agent orchestration layer and design the architecture for the "
+                "service; debug and refactor the workflow." + NEUTRAL_PAD)
+        f = extract_features(msg(text))
+        self.assertEqual(f.reasoning_score, 0)
+        self.assertIs(route(msg(text)).tier, Tier.FAST)
 
 
 class TestContextBoundary(unittest.TestCase):
-    """context > MAX_SINGLE_NODE_CONTEXT -> gx-max; context == it -> gx-max is NOT forced."""
+    """A tier is chosen only if input + margin + its planning output fits."""
 
-    def test_context_exactly_at_threshold_does_not_force_max(self):
-        # prompt_tokens + max_tokens must land EXACTLY on the threshold.
-        text = text_for_tokens(MAX_SINGLE_NODE_CONTEXT - 1)
-        payload = msg(text, max_tokens=1)
-        f = extract_features(payload)
-        self.assertEqual(f.total_context_needed, MAX_SINGLE_NODE_CONTEXT)
-        self.assertIsNot(
-            route(payload).tier,
-            Tier.MAX,
-            "context == threshold must not force gx-max (the rule is strictly '>')",
-        )
+    def _limit_total(self, tier: Tier, requested: int) -> int:
+        spec = TIERS[tier]
+        return spec.max_context - B.safety_margin(spec.max_context) - min(requested, spec.planning_output)
 
-    def test_context_one_token_over_threshold_forces_max(self):
-        text = text_for_tokens(MAX_SINGLE_NODE_CONTEXT)
-        payload = msg(text, max_tokens=1)
-        f = extract_features(payload)
-        self.assertEqual(f.total_context_needed, MAX_SINGLE_NODE_CONTEXT + 1)
-        self.assertIs(route(payload).tier, Tier.MAX)
+    def test_input_exactly_at_fast_limit_does_not_force_max(self):
+        total = self._limit_total(Tier.FAST, 1)
+        payload = msg(text_for_input_total(total), max_tokens=1)
+        d = route(payload)
+        self.assertIs(d.tier, Tier.FAST, d.reasons)
+        self.assertFalse(d.tight_fit)
+
+    def test_input_one_token_over_fast_limit_goes_to_max(self):
+        total = self._limit_total(Tier.FAST, 1) + 1
+        payload = msg(text_for_input_total(total), max_tokens=1)
+        d = route(payload)
+        self.assertIs(d.tier, Tier.MAX, d.reasons)
 
     def test_large_context_threshold_matches_derived_constant(self):
-        # LARGE_CONTEXT_THRESHOLD must never drift from the tier table (see
-        # ARCHITECTURE.md section 6: "derived from the tier table").
         self.assertEqual(LARGE_CONTEXT_THRESHOLD, MAX_SINGLE_NODE_CONTEXT)
 
 
@@ -461,7 +481,7 @@ class TestDegenerateInput(unittest.TestCase):
 
     def test_messages_key_missing_entirely(self):
         f = extract_features({})
-        self.assertEqual(f.prompt_tokens, 0)
+        self.assertEqual(f.prompt_tokens, B.REQUEST_OVERHEAD)
 
     def test_messages_value_is_none(self):
         d = route({"messages": None})
@@ -502,7 +522,7 @@ class TestDegenerateInput(unittest.TestCase):
         # must be a deliberate decision, not a silent side effect.
         payload = {"messages": [{"role": "USER", "content": "prove this theorem"}]}
         f = extract_features(payload)
-        self.assertEqual(f.complexity_score, -1, "uppercase role must not be read as a user turn")
+        self.assertEqual(f.reasoning_score, 0, "uppercase role must not be read as a user turn")
         self.assertIs(route(payload).tier, Tier.MINI)
 
     def test_empty_string_content(self):
@@ -527,7 +547,7 @@ class TestDowngradeLogging(unittest.TestCase):
         self.assertIs(d.downgraded_from, Tier.REASON)
 
     def test_downgraded_from_is_none_when_nothing_changes(self):
-        d = route(msg(oversized_prompt()), busy={Tier.MAX: True})
+        d = route(msg(impossible_prompt()), busy={Tier.MAX: True})
         self.assertIs(d.tier, Tier.MAX)
         self.assertIsNone(
             d.downgraded_from, "no actual downgrade happened; the field must stay None"

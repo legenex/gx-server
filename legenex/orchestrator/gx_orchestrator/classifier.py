@@ -604,6 +604,7 @@ def _semantic_tier(f: RequestFeatures) -> tuple[Tier, list[str]]:
         return tier, reasons
     if f.intent == INTENT_CONVERSATIONAL:
         reasons.append("tier: greeting / presence / capability question")
+        reasons.extend(_tool_note(f))
         return Tier.MINI, reasons
     if f.hard_score >= HARD_SCORE_MAX:
         reasons.append(f"tier: explicitly extreme task (hard evidence {f.hard_score} >= {HARD_SCORE_MAX})")
@@ -636,12 +637,17 @@ def _semantic_tier(f: RequestFeatures) -> tuple[Tier, list[str]]:
         reasons.append("tier: non-trivial question inside a coding agent -> workhorse")
         return Tier.FAST, reasons
     reasons.append("tier: short simple task")
-    if f.has_tools:
-        reasons.append(
-            f"tools attached ({f.tool_count}, ~{f.tool_schema_tokens} tokens) but intent is "
-            f"{f.intent}: schema size does not raise the tier"
-        )
+    reasons.extend(_tool_note(f))
     return Tier.MINI, reasons
+
+
+def _tool_note(f: RequestFeatures) -> list[str]:
+    if not f.has_tools:
+        return []
+    return [
+        f"tools attached ({f.tool_count}, ~{f.tool_schema_tokens} tokens) but intent is "
+        f"{f.intent}: schema size does not raise the tier"
+    ]
 
 
 def _fitting_tier(f: RequestFeatures, tier: Tier, reasons: list[str]) -> tuple[Tier, bool, bool]:

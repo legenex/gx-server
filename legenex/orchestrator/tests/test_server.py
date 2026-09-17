@@ -238,6 +238,12 @@ class _FakeLifecycle:
     def mark_used(self):
         pass
 
+    def begin_use(self):
+        self.in_use = getattr(self, "in_use", 0) + 1
+
+    def end_use(self):
+        self.in_use -= 1
+
 
 class _FakeHealth:
     def snapshot(self):
@@ -311,12 +317,16 @@ class TestGxAutoBehaviour(unittest.TestCase):
         self.assertEqual(lc.acquired, 0)
         self.assertEqual(self.mx.calls[0]["model"], "/model")
 
-    def test_oversized_context_with_gx_max_down_is_503_not_acquire(self):
+    def test_oversized_context_with_gx_max_down_is_400_not_acquire(self):
+        # D-039: a request only gx-max could hold is refused at once with a
+        # non-retryable context error (a 503 made clients retry for minutes).
         base, lc, _ = self._serve(State.DOWN)
         huge = {"model": "gx-auto", "messages": [{"role": "user", "content": "x" * 1_200_000}]}
-        status, _, body = self._post(base, huge)
-        self.assertEqual(status, 503)
-        self.assertEqual(body["error"]["code"], "gx_max_not_running")
+        status, headers, body = self._post(base, huge)
+        self.assertEqual(status, 400)
+        self.assertEqual(body["error"]["code"], "context_length_exceeded")
+        self.assertIn("model=gx-max", body["error"]["message"])
+        self.assertEqual(headers.get("x-should-retry"), "false")
         self.assertEqual(lc.acquired, 0)
         self.assertEqual(self.mx.calls, [])
 
