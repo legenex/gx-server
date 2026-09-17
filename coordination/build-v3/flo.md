@@ -301,3 +301,41 @@ Node run status values: `pending`, `queued`, `waiting`, `running`,
 `blocked`, `interrupted`. Run status: `queued`, `running`, `succeeded`,
 `failed`, `cancelled`, `interrupted`.
 ```
+
+## Final run of this session (after two real defects found by the tests)
+
+Two defects the tests caught and this session fixed:
+
+1. **`aria-prohibited-attr` (serious, WCAG 2.2 AA).** `@xyflow/react` renders a connection
+   handle as a plain `<div>`, and `NodeCard.tsx` put an `aria-label` on it — prohibited on a
+   generic role. The handle is now `aria-hidden="true"` with the description moved to its
+   `title`; the port is named by the visible text next to it, and connecting without a
+   pointer already goes through the Outline's Connect dialog. Found by `axeCheck` on the
+   canvas view, which the spec now runs on all three views (browser, canvas, outline).
+2. **The Playground QA gate would have failed on the bundle.** `scripts/qa.sh` step 1
+   requires a final newline in every tracked file under `web/`, and Vite emits none.
+   `npm run build` now appends it (and `npm run check:fresh` fails when it is missing), so
+   `scripts/qa.sh` needs **no** change from the lead.
+
+Also fixed while wiring the shell: leaving the page through the nav rail now flushes the
+autosave before the editor unmounts (the local draft was the only safety net before).
+
+```
+legenex/playground/flows-ui: npm run qa
+  → tsc clean · eslint 0 problems · vitest 13/13 · flows bundle OK: 3 files, 511.9 KiB
+legenex/playground (scratch copy with the 5 integration lines):
+  npx playwright test --project=offline offline.h-flows   → 9 passed (22.9 s)
+  npx playwright test --project=offline                   → 46 passed, 8 failed (6.2 min)
+```
+
+The 8 failures in the full suite are **not FLO's** and were failing before this work as
+well — MUS (`offline.d-music*.spec.js`, 6) and PLT/history
+(`offline.f-history-resources.spec.js` History, `offline.g-platform.spec.js` Models) —
+while `web/js/pages/music.js`, `models.js` and `web/css/app.css` are being edited by those
+workstreams. All 9 flows tests pass inside the full-suite run too (45-53 in the log).
+
+**Optional extra for the lead:** adding `['flows', 'Creative Flows']` to `PAGES` in
+`legenex/playground/e2e/helpers.js` makes `offline.a-shell.spec.js` cover the flow browser
+in its "every page renders without console errors, CSP violations or axe violations
+(dark and light)" test. Verified safe: axe is clean on the flow browser, the canvas and
+the outline in both views.
