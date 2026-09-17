@@ -8,7 +8,7 @@ Owner: CAL specialist. Contract: `coordination/BUILD_V3.md`, PLT interfaces in
 | Item | State |
 |---|---|
 | Model | `nvidia/NVIDIA-NemotronLabs-VoiceChat-11B` @ `a4c40ca5b4fe77db13e9840ca4a2b91becf030c8` (openmdw-1.1, public). **Downloaded and verified** on gx10-02: `/srv/models/voicechat/NVIDIA-NemotronLabs-VoiceChat-11B`, 41.35 GiB, 17 files, 6 sha256-checked (`/srv/logs/gx-call/hf-verify.log`) |
-| Runtime | image `gx-call-engine:voicechat-097dfe9-t214`: build **completed 2026-09-17 21:09** (1e61699df9e7, 18.3 GB), import gate **PASSED**. No inference has happened and the engine has never been started. |
+| Runtime | image `gx-call-engine:voicechat-097dfe9-t214`: build **completed 2026-09-17 21:09** (1e61699df9e7, 18.3 GB), import gate **PASSED**. Runtime **FAILED 2026-09-17 21:30** - dependent model `nvidia/NVIDIA-Nemotron-Nano-9B-v2` not in cache, network unreachable from container. Engine cannot load. |
 | Service | `gx-call.service` (node 2, `192.168.100.11:18840` + `127.0.0.1:18840`), key `secrets/gx-call/api-key`. Unit file written; **not installed or started** |
 | Control Center | complete: `calls.py`, `call_agents.py`, `call_intake.py`, `routes_cal.py`, 15/15 tests green |
 | Playground page | `web/js/pages/call.js` complete and **integrated by the lead**; live on the deployed Playground. 5/5 offline Playwright specs green **in the repo, unchanged** (5 axe WCAG 2.2 AA checks) |
