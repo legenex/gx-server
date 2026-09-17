@@ -20,13 +20,36 @@ import json
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
+import uuid
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-from reserve_live_acceptance import N2, ROUTER, Sampler, get, n2, router  # noqa: E402
+from reserve_live_acceptance import N2, ROUTER, Sampler, get, media_key, n2, router  # noqa: E402
 
 RESERVE = 30.0
+
+
+def router_multipart(path: str, fields: dict, file_field: str, filename: str, data: bytes) -> tuple[int, dict]:
+    """POST a multipart form (used for image-to-video source uploads)."""
+    boundary = uuid.uuid4().hex
+    parts = []
+    for key, value in fields.items():
+        parts.append(f"--{boundary}\r\nContent-Disposition: form-data; name=\"{key}\"\r\n\r\n{value}\r\n")
+    parts.append(f"--{boundary}\r\nContent-Disposition: form-data; name=\"{file_field}\"; "
+                 f"filename=\"{filename}\"\r\nContent-Type: image/png\r\n\r\n")
+    body = ("".join(parts)).encode() + data + f"\r\n--{boundary}--\r\n".encode()
+    req = urllib.request.Request(ROUTER + path, method="POST", data=body,
+                                 headers={"Authorization": f"Bearer {media_key()}",
+                                          "Content-Type": f"multipart/form-data; boundary={boundary}"})
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            raw = r.read()
+            return r.status, json.loads(raw) if raw[:1] in (b"{", b"[") else {"bytes": len(raw)}
+    except urllib.error.HTTPError as exc:
+        return exc.code, json.loads(exc.read() or b"{}")
 
 
 def free_and_settle() -> float:
@@ -68,6 +91,32 @@ def run(spec: str, out: Path) -> dict:
             ok = result.get("status") == "completed"
             detail = {"frames": result.get("frames"), "error": result.get("error"), "cold": result.get("cold_start"),
                       "elapsed": result.get("elapsed_seconds"), "waiting": result.get("waiting")}
+        elif kind == "i2v":
+            # A small source image first, then image-to-video from it.
+            _, img = router("POST", "/v1/images/generations", {"model": "gx-image", "prompt": "TEST footprint: a "
+                              "lighthouse on a cliff", "size": "1024x1024", "n": 1, "seed": 11,
+                              "response_format": "url"})
+            src_url = (img.get("data") or [{}])[0].get("url")
+            if not src_url:
+                ok, detail = False, {"error": "no source image for i2v", "http": 0}
+            else:
+                with urllib.request.urlopen(ROUTER + src_url, timeout=60) as r:
+                    png = r.read()
+                status, created = router_multipart("/v1/videos", {"model": "gx-video", "prompt": "TEST footprint: "
+                                                    "a slow pan across a harbour at sunset", "size": f"{w}x{h}",
+                                                    "length": count_i, "fps": 16, "seed": 11},
+                                                    "input_reference", "src.png", png)
+                vid = created.get("id")
+                result = {}
+                for _ in range(1800):
+                    _, result = router("GET", f"/v1/videos/{vid}")
+                    if result.get("status") in ("completed", "failed"):
+                        break
+                    time.sleep(2)
+                ok = result.get("status") == "completed"
+                detail = {"create_http": status, "frames": result.get("frames"), "error": result.get("error"),
+                          "cold": result.get("cold_start"), "elapsed": result.get("elapsed_seconds"),
+                          "waiting": result.get("waiting")}
         else:
             status, result = router("POST", "/v1/images/generations", {"model": "gx-image", "prompt": "TEST footprint:"
                                     " a lighthouse on a cliff", "size": f"{w}x{h}", "n": count_i, "seed": 11,
