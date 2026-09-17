@@ -112,6 +112,13 @@ macros:
 
   # Host-side model root on node 2 (see coordination/node2/NODE2_STATE.md).
   models_root: "/srv/models"
+  # D-039: persistent torch.compile / Triton / FlashInfer JIT caches, one
+  # directory per model. The model containers run with --rm, so without this
+  # every cold start recompiled (gx-reason: ~32 s compile + ~53 s warmup).
+  # vLLM keys its caches by config and code hash, so a new image or flag set
+  # never reuses a stale entry. Files are written by the container (root);
+  # clear them with `docker run --rm -v <dir>:/c alpine sh -c 'rm -rf /c/*'`.
+  vllm_cache_root: "/srv/projects/gx-cluster/runtime/vllm-cache"
 
   # Must match container_name of node 2's llama-swap service.
   swap_netns: "container:gx-llama-swap-node02"
@@ -253,6 +260,7 @@ models:
       -e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
       -e VLLM_USE_DEEP_GEMM=0
       -v ${models_root}/vllm:/models/vllm:ro
+      -v ${vllm_cache_root}/gx-reason:/root/.cache
       --memory ${gx_reason_mem_limit}
       --memory-swap ${gx_reason_mem_limit}
       --oom-score-adj ${gx_reason_oom_score_adj}

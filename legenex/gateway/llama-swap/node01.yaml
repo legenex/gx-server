@@ -117,6 +117,13 @@ macros:
 
   # Host-side model root. Mounted read-only into every spawned container.
   models_root: "/srv/models"
+  # D-039: persistent torch.compile / Triton / FlashInfer JIT caches, one
+  # directory per model. The model containers run with --rm, so without this
+  # every cold start recompiled (gx-reason: ~32 s compile + ~53 s warmup).
+  # vLLM keys its caches by config and code hash, so a new image or flag set
+  # never reuses a stale entry. Files are written by the container (root);
+  # clear them with `docker run --rm -v <dir>:/c alpine sh -c 'rm -rf /c/*'`.
+  vllm_cache_root: "/srv/projects/gx-cluster/runtime/vllm-cache"
 
   # Network namespace shared by all spawned model containers. MUST match
   # container_name of the llama-swap service in docker-compose.gateway.yml.
@@ -253,6 +260,7 @@ models:
       -e VLLM_USE_DEEP_GEMM=0
       -e HF_HUB_OFFLINE=1
       -v ${models_root}/vllm:/models/vllm:ro
+      -v ${vllm_cache_root}/gx-fast:/root/.cache
       --memory ${gx_fast_mem_limit}
       --memory-swap ${gx_fast_mem_limit}
       --oom-score-adj ${gx_fast_oom_score_adj}
