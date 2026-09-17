@@ -1416,3 +1416,184 @@ orchestrator 167 OK · lifecycle 22 OK · media router 74 OK · control UI 155 O
   edit 36 s (source unchanged), variation 16 s, t2v 60 s, i2v 70 s, v2v
   120 s. Evidence: `/srv/logs/acceptance/media-20260917T031557Z/`.
 * Obsolete checkpoints were **not** deleted (B-026).
+
+## 20. Final integration pass: gx-music, GX-Playground, Resource Control (2026-09-17, gx10-01)
+
+**Where the evidence is:** `/srv/logs/acceptance/final-20260917T075129Z/`.
+Everything below ran on the live cluster through the gx10-01 user-facing
+paths, unless it is marked as an offline or unit test.
+
+### 20.1 Router-mediated music eviction (EVICT kept off until this passed)
+
+`evict_proof.log.json` and `evict-proof-node2-mem.tsv`:
+
+1. image 1 was admitted cold and ran (the router held gx-image; 59 GiB
+   available);
+2. a music job asked the router to free memory, and the router's resident
+   list was empty within 3 s;
+3. ACE-Step loaded in 101.6 s and rendered 12 s of audio in 4.02 s;
+4. image 2 was admitted **cold** with the full cold requirement (35.1 GiB
+   available afterwards).
+
+Swap was flat at 4754 MiB and minimum MemAvailable was 35.07 GiB, so there was
+no overcommit. The router's record of what was loaded stayed correct
+throughout. After this passed, `GX_MUSIC_EVICT_COMFY_WEIGHTS` was removed
+from the gx10-02 env, so the default (on) now applies.
+
+### 20.2 Real gx-max + gx-music takeover (Control Center MAX profile)
+
+| Step | Result |
+|---|---|
+| Hold | set before rank 1 |
+| Music drain | via the supervisor in 9 s: container absent, ledger clean, 0 engine processes |
+| Acquire | 671 s |
+| Inference through the gateway | "391", 0.6 s |
+| Music job submitted during gx-max | waited with the gx-max reason for 377 s, then loaded (94.6 s), completed and was saved |
+| Image job submitted during gx-max | waited, then completed |
+| Release | 50 s; hold cleared; supervisor healthy; no rank containers, no deadman, lock free |
+
+Details, including the two script-parsing faults (the system itself behaved
+correctly), are in `gxmax-takeover-verified.md`. B-023 was re-measured
+during this run:
+
+| Node | Minimum MemAvailable | Peak swap use |
+|---|---|---|
+| node 1 | 9356 MiB | 65 531 MiB |
+| node 2 | 11 695 MiB | 40 895 MiB |
+
+### 20.3 Clients and API keys: `clients-acceptance.log`, 21/21 PASS
+
+**API key lifecycle.**
+* Create shows the secret once. The list shows it masked, with expiry and
+  models.
+* Test ran `/v1/models` plus a real gx-mini completion.
+* Replace issued a new secret: the old one gets 401 and the new one works.
+* Revoke: the key gets 401 and disappears from the list.
+* The master key appeared in none of 12 browser-facing responses.
+
+**Setup page tests.**
+* Setup → Kilo Code → Test connection: CONNECTED, routed to gx-mini.
+* Setup → Open WebUI → Test connection: CONNECTED.
+
+**Kilo Code CLI 7.5.14 through gx-auto (real agent runs).**
+
+| Prompt | Routed to | Details | Time |
+|---|---|---|---|
+| "are you there?" | gx-mini | 12 tools | 7.2 s |
+| coding task | gx-fast | 5 turns, and the repository diff shows the fix | 13.5 s |
+| hard debugging task | gx-reason (interim) | 5 turns, cold load | 450.6 s |
+
+The previously accepted 10/10 routing result is not regressed.
+
+**Open WebUI 0.11.3** (an isolated throw-away container; the user's instance
+was not touched).
+* Sign-up worked.
+* Verify Connection passed, and the model list shows the GX aliases.
+* A real gx-mini completion answered "42".
+
+### 20.4 GX-Playground live browser acceptance: `playground-live.log`, 4/4 PASS (4.7 min)
+
+These are Playwright runs (system Chrome) against `http://127.0.0.1:8090`,
+signed in as the acceptance account (`e2e/live.creative.spec.js`).
+
+**Music.**
+* Created a vocal track with lyrics (`[Verse]`/`[Chorus]` inserted with the
+  helper), 3 style tags, BPM 112, A minor, 4/4 and 30 s.
+* It completed and was saved with model `ACE-Step/acestep-v15-xl-turbo`
+  @d4a0b288.
+* WAV (11.5 MB), FLAC (6.5 MB) and MP3 (1.2 MB) all downloaded.
+* In-browser playback advanced over the 30 s track, and axe reported no
+  violations.
+* A UI remix became a child asset with lineage. Repaint (4-10 s) and extend
+  (+15 s, 45 s total) also completed.
+* The cold first run took 122.6 s in total (107 s load, 14 s generation).
+* With the engine warm, a remix or repaint took about 5 s.
+
+**Images.**
+* Generate 1024×1024 took 27 s cold (it first unloaded an idle gx-reason for
+  room).
+* The download is a PNG (1.8 MB).
+* A UI edit (40 s) became a child of the source; a variation took 17 s.
+
+**Video.**
+* t2v produced 49 frames, all distinct, in about 64-67 s cold. It first
+  unloaded gx-image and waited for gx-music.
+* The file downloaded, and the in-browser `<video>` played.
+* i2v from the created image produced 33 distinct frames in 57.7 s, with
+  parent lineage.
+* The t2v cold load happened while gx-music was loaded. The router admitted
+  it by its measured cold threshold (76 GiB available). Minimum MemAvailable
+  was 18.6 GiB, and swap stayed flat at about 5.5 GiB.
+
+**Library.**
+* Search by run tag, the audio type filter, sort, axe, and a bulk ZIP of all
+  9 assets (91 MB) all worked.
+* The Playground → Control Center link opened on the same host with no
+  second sign-in, and the Control Center's Playground link is correct.
+* All 9 test assets were deleted.
+
+The first run showed 3/4. The Control Center link used the Tailscale host, so
+a loopback session did not carry over. The fix: the link now keeps the page's
+host (`web/js/app.js`, offline test updated). The Library test then passed on
+the first run's assets (`playground-live-library-rerun.log`), and the full
+second run passed 4/4.
+
+### 20.5 Public music API via gx10-01:8090: `music-api-accept.log`, 20/20 PASS
+
+**Access control.**
+* No key → 401; invalid key → 401; a key without gx-music → 403.
+* Load/unload → 403.
+
+**Generation.**
+* Submit returned 202. The job completed in about 10 s (engine warm) with
+  BPM 84 / D minor.
+* MP3, WAV and FLAC downloads worked (magic bytes checked).
+
+**Isolation between keys.**
+* A second key gets 404 on the job and on its content, and its job list
+  does not include the job.
+
+**Remix and lineage.**
+* A remix of `{job_id, index}` completed with `parent_job_id`, and
+  `/lineage` lists it.
+* The Library links the remix to its parent track.
+
+**After revoke.** No key material appeared in the output, and a revoked key
+gets 401 immediately.
+
+The first attempt was 15/19 and found three defects. All are fixed and have
+regression tests:
+
+1. `completed` was reported while the tracks were still being saved, so
+   content returned 409. The public status is now `saving` until the Library
+   has the files.
+2. A revoked key kept working for up to 60 s because key look-ups were
+   cached. The Control Center now clears that cache on revoke/replace, and the
+   cache TTL is 15 s.
+3. An API remix of a job that was still being saved lost its Library parent.
+   Such a remix is now imported only after its parent, and it is linked by
+   `parent_job_id`.
+
+### 20.6 Integrity, kernel and gateway
+
+* **Kernel lock verifier:** gx10-01 13/13 PASS and gx10-02 13/13 PASS
+  (`kernel-node1.log`, `kernel-node2.log`); `6.17.0-1032-nvidia` on both.
+* **Integrity audit:** it found gx-litellm running with the media-key
+  placeholder. Cause: a gx-max release run from an orchestrator started
+  before the key rotation (B-027). Fixed in `restore-normal.sh` (the `.env`
+  values always win), with a regression test. gx-litellm was recreated,
+  gx-orchestrator restarted, and the check passes.
+* **B-025 re-checked:** still blocked, with no token on gx10-01 (details in
+  BLOCKERS).
+
+### 20.7 Offline and unit QA (all green)
+
+| Suite | Result |
+|---|---|
+| Control Center `npm run qa` | ruff, mypy, 387 unit/API/auth tests, performance budget, build (201.5 KiB), 17/17 browser E2E + axe, gitleaks + npm audit (0 vulnerabilities) |
+| GX-Playground `npm run qa` | ruff, 9 proxy tests, build (258.1 KiB), 19/19 browser E2E + axe, gitleaks |
+| gx-music `qa.sh` | 54 tests, no literal credentials |
+| media router `qa.sh` | 87 tests, no secrets |
+| orchestrator | 170 tests |
+| lifecycle | 38 tests (including the new `test_restore_normal_sh`) |
+| git-sync `sync-regression.sh` | 19/19 |

@@ -3,7 +3,79 @@
 **This file must always reflect reality.** If you are a new agent resuming this
 work, read this first, then ARCHITECTURE.md (what is locked), then BLOCKERS.md.
 
-## LATEST UPDATE — 2026-09-17 (V2 migration) — read this section first
+## LATEST UPDATE — 2026-09-17 11:00 SAST (final integration pass: gx-music, GX-Playground, Resource Control) — read this first
+
+**Eight public aliases (L-10 amended by D-036).** Everything below was
+measured live. Evidence: `TEST_RESULTS.md` §20 and
+`/srv/logs/acceptance/final-20260917T075129Z/`.
+
+| Alias | Model | Where | State |
+|---|---|---|---|
+| gx-mini | HauhauCS Qwen3.5-4B Q4_K_M | gx10-01 llama.cpp | resident, accepted |
+| gx-fast | kyaky Qwen3.6-35B-A3B NVFP4 | gx10-01 vLLM | resident, accepted |
+| gx-reason | **interim** `nvidia/Qwen3.6-27B-NVFP4` | gx10-02 vLLM, on demand (ttl 900) | serving; the required iSkye model is still gated (**B-025**, no HF token reached gx10-01) |
+| gx-max | `dealignai/DeepSeek-V4-Flash-0731-CRACK-NVFP4` | both nodes, SGLang TP=2 | accepted again today via the Control Center MAX profile (acquire 671 s, release 50 s); never auto-started |
+| gx-auto | deterministic router | gx10-01 orchestrator | Kilo routing mini / fast / reason verified live |
+| gx-image | Qwen-Image-2512 / Edit-2511 | gx10-02 ComfyUI via media router **2.3.0** | on demand |
+| gx-video | Wan 2.2 A14B t2v / i2v / keyframe edit | gx10-02 ComfyUI via router 2.3.0 | on demand |
+| **gx-music** | `ACE-Step/acestep-v15-xl-turbo` @d4a0b288 (+ 5 Hz LM 4B, runtime ACE-Step-1.5 @ca1e85f) | gx10-02: `gx-music.service` supervisor (192.168.100.11:18820) plus an on-demand engine container | on demand, idle unload after 10 min, router-mediated eviction **on** |
+
+**Services on gx10-01.**
+
+| Service | Address | Role |
+|---|---|---|
+| Control Center (`gx-control-ui.service`) | :8088 | admin |
+| **GX-Playground** (`gx-playground.service`) | :8090 on 127.0.0.1 and 100.105.214.61 | creative app, plus the public music API `/v1/music/*` authenticated with LiteLLM virtual keys |
+| LiteLLM | :4000 | gateway |
+| orchestrator | :18900 | gx-auto routing and gx-max lifecycle |
+| llama-swap node01 | — | gx-mini, gx-fast |
+
+**New in the Control Center.**
+* **Resource Control:** profiles Auto / Text / Media / Music / Max /
+  Maintenance, a live resource map, and LOAD / UNLOAD / DRAIN / PIN / UNPIN
+  through admission. The compatibility view is computed from live data.
+* **Storage & Cleanup:** both nodes, SAFE / REVIEW / PROTECTED
+  classification, opaque ids, re-checked before deleting, never
+  `prune -a`.
+* **Setup:** Kilo Code, Open WebUI and generic OpenAI clients.
+* **Model Manager:** disk preflight.
+* **Other:** a gx-music card, and a Creative page and nav link pointing to the
+  Playground.
+
+**State files and holds.**
+* Guard state lives in `/srv/projects/gx-cluster/state/guard/`:
+  `profile.json`, `pins.json`, `node{1,2}.maintenance-hold` and
+  `node2.gxmax-hold`.
+* The gx-max drain sets `node2.gxmax-hold` and waits for the music
+  supervisor to unload (verified: container, ledger and processes).
+* The router, the music supervisor, the guard and gx-reason's llama-swap
+  command all honour Maintenance.
+
+**Current live facts (10:26).**
+
+| | Kernel | RAM available | Swap used | Disk free |
+|---|---|---|---|---|
+| gx10-01 | 6.17.0-1032-nvidia | 57 GiB | 4 GiB of 63 | 492 GiB (44 %) |
+| gx10-02 | 6.17.0-1032-nvidia | 56 GiB | 3 GiB of 63 | 328 GiB (63 %) |
+
+Both nodes are HEALTHY in Storage & Cleanup, and the kernel verifier passes
+13/13 on each. The old "gx10-02 at 98 %" state (B-026) no longer applies.
+
+**Fixed in this pass.**
+* B-027: a gx-max release could recreate gx-litellm with a stale media-key
+  placeholder.
+* Music API: `completed` now means downloadable; revoke takes effect
+  immediately; API remix lineage is kept.
+* Playground → Control Center link keeps the host.
+* API key Replace keeps the name.
+* Music renders interrupted by gx-max are re-queued.
+
+**Open.**
+* **B-025:** a human must save the HF token in Model Manager.
+* **B-023:** monitored; the node-1 gx-max load transient still reaches the
+  swap ceiling for a moment.
+
+## Previous update — 2026-09-17 (V2 migration)
 
 **The cluster runs the V2 model set, and the Control UI can now create media,
 manage models and issue API keys.** Everything below was measured on the live

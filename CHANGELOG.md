@@ -62,10 +62,22 @@ Setup. See `TEST_RESULTS.md` §20.
 - API key Replace failed once LiteLLM required unique key aliases.
 - Storage scan could deadlock on a second Scan click.
 - A failed music download checksum left a temp file behind.
+- **B-027:** a gx-max release run from a long-lived orchestrator recreated
+  gx-litellm with a stale media-key placeholder. `restore-normal.sh` now lets
+  `.env` win.
+- **Music API:**
+  - the status stays `saving` until the tracks can be downloaded (content
+    was 409 right after `completed`);
+  - revoke and replace take effect immediately (the key-info cache is
+    cleared, TTL 15 s);
+  - an API remix of a `job_id` keeps its Library parent.
+- The Playground's Control Center link keeps the current host, so one
+  sign-in covers both apps.
 
 ### Resolved
 - B-026: the obsolete checkpoints were removed by the user. Disk is healthy
   on both nodes.
+- B-027 (found and fixed in this release).
 
 ## [0.15.0] - 2026-09-17
 
