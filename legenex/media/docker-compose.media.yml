@@ -77,7 +77,7 @@ services:
       options: {max-size: "20m", max-file: "5"}
 
   router:
-    image: gx-media-router:2.0.0
+    image: gx-media-router:2.1.0
     build:
       context: ./router
       dockerfile: Dockerfile
