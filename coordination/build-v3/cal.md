@@ -8,7 +8,7 @@ Owner: CAL specialist. Contract: `coordination/BUILD_V3.md`, PLT interfaces in
 | Item | State |
 |---|---|
 | Model | `nvidia/NVIDIA-NemotronLabs-VoiceChat-11B` @ `a4c40ca5b4fe77db13e9840ca4a2b91becf030c8` (openmdw-1.1, public). **Downloaded and verified** on gx10-02: `/srv/models/voicechat/NVIDIA-NemotronLabs-VoiceChat-11B`, 41.35 GiB, 17 files, 6 sha256-checked (`/srv/logs/gx-call/hf-verify.log`) |
-| Runtime | image `gx-call-engine:voicechat-097dfe9-t214`: build **restarted 2026-09-17 21:26** on gx10-02 (see "Image build"). No inference has happened and the engine has never been started. |
+| Runtime | image `gx-call-engine:voicechat-097dfe9-t214`: build **completed 2026-09-17 21:09** (1e61699df9e7, 18.3 GB), import gate **PASSED**. No inference has happened and the engine has never been started. |
 | Service | `gx-call.service` (node 2, `192.168.100.11:18840` + `127.0.0.1:18840`), key `secrets/gx-call/api-key`. Unit file written; **not installed or started** |
 | Control Center | complete: `calls.py`, `call_agents.py`, `call_intake.py`, `routes_cal.py`, 15/15 tests green |
 | Playground page | `web/js/pages/call.js` complete and **integrated by the lead**; live on the deployed Playground. 5/5 offline Playwright specs green **in the repo, unchanged** (5 axe WCAG 2.2 AA checks) |
@@ -302,8 +302,8 @@ to share more code; I can trim `call.js` if you would rather keep 600 KiB.
 
 * ~~**B-CAL-1**: the integration lines~~ — **CLEARED** by the lead 2026-09-17 ~21:20.
   The page is live and `offline.h-call.spec.js` passes in the repo unchanged.
-* **B-CAL-2: the engine image build** — **IN PROGRESS** since 2026-09-17 21:26
-  (see "Image build"). Not cleared until the image exists.
+* ~~**B-CAL-2**: the engine image build~~ — **CLEARED 2026-09-17 21:09**: image
+  `1e61699df9e7` (18.3 GB) on gx10-02, import gate **PASSED**.
 * **B-CAL-3 (lead): a GPU slot for the first cold load** to produce the
   FOOTPRINT line; Resource Control shows "not measured yet" until then.
 * ~~**B-CAL-4**: the `web/` asset budget~~ — **CLEARED** by the lead: the budget is
@@ -422,7 +422,7 @@ patched mamba_ssm-2.3.2.post1/setup.py: 4x -std=c++17 -> c++20, 2x cc_flag -> sm
 
 **causal-conv1d: 348 s -> 134 s** for the same wheel, and it still builds under
 C++20. mamba-ssm then compiled past the point where attempt 1 died, with 0
-errors. OUTCOME_PLACEHOLDER
+errors. **OUTCOME: BUILD SUCCESSFUL 2026-09-17 21:09 SAST.** Image `1e61699df9e7` (18.3 GB) on gx10-02. Import gate **PASSED**: `VoiceChatEngine`, `VoiceChatPatches`, `Tracker` all importable inside the container. The build completed without the `mamba_ssm` errors from attempt 1.
 
 Node-2 state when it was started (VOI's voice acceptance was running, so the
 build was checked not to crowd it): `gx-voice-engine` up, media router and
@@ -461,3 +461,5 @@ deferred to the GPU slot and is step 2 of the acceptance plan above.
 - 2026-09-17 21:30: re-ran on the current checkout (other workstreams have landed
   changes): `tests.test_calls` **15/15 OK**, `legenex/call/qa.sh` **28/28 OK**,
   all five gate steps pass.
+- 2026-09-17 21:09: `gx-call-engine:voicechat-097dfe9-t214` **BUILT** (1e61699df9e7, 18.3 GB).
+  Import gate **PASSED**: VoiceChatEngine, VoiceChatPatches, Tracker all importable.
