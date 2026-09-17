@@ -375,11 +375,14 @@ class MusicJobs:
         q = urllib.parse.quote(q[:48])
         return self.client.call("GET", f"/v1/music/tags?q={q}&limit={max(1, min(50, limit))}")
 
-    def lifecycle(self, op: str, *, user: str) -> dict:
+    def lifecycle(self, op: str, *, user: str, if_idle: bool = False) -> dict:
+        """Load or unload the engine. ``if_idle`` (the scheduler making room)
+        makes the supervisor refuse while music is queued or pinned (D-038)."""
         if op not in ("load", "unload"):
             raise MusicError("unknown operation", 404, "not_found")
-        result = self.client.call("POST", f"/v1/music/{op}", timeout=1200 if op == "load" else 120)
-        self.audit(user=user, ip="", action=f"music.{op}", outcome="ok")
+        body = {"if_idle": True} if op == "unload" and if_idle else None
+        result = self.client.call("POST", f"/v1/music/{op}", body=body, timeout=1200 if op == "load" else 120)
+        self.audit(user=user, ip="", action=f"music.{op}", outcome="ok", if_idle=if_idle)
         return result
 
     # ------------------------------------------------------------ worker

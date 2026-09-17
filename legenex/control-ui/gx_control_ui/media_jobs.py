@@ -349,6 +349,11 @@ class MediaJobs:
             if reason is None:
                 job.waiting = None
                 return True
+            if reason.get("terminal"):
+                job.phase = "failed"
+                job.waiting = None
+                job.error = str(reason.get("reason") or "this job cannot run on gx10-02")
+                return False
             job.phase = "waiting"
             job.waiting = reason
             job.detail = reason.get("reason", "waiting for resources")
@@ -488,6 +493,14 @@ class MediaJobs:
             phase = status.get("phase") or {"queued": "queued"}.get(status.get("status", ""), "generating")
             job.phase = {"ready": "generating"}.get(phase, phase)
             job.detail = f"router job {job.router_job}: {status.get('status')}"
+            router_wait = status.get("waiting") if isinstance(status.get("waiting"), dict) else None
+            if phase == "waiting" and router_wait:
+                # D-038: gx10-02 keeps its reserve; the router says what it waits for
+                job.waiting = {k: router_wait.get(k) for k in ("code", "reason", "required_gib", "available_gib",
+                                                               "reserve_gib", "pending_gib", "blocker", "next")}
+                job.detail = str(router_wait.get("reason") or "waiting for gx10-02 memory")
+            elif job.waiting and phase != "waiting":
+                job.waiting = None
             if status.get("status") in ("completed", "failed"):
                 break
             if time.time() > deadline:

@@ -5,7 +5,9 @@ This module does not replace any admission component. It EXPLAINS and
 COORDINATES the ones that already enforce memory safety:
 
 * gx_orchestrator.resource_guard (30 GiB reserve; gx-music, gx-safe-run),
-* the node-2 media router's cold/warm memory admission (60/76/110/8 GiB),
+* the node-2 media router's memory admission (D-038: growth 57/72/107 GiB
+  cold, measured growth warm, always plus the 30 GiB reserve, minus what
+  gx-music has not taken yet),
 * the gx-max cluster-takeover policy (>= 100 GiB free on both nodes),
 * llama-swap's own lifecycle for gx-mini / gx-fast / gx-reason.
 
@@ -46,6 +48,9 @@ RESERVE_GIB = 30.0
 #: Memory a node reports as available when nothing heavy is loaded (measured
 #: 2026-09-17: node 1 ~113-115 GiB with the control plane, node 2 ~113 GiB).
 IDLE_CAPACITY_GIB = {"node1": 113.0, "node2": 113.0}
+#: The most node 2 ever reports available (measured 113-117 GiB): a job whose
+#: growth plus the reserve is larger can never run and is not queued.
+NODE2_MAX_AVAILABLE_GIB = 117.0
 
 PROFILES: dict[str, dict[str, Any]] = {
     "auto": {"label": "Auto", "summary": "Default. The scheduler keeps text tiers resident, loads media and music "
@@ -114,16 +119,18 @@ POLICIES: dict[str, RuntimePolicy] = {
         ("load", "unload", "drain", "pin", "unpin"), "114 -> 70 GiB available when loaded (2026-09-16)",
         "about 6-7 minutes"),
     "gx-image": RuntimePolicy(
-        "gx-image", "node2", "image", "ComfyUI behind gx-media-router", 60.0, 57.0, 600, "on-demand", 50, True, True,
-        "one ComfyUI generation at a time; image and video weights never stack", "media router (cold 60 / warm 8 GiB)",
+        "gx-image", "node2", "image", "ComfyUI behind gx-media-router", 57.0, 57.0, 600, "on-demand", 50, True, True,
+        "one ComfyUI generation at a time; image and video weights never stack",
+        "media router (57 GiB cold growth + 30 GiB reserve)",
         ("unload", "pin", "unpin"), "114 -> 57.5 GiB available during a cold generation (2026-09-17)",
-        "weights load with the first job", {"edit": 60.0}),
+        "weights load with the first job", {"edit": 57.0}),
     "gx-video": RuntimePolicy(
-        "gx-video", "node2", "video", "ComfyUI behind gx-media-router", 76.0, 72.0, 600, "on-demand", 40, True, True,
-        "needs most of gx10-02; waits while gx-reason is loaded",
-        "media router (cold 76 / keyframe edit 110 / warm 8 GiB)",
+        "gx-video", "node2", "video", "ComfyUI behind gx-media-router", 72.0, 72.0, 600, "on-demand", 40, True, True,
+        "needs most of gx10-02: waits for gx-reason and gx-music to unload (a cold video plus the 30 GiB "
+        "reserve leaves no room for either)",
+        "media router (72 GiB cold growth + 30 GiB reserve; keyframe edit 107 GiB cannot keep the reserve)",
         ("unload", "pin", "unpin"), "114 -> 42 GiB available for t2v/i2v; 7 GiB for keyframe edit (2026-09-17)",
-        "weights load with the first job", {"keyframe_edit": 110.0}),
+        "weights load with the first job", {"keyframe_edit": 107.0}),
     "gx-music": RuntimePolicy(
         "gx-music", "node2", "music", "ACE-Step 1.5 XL (gx-music supervisor)", 32.0, 28.0, 600, "on-demand", 50, True,
         True, "coexists with gx-reason (measured); hands idle ComfyUI weights over through the router",
@@ -150,31 +157,44 @@ class ResourceError(Exception):
 
 
 # --------------------------------------------------------------- pure logic
-def enforced_need(alias: str, *, resident: bool, variant: str | None = None) -> float:
-    """Memory the enforcing component wants to see available before it starts."""
+def growth_gib(alias: str, *, resident: bool, variant: str | None = None,
+               warm_growth: float | None = None) -> float:
+    """How much MemAvailable starting `alias` takes away (measured)."""
     p = POLICIES[alias]
     if alias in ("gx-image", "gx-video"):
-        if resident:
-            return 8.0
-        return p.variants.get(variant or "", p.cold_gib)
+        cold = p.variants.get(variant or "", p.cold_gib)
+        # warm: the router's measured growth; unknown -> the full footprint (the
+        # router then frees its own weights and loads them again)
+        return warm_growth if resident and warm_growth is not None else cold
+    return p.cold_gib
+
+
+def enforced_need(alias: str, *, resident: bool, variant: str | None = None,
+                  warm_growth: float | None = None) -> float:
+    """MemAvailable the enforcing component wants to see before it starts:
+    the growth plus the locked 30 GiB reserve (D-038). gx-max has its own
+    takeover policy."""
     if alias == "gx-max":
-        return p.cold_gib
-    return p.cold_gib + RESERVE_GIB
+        return POLICIES[alias].cold_gib
+    return growth_gib(alias, resident=resident, variant=variant, warm_growth=warm_growth) + RESERVE_GIB
 
 
 def admission_view(alias: str, avail_gib: float | None, residents: dict[str, dict], *,
                    variant: str | None = None, pins: set[str] | None = None,
-                   holds: dict[str, bool] | None = None) -> dict:
+                   holds: dict[str, bool] | None = None, warm_growth: float | None = None) -> dict:
     """Would `alias` be admitted now, and if not, what would make room?
 
-    `residents` maps alias -> {"active": bool} for tenants currently holding
-    memory on the same node. Pure: unit-tested, no I/O.
+    `residents` maps alias -> {"active": bool, "pending_gib": float} for
+    tenants currently holding memory on the same node; ``pending_gib`` is
+    memory a load or render has been granted but not taken yet. The rule is
+    the enforcing components' (D-038): MemAvailable - pending - growth must
+    keep the 30 GiB reserve. Pure: unit-tested, no I/O.
     """
     p = POLICIES[alias]
     pins = pins or set()
     holds = holds or {}
     out: dict[str, Any] = {"alias": alias, "node": p.node, "enforced_by": p.admission,
-                           "reserve_gib": RESERVE_GIB if alias not in ("gx-image", "gx-video", "gx-max") else None}
+                           "reserve_gib": RESERVE_GIB if alias != "gx-max" else None}
     if holds.get("gxmax") and alias != "gx-max":
         return {**out, "allowed": False, "code": "gx_max_active", "reason": "gx-max owns the cluster; this "
                 "starts again after gx-max is released", "blocking": ["gx-max"], "actions": []}
@@ -185,18 +205,32 @@ def admission_view(alias: str, avail_gib: float | None, residents: dict[str, dic
     if resident and alias not in ("gx-image", "gx-video"):
         return {**out, "allowed": True, "code": "resident", "reason": f"{alias} is already loaded",
                 "need_gib": 0.0, "available_gib": avail_gib, "blocking": [], "actions": []}
-    need = enforced_need(alias, resident=resident, variant=variant)
-    out.update(need_gib=round(need, 1), available_gib=None if avail_gib is None else round(avail_gib, 1))
+    growth = growth_gib(alias, resident=resident, variant=variant, warm_growth=warm_growth)
+    need = growth + RESERVE_GIB
+    out.update(need_gib=round(need, 1), growth_gib=round(growth, 1),
+               available_gib=None if avail_gib is None else round(avail_gib, 1))
+    if alias in ("gx-image", "gx-video") and need > NODE2_MAX_AVAILABLE_GIB:
+        what = "a keyframe video edit" if variant == "keyframe_edit" else alias
+        return {**out, "allowed": False, "code": "exceeds_node", "terminal": True,
+                "reason": f"{what} needs about {growth:.0f} GiB plus the {RESERVE_GIB:.0f} GiB reserve "
+                          f"({need:.0f} GiB); gx10-02 never has more than about {NODE2_MAX_AVAILABLE_GIB:.0f} GiB "
+                          "available, so it cannot run (B-028). Use a strength below 0.5 for a video edit.",
+                "blocking": [], "actions": []}
     if avail_gib is None:
         return {**out, "allowed": False, "code": "unknown", "reason": f"{p.node} memory is not readable right now",
                 "blocking": [], "actions": []}
     others = {a: r for a, r in residents.items() if a != alias and a in POLICIES}
-    if alias == "gx-reason" and "gx-video" in others:
-        pass  # the reserve check below decides; video + reason is normally short
-    if avail_gib >= need:
+    # memory another tenant has been granted but not taken yet (a load or a render in progress)
+    pending = round(sum(float(r.get("pending_gib") or 0.0) for r in others.values()), 1)
+    effective = avail_gib - pending
+    out["pending_gib"] = pending
+    if effective >= need:
         return {**out, "allowed": True, "code": "fits",
-                "reason": f"{avail_gib:.0f} GiB available, {need:.0f} GiB needed", "blocking": [], "actions": []}
-    short = need - avail_gib
+                "reason": f"{avail_gib:.0f} GiB available"
+                          + (f" ({pending:.0f} GiB still to be taken by a running load)" if pending else "")
+                          + f", {growth:.0f} GiB + {RESERVE_GIB:.0f} GiB reserve needed",
+                "blocking": [], "actions": []}
+    short = need - effective
     # Smallest set of idle, unpinned, preemptible tenants that closes the gap.
     candidates = sorted(
         ((a, POLICIES[a].footprint_gib) for a, r in others.items()
@@ -213,8 +247,10 @@ def admission_view(alias: str, avail_gib: float | None, residents: dict[str, dic
     held = ", ".join(f"{a} (~{POLICIES[a].footprint_gib:.0f} GiB"
                      f"{', busy' if others[a].get('active') else ''}{', pinned' if a in pins else ''})"
                      for a in blocking)
-    reason = (f"{alias} needs about {need:.0f} GiB available on {_node_name(p.node)}; "
-              f"{avail_gib:.0f} GiB is available now" + (f". Holding memory: {held}" if held else ""))
+    reason = (f"{alias} needs {growth:.0f} GiB plus the {RESERVE_GIB:.0f} GiB reserve"
+              + (f" plus {pending:.0f} GiB another load has not taken yet" if pending else "")
+              + f" on {_node_name(p.node)}, so {need + pending:.0f} GiB must be available; {avail_gib:.0f} GiB is now"
+              + (f". Holding memory: {held}" if held else ""))
     actions = []
     if plan and freed >= short:
         actions.append({"id": "unload_and_continue", "unload": plan,
@@ -479,6 +515,18 @@ class ResourceController:
                                             and not j.get("done"))}
         if media is not None and media.get("video_queue_depth"):
             runtimes["gx-video"]["queue"] = runtimes["gx-video"].get("queue", 0) + int(media["video_queue_depth"])
+        media_mem = (media or {}).get("memory") if isinstance((media or {}).get("memory"), dict) else {}
+        if media is not None:
+            owner = "gx-video" if busy_holder.startswith("video") else "gx-image" if busy_holder.startswith("image") \
+                else resident_alias
+            if owner in runtimes:
+                runtimes[owner]["pending_gib"] = float(media_mem.get("pending_gib") or 0.0)
+            if resident_alias in runtimes:
+                runtimes[resident_alias]["warm_growth_gib"] = media_mem.get("warm_growth_gib")
+            router_waiting = media.get("waiting") or []
+            if router_waiting and runtimes["gx-video"]["state"] in ("UNLOADED", "READY"):
+                runtimes["gx-video"]["state"] = "WAITING"
+                runtimes["gx-video"]["detail"] = str(router_waiting[0].get("reason") or "")
 
         # music
         m_state = str(engine.get("state") or ("error" if music.get("error") else "unknown"))
@@ -496,9 +544,13 @@ class ResourceController:
             st, dt = "WAITING", "queued music job is waiting for memory or the model"
         if music.get("error"):
             st, dt = "ERROR", "music service unreachable"
+        m_mem = engine.get("memory") if isinstance(engine.get("memory"), dict) else {}
         runtimes["gx-music"] = {"state": st, "detail": dt, "queue": queue.get("active", 0),
                                 "last_load_seconds": engine.get("last_load_seconds"),
-                                "idle_seconds": engine.get("idle_seconds"), "jobs": jobs}
+                                "idle_seconds": engine.get("idle_seconds"), "jobs": jobs,
+                                "pending_gib": float(m_mem.get("pending_gib") or 0.0)
+                                if "pending_gib" in m_mem else (32.0 if st == "LOADING" else 0.0),
+                                "loaded_gib": m_mem.get("loaded_gib")}
 
         gx_map = {"down": "UNLOADED", "acquiring": "LOADING", "ready": "READY", "releasing": "DRAINING"}
         runtimes["gx-max"] = {"state": gx_map.get(gx_state, "ERROR"), "detail": gx_state}
@@ -535,7 +587,8 @@ class ResourceController:
                       "media_router_video": (media or {}).get("video_queue_depth", 0)},
             "media_router": {k: (media or {}).get(k) for k in ("version", "busy", "held_by", "resident_models",
                                                                "resident_alias", "idle_seconds",
-                                                               "idle_free_seconds", "policy", "last_refusal")},
+                                                               "idle_free_seconds", "policy", "last_refusal",
+                                                               "last_eviction", "waiting", "memory")},
             "policies": {a: p.public() for a, p in POLICIES.items()},
             "reserve_gib": RESERVE_GIB,
         }
@@ -557,8 +610,9 @@ class ResourceController:
         out: dict[str, dict] = {}
         for alias in NODE2_TENANTS if node == "node2" else ("gx-mini", "gx-fast"):
             r = snap["runtimes"].get(alias) or {}
-            if r.get("state") in ("READY", "GENERATING", "LOADING", "DRAINING"):
-                out[alias] = {"active": r.get("state") in ("GENERATING", "LOADING")}
+            if r.get("state") in ("READY", "GENERATING", "LOADING", "DRAINING") or r.get("pending_gib"):
+                out[alias] = {"active": r.get("state") in ("GENERATING", "LOADING"),
+                              "pending_gib": float(r.get("pending_gib") or 0.0)}
         # ComfyUI holds one model set: the resident alias, not both
         return out
 
@@ -585,7 +639,8 @@ class ResourceController:
         holds = {"gxmax": snap["gxmax"]["hold"] or snap["gxmax"]["state"] in ("acquiring", "ready", "releasing"),
                  "maintenance": snap["maintenance"]}
         view = admission_view(alias, snap["nodes"][node]["mem_available_gib"], self.residents(snap, node),
-                              variant=variant, pins=set(snap["pins"]), holds=holds)
+                              variant=variant, pins=set(snap["pins"]), holds=holds,
+                              warm_growth=snap["runtimes"].get(alias, {}).get("warm_growth_gib"))
         view["state"] = snap["runtimes"][alias]["state"]
         return view
 
@@ -631,6 +686,11 @@ class ResourceController:
         if view.get("allowed"):
             return {"code": "starting", "reason": "Starting", "detail": view.get("reason", ""),
                     "next": "loading the model if needed"}
+        if view.get("terminal"):
+            return {"code": view.get("code"), "terminal": True, "reason": view.get("reason"),
+                    "detail": view.get("reason"), "need_gib": view.get("need_gib"),
+                    "available_gib": view.get("available_gib"), "reserve_gib": RESERVE_GIB, "blocking": [],
+                    "next": "not retried", "actions": []}
         blocking = view.get("blocking") or []
         profile = snap["profile"]["profile"]
         if blocking:
@@ -642,11 +702,17 @@ class ResourceController:
                 nxt = "Text profile keeps gx-reason loaded; it unloads after 15 minutes idle"
             elif busy:
                 nxt = f"{', '.join(busy)} is working; the scheduler waits for it"
-            reason = f"Waiting for {first} to unload" if first != alias else "Waiting for enough gx10-02 memory"
+            elif profile == "music" and first == "gx-music":
+                nxt = "Music profile keeps gx-music loaded; it unloads after 10 minutes idle"
+            if first == "gx-music":
+                reason = "Waiting for gx-music to release enough gx10-02 memory"
+            else:
+                reason = f"Waiting for {first} to unload" if first != alias else "Waiting for enough gx10-02 memory"
         else:
             reason, nxt = f"Waiting for enough {_node_name(POLICIES[alias].node)} memory", "retries automatically"
         return {"code": view.get("code"), "reason": reason, "detail": view.get("reason"),
                 "need_gib": view.get("need_gib"), "available_gib": view.get("available_gib"),
+                "reserve_gib": RESERVE_GIB, "pending_gib": view.get("pending_gib"),
                 "blocking": blocking, "next": nxt, "actions": view.get("actions", [])}
 
     # ============================================= creative scheduling hooks
@@ -655,9 +721,14 @@ class ResourceController:
         May first free idle tenants, as the active profile allows."""
         snap = self.snapshot()
         view = self.admission(alias, variant=variant, snap=snap)
-        if alias in ("gx-image", "gx-video") and (snap["media_router"].get("busy")):
-            # The router queues behind its own slot; not a memory question.
-            return None if view.get("code") not in ("gx_max_active", "maintenance") else self.explain(alias, variant)
+        if view.get("terminal"):
+            return self.explain(alias, variant)
+        if alias in ("gx-image", "gx-video") and snap["media_router"].get("busy"):
+            # D-038: never submit behind a running job without a memory decision;
+            # the memory that job is still taking is only known once it is done.
+            return {"code": "engine_busy", "reason": "Waiting for the current media job to finish",
+                    "detail": f"gx10-02 is running {snap['media_router'].get('held_by') or 'a media job'}",
+                    "next": "the memory check runs right after it", "reserve_gib": RESERVE_GIB}
         if view.get("allowed"):
             return None
         if view.get("code") != "insufficient_memory":
@@ -718,10 +789,13 @@ class ResourceController:
             return self.media_free()
         if alias == "gx-music" and self.music is not None:
             try:
-                info = self.music.lifecycle("unload", user="scheduler")
-                return True, json.dumps(info)[:200]
+                info = self.music.lifecycle("unload", user="scheduler", if_idle=True)
             except Exception as exc:  # noqa: BLE001
                 return False, str(exc)
+            # verified release: the supervisor removed the container (its ledger
+            # release is part of the same teardown); memory is re-read by the gate
+            gone = isinstance(info, dict) and bool(info.get("container_gone"))
+            return gone, json.dumps(info)[:200]
         return False, f"{alias} has no scheduler unload"
 
     def media_free(self) -> tuple[bool, str]:
