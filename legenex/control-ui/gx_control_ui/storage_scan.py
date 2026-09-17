@@ -234,13 +234,30 @@ def active_writers() -> list[str]:
 
 
 # ------------------------------------------------------------ classification
+MEDIA_TREES = ("/srv/models/image", "/srv/models/video", "/srv/models/shared")
+BROAD_MOUNTS = ("/srv/models", "/srv/cache", "/srv/projects", "/srv/logs")
+
+
 def protection(path: str, ctx: dict) -> str | None:
     """Why `path` must not be cleaned, or None."""
+    names = ctx.get("protect_names") or {}
+    if any(inside(path, t) for t in MEDIA_TREES):
+        base = os.path.basename(path)
+        if base in names:
+            return f"protected: {names[base]}"
+        if os.path.isdir(path):
+            for root, _dirs, files in os.walk(path):
+                hit = next((f for f in files if f in names), None)
+                if hit:
+                    return f"protected: contains {hit} ({names[hit]})"
     for p in list(BASE_PROTECTED) + list(ctx.get("protect", [])):
         if inside(path, p) or inside(p, path):
             return f"protected: {ctx.get('why', {}).get(p) or 'required by the cluster'} ({p})"
     for m in ctx.get("mounts", []):
-        if inside(path, m) or inside(m, path):
+        # Removing the path would remove a mount source: protected. A path merely
+        # inside a broad mount (ComfyUI mounts all of /srv/models and /srv/cache)
+        # is judged by the other rules (references, names, writers).
+        if inside(m, path) or (inside(path, m) and os.path.normpath(m) not in BROAD_MOUNTS):
             return f"protected: mounted by a running container ({m})"
     for w in ctx.get("writers", []):
         if inside(path, w) or inside(w, path):
@@ -354,9 +371,9 @@ def classify(ctx: dict, docker: dict, now: float) -> list[dict]:
     # --- docker ------------------------------------------------------------
     if docker.get("ok"):
         if docker.get("build_cache_bytes"):
-            cands.append(candidate("docker_build_cache", "builder", "safe",
-                                   docker.get("build_cache_reclaimable") or docker["build_cache_bytes"],
-                                   "Docker build cache: never used by a running workload",
+            cands.append(candidate("docker_build_cache", "builder", "safe", docker["build_cache_bytes"],
+                                   "Docker build cache (all unused build layers; `docker builder prune -a`): "
+                                   "never used by a running workload",
                                    name="Docker build cache", category="docker_build_cache",
                                    consequence="the next image build starts without cached layers"))
         referenced = set(ctx.get("images", []))
@@ -410,6 +427,14 @@ def classify(ctx: dict, docker: dict, now: float) -> list[dict]:
             if os.path.isdir(path) and not os.path.islink(path):
                 add_path(path, "review", "model directory not referenced by any alias, rollback or binding",
                          "models", "the model must be downloaded again (Model Manager) to use it")
+    for tree in MEDIA_TREES:
+        for sub in ("diffusion_models", "loras", "checkpoints", "controlnet", "upscale_models",
+                    "latent_upscale_models", "model_patches", "embeddings"):
+            d = os.path.join(tree, sub)
+            for path, size, mt in files_older_than(d, 0, now + 1) if os.path.isdir(d) else []:
+                if size >= 100 * 1024 * 1024:
+                    add_path(path, "review", "model file not referenced by any media workflow or alias", "models",
+                             "the file must be downloaded again if a workflow needs it later")
     for rel in ("hf", "hf-stage", "huggingface", "torch", "triton", "vllm"):
         path = os.path.join("/srv/cache", rel)
         if os.path.isdir(path):
@@ -554,6 +579,7 @@ def main(req: dict) -> dict:
     docker = docker_state()
     ctx = {"node": node, "protect": [p for p in req.get("protect", []) if isinstance(p, str)],
            "why": req.get("why") or {}, "images": req.get("images") or [],
+           "protect_names": req.get("protect_names") or {},
            "known_containers": req.get("known_containers") or [],
            "mounts": docker.get("mounts", []), "writers": active_writers()}
     mode = req.get("mode")
