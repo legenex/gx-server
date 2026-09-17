@@ -74,6 +74,7 @@ export default {
   title: 'API Keys',
   interval: 0,
   async mount(el) {
+    clear(el);
     const form = h('form', { id: 'key-form', class: 'card', novalidate: true });
     const name = h('input', { id: 'key-name', required: true, maxlength: 63, placeholder: 'e.g. kilo-code-laptop' });
     const boxes = ALIASES.map((a) => h('label', { class: 'check' },

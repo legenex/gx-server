@@ -251,6 +251,7 @@ export default {
   title: 'Create',
   interval: 0,
   async mount(el, { params }) {
+    clear(el);
     root = el;
     abort = new AbortController();
     const wanted = ((params && params[0]) || '').split('?')[0];

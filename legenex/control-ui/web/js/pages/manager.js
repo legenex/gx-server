@@ -272,6 +272,7 @@ export default {
   title: 'Model Manager',
   interval: 0,
   async mount(el) {
+    clear(el);
     root = el;
     const ref = h('input', { id: 'mm-ref', placeholder: 'owner/name, owner/name@revision, or https://huggingface.co/…', 'aria-label': 'Repository or URL' });
     const q = h('input', { id: 'mm-q', type: 'search', placeholder: 'Search Hugging Face (e.g. qwen3 uncensored gguf)', 'aria-label': 'Search Hugging Face' });

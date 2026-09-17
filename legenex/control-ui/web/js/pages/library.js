@@ -226,7 +226,7 @@ export default {
   title: 'Media Library',
   interval: 0,
   async mount(el, { params }) {
-    root = el;
+    root = clear(el);
     selected.clear();
     offset = 0;
     viewer = h('dialog', { class: 'viewer', 'aria-labelledby': 'viewer-heading' });
