@@ -71,6 +71,14 @@ class Config:
     free_on_model_switch: bool = True
     #: Free ComfyUI's model cache after this many idle seconds (0 disables).
     idle_free_seconds: int = 600
+    #: Memory admission (node 2 is shared with gx-reason, ~44 GiB when loaded).
+    #: Empty path disables the check. MemAvailable in GiB needed before a job
+    #: whose weights are not loaded yet; ``need_warm_gib`` when they are.
+    meminfo_path: str = ""
+    need_image_gib: float = 40.0
+    need_video_gib: float = 48.0
+    need_keyframe_gib: float = 64.0
+    need_warm_gib: float = 12.0
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -98,4 +106,5 @@ class Config:
             max_video_upload_bytes=_int("GX_MEDIA_MAX_VIDEO_UPLOAD", 150 * 1024 * 1024, 1024, 1 << 31),
             free_on_model_switch=os.environ.get("GX_MEDIA_FREE_ON_SWITCH", "1") != "0",
             idle_free_seconds=_int("GX_MEDIA_IDLE_FREE", 600, 0, 86400),
+            meminfo_path=os.environ.get("GX_MEDIA_MEMINFO", "/proc/meminfo"),
         )

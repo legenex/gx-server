@@ -47,6 +47,13 @@ class BusyError(RouterError):
     code = "service_busy"
 
 
+class InsufficientMemoryError(RouterError):
+    """gx10-02 does not have the memory this job needs (usually gx-reason is loaded)."""
+
+    status = 503
+    code = "insufficient_memory"
+
+
 class UpstreamError(RouterError):
     """ComfyUI rejected the graph, failed to execute it, or is unreachable."""
 

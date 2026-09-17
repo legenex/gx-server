@@ -6,6 +6,7 @@ temporary directory so the tests can assert that sources are cleaned up.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import struct
 import sys
@@ -430,6 +431,49 @@ class MediaApiTests(unittest.TestCase):
         self.assertEqual((status, body["freed"]), (409, False))
         self.assertIn("test-job", body["reason"])
         self.assertEqual(self.comfy.frees, before + 1)
+
+    def test_memory_admission_refuses_instead_of_swapping(self):
+        svc = self.service
+        meminfo = Path(self.tmp.name) / "meminfo"
+
+        def set_avail(gib):
+            meminfo.write_text(f"MemTotal: 127535600 kB\nMemAvailable: {int(gib * 1024 * 1024)} kB\n")
+
+        original_cfg = svc.cfg
+        svc.cfg = dataclasses.replace(original_cfg, meminfo_path=str(meminfo))
+        try:
+            # gx-reason loaded, nothing of ours resident: an image needs 40 GiB -> refused, nothing freed
+            svc.comfy.free(unload_models=True, free_memory=True)
+            svc._resident_models = frozenset()
+            before = self.comfy.frees
+            set_avail(20)
+            status, body = self.call("POST", "/v1/images/generations", {"prompt": "no room"})
+            self.assertEqual(status, 503)
+            self.assertEqual(body["error"]["code"], "insufficient_memory")
+            self.assertIn("gx-reason", body["error"]["message"])
+            self.assertEqual(self.comfy.frees, before)
+            self.assertEqual(svc._resident_models, frozenset(), "refused weights are not resident")
+            # enough memory -> runs
+            set_avail(70)
+            status, _ = self.call("POST", "/v1/images/generations", {"prompt": "room"})
+            self.assertEqual(status, 200)
+            # same weights already loaded: only the warm need applies
+            set_avail(15)
+            status, _ = self.call("POST", "/v1/images/generations", {"prompt": "warm"})
+            self.assertEqual(status, 200)
+            # a video job while memory is short fails its job, with the reason
+            set_avail(20)
+            status, created = self.call("POST", "/v1/videos", {"prompt": "no room for video"})
+            self.assertEqual(status, 202)
+            job = self.wait_video(created["id"])
+            self.assertEqual(job["status"], "failed")
+            self.assertIn("needs about 48 GiB", json.dumps(job))
+            # unreadable meminfo never blocks generation
+            svc.cfg = dataclasses.replace(original_cfg, meminfo_path=str(Path(self.tmp.name) / "missing"))
+            status, _ = self.call("POST", "/v1/images/generations", {"prompt": "no meminfo"})
+            self.assertEqual(status, 200)
+        finally:
+            svc.cfg = original_cfg
 
     def test_listing_and_workflows(self):
         status, body = self.call("GET", "/v1/videos")

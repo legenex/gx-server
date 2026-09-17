@@ -15,7 +15,7 @@ import uuid
 
 from .comfy import Artefact, ComfyClient
 from .config import Config
-from .errors import NotFoundError, RouterError, UpstreamError, ValidationError
+from .errors import InsufficientMemoryError, NotFoundError, RouterError, UpstreamError, ValidationError
 from .jobs import GenerationSlot, Job, JobStore
 from .uploads import InputStore, MediaInfo
 from .workflows import WorkflowRegistry
@@ -185,12 +185,55 @@ class MediaService:
         self._resident_models = self._resident_models | models
         return cold
 
+    def _mem_available_gib(self) -> float | None:
+        path = self.cfg.meminfo_path
+        if not path:
+            return None
+        try:
+            with open(path, encoding="ascii") as fh:
+                for line in fh:
+                    if line.startswith("MemAvailable:"):
+                        return int(line.split()[1]) / (1024 * 1024)
+        except (OSError, ValueError, IndexError):
+            log.warning("cannot read %s; memory admission skipped", path)
+        return None
+
+    def _memory_need_gib(self, job: Job, cold: bool) -> float:
+        if not cold:
+            return self.cfg.need_warm_gib
+        if "keyframe" in job.workflow:
+            return self.cfg.need_keyframe_gib
+        return self.cfg.need_video_gib if job.kind == "video" else self.cfg.need_image_gib
+
+    def _admit(self, job: Job, held_before: frozenset) -> None:
+        """Refuse a job gx10-02 cannot hold instead of pushing the node into swap (B-012).
+
+        Runs after _switch_models, which already dropped any other cached weights, so
+        whatever is still short is held by another tenant (normally gx-reason).
+        """
+        avail = self._mem_available_gib()
+        if avail is None:
+            return
+        need = self._memory_need_gib(job, job.cold_start)
+        if avail >= need:
+            return
+        if job.cold_start:
+            # The job's weights were never loaded; do not remember them as resident.
+            self._resident_models = held_before if not self.cfg.free_on_model_switch else frozenset()
+        log.warning("job %s refused: %.1f GiB available on gx10-02, about %.0f GiB needed", job.id, avail, need)
+        raise InsufficientMemoryError(
+            f"gx10-02 has {avail:.0f} GiB free and this {job.kind} job needs about {need:.0f} GiB. "
+            "gx-reason is probably loaded: unload it in the Control UI (Models > gx-reason > UNLOAD) "
+            "or retry after it idles out (15 minutes).")
+
     def _run(self, job: Job, graph: dict, timeout: float, thumbnail_node: str | None) -> None:
         self._last_activity = time.monotonic()
+        held_before = self._resident_models
         job.cold_start = self._switch_models(job.workflow)
         job.status = "running"
         job.started_at = time.time()
         try:
+            self._admit(job, held_before)
             job.prompt_id = self.comfy.submit(graph, self._client_id)
             log.info("job %s -> comfy prompt %s (%s)", job.id, job.prompt_id, job.workflow)
             result = self.comfy.wait(job.prompt_id, timeout=timeout, thumbnail_node=thumbnail_node)
