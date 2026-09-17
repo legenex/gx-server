@@ -100,6 +100,9 @@ services:
       GX_SWAP_API_KEY: ${GX_SWAP_API_KEY:?GX_SWAP_API_KEY is required}
       GX_ORCHESTRATOR_API_KEY: ${GX_ORCHESTRATOR_API_KEY:-not-required}
       GX_MEDIA_API_KEY: ${GX_MEDIA_API_KEY:-not-required}
+      # gx-voice (D-040): the node-2 supervisor's bearer key, from
+      # /srv/projects/gx-cluster/secrets/gx-voice/api-key via .env.
+      GX_VOICE_API_KEY: ${GX_VOICE_API_KEY:-not-required}
       LITELLM_LOG: ${LITELLM_LOG_LEVEL:-INFO}
       # D-039 budget hook: metrics file location inside the container.
       GX_TEXT_METRICS_LOG: /var/log/gx-text/gateway-text.jsonl
