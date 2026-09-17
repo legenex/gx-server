@@ -29,9 +29,11 @@ USER_UNITS = {
         "gx-orchestrator.service", "gx-control-ui.service", "gx-hostwatch.timer",
         "gx-git-watch.service", "gx-git-autosync.timer", "gx-git-daily-audit.timer",
         "agentos-control-center.service", "agentos-supervisor.service",
+        "gx-playground.service",
     ],
     "node2": [
         "gx-hostwatch.timer", "gx-git-reconcile.timer", "gx-git-daily-audit.timer",
+        "gx-music.service",
     ],
 }
 
@@ -337,6 +339,59 @@ def lock_state(path: str) -> str:
         os.close(fd)
 
 
+GUARD_DIR = "/srv/projects/gx-cluster/state/guard"
+GXMAX_HOLD_TTL = 1200
+
+
+def guard_state(role: str, guard_dir: str = GUARD_DIR) -> dict:
+    """This node's shared guard state (D-036/D-037): the residency ledger this
+    node keeps for itself, hold files, pins and the replicated profile."""
+    node = role if role in ("node1", "node2") else "node1"
+    out: dict = {"dir": guard_dir, "ledger": {}, "holds": {}, "pins": {}, "profile": None}
+    try:
+        with open(os.path.join(guard_dir, f"{node}-residency.json"), encoding="utf-8") as fh:
+            data = json.load(fh)
+        out["ledger"] = data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        pass
+    now = time.time()
+    for name in ("gxmax", "maintenance"):
+        path = os.path.join(guard_dir, f"{node}.{name}-hold")
+        try:
+            age = now - os.path.getmtime(path)
+        except OSError:
+            continue
+        out["holds"][name] = {"age_seconds": round(age, 1),
+                              "active": name != "gxmax" or age <= GXMAX_HOLD_TTL}
+    for fname, key in (("pins.json", "pins"), ("profile.json", "profile")):
+        try:
+            with open(os.path.join(guard_dir, fname), encoding="utf-8") as fh:
+                out[key] = json.load(fh)
+        except (OSError, ValueError):
+            pass
+    return out
+
+
+def disk_usage(path: str = "/") -> dict:
+    try:
+        st = os.statvfs(path)
+    except OSError:
+        return {}
+    total = st.f_blocks * st.f_frsize
+    free = st.f_bavail * st.f_frsize
+    used = (st.f_blocks - st.f_bfree) * st.f_frsize
+    return {"path": path, "total": total, "free": free, "used": used,
+            "percent": round(used / (used + free) * 100, 1) if used + free else None}
+
+
+def music_engine_procs() -> int:
+    rc, out = _cmd(["pgrep", "-fc", "acestep[.]api_server"], timeout=3)
+    try:
+        return int(out.strip() or 0) if rc in (0, 1) else 0
+    except ValueError:
+        return 0
+
+
 def pid_alive(pidfile: str) -> dict:
     raw = _read(pidfile).strip()
     if not raw.isdigit():
@@ -378,6 +433,9 @@ def collect(role: str) -> dict:
         "hostwatch": hostwatch(paths["hostwatch_log"]),
         "guard_lock": lock_state(paths["guard_lock"]),
         "gxmax_watcher": pid_alive(paths["watch_pid"]),
+        "guard": guard_state(role),
+        "disk": disk_usage("/"),
+        "music_engine_procs": music_engine_procs() if role == "node2" else 0,
     }
 
 
