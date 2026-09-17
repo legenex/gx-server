@@ -50,6 +50,8 @@ V2 migration: uncensored models, media v2, and new Control UI pages. See
 - The gateway's media key had fallen back to `not-required` after a LiteLLM
   recreate from a stale shell. It is now recreated, and `integrity-audit.sh`
   (writer) checks the running key hash against `.env`.
+- API Playground video polling accepts the router's gateway-encoded video
+  ids (D-031). It had reported "unknown video job" for finished videos.
 - Control UI: new pages clear the loading placeholder. `pre.code` blocks are
   keyboard-focusable (axe `scrollable-region-focusable`). The API-key form
   validates on the client. Live Playwright runs no longer write traces,

@@ -1357,4 +1357,14 @@ orchestrator 167 OK · lifecycle 22 OK · media router 74 OK · control UI 155 O
   `.env`, and a real 1024² image came back through the gateway. The integrity
   audit on gx10-01 now FAILs when the running LiteLLM media key differs from
   `.env`.
+* **A second regression was caught by the live UI test.** The API
+  Playground's video polling rejected the router's new gateway-encoded ids
+  (`video_<base64>`, 118 characters). Both the route pattern and the
+  playground check only allowed `[A-Za-z0-9-]{1,64}`, so the UI showed
+  "unknown video job" although the router had finished in 49 s. Fixed:
+  `[A-Za-z0-9_=-]{1,200}`, with unit and route tests added. The live
+  gx-video test then passed (6 of 6 sampled frames distinct).
+* The third gx-reason UI run answered correctly ("5 cents", 212 s). The test
+  failed only because the answer mentioned "10 cents" while explaining the
+  common mistake; the assertion now ignores sentences that discuss the mistake.
 * Obsolete checkpoints were **not** deleted (B-026).
