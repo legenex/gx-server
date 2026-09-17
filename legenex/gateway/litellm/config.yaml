@@ -321,7 +321,10 @@ router_settings:
   routing_strategy: simple-shuffle
   # Reinforces the no-silent-substitution rule at the router layer.
   num_retries: 0
-  # Do not park a model in cooldown after a transient failure — each alias is a
-  # single distinct upstream, so a cooldown would just mean a hard outage.
-  allowed_fails: 0
+  # Do not park a model in cooldown after a failure — each alias is a single
+  # distinct upstream, so a cooldown only turns one failure into a burst of
+  # 429 "No deployments available" (seen 2026-09-17: `cooldown_time: 0` alone
+  # still cooled gx-reason down for 5 s after one failed start). D-039.
+  disable_cooldowns: true
+  allowed_fails: 1000
   cooldown_time: 0
