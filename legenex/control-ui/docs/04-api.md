@@ -22,7 +22,7 @@ Endpoints you will use:
 
 | Endpoint | Aliases |
 |---|---|
-| `GET /v1/models` | lists the seven aliases |
+| `GET /v1/models` | lists the seven gateway aliases (gx-music has its own API, see *gx-music*) |
 | `POST /v1/chat/completions` | `gx-mini`, `gx-fast`, `gx-reason`, `gx-max`, `gx-auto` |
 | `POST /v1/images/generations` | `gx-image` |
 | `POST /v1/images/edits`, `POST /v1/videos`, `POST /v1/videos/edits` | `gx-image`, `gx-video` (see Images and video) |
@@ -56,7 +56,7 @@ model:
 
 Open WebUI, LibreChat, Continue, Cline, Aider, LangChain, LlamaIndex and the
 official `openai` SDKs all work with the settings above. In tools that
-auto-discover models, `GET /v1/models` returns exactly the seven aliases.
+auto-discover models, `GET /v1/models` returns exactly the seven gateway aliases your key allows. The eighth alias, gx-music, is served by `/v1/music/*` on port 8090.
 
 ## curl examples
 

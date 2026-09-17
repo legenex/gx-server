@@ -1,6 +1,6 @@
 # Models
 
-The seven aliases and the exact models behind them (pinned revisions are in
+The eight aliases (seven on the gateway, plus gx-music on the music API) and the exact models behind them (pinned revisions are in
 `legenex/models/registry.json` and on each card in **Models**).
 
 ## Which model should I use?

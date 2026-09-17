@@ -19,7 +19,15 @@ files nothing uses any more.
 
 1. Choose the node and folder (`gguf`, `vllm`, `deepseek`, `staging`) and,
    optionally, file patterns (`*Q4_K_M.gguf, mmproj-*`).
-2. **Plan install** checks disk space (download + 20 GiB margin) and access.
+2. **Plan install** checks access and runs the **disk preflight** on the
+   target node:
+   * it shows the free space, the download size, the 50 GiB headroom and the
+     space left afterwards;
+   * the verdict is SAFE (at least 50 GiB stays free at the peak), TIGHT
+     (under 50 GiB would remain at the peak) or BLOCKED (under 50 GiB would
+     remain afterwards, or the download does not fit). Only SAFE plans can
+     be staged;
+   * **Open Storage & Cleanup** jumps to the node's cleanup page.
 3. **Download and verify** downloads the pinned revision and checks the size
    and SHA-256 of every file, then writes `.gx-manifest.json`. Progress is
    shown live.

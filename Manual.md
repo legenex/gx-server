@@ -6,7 +6,9 @@ who runs the two GX10 nodes. For deep recovery procedures, see
 
 ## 1. Using the models
 
-**Purpose.** One OpenAI-compatible endpoint serves seven aliases.
+**Purpose.** Eight public aliases (D-036). One OpenAI-compatible endpoint
+serves seven of them. The eighth, `gx-music`, has its own authenticated API
+on GX-Playground (section 7).
 
 **Prerequisites.**
 
@@ -23,6 +25,7 @@ who runs the two GX10 nodes. For deep recovery procedures, see
 | `gx-auto` | lets the router pick; understands Kilo Code requests; **never** starts gx-max | — |
 | `gx-image` | image generation, edit (`/v1/images/edits`) and variation | node 2 |
 | `gx-video` | text-to-video, image-to-video and video edit (`/v1/videos`, `/v1/videos/edits`) | node 2 |
+| `gx-music` | songs and instrumentals with ACE-Step 1.5 XL: `http://100.105.214.61:8090/v1/music/*` (not a chat model) | node 2 |
 
 Base URL: `http://100.105.214.61:4000/v1` (Tailscale). Step-by-step client
 setup for Kilo Code, Open WebUI, curl, Python, JavaScript and agents is in the
@@ -233,13 +236,17 @@ access, except for the GitHub HEAD check, which then shows as unreachable.
 
 ### Create and Media Library
 
+Creating moved to **GX-Playground** (section 7). The Control Center's
+**Creative** page shows the Library size and active jobs and links to the
+Playground. The notes below still describe the job behaviour.
+
 **Purpose.** Make images and videos without writing API calls, and keep
 every result.
 
 **Steps.**
 
-1. Open **Create**. Pick a tab: Generate Image, Edit Image, Generate Video,
-   Image to Video or Edit Video.
+1. Open GX-Playground → **Images** or **Video**. Pick a tab: Generate,
+   Edit or Variation; Text to Video, Image to Video or Video Edit.
 2. Type a prompt. For the edit tabs, choose a source from the library or
    upload one (PNG, JPEG or WebP images; MP4, MOV or WebM videos; up to
    150 MB).
@@ -252,10 +259,11 @@ takes about 45–75 s; the first job after an idle period takes longer while
 the models load. Edits never overwrite: the result is a new item linked to
 its source.
 
-**Errors.** "gx-max is running": media is unavailable until gx-max is
-released. "gx10-02 has N GiB free…": gx-reason is loaded, and a video job
-needs the node to itself. Unload gx-reason under **Models**, or wait
-15 minutes, then retry. Images still work next to gx-reason. An upload is refused if its type or size is wrong. Delete asks you
+**Errors and waiting.** Jobs are never refused for lack of memory; they wait
+and say why. "gx-max owns the cluster": the job starts after gx-max is
+released. "Unloading gx-reason to make room": in the Auto profile the
+scheduler unloads an idle gx-reason (idle ≥ 5 min) or idle music for you.
+"Maintenance mode is on": the job starts when Maintenance ends. An upload is refused if its type or size is wrong. Delete asks you
 to type `DELETE`.
 
 **Privacy.** Files stay in `/srv/projects/gx-cluster/media` on gx10-01. Uploads
@@ -284,8 +292,13 @@ support the arrow keys. The media library works without internet access.
 5. When you are happy, press **Accept**. The previous model's row then
    offers **Delete**.
 
+**Disk preflight.** Before anything downloads, the page shows the free space
+on the target node, the download size, the 50 GiB headroom it keeps and
+the verdict: SAFE, TIGHT or BLOCKED. Only SAFE plans are staged; the others
+link to **Storage & Cleanup**.
+
 **Errors.** Gated models need a Hugging Face token: save one under
-**Hugging Face token**. It is stored with mode 0600 and never shown again.
+**Hugging Face token**. The page then says "token saved". It is stored with mode 0600 and never shown again.
 Delete is disabled for anything still in use. Operations are refused while
 gx-max is running.
 
@@ -311,3 +324,130 @@ own revocable key.
 
 **Privacy.** The UI never stores the secret and never shows the gateway
 master key.
+
+## 7. GX-Playground: images, video and music
+
+**Purpose.** The creative app. Open `http://100.105.214.61:8090/` (Tailscale)
+or `http://127.0.0.1:8090/` on gx10-01. The Control Center sign-in works here
+too; a second sign-in is not needed when both apps are opened on the same host.
+
+**Prerequisites.** A Control Center account. The **Playground** link in the
+Control Center navigation opens it; **Control Center** in the Playground top
+bar goes back.
+
+**Steps (music).**
+
+1. Open **Music** → **Create**. Write a prompt and add style tags (type a tag
+   and press Enter, or browse the tag groups).
+2. Write lyrics with the section buttons (`[Verse]`, `[Chorus]`, …), or tick
+   **Instrumental (no vocals)**. You can instead write a **Song description**;
+   the language model then writes the lyrics, tempo and key itself.
+3. Optionally set Duration, BPM, Key and Time signature, and the number of
+   tracks (1-4). **Advanced** holds seed, steps, sampler and planner settings.
+4. Press **Generate**. The job card shows queued → loading model → generating
+   → saving, with the reason whenever it waits.
+5. When it is complete, the track card has a waveform, a player and WAV, FLAC
+   and MP3 downloads. **Remix/Cover**, **Repaint** (redo a time range) and
+   **Extend** create new tracks linked to the source; the original is never
+   changed.
+
+**Expected result (measured 2026-09-17).**
+* A 30 s song with vocals takes about 2 minutes on a cold engine (107 s load
+  plus 14 s generation).
+* With the engine loaded, a remix or repaint takes about 5 s.
+* The downloads are WAV, FLAC and MP3.
+
+**Music API.** Create a key under **API Keys** with gx-music ticked, then see
+the Control Center **Docs → gx-music** page (`POST /v1/music/generations`,
+`GET /v1/music/{id}`, `GET /v1/music/{id}/content?format=mp3`). Each key sees
+only its own jobs. Load and unload are not part of the API.
+
+**Errors.**
+* "gx-max owns the cluster": the job runs after the release.
+* A failed job shows plain words and a **Retry** button, never an internal
+  error.
+* The turbo model has no extract, lego, complete or music guidance, so those
+  controls are not shown.
+
+**Library.** One Library holds every image, video and track. You can search
+prompts, titles, lyrics and tags, filter by type, model and operation, and
+sort. You can select, select all or clear, then run a bulk action:
+favourite, delete (confirmed) or ZIP download. **Lineage** shows the parents
+and children of an item. Nothing is ever deleted automatically.
+
+**Mobile, accessibility, offline.**
+* On phones the rail becomes a bottom bar and the forms stack.
+* Every control has a label. The waveform has a keyboard slider, and the
+  tabs use the arrow keys.
+* Reduced motion is respected. The pages pass the axe WCAG 2.2 AA checks.
+* The app needs gx10-01, not the internet.
+
+**Privacy.**
+* Files stay in `/srv/projects/gx-cluster/media` on gx10-01. Uploads are
+  copied to gx10-02 only for processing.
+* The browser never receives an API key or reaches gx10-02 directly.
+
+## 8. Resource Control, Maintenance, and Storage & Cleanup (Control Center)
+
+**Resource Control.**
+
+* **Profiles** say what may run.
+  * **Auto** (default) shares the nodes and unloads idle work when needed.
+  * **Text** keeps gx-reason.
+  * **Media** keeps image/video.
+  * **Music** keeps gx-music.
+  * **Max** acquires gx-max after a typed confirmation.
+  * **Maintenance** stops new heavy work.
+* **Resource map.** Shows what is loaded on each node, the available memory
+  and the 30 GiB reserve.
+* **Manual controls.** LOAD, UNLOAD, DRAIN, PIN and UNPIN go through the same
+  admission checks as jobs, so a button never overcommits a node. A refusal
+  says why and what would make room.
+* **Compatibility table.** Computed from live numbers; it shows which
+  runtimes can share a node.
+
+**Maintenance.**
+
+1. Turn it on under **Resource Control** (it asks for confirmation).
+2. Running work finishes. New model loads, media jobs and music jobs wait
+   with the reason "Maintenance mode is on".
+3. Turn it off to resume them.
+
+**Storage & Cleanup.**
+
+1. Choose a node and press **Scan**.
+2. Items are marked:
+   * **SAFE**: caches and dangling images;
+   * **REVIEW**: models not bound to any alias, older checkpoints;
+   * **PROTECTED**: anything in use, bound, mounted or written to. It is
+     never deletable.
+3. Tick SAFE items and press **Clean**. Every item is re-checked on the node
+   just before deletion.
+4. REVIEW items additionally need Maintenance mode and a typed confirmation.
+
+The page never runs `docker system prune -a`. Health is shown as HEALTHY,
+WATCH (< 150 GiB or ≥ 85 %), LOW (< 75 GiB or ≥ 92 %) or CRITICAL (< 30 GiB
+or ≥ 97 %).
+
+**Privacy and safety.**
+* Item ids are opaque, so the browser cannot name arbitrary paths.
+* All deletions are audited.
+
+## 9. Connecting clients (Control Center → Setup)
+
+* **Kilo Code.**
+  * Settings → Providers → Custom provider → Connect.
+  * Base URL `http://100.105.214.61:4000/v1`, your key, model **gx-auto**
+    (recommended).
+  * The page also shows a copyable `~/.config/kilo/kilo.jsonc` using
+    `{env:GX_API_KEY}`.
+  * **Test connection** runs a real Kilo-shaped request and shows the tier it
+    was routed to.
+* **Open WebUI.**
+  * User menu → **Admin Panel** → **Settings** → **Admin → AI → Connections**
+    → **OpenAI API** → **+** (Add Connection).
+  * Fields: Connection Type External, URL `http://100.105.214.61:4000/v1`,
+    Auth Bearer with your key in **API Key**, API Type Chat Completions.
+  * Press **Verify Connection**, then **Save**.
+* **Other OpenAI clients.** The page shows curl, Python and JavaScript
+  examples with `YOUR_GX_API_KEY`.

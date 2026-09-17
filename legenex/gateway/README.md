@@ -195,7 +195,9 @@ curl -fsS http://127.0.0.1:28080/health
 ```
 
 `/v1/models` must list exactly seven ids: `gx-mini`, `gx-fast`, `gx-reason`,
-`gx-max`, `gx-auto`, `gx-image`, `gx-video`.
+`gx-max`, `gx-auto`, `gx-image`, `gx-video`. The eighth public alias, `gx-music`
+(D-036), is not a LiteLLM model: it is served by `/v1/music/*` on GX-Playground
+(port 8090) and authenticated with these same virtual keys.
 
 ---
 

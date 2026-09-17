@@ -21,10 +21,13 @@ operation.
 | Page | What it shows / does |
 |---|---|
 | Dashboard | overall state, both nodes, rails, models, gx-max lifecycle, locks and ledger, Git sync, services, warnings, queue |
-| Models | the seven aliases with the exact model, revision, size class, quantization, uncensored status, live state, last results, and LOAD / UNLOAD / RESTART |
-| Create | generate and edit images and videos (five tabs) with live job phases |
-| Media Library | every generated, edited or uploaded item: preview, search, filters, selection, ZIP, favourites, rename, lineage, delete |
-| Model Manager | Hugging Face search and inspection, pinned install + verification, test-serve, alias assignment with rollback, delete-if-unused, HF token |
+| Models | the eight aliases (gx-music included) with the exact model, revision, size class, quantization, uncensored status, live state, last results, and LOAD / UNLOAD / RESTART |
+| Playground (link) | opens GX-Playground on port 8090 of the same host; creating images, video and music happens there (see *GX-Playground*) |
+| Creative | Library size, active media and music jobs, and a link to the Playground |
+| Resource Control | profiles (Auto, Text, Media, Music, Max, Maintenance), live resource map, LOAD / UNLOAD / DRAIN / PIN / UNPIN through admission, computed compatibility (see *Resource Control*) |
+| Storage & Cleanup | disk health of both nodes, scans with SAFE / REVIEW / PROTECTED items, revalidated cleanup (see *Storage*) |
+| Setup | Kilo Code, Open WebUI and generic OpenAI clients: exact labels, copyable config, live connection test |
+| Model Manager | Hugging Face search and inspection, disk preflight, pinned install + verification, test-serve, alias assignment with rollback, delete-if-unused, HF token |
 | API Keys | create, list, replace and revoke gateway keys (secret shown once) |
 | Runtime | per-node memory, swap, PSI, load, temperatures, containers, units; llama-swap, orchestrator, media, hostwatch |
 | Cluster | topology of the two nodes, both RoCE rails with live throughput, Tailscale, SSH |
