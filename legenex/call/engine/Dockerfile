@@ -143,8 +143,9 @@ COPY gx_call_engine.py gx_call_tracker.py gx_voicechat_patches.py /opt/gxcall-ap
 ENV PYTHONPATH=/opt/gxcall-app \
     HF_HOME=/work/cache/hf TORCH_HOME=/work/cache/torch NEMO_CACHE_DIR=/work/cache/nemo \
     NUMBA_CACHE_DIR=/work/cache/numba TRITON_CACHE_DIR=/work/cache/triton MPLCONFIGDIR=/work/cache/mpl \
-    HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
+    HF_MODULES_CACHE=/tmp/hf_modules HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
     WANDB_DISABLED=true WANDB_MODE=offline WANDB_SILENT=true
+RUN mkdir -p /tmp/hf_modules && chmod 777 /tmp/hf_modules
 
 # Fail the BUILD if the Python stack cannot even be imported (no GPU needed).
 RUN mkdir -p /work/cache && python - <<'EOF'
