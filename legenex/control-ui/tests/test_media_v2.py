@@ -485,6 +485,51 @@ class GatingTests(unittest.TestCase):
         self.wait_for(jobs, weak, ("cancelled",))
         self.assertEqual(self.router.posts, [])
 
+    def test_terminal_gate_fails_fast_without_submitting(self):
+        terminal = {"code": "exceeds_node", "terminal": True,
+                    "reason": "a keyframe video edit needs about 107 GiB plus the 30 GiB reserve (137 GiB)"}
+        jobs = self.jobs(Gate([terminal] * 100), wait_limit=60)
+        jid = self.submit(jobs)
+        job = self.wait_for(jobs, jid, ("failed",), timeout=2)
+        self.assertIn("137 GiB", job["error"])
+        self.assertIsNone(job["waiting"])
+        self.assertEqual(self.router.posts, [])
+
+    def test_router_waiting_reason_is_shown_on_the_job(self):
+        router_wait = {"code": "insufficient_memory", "since": 1.0, "growth_basis": "cold load",
+                       "reason": "Waiting for gx-music to release enough gx10-02 memory: ... 102 GiB must be "
+                                 "available; 88 GiB is",
+                       "required_gib": 102.0, "available_gib": 88.0, "reserve_gib": 30.0, "pending_gib": 0.0,
+                       "blocker": "gx-music", "next": "gx-music is working; this starts after it finishes"}
+        polls = {"n": 0}
+
+        class WaitingRouter(FakeRouter):
+            def post_multipart(self, path, ctype, data, timeout):
+                self.posts.append(path)
+                return {"id": "vid1", "status": "queued", "phase": "waiting", "waiting": router_wait}
+
+            def get_json(self, path, timeout=30):
+                if path == "/health":
+                    return {"resident_alias": None}
+                polls["n"] += 1
+                if polls["n"] < 40:
+                    return {"id": "vid1", "status": "queued", "phase": "waiting", "waiting": router_wait}
+                return {"id": "vid1", "status": "failed", "phase": "failed",
+                        "error": {"code": "insufficient_memory", "message": "Gave up after 30 minutes"}}
+
+        self.router = WaitingRouter()
+        jobs = self.jobs(Gate([]))
+        jid = jobs.submit({"kind": "t2v", "prompt": "a lighthouse", "seconds": 2, "size": "640x640", "fps": 16},
+                          user="admin")["id"]
+        job = self.wait_for(jobs, jid, ("waiting",))
+        self.assertEqual(job["waiting"]["blocker"], "gx-music")
+        self.assertEqual((job["waiting"]["required_gib"], job["waiting"]["reserve_gib"]), (102.0, 30.0))
+        self.assertNotIn("growth_basis", job["waiting"])
+        self.assertIn("Waiting for gx-music", job["detail"])
+        job = self.wait_for(jobs, jid, ("failed",))
+        self.assertIn("Gave up", job["error"])
+        self.assertIsNone(job["waiting"])
+
     def test_source_type_is_checked_at_submit(self):
         jobs = self.jobs(None)
         img = self.lib.add(NewAsset(type="image", ext="png", operation="upload", data=PNG))
