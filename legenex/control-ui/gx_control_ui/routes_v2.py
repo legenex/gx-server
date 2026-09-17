@@ -18,7 +18,7 @@ import urllib.parse
 from typing import TYPE_CHECKING, Any
 
 from . import setup as client_setup
-from .music import JOB_ID, OPERATIONS, MusicError
+from .music import OPERATIONS, MusicError
 from .redact import redact
 from .resources import GENERATIVE, POLICIES, PROFILE_IDS, ResourceError
 from .server import MAX_BODY, Handler, _q, read_upload, route
@@ -265,6 +265,7 @@ def api_creative_overview(h: Handler) -> None:
     lib = h.app.library
     recent = lib.search(limit=12, include_tests=True)
     media_jobs = h.app.media.list()[:30]
+    music_error: str | None = None
     try:
         music_jobs = h.app.music.list(limit=30)
     except MusicError as exc:

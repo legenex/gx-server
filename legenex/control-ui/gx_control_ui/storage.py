@@ -317,8 +317,8 @@ class StorageManager:
         res = run(ssh_args(self.cfg.node2_ssh, 10) + [f"for p in {quoted}; do test -d \"$p\" && echo ok "
                                                       "|| echo MISSING; done"], timeout=30)
         lines = res.out.split() if res.ok else []
-        for p, state in zip(n2_paths + ["/srv/models/image", "/srv/models/video", "/srv/models/shared"],
-                            lines + ["?"] * (len(n2_paths) + 3 - len(lines))):
+        wanted = n2_paths + ["/srv/models/image", "/srv/models/video", "/srv/models/shared"]
+        for p, state in zip(wanted, (lines + ["?"] * len(wanted))[:len(wanted)], strict=True):
             checks.append({"check": f"gx10-02 {p}", "ok": state == "ok"})
         try:
             stats = self.library.stats()

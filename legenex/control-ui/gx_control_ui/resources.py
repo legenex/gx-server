@@ -120,7 +120,8 @@ POLICIES: dict[str, RuntimePolicy] = {
         "weights load with the first job", {"edit": 60.0}),
     "gx-video": RuntimePolicy(
         "gx-video", "node2", "video", "ComfyUI behind gx-media-router", 76.0, 72.0, 600, "on-demand", 40, True, True,
-        "needs most of gx10-02; waits while gx-reason is loaded", "media router (cold 76 / keyframe edit 110 / warm 8 GiB)",
+        "needs most of gx10-02; waits while gx-reason is loaded",
+        "media router (cold 76 / keyframe edit 110 / warm 8 GiB)",
         ("unload", "pin", "unpin"), "114 -> 42 GiB available for t2v/i2v; 7 GiB for keyframe edit (2026-09-17)",
         "weights load with the first job", {"keyframe_edit": 110.0}),
     "gx-music": RuntimePolicy(
@@ -948,7 +949,7 @@ class ResourceController:
     def _background(self, label: str, user: str, fn: Callable[[], Any]) -> dict:
         import secrets as _secrets
 
-        job = {"id": _secrets.token_hex(8), "label": label, "user": user, "state": "running",
+        job: dict[str, Any] = {"id": _secrets.token_hex(8), "label": label, "user": user, "state": "running",
                "started": time.time(), "result": None}
         self._bg[job["id"]] = job
 

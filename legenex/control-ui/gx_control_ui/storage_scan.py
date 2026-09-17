@@ -38,6 +38,7 @@ import stat
 import subprocess
 import sys
 import time
+from typing import Any
 
 HOME = os.path.expanduser("~")
 DAY = 86400.0
@@ -152,7 +153,7 @@ def root_of(path: str) -> str | None:
 
 # ------------------------------------------------------------- docker facts
 def docker_state() -> dict:
-    out = {"ok": False, "containers": [], "images": [], "mounts": [], "running_images": [],
+    out: dict[str, Any] = {"ok": False, "containers": [], "images": [], "mounts": [], "running_images": [],
            "used_images": [], "volumes": [], "build_cache_bytes": 0, "build_cache_reclaimable": 0}
     rc, text, _ = _run(["docker", "ps", "-a", "-q", "--no-trunc"], 20)
     if rc != 0:
@@ -246,7 +247,7 @@ def protection(path: str, ctx: dict) -> str | None:
         if base in names:
             return f"protected: {names[base]}"
         if os.path.isdir(path):
-            for root, _dirs, files in os.walk(path):
+            for _root, _dirs, files in os.walk(path):
                 hit = next((f for f in files if f in names), None)
                 if hit:
                     return f"protected: contains {hit} ({names[hit]})"
@@ -281,7 +282,7 @@ def candidate(kind: str, target: str, cls: str, size: int, reason: str, *, name:
 
 
 def files_older_than(directory: str, seconds: float, now: float) -> list[tuple[str, int, float]]:
-    out = []
+    out: list[tuple[str, int, float]] = []
     try:
         entries = list(os.scandir(directory))
     except OSError:
@@ -320,7 +321,7 @@ def classify(ctx: dict, docker: dict, now: float) -> list[dict]:
         ("/srv/models/comfy-temp", DAY, "ComfyUI temporary file older than 24 h"),
         ("/srv/models/music-data/api_audio", 6 * 3600, "music engine scratch older than 6 h"),
     ):
-        for path, size, mt in files_older_than(d, age, now):
+        for path, _size, _mt in files_older_than(d, age, now):
             add_path(path, "safe", what, "temporary_uploads", "none: temporary data")
     # rotated logs
     for root, _dirs, files in os.walk("/srv/logs"):
@@ -346,7 +347,7 @@ def classify(ctx: dict, docker: dict, now: float) -> list[dict]:
         if os.path.isdir(path):
             add_path(path, "safe", f"{rel} download cache", "caches", "re-downloaded when needed")
     # interrupted Hugging Face downloads (not being written)
-    for root, dirs, files in os.walk("/srv/models/staging"):
+    for root, _dirs, files in os.walk("/srv/models/staging"):
         for f in files:
             if f.endswith(".incomplete"):
                 path = os.path.join(root, f)
@@ -421,7 +422,7 @@ def classify(ctx: dict, docker: dict, now: float) -> list[dict]:
         for sub in ("diffusion_models", "loras", "checkpoints", "controlnet", "upscale_models",
                     "latent_upscale_models", "model_patches", "embeddings"):
             d = os.path.join(tree, sub)
-            for path, size, mt in files_older_than(d, 0, now + 1) if os.path.isdir(d) else []:
+            for path, size, _mt in files_older_than(d, 0, now + 1) if os.path.isdir(d) else []:
                 if size >= 100 * 1024 * 1024:
                     add_path(path, "review", "model file not referenced by any media workflow or alias", "models",
                              "the file must be downloaded again if a workflow needs it later")
@@ -451,10 +452,9 @@ def classify(ctx: dict, docker: dict, now: float) -> list[dict]:
                                    f"protected: {ctx.get('why', {}).get(p) or 'required by the cluster'}",
                                    name=os.path.basename(p) or p, category=category_of(p), mtime=None))
     for p in BASE_PROTECTED:
-        if os.path.lexists(p) and inside(p, "/srv"):
-            if not any(c["target"] == p for c in cands):
-                cands.append(candidate("path", p, "protected", du(p), "protected: cluster state, secrets, "
-                                       "Git or Library metadata", name=p, category=category_of(p)))
+        if os.path.lexists(p) and inside(p, "/srv") and not any(c["target"] == p for c in cands):
+            cands.append(candidate("path", p, "protected", du(p), "protected: cluster state, secrets, "
+                                   "Git or Library metadata", name=p, category=category_of(p)))
     # A path both suggested and protected: protected wins; drop duplicates.
     seen: dict[tuple, dict] = {}
     for c in cands:
@@ -505,7 +505,7 @@ def usage(docker: dict) -> dict:
 
 
 def largest(paths: list[str], n: int = 15) -> list[dict]:
-    rows = []
+    rows: list[dict[str, Any]] = []
     for base in paths:
         if not os.path.isdir(base):
             continue

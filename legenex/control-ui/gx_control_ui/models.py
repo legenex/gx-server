@@ -248,7 +248,8 @@ def live_state(cluster: Cluster, results: ResultLog) -> list[dict]:
             extra["orchestrator_view"] = tiers
         elif alias == "gx-music":
             music = svc.get("music") or {}
-            mbody = music.get("body") if isinstance(music.get("body"), dict) else {}
+            raw_music = music.get("body")
+            mbody: dict = raw_music if isinstance(raw_music, dict) else {}
             engine = mbody.get("engine")
             if gxmax_state in ("ready", "acquiring", "releasing"):
                 state, detail = "unavailable", f"engine held off: gx-max is {gxmax_state}"

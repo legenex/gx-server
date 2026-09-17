@@ -295,8 +295,7 @@ class ClassifyTests(ScanBase):
             "/srv/logs/app/app.log.1",
             f"{VHOME}/.cache/pip",
             "/srv/models/staging/modelA/w.safetensors.incomplete",
-            f"{VHOME}/Documents/Projects/Server/gx-cluster/legenex/control-ui/test-results",
-        })
+        })  # nothing inside the Git checkout is ever offered
         self.assertEqual(review, {
             "/srv/models/staging/modelA", "/srv/models/gguf/unused", "/srv/cache/hf",
             f"{VHOME}/.cache/huggingface/hub/models--org--name", "/srv/projects/gx-music-staging",

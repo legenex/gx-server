@@ -22,6 +22,7 @@ Nothing here ever returns a node-2 path, the node-2 key, or an engine URL.
 
 from __future__ import annotations
 
+import builtins
 import hashlib
 import json
 import logging
@@ -393,7 +394,7 @@ class MusicJobs:
             self._wake.wait(self.poll_interval)
             self._wake.clear()
 
-    def pending(self) -> list[str]:
+    def pending(self) -> builtins.list[str]:
         with self._lock:
             return [jid for jid, j in self._jobs.items() if not j.get("imported") and not j.get("final")]
 
@@ -421,7 +422,7 @@ class MusicJobs:
                 self._jobs[job_id].update(values)
         self._save()
 
-    def import_job(self, job: dict) -> list[str]:
+    def import_job(self, job: dict) -> builtins.list[str]:
         """Download and register every track of a completed job (idempotent)."""
         job_id = job["id"]
         with self._lock:

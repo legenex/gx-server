@@ -320,7 +320,7 @@ class MediaJobs:
 
     def snapshot(self) -> dict:
         with self._cv:
-            jobs = [{"id": j.id, "alias": j.alias, "kind": j.kind, "phase": j.phase, "waiting": j.waiting,
+            jobs: list[dict[str, Any]] = [{"id": j.id, "alias": j.alias, "kind": j.kind, "phase": j.phase, "waiting": j.waiting,
                      "done": j.phase in TERMINAL} for j in self._jobs.values()]
         counts: dict[str, int] = {}
         for j in jobs:

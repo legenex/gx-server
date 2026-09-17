@@ -379,7 +379,7 @@ class ModelManager:
         for node, data in (("node1", n1), ("node2", n2)):
             for d in data.get("dirs", []):
                 if d.get("category") == "music":
-                    comp = music_components.get(d["name"]) or next(
+                    comp: dict[str, Any] = music_components.get(d["name"]) or next(
                         (c for c in music_components.values() if d["name"] in (c.get("file") or "")), {})
                     installed.append({
                         "node": node, "category": "music", "name": d["name"], "path": d["path"],
