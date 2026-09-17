@@ -226,15 +226,20 @@ models:
     name: "gx-reason"
     description: >
       nvidia/Qwen3.6-27B-NVFP4 on vLLM. Dense 27B, hybrid attention, hard
-      reasoning and coding tier. Owns node 2 exclusively - do not
-      co-schedule with ComfyUI. Replaces the broken Qwen3.5-122B-A10B
+      reasoning and coding tier. Frees ComfyUI's idle models before it
+      starts; do not co-schedule with a running media job. Replaces the broken Qwen3.5-122B-A10B
       GGUF/llama.cpp tier (B-011).
     proxy: "http://127.0.0.1:25800"
     checkEndpoint: /health
     ttl: 900
     unloadTimeout: 180
+    # The first line hands node 2 over from ComfyUI (frees its models unless a
+    # generation is running; gx-media-router refuses then). Without it a cold
+    # start in the 10 minutes after a media job failed vLLM's free-memory
+    # check (2026-09-17, TEST_RESULTS §19.7).
     cmd: >
-      sh -c 'docker rm -f gx-reason >/dev/null 2>&1;
+      sh -c 'docker exec gx-media-router python -m gx_media_router.free_node >/dev/null 2>&1;
+      docker rm -f gx-reason >/dev/null 2>&1;
       exec docker run --rm --name gx-reason
       --network ${swap_netns}
       --device nvidia.com/gpu=all

@@ -95,6 +95,26 @@ class MediaService:
         finally:
             self.slot.release()
 
+    def free_now(self, wait_seconds: float = 2.0) -> dict:
+        """Hand node 2 to another tenant now (gx-reason's start calls this).
+
+        Frees ComfyUI's models only when no generation holds the slot and no video
+        is queued; a running job is never disturbed.
+        """
+        if not self._video_queue.empty():
+            return {"freed": False, "reason": "video jobs queued"}
+        if not self.slot.acquire("free-request", wait_seconds):
+            holder, _ = self.slot.held_by()
+            return {"freed": False, "reason": f"busy ({holder})"}
+        try:
+            models = sorted(self._resident_models)
+            log.info("free requested: freeing ComfyUI models %s", models)
+            self.comfy.free(unload_models=True, free_memory=True)
+            self._resident_models = frozenset()
+            return {"freed": True, "models": models}
+        finally:
+            self.slot.release()
+
     # -- images (synchronous) ---------------------------------------------
     def generate_image(self, workflow_name: str, params: dict, *, staged: tuple[str, ...] = (),
                        operation: str | None = None) -> Job:

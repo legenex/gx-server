@@ -412,6 +412,25 @@ class MediaApiTests(unittest.TestCase):
         self.assertEqual(self.comfy.frees, before + 1)
         self.assertFalse(svc.free_if_idle(), "nothing left to free")
 
+    def test_free_request_hands_the_node_to_gx_reason(self):
+        status, _ = self.call("POST", "/v1/admin/free", {}, key="wrong")
+        self.assertEqual(status, 401)
+        self.call("POST", "/v1/images/generations", {"prompt": "before reason"})
+        before = self.comfy.frees
+        status, body = self.call("POST", "/v1/admin/free", {})
+        self.assertEqual((status, body["freed"]), (200, True))
+        self.assertTrue(body["models"])
+        self.assertEqual(self.comfy.frees, before + 1)
+        # never while a generation holds the slot
+        self.assertTrue(self.service.slot.acquire("test-job", 1.0))
+        try:
+            status, body = self.call("POST", "/v1/admin/free", {})
+        finally:
+            self.service.slot.release()
+        self.assertEqual((status, body["freed"]), (409, False))
+        self.assertIn("test-job", body["reason"])
+        self.assertEqual(self.comfy.frees, before + 1)
+
     def test_listing_and_workflows(self):
         status, body = self.call("GET", "/v1/videos")
         self.assertEqual(status, 200)

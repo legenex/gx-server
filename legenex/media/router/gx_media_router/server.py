@@ -259,6 +259,10 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/v1/videos/edits":
                 self._video_edit(None)
                 return
+            if path == "/v1/admin/free":
+                result = self.service.free_now()
+                self._json(200 if result["freed"] else 409, result)
+                return
             match = _VIDEO_REMIX.match(path)
             if match:
                 self._video_edit(match.group("id"))
