@@ -312,6 +312,74 @@ def run_checks(alias: str, checks: list[str], thinking: bool | None) -> list[dic
                    tool_calls=s["tool_calls"][:3], answer=s["text"][:300])
         safe("kilo", _k)
 
+    if "moderate" in checks:
+        def _mod():
+            # ~12k tokens of real code-like context, then a question about it.
+            body = "\n".join(f"def handler_{i}(req):\n    return {{'id': {i}, 'ok': True}}  # route /r/{i}" for i in range(900))
+            s = stream_chat(alias, [{"role": "user", "content": body + "\n\nWhich route does handler_417 serve? Reply with just the path."}],
+                            max_tokens=2048, temperature=0, **extra)
+            record("moderate", "/r/417" in s["text"], ttft_s=s["ttft_s"], total_s=s["total_s"],
+                   prompt_tokens=s["prompt_tokens"], tokens_per_s=s["tokens_per_s"], answer=s["text"][:200])
+        safe("moderate", _mod)
+
+    if "repeat" in checks:
+        def _rep():
+            runs = []
+            for _ in range(3):
+                s = stream_chat(alias, [{"role": "user", "content": "Name three primary colours, comma separated."}],
+                                max_tokens=1024, temperature=0, **extra)
+                runs.append(s)
+            ttfts = [r["ttft_s"] for r in runs]
+            ok = all(r["text"].strip() for r in runs) and all(t is not None for t in ttfts)
+            record("repeat", ok, ttft_s=ttfts, total_s=[r["total_s"] for r in runs],
+                   tokens_per_s=[r["tokens_per_s"] for r in runs])
+        safe("repeat", _rep)
+
+    if "claude" in checks:
+        def _cc():
+            from kilo_fixtures import claude_code_continuation
+
+            req = claude_code_continuation()
+            s = stream_chat(alias, req["messages"], tools=req["tools"], tool_choice="auto",
+                            max_tokens=req["max_tokens"], temperature=0, **extra)
+            answered = bool(s["text"].strip()) or bool(s["tool_calls"])
+            record("claude", answered, ttft_s=s["ttft_s"], total_s=s["total_s"], prompt_tokens=s["prompt_tokens"],
+                   completion_tokens=s["completion_tokens"], tool_calls=s["tool_calls"][:3],
+                   budget_headers=s["headers"], answer=s["text"][:200])
+        safe("claude", _cc)
+
+    if "nearlimit" in checks:
+        def _nl():
+            # Fill ~85 % of the served window with the requested output left
+            # at 32000: the gateway must clamp it and still answer.
+            from gx_orchestrator.tiers import TIERS, Tier
+
+            limit = TIERS[Tier(alias)].max_context
+            target_chars = int(limit * 0.80 * 3.9)
+            filler = ("The quick brown fox jumps over the lazy dog near the river bank. " * (target_chars // 66))
+            s = stream_chat(alias, [{"role": "user", "content": filler + "\nIgnore the text above. Reply with the single word: done"}],
+                            max_tokens=32000, temperature=0, **extra)
+            ok = "done" in s["text"].lower()
+            record("nearlimit", ok, ttft_s=s["ttft_s"], total_s=s["total_s"], prompt_tokens=s["prompt_tokens"],
+                   context_limit=limit, completion_tokens=s["completion_tokens"], answer=s["text"][:120])
+        safe("nearlimit", _nl)
+
+    if "overflow" in checks:
+        def _ov():
+            from gx_orchestrator.tiers import TIERS, Tier
+
+            limit = TIERS[Tier(alias)].max_context
+            t0 = time.monotonic()
+            try:
+                stream_chat(alias, [{"role": "user", "content": "x " * (limit * 7)}], max_tokens=1000, **extra)
+                record("overflow", False, error="an impossible request was accepted")
+            except urllib.error.HTTPError as exc:
+                secs = round(time.monotonic() - t0, 2)
+                body = exc.read().decode("utf-8", "replace")
+                ok = exc.code == 400 and "context" in body.lower() and secs < 30
+                record("overflow", ok, http=exc.code, seconds=secs, error=body[:240])
+        safe("overflow", _ov)
+
     return results
 
 
