@@ -206,6 +206,9 @@ def api_setup_owui_identity(h: Handler) -> None:
 def api_setup_owui_identity_sync(h: Handler) -> None:
     assert h.session is not None  # noqa: S101
     h._body(256)
+    if h.via_playground():
+        h._json(403, {"error": {"code": "forbidden", "message": "Open WebUI identity is managed in the Control Center"}})
+        return
     if h.app.cfg.offline:
         raise ValueError("not available in offline mode")
     try:

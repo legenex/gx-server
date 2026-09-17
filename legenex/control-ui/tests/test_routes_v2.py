@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import http.client
+import dataclasses
 import json
 import re
 import secrets
@@ -336,6 +337,44 @@ class PlaygroundRestrictionTests(V2Base):
         self.assertEqual(job["submitted_via"], "playground")
         entry = [e for e in self.audit() if e.get("action") == "music.generate"][-1]
         self.assertEqual(entry["ip"], "100.64.7.8")
+
+
+class OpenWebUIIdentityApiTests(V2Base):
+    """D-038 routes; the sync itself is covered by test_owui_identity."""
+
+    def test_requires_a_session_and_csrf(self):
+        self.assertEqual(self.req("GET", "/api/setup/openwebui/identity")[0], 401)
+        self.assertEqual(self.post("/api/setup/openwebui/identity/sync")[0], 401)
+        self.login()
+        status, _, body = self.req("GET", "/api/setup/openwebui/identity")
+        self.assertEqual((status, body["offline"], body["in_sync"]), (200, True, None))
+        self.assertEqual(self.post("/api/setup/openwebui/identity/sync", csrf=False)[0], 403)
+        status, _, body = self.post("/api/setup/openwebui/identity/sync")
+        self.assertEqual(status, 400)
+        self.assertIn("offline", body["error"]["message"])
+
+    def test_sync_reports_and_audits(self):
+        self.login()
+        self.app.cfg = dataclasses.replace(self.app.cfg, offline=False)  # routes only; nothing else re-reads it
+        calls = []
+
+        class FakeIdentity:
+            def plan(self):
+                return {"in_sync": False, "items": [{"id": "gx-mini", "state": "missing"}]}
+
+            def apply(self, *, user):
+                calls.append(user)
+                return {"in_sync": True, "items": [{"id": "gx-mini", "state": "ok"}], "written": ["gx-mini"]}
+
+        self.app.identity = FakeIdentity()
+        status, _, body = self.req("GET", "/api/setup/openwebui/identity")
+        self.assertEqual((status, body["in_sync"]), (200, False))
+        status, _, body = self.post("/api/setup/openwebui/identity/sync")
+        self.assertEqual((status, body["written"]), (200, ["gx-mini"]))
+        self.assertEqual(calls, ["admin"])
+        status, _, body = self.post("/api/setup/openwebui/identity/sync", headers=self.playground())
+        self.assertEqual(status, 403)
+        self.assertEqual(calls, ["admin"])
 
 
 class ResourcesApiTests(V2Base):
