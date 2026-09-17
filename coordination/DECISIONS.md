@@ -1260,3 +1260,29 @@ every ~303 s for 20-30 minutes.
 * gx-max: in-flight requests hold the engine; the idle TTL (1800 s) counts
   from the end of the last request and its remaining time is exposed.
 **Status:** implemented and tested; live evidence in TEST_RESULTS.md §21.
+
+## D-040 — Build V3: creative flows, video LoRAs, voice, call agents and live (amends L-10)
+
+**Date:** 2026-09-17. **Status:** IN PROGRESS (implementation contract in
+`coordination/BUILD_V3.md`).
+
+**Why.** The user ordered one integrated production build: fix image
+editing, add a second image model (VisionmasterPro_V3), turn Wan 2.2 LoRAs
+into a Playground feature, rebuild the music UX with AI prompting and
+reference analysis, and add Creative Flows plus three realtime/audio
+services. The user explicitly added three public aliases.
+
+**Decision.**
+* **Aliases (amends L-10):** eleven — the existing eight plus `gx-voice`
+  (Qwen3-TTS 1.7B), `gx-call` (NemotronLabs VoiceChat 11B) and `gx-live`
+  (MiniCPM-o 4.5). No existing alias changes meaning.
+* **Placement:** new model services default to gx10-02 behind private
+  supervisors on the fabric (ports 18830/18840/18850), launched through the
+  resource guard and bound by the 30 GiB reserve. Final placement follows
+  measured footprints (recorded per service).
+* **One application database:** the Library database gains named,
+  order-independent feature migrations (`gx_control_ui/migrations/`).
+* **SSRF:** every user-supplied URL goes through `gx_control_ui/netguard.py`.
+* **Playground:** pages load lazily from `web/js/routes.js`; Creative Flows is
+  a React + TypeScript + `@xyflow/react` island built by Vite; every other
+  page stays on the existing dependency-free design system.

@@ -36,6 +36,7 @@ log "=== waiting for gx-max to become healthy (timeout 1800s) ==="
 touch "$(dirname "$0")/healthy-now"
 sleep 0.5
 log "=== gx-max READY on http://127.0.0.1:30000/v1 after 512s ==="
+log "ENGINE_PHASES container_to_args=16.0 weights=370.9 cuda_graphs=73.6 health_ready=545.0"
 exit 0
 """
 
@@ -91,6 +92,10 @@ class TestPhases(LifecycleTestBase):
             ["preflight", "draining", "admission", "loading_rank1", "loading_rank0",
              "warming", "ready", "serving"],
         )
+        # D-039: every phase has a duration and the engine breakdown is kept.
+        self.assertTrue(all(isinstance(p.get("seconds"), float) and p["seconds"] >= 0 for p in job["phases"]))
+        self.assertEqual(job["engine_phases"]["weights"], 370.9)
+        self.assertEqual(job["engine_phases"]["health_ready"], 545.0)
         lines = [e["line"] for e in ev["events"]]
         self.assertTrue(any("starting rank1" in line for line in lines))
         self.assertIn("starting rank1 on node2", evlog.read_text())
@@ -234,3 +239,23 @@ class TestEventsEndpoint(LifecycleTestBase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestInFlightKeepWarm(LifecycleTestBase):
+    def test_reaper_never_releases_while_a_request_is_in_flight(self):
+        self.write_start(_START_OK)
+        self.write_stop(_STOP_OK)
+        lc = GxMaxLifecycle(self.dir, self.health_url, idle_ttl=1, acquire_timeout=20)
+        _StubHealth.healthy = True
+        lc._state = State.READY
+        lc.begin_use()
+        lc._last_used = time.time() - 100
+        st = lc.status().as_dict()
+        self.assertEqual(st["in_flight"], 1)
+        self.assertEqual(st["ttl_remaining_seconds"], 1, "the TTL does not run during a request")
+        lc.end_use()
+        st = lc.status().as_dict()
+        self.assertEqual(st["in_flight"], 0)
+        self.assertLessEqual(st["ttl_remaining_seconds"], 1)
+        self.assertGreaterEqual(st["idle_seconds"], 0)
+        lc.shutdown()

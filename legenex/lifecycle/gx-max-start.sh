@@ -290,6 +290,7 @@ flock -x -w "${GX_GUARD_LOCK_TIMEOUT}" "${n1_lock_fd}" || die "node1 lock busy (
 facts_n1="$(gxs_clean_start_facts "${GXMAX_REQUIRED_SWAPFILE}")"
 guard_n1_result="$(gx_guard_takeover_check node1 gx-max-rank0 "${facts_n1}")" \
   || die "node1 admission REFUSED under lock: ${guard_n1_result}"
+t_rank0_launch=$(date +%s)
 docker run -d --name "${GXMAX_RANK0_NAME}" --restart no \
   "${DFLAGS[@]}" "${EFLAGS[@]}" "${GXMAX_IMAGE}" $(gxmax_args 0) >/dev/null \
   || die "failed to start rank0"
@@ -343,6 +344,7 @@ while :; do
   if gxmax_healthy; then
     t_ready=$(date +%s)
     log "=== gx-max READY on http://127.0.0.1:${GXMAX_PORT}/v1 after $(( t_ready - t_start ))s ==="
+    log "$(gxmax_engine_phases "${GXMAX_LOG_DIR}/gx-max-rank0.log" "${t_rank0_launch}" "${t_ready}")"
     log "    LOAD-phase minima : node1=${GXS_MIN_AVAIL_MIB}MiB node2=${min_n2}MiB MemAvailable"
     log "    LOAD-phase swap   : node1 peak=${GXS_MAX_SWAPUSED_MIB}MiB node2 peak=${max_swap2}MiB; node1 peak PSI full=${GXS_MAX_PSI_FULL10}%; node1 soft NV_ERR lines=${GXS_NV_SOFT:-0}"
     sleep 30   # let loader staging be released before measuring steady state

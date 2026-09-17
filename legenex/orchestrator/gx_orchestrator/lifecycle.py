@@ -80,6 +80,8 @@ _STOP_MARKERS: tuple[tuple["re.Pattern[str]", str], ...] = tuple(
     )
 )
 _STARTUP_SECONDS_RE = re.compile(r"gx-max READY on \S+ after (\d+)s")
+#: gx-max-start.sh prints the engine's own startup breakdown after READY.
+_ENGINE_PHASES_RE = re.compile(r"ENGINE_PHASES((?:\s+\w+=[\d.]+)+)")
 
 #: Lines kept in memory for /lifecycle/gx-max/events.
 _EVENT_BUFFER = 400
@@ -495,6 +497,10 @@ class GxMaxLifecycle:
                 return
             job["ended"] = round(time.time(), 1)
             job["elapsed_seconds"] = round(job["ended"] - job["started"], 1)
+            # D-039: how long each phase took, so a slow start is attributable.
+            phases = job.get("phases") or []
+            for cur, nxt in zip(phases, phases[1:] + [{"at": job["ended"]}]):
+                cur["seconds"] = round(nxt["at"] - cur["at"], 1)
             job["outcome"] = outcome
             if error:
                 job["error"] = error[:1000]
@@ -582,6 +588,12 @@ class GxMaxLifecycle:
                     with self._cv:
                         if self._job is not None:
                             self._job["startup_seconds"] = int(m.group(1))
+                m = _ENGINE_PHASES_RE.search(line)
+                if m:
+                    parsed = dict(kv.split("=", 1) for kv in m.group(1).split())
+                    with self._cv:
+                        if self._job is not None:
+                            self._job["engine_phases"] = {k: float(v) for k, v in parsed.items()}
                 self._event(source, line)
 
         reader = threading.Thread(target=pump, name=f"gxmax-{source}-out", daemon=True)

@@ -130,3 +130,45 @@ gxmax_healthy() {
 
 gxmax_rank0_running() { [ "$(docker inspect -f '{{.State.Running}}' "${GXMAX_RANK0_NAME}" 2>/dev/null || echo false)" = "true" ]; }
 gxmax_rank1_running() { [ "$(n2 "docker inspect -f '{{.State.Running}}' ${GXMAX_RANK1_NAME} 2>/dev/null || echo false")" = "true" ]; }
+
+# D-039: one line with the engine's own startup breakdown, parsed from the
+# rank0 log after READY (observability only; never affects a decision).
+#   gxmax_engine_phases <rank0-log> <rank0-launch-epoch> <ready-epoch>
+gxmax_engine_phases() {
+  python3 - "$1" "$2" "$3" <<'PY' 2>/dev/null || true
+import re, sys, datetime as dt
+path, launched, ready = sys.argv[1], float(sys.argv[2]), float(sys.argv[3])
+stamp = re.compile(r"^\[(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)")
+def epoch(line):
+    m = stamp.match(line)
+    return dt.datetime.strptime(m.group(1), "%Y-%m-%d %H:%M:%S").replace(tzinfo=dt.timezone.utc).timestamp() if m else None
+first = weights = draft = graphs = dist = serving = None
+out = {}
+try:
+    lines = open(path, errors="replace").read().splitlines()
+except OSError:
+    sys.exit(0)
+for line in lines:
+    t = epoch(line)
+    if t is None:
+        continue
+    if first is None and "server_args=" in line:
+        first = t
+        out["container_to_args"] = t - launched
+    m = re.search(r"Init torch distributed ends\. elapsed=([\d.]+)", line)
+    if m and "dist_init" not in out:
+        out["dist_init"] = float(m.group(1))
+    m = re.search(r"Load weight end\. elapsed=([\d.]+)", line)
+    if m:
+        out["draft_weights" if "weights" in out else "weights"] = float(m.group(1))
+    m = re.search(r"Capture .*CUDA graph end\. elapsed=([\d.]+)", line)
+    if m:
+        out["cuda_graphs"] = out.get("cuda_graphs", 0.0) + float(m.group(1))
+    if "Uvicorn running" in line and "http_up" not in out:
+        out["http_up"] = t - launched
+    if "fired up and ready to roll" in line and "warmup_done" not in out:
+        out["warmup_done"] = t - launched
+out["health_ready"] = ready - launched
+print("ENGINE_PHASES " + " ".join(f"{k}={v:.1f}" for k, v in out.items()))
+PY
+}
