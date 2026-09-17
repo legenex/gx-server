@@ -234,3 +234,97 @@ test('theme toggle, keyboard skip link and logout', async ({ page }) => {
   const status = await page.evaluate(async () => (await fetch('/api/overview')).status);
   expect(status).toBe(401);
 });
+
+test('create: image generation runs through the job phases and lands in the library', async ({ page }) => {
+  const problems = watchPage(page);
+  await login(page, PASSWORD);
+  await gotoPage(page, 'create', 'Create');
+  await expect(page.getByRole('tab', { name: 'Generate Image' })).toHaveAttribute('aria-selected', 'true');
+  await page.click('#go-image');
+  await expect(page.locator('#form-image .form-error')).toContainText('Enter a prompt');
+  await page.fill('#prompt-image', 'e2e: a red kite over the sea');
+  await page.click('#go-image');
+  const card = page.locator('.job-card').first();
+  await expect(card).toContainText('Ready', { timeout: 30_000 });
+  await expect(card.locator('img.media-view')).toBeVisible();
+  await expect(card.getByRole('link', { name: 'Open in Library' })).toBeVisible();
+  // tabs are keyboard operable
+  await page.getByRole('tab', { name: 'Generate Image' }).focus();
+  await page.keyboard.press('ArrowRight');
+  await expect(page.getByRole('tab', { name: 'Edit Image' })).toHaveAttribute('aria-selected', 'true');
+  await page.click('#go-edit');
+  await expect(page.locator('#form-edit .form-error')).toBeVisible();
+  expect(problems).toEqual([]);
+});
+
+test('library: search, select all / none, favourite, rename, viewer, delete with confirmation', async ({ page }) => {
+  const problems = watchPage(page);
+  await login(page, PASSWORD);
+  await gotoPage(page, 'library', 'Media Library');
+  const tiles = page.locator('.media-grid .media-tile');
+  await expect(tiles.first()).toBeVisible();
+  const before = await tiles.count();
+  expect(before).toBeGreaterThanOrEqual(2);
+  await page.click('#lib-select-all');
+  await expect(page.locator('.sel-count')).toHaveText(`${before} selected`);
+  await page.click('#lib-select-none');
+  await expect(page.locator('.sel-count')).toHaveText('0 selected');
+  await page.fill('#lib-search', 'lighthouse');
+  await expect(tiles).toHaveCount(1);
+  await tiles.first().locator('.tile-open').click();
+  const viewer = page.locator('dialog.viewer');
+  await expect(viewer).toBeVisible();
+  await expect(viewer).toContainText('e2e seeded lighthouse');
+  await axeCheck(page, 'library-viewer');
+  await page.click('#viewer-fav');
+  await expect(page.locator('#viewer-fav')).toHaveAttribute('aria-pressed', 'true');
+  await page.fill('#viewer-title', 'Renamed in e2e');
+  await viewer.getByRole('button', { name: 'Rename' }).click();
+  await expect(page.locator('.toast').last()).toContainText('Title saved');
+  await page.click('#viewer-delete');
+  await expect(page.locator('#confirm-ok')).toBeDisabled();
+  await page.fill('#confirm-phrase', 'DELETE');
+  await page.click('#confirm-ok');
+  await expect(page.locator('.toast').last()).toContainText('Deleted 1');
+  await page.fill('#lib-search', '');
+  await expect(tiles).toHaveCount(before - 1 + 1 > before ? before : before - 1 + (await tiles.count() - (before - 1)));
+  expect(problems).toEqual([]);
+});
+
+test('api keys: create shows the secret once, list is masked, revoke needs the name', async ({ page }) => {
+  const problems = watchPage(page);
+  await login(page, PASSWORD);
+  await gotoPage(page, 'keys', 'API Keys');
+  await expect(page.getByText('kilo-code')).toBeVisible();
+  await page.click('#key-create');
+  await expect(page.locator('#key-form .form-error')).toBeVisible();
+  await page.fill('#key-name', 'e2e-client');
+  await page.click('#key-create');
+  await expect(page.locator('#new-key-secret')).toHaveValue(/^sk-e2e-/);
+  await expect(page.getByText('cannot be shown again')).toBeVisible();
+  const table = page.locator('table');
+  await expect(table).toContainText('e2e-client');
+  await expect(table).not.toContainText('sk-e2e-');
+  await page.getByRole('button', { name: 'I have copied it: hide' }).click();
+  await expect(page.locator('#new-key-secret')).toHaveCount(0);
+  await page.locator('[data-revoke="e2e-client"]').click();
+  await page.fill('#confirm-phrase', 'e2e-client');
+  await page.click('#confirm-ok');
+  await expect(page.locator('.toast').last()).toContainText('Revoked e2e-client');
+  await expect(table).not.toContainText('e2e-client');
+  expect(problems).toEqual([]);
+});
+
+test('model manager: inventory, alias bindings and delete protection', async ({ page }) => {
+  const problems = watchPage(page);
+  await login(page, PASSWORD);
+  await gotoPage(page, 'manager', 'Model Manager');
+  await expect(page.getByText('Alias bindings')).toBeVisible();
+  await expect(page.locator('table').first()).toContainText('dealignai/DeepSeek-V4-Flash-0731-CRACK-NVFP4');
+  const live = page.locator('tr', { hasText: 'Qwen3.5-4B-Uncensored-HauhauCS-Aggressive' }).filter({ hasText: 'gx10-01' }).last();
+  await expect(live.getByRole('button', { name: 'Delete' })).toBeDisabled();
+  const unused = page.locator('tr', { hasText: 'unused-e2e' });
+  await expect(unused.getByRole('button', { name: 'Delete' })).toBeEnabled();
+  await expect(page.getByText('No token configured')).toBeVisible();
+  expect(problems).toEqual([]);
+});

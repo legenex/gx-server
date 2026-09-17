@@ -11,8 +11,6 @@ let jobsEl;
 let lookupEl;
 let searchEl;
 let tokenEl;
-let lastInventory = null;
-let polling = null;
 
 const yes = (v) => (v === true ? 'yes' : v === false ? 'no' : (v || '—'));
 
@@ -187,7 +185,6 @@ function diskCards(inv) {
 async function loadInventory() {
   try {
     const inv = await api.get('/api/manager/inventory');
-    lastInventory = inv;
     clear(invEl).append(
       diskCards(inv),
       inv.node2_error ? h('p', { class: 'callout callout-warning' }, inv.node2_error) : null,
@@ -261,7 +258,7 @@ function renderLookup(info) {
     info.access_note ? h('p', { class: 'callout callout-warning' }, info.access_note) : null,
     h('details', {}, h('summary', {}, `Files (${info.file_count})`),
       table(['Path', 'Size'], info.files.map((f) => [f.path, bytes(f.size)]), { caption: 'Files' })),
-    info.readme_excerpt ? h('details', {}, h('summary', {}, 'Model card (untrusted text)'), h('pre', { class: 'code card-text' }, info.readme_excerpt)) : null,
+    info.readme_excerpt ? h('details', {}, h('summary', {}, 'Model card (untrusted text)'), h('pre', { class: 'code card-text', tabindex: '0' }, info.readme_excerpt)) : null,
     h('h3', {}, 'Install'),
     h('div', { class: 'form-grid' },
       h('div', { class: 'field' }, h('label', { for: 'mm-node' }, 'Node'), node),
@@ -315,5 +312,5 @@ export default {
     for (const j of jobs.jobs.filter((x) => x.state === 'running')) watchJob(j.id);
     await loadInventory();
   },
-  unmount() { if (polling) clearTimeout(polling); lastInventory = null; },
+  unmount() { clear(jobsEl); },
 };

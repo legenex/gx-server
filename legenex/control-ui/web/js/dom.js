@@ -165,7 +165,7 @@ export function copyButton(getText, label = 'Copy') {
 }
 
 export function codeBlock(text, lang = '') {
-  const pre = h('pre', { class: 'code' }, h('code', { class: lang ? `lang-${lang}` : '' }, text));
+  const pre = h('pre', { class: 'code', tabindex: '0' }, h('code', { class: lang ? `lang-${lang}` : '' }, text));
   return h('div', { class: 'code-wrap' }, copyButton(() => text), pre);
 }
 

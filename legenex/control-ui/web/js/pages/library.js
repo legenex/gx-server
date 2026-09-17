@@ -217,7 +217,7 @@ async function openViewer(id) {
         lineageList(`Versions made from this (${(a.children || []).length})`, a.children),
         h('details', { open: true }, h('summary', {}, 'Metadata'), kv(metaRows(a))),
         a.settings && Object.keys(a.settings).length
-          ? h('details', {}, h('summary', {}, 'Generation settings'), h('pre', { class: 'code' }, JSON.stringify(a.settings, null, 2)))
+          ? h('details', {}, h('summary', {}, 'Generation settings'), h('pre', { class: 'code', tabindex: '0' }, JSON.stringify(a.settings, null, 2)))
           : null)));
   if (!viewer.open) viewer.showModal();
 }

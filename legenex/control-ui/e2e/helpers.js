@@ -4,12 +4,16 @@ import { expect } from '@playwright/test';
 export const PAGES = [
   ['dashboard', 'Dashboard'],
   ['models', 'Models'],
+  ['create', 'Create'],
+  ['library', 'Media Library'],
+  ['manager', 'Model Manager'],
   ['runtime', 'Runtime'],
   ['cluster', 'Cluster'],
   ['jobs', 'Jobs / Queue'],
   ['logs', 'Logs'],
   ['playground', 'API Playground'],
   ['docs', 'Docs'],
+  ['keys', 'API Keys'],
   ['settings', 'Settings / System'],
 ];
 

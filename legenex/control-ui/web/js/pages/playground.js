@@ -166,7 +166,7 @@ function renderChatResult(out, res, { streamed } = {}) {
       ['Tokens', res.usage ? `prompt ${res.usage.prompt_tokens} · completion ${res.usage.completion_tokens} · total ${res.usage.total_tokens}` : '—'],
     ]),
     content ? h('div', { class: 'answer', tabindex: '0' }, content) : h('p', { class: 'muted' }, '(no text content)'),
-    reasoning ? h('details', {}, h('summary', {}, 'Reasoning content'), h('pre', { class: 'code' }, reasoning)) : null,
+    reasoning ? h('details', {}, h('summary', {}, 'Reasoning content'), h('pre', { class: 'code', tabindex: '0' }, reasoning)) : null,
     toolCalls && toolCalls.length ? h('div', {}, h('h4', {}, 'Tool calls'), codeBlock(JSON.stringify(toolCalls, null, 2), 'json')) : null,
     h('details', {}, h('summary', {}, 'Request sent (credentials are added server-side and never shown)'), codeBlock(JSON.stringify(res.request, null, 2), 'json')),
     res.response ? h('details', {}, h('summary', {}, 'Raw response'), codeBlock(JSON.stringify(res.response, null, 2), 'json')) : null,

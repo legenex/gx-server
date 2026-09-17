@@ -42,7 +42,7 @@ def _png(width: int = 64, height: int = 64) -> str:
     return base64.b64encode(png).decode()
 
 
-PNG = _png()
+PNG = _png(256, 256)
 
 
 def node_facts(role: str, avail: float) -> dict:
@@ -92,10 +92,35 @@ def node_facts(role: str, avail: float) -> dict:
     }
 
 
+KEYS: dict = {}
+
+
+def key_generate(handler, body):
+    token = f"{len(KEYS) + 1:064x}"
+    KEYS[token] = {"token": token, "key_alias": body["key_alias"], "key_name": "sk-...e2e0",
+                   "models": body["models"], "metadata": body.get("metadata") or {}, "expires": None,
+                   "created_at": "2026-09-17T00:00:00Z", "last_active": None}
+    return 200, {"key": "sk-e2e-" + "x" * 30, "token": token, "expires": None}
+
+
+def key_delete(handler, body):
+    for k in body.get("keys", []):
+        KEYS.pop(k, None)
+    return 200, {"deleted_keys": body.get("keys", [])}
+
+
 def main() -> int:
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 18089
     password = os.environ["GX_E2E_PASSWORD"]
+    KEYS.clear()
+    KEYS["e" * 64] = {"token": "e" * 64, "key_alias": "kilo-code", "key_name": "sk-...kilo",
+                      "models": ["gx-mini", "gx-fast"], "metadata": {}, "expires": None,
+                      "created_at": "2026-09-16T20:41:59Z", "last_active": "2026-09-16T21:54:17Z"}
     stub = StubUpstream({
+        ("GET", "/key/list"): lambda h, b: (200, {"keys": list(KEYS.values())}),
+        ("POST", "/key/generate"): key_generate,
+        ("POST", "/key/delete"): key_delete,
+        ("GET", "/v1/models"): (200, {"data": [{"id": "gx-mini"}, {"id": "gx-fast"}]}),
         ("POST", "/v1/chat/completions"): (200, {
             "id": "e2e", "model": "gx-mini",
             "usage": {"prompt_tokens": 12, "completion_tokens": 3, "total_tokens": 15},
@@ -147,6 +172,24 @@ def main() -> int:
         "sglang": {"ok": False, "status": 0},
     }
     app._fabric_cache = {"at": time.time() + 10**9, "192.168.100.11": "open", "192.168.101.11": "open"}
+    # Model Manager: synthetic inventory (no SSH, no /srv/models).
+    app.manager._node1_inventory = lambda: {
+        "disk": {"total": 900 * GIB, "free": 160 * GIB, "used": 740 * GIB}, "manifests": [],
+        "dirs": [{"category": "gguf", "name": "Qwen3.5-4B-Uncensored-HauhauCS-Aggressive",
+                  "path": "/srv/models/gguf/Qwen3.5-4B-Uncensored-HauhauCS-Aggressive", "size": 3 * GIB,
+                  "manifest": {"repository": "HauhauCS/Qwen3.5-4B-Uncensored-HauhauCS-Aggressive",
+                               "revision": "c09cdbcdb1fefad6d335809d445621b5f5ba0c6e"}},
+                 {"category": "staging", "name": "unused-e2e", "path": "/srv/models/staging/unused-e2e",
+                  "size": 20 * 2**20, "manifest": None}]}
+    app.manager._node2_inventory = lambda: {"disk": {"total": 900 * GIB, "free": 56 * GIB, "used": 844 * GIB},
+                                            "dirs": [], "manifests": []}
+    app.manager._start = lambda kind, label, user, params, fn: {"id": "0" * 16, "label": label, "state": "running"}
+    # Media library: two seeded images.
+    from gx_control_ui.media_library import NewAsset  # noqa: PLC0415
+    big = base64.b64decode(_png(256, 256))
+    for i, prompt in enumerate(("e2e seeded lighthouse", "e2e seeded bicycle")):
+        app.library.add(NewAsset(type="image", ext="png", operation="generate", data=big, prompt=prompt,
+                                 model_alias="gx-image", seed=i, title=f"Seed {i}"))
     for s in servers:
         threading.Thread(target=s.serve_forever, daemon=True).start()
     print(f"e2e fixture server on http://127.0.0.1:{port}", flush=True)
