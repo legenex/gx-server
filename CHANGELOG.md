@@ -50,6 +50,10 @@ V2 migration: uncensored models, media v2, and new Control UI pages. See
 - The gateway's media key had fallen back to `not-required` after a LiteLLM
   recreate from a stale shell. It is now recreated, and `integrity-audit.sh`
   (writer) checks the running key hash against `.env`.
+- gx-reason no longer fails to cold-start right after a media job. Media
+  router 2.1.0 adds `POST /v1/admin/free` and
+  `python -m gx_media_router.free_node`; gx-reason's llama-swap start command
+  calls it first.
 - API Playground video polling accepts the router's gateway-encoded video
   ids (D-031). It had reported "unknown video job" for finished videos.
 - Control UI: new pages clear the loading placeholder. `pre.code` blocks are

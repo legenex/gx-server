@@ -900,6 +900,13 @@ for generation, and `rzgar/Wan2.2_LightX2V_4Step_Uncensored` for video. ComfyUI
 runs with `--reserve-vram 40`, and the router frees it after 600 s idle or on a
 model-set change, so node 2 keeps headroom for gx-reason.
 
+**Amendment (router 2.1.0, same day).** `--reserve-vram` does not bound
+ComfyUI's host-side cache. A video edit left node 2 with 14 GiB
+MemAvailable, and a cold gx-reason start then failed. gx-reason's start
+command now first asks the router to free ComfyUI (`POST /v1/admin/free`,
+refused while a generation runs), so node 2 is handed over explicitly
+instead of waiting for the idle timer.
+
 ## D-032 — gx-max serves the CRACK abliterated DeepSeek-V4-Flash (amends L-6)
 
 **Date:** 2026-09-17. **Status:** ACCEPTED (the migration request asked for

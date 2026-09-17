@@ -18,8 +18,8 @@ cluster. Evidence is in `TEST_RESULTS.md` §19 and `/srv/logs/acceptance/`.
 | gx-reason | **interim** `nvidia/Qwen3.6-27B-NVFP4` @0893e160 | gx10-02 vLLM 0.28 | the required `iSkye/Qwen3.8-Flash-Next-NVFP4-ablit-a070` is gated and neither node has an HF token (**B-025**) |
 | gx-max | `dealignai/DeepSeek-V4-Flash-0731-CRACK-NVFP4` @c66fe384 | both nodes, SGLang TP=2, cookbook cell `fp4` (b12x MoE runner) | accepted (D-032); rollback is `GXMAX_MODEL_DIR=…/DeepSeek-V4-Flash-0731-NVFP4 GXMAX_QUANT_CELL=nvfp4` |
 | gx-auto | deterministic classifier (D-030) | gx10-01 orchestrator | Kilo-aware; never starts gx-max |
-| gx-image | Qwen-Image-2512 + tumblr LoRA; Qwen-Image-Edit-2511 | gx10-02 ComfyUI via media router 2.0 | generate / edit / variation |
-| gx-video | Wan 2.2 A14B T2V / I2V + uncensored LightX2V LoRAs; keyframe video edit | gx10-02 ComfyUI via media router 2.0 | t2v / i2v / video edit |
+| gx-image | Qwen-Image-2512 + tumblr LoRA; Qwen-Image-Edit-2511 | gx10-02 ComfyUI via media router 2.1 | generate / edit / variation |
+| gx-video | Wan 2.2 A14B T2V / I2V + uncensored LightX2V LoRAs; keyframe video edit | gx10-02 ComfyUI via media router 2.1 | t2v / i2v / video edit |
 
 ### Control UI additions (D-034, D-035)
 
@@ -43,9 +43,14 @@ only from 127.0.0.1).
 * **Orchestrator** restarted. It has the new classifier and a routing journal in
   `/srv/logs/gx-auto-routing.jsonl` (`GET /routing/decisions`). It returns 503
   `gx_max_not_running` instead of silently downgrading.
-* **Media router 2.0.0** is deployed on gx10-02 with `legenex/media/deploy-node2.sh`.
-  It adds uploads, edits, variations, i2v and video edit, and frees ComfyUI
-  after 600 s idle. **ComfyUI** now runs with `--reserve-vram 40`.
+* **Media router 2.1.0** is deployed on gx10-02 with `legenex/media/deploy-node2.sh`.
+  It adds uploads, edits, variations, i2v and video edit. It frees ComfyUI
+  after 600 s idle, and on request through `POST /v1/admin/free`.
+  **ComfyUI** now runs with `--reserve-vram 40`, but that does not bound its
+  host-side cache: a video edit can leave only 14 GiB free on node 2.
+* **node-2 llama-swap:** gx-reason's start command first asks the router to
+  free ComfyUI (`free_node`). The file is deployed to `~/gx-gateway/node02.yaml`,
+  and the container was restarted.
 * **B-024 resolved:** the media router key is rotated on both nodes. The hashes
   match, and it was not printed.
 

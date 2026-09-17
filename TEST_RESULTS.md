@@ -1367,4 +1367,21 @@ orchestrator 167 OK · lifecycle 22 OK · media router 74 OK · control UI 155 O
 * The third gx-reason UI run answered correctly ("5 cents", 212 s). The test
   failed only because the answer mentioned "10 cents" while explaining the
   common mistake; the assertion now ignores sentences that discuss the mistake.
+* **A third problem was found by the gx-auto Kilo re-run.** A cold gx-reason
+  start right after the gateway video-edit job failed after 39 s
+  (`upstream command exited prematurely`, HTTP 500). After a video edit,
+  ComfyUI keeps the Wan and Qwen-edit weights until its 600 s idle free, and
+  node 2 was at **14 GiB MemAvailable (107 GiB used)** despite
+  `--reserve-vram 40`. gx-reason needs 0.35 × 121.6 ≈ 42.6 GiB free.
+  Fix (router 2.1.0): `POST /v1/admin/free` frees ComfyUI unless a generation
+  holds the slot or videos are queued. gx-reason's start command runs
+  `docker exec gx-media-router python -m gx_media_router.free_node` first.
+  **Proof:** t2v + video edit through the gateway (2/2), then immediately a cold
+  gx-reason request. The router logged the free of the Qwen-edit and Wan
+  models at 04:10:01, and gx-reason loaded and answered "156" in 6 min 37 s.
+  New router test: `test_free_request_hands_the_node_to_gx_reason` (router
+  suite 75 tests).
+* Gateway media acceptance re-run after the LiteLLM fix: **6/6**. t2i 26 s,
+  edit 36 s (source unchanged), variation 16 s, t2v 60 s, i2v 70 s, v2v
+  120 s. Evidence: `/srv/logs/acceptance/media-20260917T031557Z/`.
 * Obsolete checkpoints were **not** deleted (B-026).
