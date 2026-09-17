@@ -777,6 +777,15 @@ class LiveManager:
                     stage="delegation" if name == "delegate_to_gx" else "tool", ms=latency,
                     outcome="ok" if ok else "failed", alias=model)
 
+    def _delegation_hint(self, sid: str, call_id: str, alias: str) -> None:
+        """Tell the page why a delegation is waiting (never on the answer's path)."""
+        if self._explain is None:
+            return
+        with _quiet():
+            why = self._explain(alias) or {}
+            if why.get("code") not in (None, "starting"):
+                self._progress(sid, call_id, "loading", str(why.get("reason") or "")[:300], alias)
+
     def _progress(self, sid: str, call_id: str, state: str, detail: str, model: str | None = None) -> None:
         with _quiet():
             self.client.request("POST", f"/v1/live/sessions/{sid}/tool-calls/{call_id}",
@@ -818,11 +827,12 @@ class LiveManager:
         task = _clean_text(args.get("task"), 4000, "task")
         if not task:
             return False, "", "the task was empty", {"error_code": "invalid_tool_arguments"}
-        if self._explain:
-            with _quiet():
-                why = self._explain(alias) or {}
-                if why.get("code") not in (None, "starting"):
-                    self._progress(sid, call_id, "loading", str(why.get("reason") or "")[:300], alias)
+        # "why am I waiting?" is a courtesy line for the page; asking Resource
+        # Control can itself take a moment, so it never sits in front of the
+        # answer (it delayed the whole tool call in the offline suite).
+        if self._explain is not None:
+            threading.Thread(target=self._delegation_hint, args=(sid, call_id, alias),
+                             name="gx-live-hint", daemon=True).start()
         self._progress(sid, call_id, "running", f"asking {alias}", alias)
         body = {"model": alias, "messages": [
             {"role": "system", "content": "You are answering a question that was asked out loud during a live "

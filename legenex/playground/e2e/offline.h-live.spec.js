@@ -27,10 +27,17 @@ test.afterEach(async ({ page }) => {
 });
 
 async function startSession(page) {
-  const [resp] = await Promise.all([
-    page.waitForResponse((r) => r.url().endsWith('/api/live/sessions') && r.request().method() === 'POST'),
-    page.locator('#live-start').click(),
-  ]);
+  // gx-live runs one session at a time; a previous test's session may still be
+  // closing on the supervisor, which answers 409 session_busy.
+  let resp = null;
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    [resp] = await Promise.all([
+      page.waitForResponse((r) => r.url().endsWith('/api/live/sessions') && r.request().method() === 'POST'),
+      page.locator('#live-start').click(),
+    ]);
+    if (resp.status() !== 409) break;
+    await page.waitForTimeout(1000);
+  }
   expect(resp.status()).toBe(201);
   const created = await resp.json();
   openSession = created.session_id;

@@ -1945,7 +1945,34 @@ directories in `TempEnv` collided with `mkdir(parents=True)` in
 `tests/test_calls.py`, turning CAL's 15/15 into 6 errors. Both call sites are
 now idempotent and the suite is back to 713 OK.
 
-### 22.7 Hugging Face access diagnosis (B-030)
+### 22.7 A note on the full offline E2E suite during this pass
+
+The full `--project=offline` suite was run three times. The numbers moved from
+**42 passed / 14 failed** → **58 / 8** → **49 / 9** as integration landed. The
+last run is *not* a clean signal and should not be read as a regression:
+
+* three workstreams were editing the same tree and running their own Playwright
+  instances while it ran;
+* every one of its failures passes when its spec file is run on its own — for
+  example `offline.g-platform.spec.js` is **7/7 in isolation** but failed in the
+  full run;
+* the suite runs `workers: 1` against one shared fixture backend, so state
+  (jobs, assets, voices, agents, flows) accumulates across files and specs that
+  assume a nearly-clean backend interfere with each other.
+
+Two genuine ordering defects were found this way and fixed:
+
+* `offline.f-history-resources.spec.js` depended on other spec files having left
+  media and music jobs behind. It now seeds its own and waits for real terminal
+  phases (`completed`/`failed`/`cancelled`), and passes standalone in 4 s.
+* `tests/test_tunnel.py` was **silently not running at all** — its `setUpClass`
+  raised `FileExistsError` — so the Playground suite reported 11 tests instead
+  of 40. The 29 tunnel cases are now actually executed.
+
+The definitive full-suite number should be taken once every workstream has
+stopped editing.
+
+### 22.8 Hugging Face access diagnosis (B-030)
 
 `tests/test_hf_access.py`, 12 hermetic tests against a stub Hub that serves
 metadata 200 and files 401/403, pins the distinction that had been collapsed
