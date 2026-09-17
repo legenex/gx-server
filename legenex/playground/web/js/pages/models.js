@@ -53,8 +53,11 @@ function repoLine(repo, rev) {
     }));
 }
 
-function componentList(items) {
-  return h('ul', { class: 'model-components' }, items.map((c) => h('li', {},
+function componentList(items, kind = 'components') {
+  // `kind` distinguishes the variants list from the components list: both render
+  // the same markup, and a card can now show both, so anything selecting
+  // `.model-components li` would otherwise hit whichever came first.
+  return h('ul', { class: 'model-components', dataset: { kind } }, items.map((c) => h('li', {},
     h('p', { class: 'model-comp-role' }, c.label || c.role || c.kind || 'component',
       c.default ? badge('default', 'info') : null, c.status ? badge(c.status, 'neutral') : null),
     kv([
@@ -91,8 +94,8 @@ function modelCard(m) {
     ]),
     caps.length ? h('ul', { class: 'caps-chips', 'aria-label': `${m.alias} capabilities` }, caps.map((c) => h('li', { class: 'chip chip-static' }, c))) : null,
     (m.not_supported || []).length ? h('p', { class: 'muted small' }, `Not supported: ${m.not_supported.join(', ')}`) : null,
-    (m.variants || []).length ? disclosure(`Model variants (${m.variants.length})`, componentList(m.variants), { ic: 'layers' }) : null,
-    (m.components || []).length ? disclosure(`Components (${m.components.length})`, componentList(m.components), { ic: 'layers' }) : null,
+    (m.variants || []).length ? disclosure(`Model variants (${m.variants.length})`, componentList(m.variants, 'variants'), { ic: 'layers' }) : null,
+    (m.components || []).length ? disclosure(`Components (${m.components.length})`, componentList(m.components, 'components'), { ic: 'layers' }) : null,
     m.registered ? null : callout('info', 'Not installed yet', 'This alias is part of the platform but its model is not registered on the cluster yet.'));
   return card(m.alias, body, {
     cls: 'model-card', level: 2, sub: m.group === 'realtime' ? 'Realtime' : m.group === 'create' ? 'Create' : 'Text',

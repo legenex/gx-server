@@ -52,7 +52,14 @@ test('Models lists every alias with state, memory and repository, filters by gro
   await expect(grid.locator('.model-card')).toHaveCount(4);
   const image = grid.locator('.model-card', { has: page.getByRole('heading', { name: 'gx-image', exact: true }) });
   await image.getByText(/^Components/).click();
-  await expect(image.locator('.model-components li').first()).toBeVisible();
+  // A card can show both "Model variants" and "Components", and both render a
+  // .model-components list, so target this one by its kind rather than by order.
+  await expect(image.locator('[data-kind="components"] li').first()).toBeVisible();
+  // gx-image now also publishes its selectable variants (IMG, registry).
+  await image.getByText(/^Model variants/).click();
+  const variants = image.locator('[data-kind="variants"] li');
+  await expect(variants.first()).toBeVisible();
+  await expect(variants).toHaveCount(3);
   const text = await page.locator('#page-models').textContent();
   expect(text).not.toContain('/srv/');
   expect(text).not.toMatch(/Bearer|sk-[A-Za-z0-9]{8}/);
