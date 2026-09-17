@@ -87,6 +87,14 @@ FOOTPRINT gx-live node=gx10-02 cold_gib=34 resident_gib=30 startup_s=128 measure
   * Also hardened: the delegation "why am I waiting" hint now runs off the answer's path (it called
     Resource Control inline), and the offline spec waits for a session to be released before the next
     test starts.
+  * **B-LIV-6 (shipped fix, `web/js/pages/live.js`, NOT yet re-verified on the GPU): the conversation
+    read backwards for spoken turns.** The acceptance screenshot
+    (`browser-live-session.png`) shows the assistant's answer *above* the question, because a speech
+    transcript only arrives once the reply is already running (PROTOCOL.md section 4) and the page
+    appended it. A late speech transcript is now inserted in front of the answer it belongs to, in the
+    log and in the saved transcript. This one is **verified by code review and the offline suite only** -
+    the offline stub engine has no VAD, so it never produces a late speech transcript, and gx-live is
+    unloaded with gx-music holding node 2. Worth one glance at the next live session.
 
   **Cold start (1 Hz MemAvailable sampling, `mem.tsv`, 661 samples / 666 s):**
 
