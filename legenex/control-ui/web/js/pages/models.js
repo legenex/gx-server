@@ -23,7 +23,11 @@ function resultLine(r) {
   return h('span', { class: r.ok ? '' : 'text-crit' }, `${bits.join(' · ')}${r.detail ? ` — ${r.detail}` : ''}`);
 }
 
-function allowed(op, state) {
+function allowed(op, state, alias) {
+  if (alias === 'gx-music') {
+    if (op === 'load') return ['ready', 'unloaded'].includes(state);
+    if (op === 'unload') return ['loaded'].includes(state);
+  }
   switch (op) {
     case 'load': return ['unloaded'].includes(state);
     case 'unload': return ['loaded', 'loading', 'ready'].includes(state);
@@ -42,7 +46,7 @@ function controls(m) {
     return wrap;
   }
   for (const [op, spec] of ops) {
-    const enabled = allowed(op, m.state) || (m.alias.startsWith('gx-image') || m.alias.startsWith('gx-video'));
+    const enabled = allowed(op, m.state, m.alias) || (m.alias.startsWith('gx-image') || m.alias.startsWith('gx-video'));
     const cls = op === 'force_release' ? 'btn btn-danger btn-sm' : (op === 'load' ? 'btn btn-primary btn-sm' : 'btn btn-sm');
     const btn = h('button', {
       class: cls, type: 'button', disabled: busy || !enabled,
@@ -59,8 +63,9 @@ function controls(m) {
     });
     wrap.append(btn);
   }
-  if (m.alias === 'gx-image' || m.alias === 'gx-video') {
-    wrap.append(h('span', { class: 'muted small' }, 'Loads automatically on the first generation.'));
+  if (m.alias === 'gx-image' || m.alias === 'gx-video' || m.alias === 'gx-music') {
+    wrap.append(h('span', { class: 'muted small' }, 'Loads automatically on the first generation. '),
+      h('a', { class: 'small', href: '#/resources' }, 'Resource Control →'));
   }
   return wrap;
 }
@@ -169,6 +174,12 @@ function modelCard(m) {
     ['Last load', resultLine(res.load)],
     ['Last unload', resultLine(res.unload)],
     ['Previous model', m.previous ? `${m.previous.repository || m.previous.path} — ${m.previous.status || ''}` : undefined],
+    ['Task', m.task && m.task !== 'chat' ? m.task : undefined],
+    ['Container image', m.image ? h('code', {}, m.image) : undefined],
+    ['Runtime source', m.runtime_repository ? h('span', {}, h('code', {}, m.runtime_repository), ' @ ',
+      h('code', {}, String(m.runtime_revision || '').slice(0, 12))) : undefined],
+    ['Supported', m.capabilities ? h('span', {}, m.capabilities.map((c) => h('span', { class: 'chip' }, c))) : undefined],
+    ['Not supported', m.not_supported ? m.not_supported.join('; ') : undefined],
   ]);
   const interim = m.interim && m.target ? h('div', { class: 'callout callout-danger', role: 'note' },
     h('strong', {}, 'Interim model. '), `Target: ${m.target.repository} @ ${String(m.target.revision).slice(0, 12)}. `,
@@ -198,8 +209,9 @@ export default {
     focusAlias = params && params[0] ? params[0] : null;
     clear(root);
     root.append(
-      h('p', { class: 'lead' }, 'The seven public aliases. Controls call the sanctioned lifecycle only: llama-swap for gx-mini / gx-fast / gx-reason, ',
-        'the orchestrator for gx-max, ComfyUI\'s own free call for media. There is no direct docker start for gx-max.'),
+      h('p', { class: 'lead' }, 'The eight public aliases. Controls call the sanctioned lifecycle only: llama-swap for gx-mini / gx-fast / gx-reason, ',
+        'the orchestrator for gx-max, the media router for gx-image / gx-video, the gx-music supervisor for gx-music. ',
+        'There is no direct docker start for gx-max. Profiles, pins and Maintenance live in ', h('a', { href: '#/resources' }, 'Resource Control'), '.'),
       h('div', { class: 'btn-row' },
         h('a', { class: 'btn btn-ghost btn-sm', href: '#/playground' }, 'Try a model in the playground →'),
         h('a', { class: 'btn btn-ghost btn-sm', href: '#/docs/models' }, 'Which model should I use? →')),

@@ -61,7 +61,12 @@ test('dashboard shows both nodes, rails, eight aliases and git sync', async ({ p
 test('models page: sanctioned controls, gx-max details and typed confirmation', async ({ page }) => {
   await login(page, PASSWORD);
   await gotoPage(page, 'models', 'Models');
-  await expect(page.locator('.model-card')).toHaveCount(7);
+  await expect(page.locator('.model-card')).toHaveCount(8);
+  const music = page.locator('#model-gx-music');
+  await expect(music).toContainText('ACE-Step/acestep-v15-xl-turbo');
+  await expect(music).toContainText('d4a0b288b83ebb7e25a8c0b32c573c22e134e8ee');
+  await expect(music).toContainText('music-generation');
+  await expect(music).toContainText('extract');
   const gx = page.locator('#model-gx-max');
   await expect(gx).toContainText('nvidia/DeepSeek-V4-Flash-0731-NVFP4');
   await expect(gx).toContainText('TP=2 · nnodes=2 · rank 0 on gx10-01 · rank 1 on gx10-02');
@@ -339,7 +344,9 @@ test('setup: kilo, open webui and generic pages with live values and a real test
   await expect(page.locator('input[name=models][value="gx-auto"]')).toBeChecked();
   await expect(page.locator('input[name=models][value="gx-max"]')).not.toBeChecked();
   await expect(page.locator('input[name=models][value="gx-music"]')).not.toBeChecked();
-  expect(problems).toEqual([]);
+  // the only console error is the deliberate 400 of the malformed key above
+  expect(problems.filter((x) => !x.includes('400 (Bad Request)'))).toEqual([]);
+  expect(problems.filter((x) => x.includes('400 (Bad Request)'))).toHaveLength(1);
 });
 
 test('api keys: create shows the secret once, list is masked, revoke needs the name', async ({ page }) => {
