@@ -438,13 +438,16 @@ class SnapshotTests(ControllerBase):
         self.assertTrue(self.ctrl.maintenance())
 
     def test_admission_explains_what_to_unload(self):
+        # gx-reason and pinned gx-music loaded, image weights on the router: 20 GiB left
+        self.cluster.node2.value = facts(20, pins={"gx-music": {"by": "admin", "since": 1.0}})
         view = self.ctrl.admission("gx-video")
         self.assertFalse(view["allowed"])
         self.assertEqual(view["state"], "UNLOADED")
-        self.assertEqual(view["blocking"], ["gx-image", "gx-reason", "gx-music"])
-        self.assertEqual(view["actions"][0]["unload"], ["gx-image"])
+        self.assertEqual(view["reclaim_gib"], 57.0, "the router frees its own image weights")
+        self.assertEqual(view["blocking"], ["gx-reason", "gx-music"])
+        self.assertEqual(view["actions"][0]["unload"], ["gx-reason"])
         explained = self.ctrl.explain("gx-video")
-        self.assertEqual(explained["reason"], "Waiting for gx-image to unload")
+        self.assertEqual(explained["reason"], "Waiting for gx-reason to unload")
         self.assertEqual((explained["need_gib"], explained["reserve_gib"]), (102.0, 30.0))
         self.assertNotIn("eta", explained)
         self.assertNotIn("eta_seconds", explained)
@@ -702,11 +705,18 @@ class SchedulingTests(ControllerBase):
         self.set_svc(media={"resident_alias": "gx-image", "held_by": "", "busy": False})
 
     def test_gate_allows_when_it_fits(self):
+        self.set_svc(media={"resident_alias": None, "held_by": "", "busy": False})
         self.cluster.node2.value = facts(110)
         self.assertIsNone(self.ctrl.creative_gate("gx-video"))
-        # 100 GiB is no longer enough for a cold video (72 + 30)
+        # 100 GiB is no longer enough for a cold video (72 + 30), and nothing can be freed
         self.cluster.node2.value = facts(100)
-        self.assertEqual(self.ctrl.creative_gate("gx-video")["code"], "freeing")
+        out = self.ctrl.creative_gate("gx-video")
+        self.assertEqual((out["code"], out["need_gib"]), ("insufficient_memory", 102.0))
+        # image weights on the router: it frees them itself, so 50 GiB + 57 GiB is enough
+        self.set_svc(media={"resident_alias": "gx-image", "held_by": "", "busy": False})
+        self.cluster.node2.value = facts(50)
+        self.assertIsNone(self.ctrl.creative_gate("gx-video"))
+        self.assertEqual(self.freed, 0, "the Control Center does not free ComfyUI for a media job")
 
     def test_gate_unloads_idle_music_for_a_video_with_if_idle(self):
         self.set_svc(media={"resident_alias": None, "held_by": "", "busy": False})
@@ -743,17 +753,24 @@ class SchedulingTests(ControllerBase):
         self.assertTrue(out["terminal"])
         self.assertEqual(out["code"], "exceeds_node")
 
-    def test_gate_frees_idle_weights_in_auto(self):
+    def test_gate_unloads_an_idle_gx_reason_in_auto(self):
+        self.set_svc(n2=[("gx-reason", "ready")], media={"resident_alias": "gx-image", "held_by": "", "busy": False})
+        self.cluster.node2.value = facts(40)
         out = self.ctrl.creative_gate("gx-video")
         self.assertEqual(out["code"], "freeing")
-        self.assertEqual(self.freed, 1)
+        self.assertEqual(self.cluster.unloaded, ["gx-reason"])
+        self.assertEqual(self.freed, 0)
         self.assertIn("making room for gx-video", self.audits[-1]["reason"])
 
-    def test_gate_waits_in_media_profile_instead_of_evicting_media(self):
-        self.ctrl._write_local("profile.json", {"profile": "media", "since": 1.0})
+    def test_gate_waits_in_text_profile_instead_of_evicting_gx_reason(self):
+        self.ctrl._write_local("profile.json", {"profile": "text", "since": 1.0})
+        self.set_svc(n2=[("gx-reason", "ready")], media={"resident_alias": "gx-image", "held_by": "", "busy": False})
+        self.cluster.node2.value = facts(40)
         out = self.ctrl.creative_gate("gx-video")
         self.assertEqual(out["code"], "insufficient_memory")
-        self.assertEqual(self.freed, 0)
+        self.assertEqual(out["reason"], "Waiting for gx-reason to unload")
+        self.assertIn("Text profile", out["next"])
+        self.assertEqual(self.cluster.unloaded, [])
 
     def test_gate_in_maintenance_explains(self):
         self.cluster.node2.value = facts(120, holds={"maintenance": {"active": True}})
@@ -765,6 +782,42 @@ class SchedulingTests(ControllerBase):
         out = self.ctrl.creative_gate("gx-image")
         self.assertEqual(out["code"], "engine_busy")
         self.assertIn("video-x", out["detail"])
+
+    def test_a_waiting_video_behind_its_own_loaded_weights_is_not_stuck(self):
+        # found live: the tile says WAITING, the router still holds the video weights (68 GiB)
+        self.set_svc(media={"resident_alias": "gx-video", "held_by": "", "busy": False,
+                            "memory": {"pending_gib": 0.0, "warm_growth_gib": 8.0, "resident_held_gib": 67.9}})
+        self.media.jobs = [{"id": "j1", "alias": "gx-video", "kind": "t2v", "phase": "waiting", "done": False,
+                            "waiting": {"reason": "Waiting for enough gx10-02 memory"}}]
+        self.cluster.node2.value = facts(46.3)
+        snap = self.ctrl.snapshot()
+        self.assertEqual(snap["runtimes"]["gx-video"]["state"], "WAITING")
+        view = self.ctrl.admission("gx-video", snap=snap)
+        self.assertEqual((view["allowed"], view["need_gib"]), (True, 38.0))
+        self.assertIsNone(self.ctrl.creative_gate("gx-video"))
+
+    def test_the_routers_own_weights_count_as_reclaimable(self):
+        # image weights resident (57 GiB measured), a video needs 102 GiB: the router frees them itself
+        self.set_svc(media={"resident_alias": "gx-image", "held_by": "", "busy": False,
+                            "memory": {"pending_gib": 0.0, "warm_growth_gib": 8.0, "resident_held_gib": 50.0}})
+        self.cluster.node2.value = facts(60)
+        view = self.ctrl.admission("gx-video")
+        self.assertEqual((view["allowed"], view["reclaim_gib"], view["need_gib"]), (True, 50.0, 102.0))
+        self.assertIn("media router frees first", view["reason"])
+        # resident size unknown: the footprint is assumed; the router re-checks for real
+        self.set_svc(media={"resident_alias": "gx-video", "held_by": "", "busy": False, "memory": {}})
+        self.cluster.node2.value = facts(40)
+        view = self.ctrl.admission("gx-video")
+        self.assertEqual((view["allowed"], view["reclaim_gib"]), (True, 72.0))
+        # a keyframe edit is never warm and still never fits
+        self.assertEqual(self.ctrl.admission("gx-video", variant="keyframe_edit")["code"], "exceeds_node")
+        # music is judged against the media weights as a tenant that can be freed
+        self.set_svc(media={"resident_alias": "gx-video", "held_by": "", "busy": False,
+                            "memory": {"resident_held_gib": 67.9}})
+        self.cluster.node2.value = facts(46)
+        view = self.ctrl.admission("gx-music")
+        self.assertFalse(view["allowed"])
+        self.assertEqual(view["actions"][0]["unload"], ["gx-video"])
 
     def test_router_pending_growth_is_subtracted(self):
         self.set_svc(media={"resident_alias": "gx-video", "held_by": "", "busy": False,

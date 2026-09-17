@@ -184,14 +184,17 @@ def enforced_need(alias: str, *, resident: bool, variant: str | None = None,
 
 def admission_view(alias: str, avail_gib: float | None, residents: dict[str, dict], *,
                    variant: str | None = None, pins: set[str] | None = None,
-                   holds: dict[str, bool] | None = None, warm_growth: float | None = None) -> dict:
+                   holds: dict[str, bool] | None = None, warm_growth: float | None = None,
+                   reclaim_gib: float = 0.0) -> dict:
     """Would `alias` be admitted now, and if not, what would make room?
 
     `residents` maps alias -> {"active": bool, "pending_gib": float} for
     tenants currently holding memory on the same node; ``pending_gib`` is
     memory a load or render has been granted but not taken yet. The rule is
     the enforcing components' (D-038): MemAvailable - pending - growth must
-    keep the 30 GiB reserve. Pure: unit-tested, no I/O.
+    keep the 30 GiB reserve. ``reclaim_gib`` is memory the enforcing component
+    frees by itself before the job (the media router drops its own resident
+    weights when the job needs other ones). Pure: unit-tested, no I/O.
     """
     p = POLICIES[alias]
     pins = pins or set()
@@ -225,12 +228,15 @@ def admission_view(alias: str, avail_gib: float | None, residents: dict[str, dic
     others = {a: r for a, r in residents.items() if a != alias and a in POLICIES}
     # memory another tenant has been granted but not taken yet (a load or a render in progress)
     pending = round(sum(float(r.get("pending_gib") or 0.0) for r in others.values()), 1)
-    effective = avail_gib - pending
+    effective = avail_gib - pending + max(0.0, reclaim_gib)
     out["pending_gib"] = pending
+    if reclaim_gib:
+        out["reclaim_gib"] = round(reclaim_gib, 1)
     if effective >= need:
         return {**out, "allowed": True, "code": "fits",
                 "reason": f"{avail_gib:.0f} GiB available"
                           + (f" ({pending:.0f} GiB still to be taken by a running load)" if pending else "")
+                          + (f" (+{reclaim_gib:.0f} GiB the media router frees first)" if reclaim_gib else "")
                           + (f", {growth:.0f} GiB + {RESERVE_GIB:.0f} GiB reserve needed" if alias != "gx-max"
                              else f", {need:.0f} GiB needed (takeover policy)"),
                 "blocking": [], "actions": []}
@@ -614,9 +620,14 @@ class ResourceController:
     # ========================================================== admission
     def residents(self, snap: dict, node: str) -> dict[str, dict]:
         out: dict[str, dict] = {}
+        media_resident = (snap.get("media_router") or {}).get("resident_alias")
         for alias in NODE2_TENANTS if node == "node2" else ("gx-mini", "gx-fast"):
             r = snap["runtimes"].get(alias) or {}
-            if r.get("state") in ("READY", "GENERATING", "LOADING", "DRAINING") or r.get("pending_gib"):
+            held = r.get("state") in ("READY", "GENERATING", "LOADING", "DRAINING") or bool(r.get("pending_gib"))
+            if alias in ("gx-image", "gx-video"):
+                # the tile may say WAITING while the weights are still loaded
+                held = held or media_resident == alias
+            if held:
                 out[alias] = {"active": r.get("state") in ("GENERATING", "LOADING"),
                               "pending_gib": float(r.get("pending_gib") or 0.0)}
         # ComfyUI holds one model set: the resident alias, not both
@@ -644,9 +655,22 @@ class ResourceController:
         node = "node1" if p.node == "node1" else "node2"
         holds = {"gxmax": snap["gxmax"]["hold"] or snap["gxmax"]["state"] in ("acquiring", "ready", "releasing"),
                  "maintenance": snap["maintenance"]}
-        view = admission_view(alias, snap["nodes"][node]["mem_available_gib"], self.residents(snap, node),
+        residents = self.residents(snap, node)
+        warm, reclaim = None, 0.0
+        if alias in ("gx-image", "gx-video"):
+            router = snap.get("media_router") or {}
+            on_router = router.get("resident_alias")
+            if on_router == alias and variant != "keyframe_edit":
+                warm = snap["runtimes"].get(alias, {}).get("warm_growth_gib")
+            if on_router in ("gx-image", "gx-video") and warm is None:
+                # the router frees its own resident weights before this job
+                held = (router.get("memory") or {}).get("resident_held_gib")
+                reclaim = float(held) if isinstance(held, (int, float)) else POLICIES[on_router].footprint_gib
+            residents = {a: r for a, r in residents.items()
+                         if a not in ("gx-image", "gx-video") or (a == alias and warm is not None)}
+        view = admission_view(alias, snap["nodes"][node]["mem_available_gib"], residents,
                               variant=variant, pins=set(snap["pins"]), holds=holds,
-                              warm_growth=snap["runtimes"].get(alias, {}).get("warm_growth_gib"))
+                              warm_growth=warm, reclaim_gib=reclaim)
         view["state"] = snap["runtimes"][alias]["state"]
         return view
 
