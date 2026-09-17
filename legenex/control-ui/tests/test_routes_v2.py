@@ -599,6 +599,21 @@ class PublicMusicApiTests(V2Base):
             self.assertEqual(self.api("GET", "/v1/music/model", self.k_music)[0], 200)
         self.assertEqual(len([c for c in self.litellm.calls if c[1] == "/key/info"]), 1)
 
+    def test_revoke_and_replace_take_effect_immediately(self):
+        key = fake_key()
+        self.key_infos[key] = {"key_alias": "short-lived", "models": ["gx-music"]}
+        try:
+            self.assertEqual(self.api("GET", "/v1/music/model", key)[0], 200)
+            del self.key_infos[key]  # LiteLLM no longer knows it
+            self.assertEqual(self.api("GET", "/v1/music/model", key)[0], 200)  # cached look-up
+            self.app.keys.revoke = lambda key_id: {"revoked": key_id, "name": "short-lived"}
+            self.login()
+            status, _, body = self.post(f"/api/keys/{'a' * 64}/revoke", {"confirm": True})
+            self.assertEqual(status, 200, body)
+            self.assertEqual(self.api("GET", "/v1/music/model", key)[0], 401)
+        finally:
+            self.key_infos.pop(key, None)
+
     def test_model_view_is_limited(self):
         status, _, body = self.api("GET", "/v1/music/model", self.k_music)
         self.assertEqual(status, 200)
@@ -643,6 +658,12 @@ class PublicMusicApiTests(V2Base):
         jid = job["id"]
         status, _, body = self.api("GET", f"/v1/music/{jid}/content?format=wav", self.k_music)
         self.assertEqual((status, body["error"]["code"]), (409, "not_ready"))
+        # Rendered on node 2 but not yet saved: the API says "saving", never "completed".
+        for _ in range(10):
+            if self.app.music.client.call("GET", f"/v1/music/{jid}")["status"] == "completed":
+                break
+        view = self.api("GET", f"/v1/music/{jid}", self.k_music)[2]
+        self.assertEqual((view["status"], view["imported"]), ("saving", False))
         self.completed_import(jid)
         status, headers, data = self.api("GET", f"/v1/music/{jid}/content?format=wav", self.k_music)
         self.assertEqual(status, 200)
@@ -660,6 +681,7 @@ class PublicMusicApiTests(V2Base):
         view = self.api("GET", f"/v1/music/{jid}", self.k_music)[2]
         self.assertEqual(view["tracks"][0]["files"]["wav"]["url"], f"/v1/music/{jid}/content?index=0&format=wav")
         self.assertTrue(view["imported"])
+        self.assertEqual(view["status"], "completed")
 
     def test_forbidden_and_unknown_operations(self):
         for path in ("/v1/music/load", "/v1/music/unload"):

@@ -1054,6 +1054,8 @@ def api_keys_op(h: Handler, key_id: str, op: str) -> None:
     if body.get("confirm") is not True:
         raise ValueError(f"{op} must be confirmed")
     result = h.app.keys.revoke(key_id) if op == "revoke" else h.app.keys.replace(key_id, user=h.session.username)
+    # The music API caches key look-ups; a revoked or replaced key must stop working now.
+    h.app.api_keys_cache.clear()
     h.app.actions.audit(user=h.session.username, ip=h._client_ip(), action=f"keys.{op}", outcome="ok", key=key_id)
     h._json(200, result)
 

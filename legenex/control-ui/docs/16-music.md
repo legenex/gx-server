@@ -75,10 +75,20 @@ curl -s -o song.mp3 "http://100.105.214.61:8090/v1/music/mus-…/content?index=0
 | POST | `/v1/music/extend` | add `seconds` at the `end` or `start` |
 | POST | `/v1/music/uploads` | raw audio body (WAV/FLAC/MP3/OGG/M4A, ≤ 64 MB), header `X-Filename` |
 | GET | `/v1/music/{id}` | status and tracks |
-| GET | `/v1/music/{id}/content?index=&format=` | WAV / FLAC / MP3 (409 until saved) |
+| GET | `/v1/music/{id}/content?index=&format=` | WAV / FLAC / MP3 (409 while the job is not `completed`) |
 | GET | `/v1/music/{id}/lineage` | parents and children |
 | POST | `/v1/music/{id}/cancel` | cancel (a running render finishes and is discarded) |
 | GET | `/v1/music/jobs`, `/v1/music/model`, `/v1/music/tags` | list, capabilities, tag suggestions |
+
+**Job status:**
+
+* `queued` → `waiting_for_resource` → `loading_model` → `generating` →
+  `saving` → `completed` (or `failed` / `cancelled`).
+* `completed` is reported only after the tracks are saved to the Library, so
+  every format can be downloaded at that point.
+* Poll every 2-5 s.
+* A key revoked or replaced in the Control Center stops working immediately.
+  A key revoked elsewhere stops within 15 s.
 
 Load and unload are not part of the API (403). Use **Resource Control**
 instead.

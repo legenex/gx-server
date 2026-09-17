@@ -322,7 +322,9 @@ def _key_identity(h: Handler) -> dict | None:
         ident = None
     if len(h.app.api_keys_cache) > 500:
         h.app.api_keys_cache.clear()
-    h.app.api_keys_cache[digest] = (now + (60 if ident else 10), ident)
+    # Short positive TTL: a key revoked outside the Control Center (which clears
+    # this cache itself) stops working within 15 s.
+    h.app.api_keys_cache[digest] = (now + (15 if ident else 10), ident)
     return ident
 
 
@@ -349,6 +351,11 @@ def _public_job(job: dict) -> dict:
                       for fmt, meta in (t.get("files") or {}).items()}
     out["links"] = {"self": f"/v1/music/{jid}", "lineage": f"/v1/music/{jid}/lineage",
                     "content": f"/v1/music/{jid}/content"}
+    if out.get("status") == "completed" and out.get("phase") == "saving":
+        # Rendered on gx10-02 but not yet in the Library: content would be 409.
+        # "completed" is reported only once every format can be downloaded.
+        out["status"] = "saving"
+        out["detail"] = out.get("phase_detail") or "saving the tracks"
     for k in ("submitted_via", "import_error"):
         out.pop(k, None)
     return out
