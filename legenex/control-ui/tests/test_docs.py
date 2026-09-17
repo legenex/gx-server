@@ -9,6 +9,8 @@ from support import UI_DIR
 from gx_control_ui.docs import DocLibrary, render
 
 REQUIRED_SECTIONS = [
+    "Kilo Code setup", "Provider fields", "Models and capability toggles", "Open WebUI setup", "Other clients",
+    "Hermes, AgentOS, Buzz and other agent frameworks", "Media: generate and edit", "Model Manager",
     "Getting started", "Architecture", "Which model should I use?", "gx-mini", "gx-fast", "gx-reason",
     "gx-max", "gx-auto", "gx-image", "gx-video", "API quickstart", "curl examples", "Python examples",
     "JavaScript examples", "Vision input", "Tool calling", "Image generation", "Video generation",
@@ -66,6 +68,7 @@ class TestLibrary(unittest.TestCase):
     def test_real_docs_cover_every_required_section(self):
         lib = DocLibrary(UI_DIR / "docs")
         titles = {s["title"].lower() for p in lib.index() for s in p["sections"]}
+        titles |= {p["title"].lower() for p in lib.index()}
         missing = [s for s in REQUIRED_SECTIONS if s.lower() not in titles]
         self.assertEqual(missing, [], f"docs are missing sections: {missing}")
 

@@ -386,7 +386,8 @@ class MediaJobs:
         identity = self.model_identity(status.get("workflow") or "")
         width, _, height = str(status.get("size") or "x").partition("x")
         asset = self.library.add(NewAsset(
-            type="video", ext=ext, operation=kind, data_path=tmp, title=p.get("title"),
+            type="video", ext=ext, operation="generate" if kind == "t2v" else kind, data_path=tmp,
+            title=p.get("title"),
             model_alias="gx-video", model_repo=identity.get("repository"),
             model_revision=identity.get("revision"), workflow=status.get("workflow"),
             prompt=p.get("prompt"), negative_prompt=p.get("negative_prompt"), seed=status.get("seed"),

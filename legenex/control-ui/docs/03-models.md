@@ -87,6 +87,20 @@ schema or system prompt:
 A tool-result turn in an agent loop stays on the tier of the original task.
 `max_tokens` is capped to the chosen tier's output limit.
 
-## gx-image and gx-video
+## gx-image
 
-See **Media: generate and edit**.
+* **Generation:** Qwen-Image-2512 fp8 with the Lightning 4-step LoRA and, by
+  default, the NSFW-capable perpetual3x adapter (exact 2512 base,
+  non-commercial licence). About 30 s for 1024×1024.
+* **Editing and variations:** Qwen-Image-Edit-2511 fp8mixed with its
+  Lightning 4-step LoRA. The optional NSFW edit adapter is a Qwen-Image
+  (original) LoRA, not an exact 2511 match, so it is off unless requested.
+* Details: [Media: generate and edit](/#/docs/media).
+
+## gx-video
+
+* **Text-to-video and image-to-video:** Wan 2.2 A14B (two experts each) with
+  the rzgar uncensored LightX2V 4-step LoRAs; 640×640, 3 s in about a minute.
+* **Video editing:** the first frame is edited with Qwen-Image-Edit-2511 and
+  the Wan 2.2 image-to-video experts re-render the clip from it.
+* Details: [Media: generate and edit](/#/docs/media).

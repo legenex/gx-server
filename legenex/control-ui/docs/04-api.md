@@ -232,6 +232,18 @@ print(final.choices[0].message.content)
 `gx-mini` supports tools too; the gateway buffers its streaming output
 (`fake_stream`) because llama.cpp's streaming tool parser is unreliable.
 
+## Image generation
+
+`POST /v1/images/generations` with `model: gx-image`; image edits use
+`POST /v1/images/edits`. Examples and parameters:
+[Media: generate and edit](/#/docs/media).
+
+## Video generation
+
+`POST /v1/videos` (text-to-video, or image-to-video with `input_reference`),
+then poll `GET /v1/videos/{id}` and download `GET /v1/videos/{id}/content`.
+Video edits use `POST /v1/videos/edits` or `/v1/videos/{id}/remix`.
+
 ## Images and video
 
 Image generation, image editing, text-to-video, image-to-video and video
