@@ -319,7 +319,7 @@ test('model manager: inventory, alias bindings and delete protection', async ({ 
   const problems = watchPage(page);
   await login(page, PASSWORD);
   await gotoPage(page, 'manager', 'Model Manager');
-  await expect(page.getByText('Alias bindings')).toBeVisible();
+  await expect(page.locator('caption', { hasText: 'Alias bindings' })).toBeVisible();
   await expect(page.locator('table').first()).toContainText('dealignai/DeepSeek-V4-Flash-0731-CRACK-NVFP4');
   const live = page.locator('tr', { hasText: 'Qwen3.5-4B-Uncensored-HauhauCS-Aggressive' }).filter({ hasText: 'gx10-01' }).last();
   await expect(live.getByRole('button', { name: 'Delete' })).toBeDisabled();
