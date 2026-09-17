@@ -445,7 +445,6 @@ class ReserveTests(unittest.TestCase):
         # ComfyUI kept the video weights across a router recreate: 46 GiB left,
         # but the new router's record says nothing is resident
         self.node.set(46)
-        svc = self.service()
         frees = self.comfy.frees
 
         def comfy_free(**kw):
@@ -453,10 +452,14 @@ class ReserveTests(unittest.TestCase):
             self.node.set(114)
 
         self.comfy.free = comfy_free
-        svc.slot.acquire("busy", 1.0)
-        self.assertFalse(svc.reconcile_residency(), "never while a job holds the slot")
-        svc.slot.release()
-        self.assertTrue(svc.reconcile_residency())
+        svc = self.service()
+        # The janitor thread also reconciles at start; whichever caller wins,
+        # the free happens exactly once and never while the slot is held.
+        if svc.slot.acquire("busy", 1.0):
+            self.assertFalse(svc.reconcile_residency(), "never while a job holds the slot")
+            svc.slot.release()
+        svc.reconcile_residency()
+        self.assertFalse(svc._residency_unknown)
         self.assertEqual(self.comfy.frees, frees + 1)
         self.assertFalse(svc.reconcile_residency(), "only once")
         self.assertEqual(self.done(self.video(svc)).status, "completed")
