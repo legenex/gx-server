@@ -172,6 +172,8 @@ def main() -> int:
         "sglang": {"ok": False, "status": 0},
     }
     app._fabric_cache = {"at": time.time() + 10**9, "192.168.100.11": "open", "192.168.101.11": "open"}
+    # API keys: the stub upstream plays LiteLLM; a dummy admin credential stands in.
+    app.keys._master = lambda: "e2e-dummy-admin"
     # Model Manager: synthetic inventory (no SSH, no /srv/models).
     app.manager._node1_inventory = lambda: {
         "disk": {"total": 900 * GIB, "free": 160 * GIB, "used": 740 * GIB}, "manifests": [],
