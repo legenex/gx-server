@@ -42,7 +42,14 @@ Owner: LIV specialist. Contract: `coordination/BUILD_V3.md`. Newest entries firs
 
 ## Measured footprint (PLT parses this line)
 
-FOOTPRINT gx-live node=gx10-02 cold_gib=34 resident_gib=31 startup_s=102 measured=2026-09-17 evidence=/srv/logs/acceptance/build-v3/liv/probe1-feasibility
+**Corrected by the GPU acceptance on 2026-09-17 22:0x** (was `resident_gib=31 startup_s=102
+evidence=.../probe1-feasibility`). `cold_gib` stays 34: it is the admission estimate, it was never
+exceeded, and the measured node growth was 30.6 GiB. `startup_s` rises to 128 because both real cold
+loads today took 123-128 s, not 102 s - probe 1 measured the weight load alone on a quiet node, while a
+real cold start also pays the per-session speaker-prompt encode and shares the disk with whatever else
+is loading (gx-voice, then gx-music, were resident/loading during these two).
+
+FOOTPRINT gx-live node=gx10-02 cold_gib=34 resident_gib=30 startup_s=128 measured=2026-09-17 evidence=/srv/logs/acceptance/build-v3/liv/acceptance
 
 * Weights on GPU after load: 20.7 GiB (torch allocated). During speech turns torch holds 24-26 GiB
   (reserved up to 29.5 GiB after a native-duplex test). CUDA context, ONNX speaker model and Python
@@ -54,6 +61,82 @@ FOOTPRINT gx-live node=gx10-02 cold_gib=34 resident_gib=31 startup_s=102 measure
 * Cold start: 97 s weight load (disk-bound while other downloads ran; 94-186 s observed) + 5 s TTS init.
 
 ## Log
+
+- 2026-09-17 22:05: **GPU ACCEPTANCE PASSED on the deployed stack** (evidence
+  `/srv/logs/acceptance/build-v3/liv/acceptance/`). Real MiniCPM-o 4.5, real microphone audio, real
+  camera frames, real tools, on gx10-02 while gx-voice and then gx-music were also resident. Node 2 was
+  left **idle**: engine unloaded, container gone, ledger empty, 109.8 GiB MemAvailable.
+
+  **Two real bugs were found and fixed, both invisible to the offline suite:**
+
+  * **B-LIV-4 (shipped fix, `gx_live/service.py`): a warm model had a dead microphone.** The engine gates
+    microphone audio on `client_attached`, which is decided when the engine link opens. On a warm model
+    that happens *before* the browser's WebSocket arrives (create -> link -> connect), so the engine was
+    told "no client" and silently dropped every mic frame for the whole session; typed input still
+    worked, which is why nothing looked broken. `serve_client` now announces the attach whenever an
+    engine link exists, not only when the engine is already ready. Regression test
+    `test_client_attached_reaches_the_engine_when_it_linked_first` **fails on the pre-fix code**
+    (`('json', 'client.attached') not found in []`) and passes after - the stub engine gained a
+    `ready_delay` so it reproduces the real 1.5 s window. Supervisor suite is now **30 tests**.
+  * **B-LIV-5 (shipped fix, `web/js/pages/live.js`): short sessions lost their turn timings.** Turns were
+    only flushed at 5 pending / every 15 s / on `finish()`, so a one-turn call ended by navigation wrote
+    nothing to `live_turns` (observed: 0 rows after a real browser session). Every finished turn is now
+    posted immediately, and the page's cleanup flushes before it tears down. Verified: a real browser
+    turn now lands as `response=1 trigger=speech status=completed first_audio_ms=1764 turn_ms=6846
+    audio_ms=11240 assistant_chars=171`.
+  * Also hardened: the delegation "why am I waiting" hint now runs off the answer's path (it called
+    Resource Control inline), and the offline spec waits for a session to be released before the next
+    test starts.
+
+  **Cold start (1 Hz MemAvailable sampling, `mem.tsv`, 661 samples / 666 s):**
+
+  | | |
+  |---|---|
+  | baseline before the load | 92.0 GiB |
+  | minimum during load + whole session | 61.4 GiB |
+  | growth | **30.6 GiB** (admission estimate 34 GiB was never exceeded) |
+  | headroom at the minimum | 31.4 GiB above the 30 GiB reserve - **the reserve was never breached** |
+  | startup | engine **128.1 s**, supervisor `load_ms` 131.0 s, client create->ready 132.0 s |
+  | GPU allocated after load | 22.68 GiB (engine log) |
+  | resident (supervisor `/health`) | 26.3-30.1 GiB while a session ran |
+  | after unload | 110.0 GiB |
+
+  A second cold start earlier the same hour (while gx-voice was loading) took **124.9 s**. Probe 1's
+  102 s was the weight load alone on a quiet node; the FOOTPRINT line above is corrected to 128 s.
+
+  **Acceptance items, each with its evidence and how it was measured:**
+
+  | Item | Result | Evidence / method |
+  |---|---|---|
+  | cold start + sampling | 128.1 s, growth 30.6 GiB, reserve never breached | `mem.tsv` (1 Hz), `acceptance.json.cold_start`, engine log |
+  | guarded load path | `gx_guard_run` admitted it: "admitted: 109.1GiB projected of 121.0GiB node total; MemAvailable leaves 44.8GiB (reserve floor 30.0GiB)"; ledger `gx-live-engine class=medium 34 GiB` | `/srv/logs/gx-live/gx-live.log`, `node2-residency.json` |
+  | real spoken conversation | 4.04 s of real speech in, **ASR: "Hello, can you tell me what a fossil is in two sentences?"**, answer "A fossil is the preserved remains or impression of an ancient organism..." | `events.jsonl`, `turn1_assistant.wav` (13.16 s, peak -1.89 dBFS) |
+  | first-audio latency | **1857 ms** (server), median 1857 / min 1621 / max 1867 over 4 spoken responses; client-side end-of-speech -> first audio frame 2457 ms (the 700 ms VAD window is inside that) | `acceptance.json.turn1_spoken`, `record.metrics.latency` |
+  | turn latency | median **3569 ms** (min 1588, max 8424) over 8 turns | `record.metrics.latency.turn_ms` |
+  | barge-in | **169 ms** server-measured (speech detected -> generation stopped), reason `barge_in`; assistant audio frames froze at 2 and stayed 2 for 1.5 s afterwards | `acceptance.json.barge_in`, `turn2_interrupted.wav` (2.00 s) |
+  | live camera vision | **"I see a red circle, a blue square, and the number seven."** for a JPEG holding exactly a red circle, a blue square and a black 7 | `vision_frame.jpg`, `turn4_vision.wav`, `acceptance.json.vision.mentions` |
+  | `delegate_to_gx` | model emitted `{"model":"gx-fast","task":"Write a haiku about GPUs."}`; gateway answered in **494 ms**, `routed_to=gx-fast`, and the haiku was spoken back | `live_tool_calls` row, `run.log` |
+  | `get_time` | 2 ms, spoken back as "It's currently 9.57 PM on Thursday, September 17th, ... South African Standard Time" | `live_tool_calls`, `run.log` |
+  | `search_library` | 5 matches in 6 ms, **5 `live_session_assets` provenance rows** joined to real `assets` ids | `live_session_assets`, `record.assets` |
+  | `fetch_url` | https://example.com through netguard in 154 ms, real page text returned | `live_tool_calls`, `run.log` |
+  | Save transcript / Delete conversation | 16 entries saved and read back; after delete **0 entries, `content_purged=1`** | `acceptance.json.transcript` |
+  | clean shutdown, route change | session `ended` / `completed` the moment the page navigated away | `browser_leg.json` |
+  | clean shutdown, page-hide | session `ended` / `abandoned` after the documented 60 s reconnect grace; `gx-live` back to `ready`, `active_sessions 0` - **the model is never left held** | `browser_leg.json`, node-2 summary |
+  | DB rows | `live_sessions` 3, `live_events` 16 (`session.created`, 4x `tool.call`+`tool.result`, `transcript.saved`, `session.ended`, `content.deleted`), `live_tool_calls` 4 **with argument names only** (`["model","task"]`, `["query","type"]`, `["url"]`, `[]`), `live_session_assets` 5, `live_turns` 1 (after the B-LIV-5 fix) | `sqlite3` on the live DB |
+  | memory returns after unload | `POST /v1/live/unload {"if_idle":true}` -> `returned_gib 26.1, container_gone true, ledger_released true, engine_processes 0, verified true` in 4.2 s; independently: container 0, ledger `[]`, 0 engine processes, 109.8 GiB | unload response + direct checks |
+
+  **Browser leg** (`browser_leg.mjs`, real Chromium on **https://127.0.0.1:8443**, `isSecureContext: true`,
+  fake device fed from `browser_mic.wav` = real recorded speech): the Live page's own capture worklet
+  streamed the speech, the page showed "First audio (median) 1764 ms / Turn (median) 6846 ms / Assistant
+  audio 11.2 s / Model load 131.0 s", the camera preview ran at 1280 px, Save transcript wrote 2 lines,
+  and there were **no console or page errors**. Screenshot: `browser-live-session.png`.
+
+  **What I did NOT verify:** I cannot listen. The four assistant WAVs are real 24 kHz PCM with sane
+  levels (peak -1.89 to -5.16 dBFS, RMS ~-23 dBFS, 92-98 % non-zero samples), so they are certainly not
+  silence, and their *content* is confirmed by the model's own captions and by the ASR of what it heard -
+  but whether the speech *sounds* natural is a subjective judgement a human still has to make. The four
+  WAVs are in the evidence directory for exactly that.
+
 
 - 2026-09-17 21:2x: **Control Center, Live page and offline acceptance (no GPU workload started).**
 
@@ -293,7 +376,7 @@ and after `auth.PasswordStore(...)`, before `srv.build`:
 The FOOTPRINT line PLT parses is unchanged and already in this file:
 
 ```
-FOOTPRINT gx-live node=gx10-02 cold_gib=34 resident_gib=31 startup_s=102 measured=2026-09-17 evidence=/srv/logs/acceptance/build-v3/liv/probe1-feasibility
+FOOTPRINT gx-live node=gx10-02 cold_gib=34 resident_gib=30 startup_s=128 measured=2026-09-17 evidence=/srv/logs/acceptance/build-v3/liv/acceptance
 ```
 
 ### 10. Restarts I did not do
@@ -323,12 +406,48 @@ acceptance run needs, in this order:
    a clean end, with evidence under `/srv/logs/acceptance/build-v3/liv/acceptance/`. Roughly 25 minutes,
    with the node held for gx-live for that time.
 
+## Open requests after the acceptance (lead)
+
+### A. One line in `legenex/control-ui/e2e/fixture_server.py` (blocks 2 of my 5 offline tests)
+
+The App block correctly uses `start_threads=not cfg.offline`, and the E2E fixture builds the app with
+`offline=True` - so in the offline suite my **tool executor thread never runs** and a tool call sits at
+`running` forever. The fixture already tweaks services after `srv.build` (`app.media.poll_interval`,
+`app.voice.poll_interval`, `app.music.poll_interval`); please add next to those:
+
+```python
+    app.live.start_threads = True   # Build V3 LIV: run the tool executor in the offline suite
+```
+
+With the executor enabled the whole spec passed 5/5 (I ran it that way through a scratchpad copy of the
+fixture before your integration landed). Against the fixture as it stands today it is **3 passed,
+2 failed**: `a tool call runs on the Control Center and is shown` (the tool never completes) and
+`the transcript is saved only when asked` (it inherits the busy session from the failed test).
+Nothing else is needed - production is unaffected, this is test wiring only.
+
+### B. Re-sync the corrected FOOTPRINT into `legenex/models/registry.json`
+
+The line PLT parses now reads:
+
+```
+FOOTPRINT gx-live node=gx10-02 cold_gib=34 resident_gib=30 startup_s=128 measured=2026-09-17 evidence=/srv/logs/acceptance/build-v3/liv/acceptance
+```
+
+so `aliases.gx-live.measured_footprint` should become `cold_gib 34, resident_gib 30, startup_s 128`,
+`measured_on 2026-09-17`, `evidence /srv/logs/acceptance/build-v3/liv/acceptance`.
+
+### C. Restarts I did not do
+
+`gx-live.service` on gx10-02 was restarted **by me** at 21:53 to pick up the B-LIV-4 fix (it is my
+service; that restart is what unloaded the engine, which also produced the unload evidence). The
+Playground and Control Center were not restarted by me - and note the Control Center restarted at
+21:59:54 during my browser leg, which correctly closed the in-flight session as `restarted`
+(`LiveManager._resume`), exactly as designed.
+
 ## Blockers
 
-* **B-LIV-1 (blocking the live acceptance, needs the lead):** items 1-8 above are in shared files I must
-  not edit. Until they land there is no `App.live`, so every `/api/live/*` request 500s, the page is not
-  in the nav, and the Playground proxy answers 404 for `/api/live/*`. Everything on my side is written and
-  green against a staged copy of exactly those lines.
+* ~~**B-LIV-1**~~ **CLEARED 2026-09-17 21:5x**: the lead applied all ten integration items; the Live page
+  is live in the deployed Playground and the GPU acceptance ran through it end to end.
 * **B-LIV-2 (not mine to fix, for information):** `mypy gx_control_ui` is red on other workstreams'
   in-progress code — 12 errors in 8 files at 21:30 (`activity.py`, `node2_services.py` x3, `music_ai.py`,
   `resources.py`, `image_catalog.py`, `music_reference.py` x2, `routes_plt.py` x2), so QA step 3 fails

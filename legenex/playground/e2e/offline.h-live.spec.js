@@ -19,11 +19,18 @@ test.use({
 let openSession = null;
 
 test.afterEach(async ({ page }) => {
-  // gx-live holds the model for one session at a time: never leave one open.
+  // gx-live holds the model for one session at a time: never leave one open,
+  // and do not start the next test until the supervisor has really released it.
   if (!openSession) return;
-  await page.request.post(`/api/live/sessions/${openSession}/end`, { data: { reason: 'abandoned' } })
-    .catch(() => {});
+  const sid = openSession;
   openSession = null;
+  await page.request.post(`/api/live/sessions/${sid}/end`, { data: { reason: 'abandoned' } }).catch(() => {});
+  for (let i = 0; i < 20; i += 1) {
+    const res = await page.request.get(`/api/live/sessions/${sid}?refresh=1`).catch(() => null);
+    const body = res ? await res.json().catch(() => null) : null;
+    if (!body || body.state === 'ended') break;
+    await new Promise((r) => setTimeout(r, 500));
+  }
 });
 
 async function startSession(page) {
