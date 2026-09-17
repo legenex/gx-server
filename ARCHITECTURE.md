@@ -1,7 +1,7 @@
 # gx-cluster architecture
 
 Two-node NVIDIA DGX Spark / ASUS GX10 local AI cluster.
-Last reviewed: 2026-09-14.
+Last reviewed: 2026-09-17 (D-036 gx-music, D-037 Playground / Resource Control / Storage).
 
 ---
 
@@ -13,14 +13,15 @@ explicit human decision. If a task seems to require changing one, stop and ask.
 | # | Decision | Why |
 |---|---|---|
 | L-1 | **Two separate 128 GB nodes.** They are NOT a coherent 256 GB pool. | Physical reality. Distributed frameworks may shard across both, but memory budgeting is always per-node. |
-| L-2 | **Node roles are fixed.** gx10-01 = control/dev/gateway/lifecycle/gx-mini/gx-fast. gx10-02 = compute/gx-reason/media/ComfyUI/rank1. | Keeps the control plane off the node that gets evicted for media work. |
+| L-2 | **Node roles are fixed.** gx10-01 = control/dev/gateway/lifecycle/gx-mini/gx-fast plus the browser-facing Control Center and GX-Playground. gx10-02 = compute/gx-reason/media/ComfyUI/gx-music/rank1. | Keeps the control plane off the node that gets evicted for media work. |
 | L-3 | **Tailscale is management only.** Model and distributed traffic run ONLY on the ConnectX/RoCE fabric. | Tailscale is a userspace WireGuard mesh; routing NCCL over it would collapse throughput. |
 | L-4 | **Kernel pinned to `6.17.0-1032-nvidia` on both nodes.** Never upgrade to 7.0. | Kernel 7.0 caused `ibv_reg_mr_iova2 failed: Cannot allocate memory` during FlashInfer autotune on gx10-02. See D-001. |
 | L-5 | **Do not attempt GPUDirect RDMA**, `nvidia-peermem`, GDRCopy, or `NCCL_NET_GDR_LEVEL` hacks. | DGX Spark does not support GPUDirect RDMA in this topology. NET/IB with staged pinned memory is the expected and working path. |
-| L-6 | **gx-max = SGLang, TP=2, 2 nodes, DeepSeek-V4-Flash-0731 NVFP4.** Since D-032 (2026-09-17), the served checkpoint is the abliterated `dealignai/DeepSeek-V4-Flash-0731-CRACK-NVFP4` (cookbook cell `fp4`). `nvidia/DeepSeek-V4-Flash-0731-NVFP4` (cell `nvfp4`) is the rollback. Never vLLM. Never a different model family. Never a silent downgrade. | This is the flagship tier and the only reason the second node exists in the inference path. |
+| L-6 | **gx-max = SGLang, TP=2, 2 nodes, DeepSeek-V4-Flash-0731 NVFP4.** Since D-032 (2026-09-17), the served checkpoint is the abliterated `dealignai/DeepSeek-V4-Flash-0731-CRACK-NVFP4` (cookbook cell `fp4`). The former rollback `nvidia/DeepSeek-V4-Flash-0731-NVFP4` (cell `nvfp4`) was deleted on 2026-09-17 (B-026); a rollback needs a fresh download. Never vLLM. Never a different model family. Never a silent downgrade. | This is the flagship tier and the only reason the second node exists in the inference path. |
 | L-7 | **Do not modify** MTU, Netplan, RDMA setup, ConnectX firmware, or routing without concrete evidence of a fault. | The fabric is measured-good (~21.3 GB/s bus bandwidth, zero errors). |
 | L-8 | **`/swapfile-sglang` (48 G) stays on both nodes.** | Load-time OOM mitigation for gx-max weight loading. |
 | L-9 | **The stack is LiteLLM + llama-swap + llama.cpp + vLLM + SGLang + ComfyUI.** Do not replace it with Ollama. | Each engine is chosen per tier for a concrete reason; see MODELS.md. |
+| L-10 | **Eight public aliases** (D-036): gx-mini, gx-fast, gx-reason, gx-max, gx-auto, gx-image, gx-video on LiteLLM, and gx-music through the gx10-01 music API. No gx-vision. | The user approved gx-music as the eighth alias on 2026-09-17. |
 
 ## 2. Physical layout
 
@@ -38,8 +39,10 @@ explicit human decision. If a task seems to require changing one, stop and ask.
             │ llama-swap:8080│                                     │ llama-swap :8080│
             │ gx-mini   :19001                                     │                 │
             │ gx-fast        │                                     │                 │
-            │ gx-max rank 0  │                                     │                 │
-            │           :30000                                     │                 │
+            │ gx-max rank 0  │                                     │ gx-music :18820 │
+            │           :30000                                     │  (ACE-Step 1.5) │
+            │ Control :8088  │                                     │ media router    │
+            │ Playground:8090│                                     │          :18800 │
             └───────┬────────┘                                     └────────┬────────┘
                     │                                                       │
       rail A  192.168.100.10 ◄────────── ConnectX / RoCE ──────────► 192.168.100.11
@@ -234,8 +237,9 @@ message fingerprint (`GET /routing/decisions`).
 
 | State | gx10-01 | gx10-02 |
 |---|---|---|
-| Normal | LiteLLM, orchestrator, llama-swap, gx-mini hot, gx-fast on demand | gx-reason on demand, ComfyUI on demand |
-| gx-max active | rank 0 + control plane only; gx-mini/gx-fast evicted | rank 1 only; gx-reason and ComfyUI evicted |
+| Normal | LiteLLM, orchestrator, llama-swap, gx-mini and gx-fast resident, Control Center, GX-Playground | gx-reason, ComfyUI and gx-music on demand (music supervisor always up) |
+| Maintenance | control plane only for new work; resident text tiers stay | running jobs finish; idle on-demand models unload; no new heavy launch |
+| gx-max active | rank 0 + control plane only; gx-mini/gx-fast evicted | rank 1 only; gx-reason, ComfyUI and the music engine evicted (supervisor stays, jobs wait) |
 | Recovering | gateway + orchestrator restart first, then gx-mini | media/reason start on demand |
 
 gx-max is never started at boot.
@@ -406,3 +410,94 @@ HF content is treated as data: no model-card command is run and
 `trust_remote_code` is never enabled. The unit limit is `MemoryMax=1G` (uploads
 are streamed to disk, capped at 150 MB). A loopback-only `acceptance`
 account exists for automated live tests.
+
+
+## 12. gx-music (D-036)
+
+```
+browser ──► GX-Playground :8090 ──► Control Center backend :8088 ──(fabric, bearer)──► gx-music supervisor
+API key ──► GX-Playground /v1/music ─┘         │                                        192.168.100.11:18820
+                                               │ imports WAV/FLAC/MP3 (sha256)              │ admission: resource_guard
+                                               ▼                                            ▼ (32 GiB + 30 GiB reserve)
+                                     Media Library (gx10-01)                   ACE-Step engine 127.0.0.1:18811
+                                                                               (container gx-music, on demand)
+```
+
+* The supervisor (stdlib, systemd user unit, starts at boot) is the only
+  ingress; the engine is loopback-only behind its own key.
+* **gx-max wins.** Engine loads are refused, and a loaded engine is unloaded,
+  while any of these holds:
+  * a rank1 container exists;
+  * the deadman is alive;
+  * node 2's llama-swap is stopped;
+  * `node2.gxmax-hold` is fresh (written by gx-max-start before rank 1).
+
+  Interrupted renders are re-queued.
+* **ComfyUI eviction** goes only through the media router's free path, so the
+  router's resident-model record stays true and its admission stays correct.
+* **Maintenance** (`node2.maintenance-hold`): no new loads; the idle engine
+  unloads. **Pins** keep the engine past its idle timer only above the reserve.
+
+## 13. GX-Playground (D-037)
+
+The creative app on gx10-01:8090 (loopback + Tailscale). It is a static
+single-page app plus an allow-listed streaming reverse proxy to the Control
+Center backend.
+
+* **One backend.** There is one Library (SQLite schema 2 with audio), one
+  media queue, one music integration and one session store. The cookie is
+  host-scoped, so one sign-in covers both apps.
+* **Proxy trust.** The proxy adds a 0600 shared token and the client address;
+  the backend trusts that address only with the token from loopback.
+* **Refused through the Playground:** runtime controls, storage cleanup and
+  Maintenance.
+* **Control Center.** It no longer contains Create or Media Library; it links
+  to the Playground.
+
+## 14. Resource Control (D-037)
+
+The Resource Controller (`gx_control_ui/resources.py`) explains and
+coordinates. It never replaces an enforcing component:
+
+| Enforcer | Scope |
+|---|---|
+| `resource_guard` | 30 GiB reserve; takeover policy; Maintenance hold |
+| media router 2.3 | cold 60/76/110 GiB, warm 8 GiB; holds; pins |
+| music supervisor | guard admission; holds; pins |
+| gx-reason start command | Maintenance hold (guard directory mounted read-only) |
+| gx-max lifecycle | drain, takeover admission, safety rules |
+
+**Profiles.** Auto, Text, Media, Music, Max and Maintenance are priority and
+preemption preferences, stored in `state/guard/profile.json` on both nodes.
+
+* The creative queue asks the controller before it submits. It may free
+  idle, unpinned tenants as the profile allows.
+* Otherwise the job waits with a reason: memory, gx-max, Maintenance or a
+  busy engine.
+
+**Manual controls.** LOAD, UNLOAD, DRAIN, PIN and UNPIN use only sanctioned
+paths: ActionRunner, the router's free path, and the supervisor's load and
+unload.
+
+**Compatibility.** Computed from placement, live MemAvailable and the
+measured footprints.
+
+## 15. Storage & Cleanup (D-037)
+
+A two-node scanner (`storage_scan.py`, run locally and over SSH as a fixed
+script) sorts candidates into SAFE, REVIEW and PROTECTED.
+
+* **Protection** is based on the registry, bindings, rollbacks, gx-max.conf,
+  the media workflows (by file name), the gx-music weights, running
+  containers' mounts, active downloads and builds, secrets, Git, state and
+  the Library.
+* **Candidate ids.** The browser sees only opaque HMAC ids. The owning node
+  re-classifies each item right before deleting it.
+* **REVIEW items** need Maintenance and a typed confirmation.
+* **Docker:** images are removed by id and never while running or referenced
+  by configuration; the build cache is removed with `builder prune`. There is
+  no `system prune -a`.
+* **Health:** CRITICAL below 30 GiB free, LOW below 75 GiB, WATCH below
+  150 GiB.
+* **Model Manager disk preflight:** blocks an install before the download if
+  the peak would leave less than 50 GiB free.

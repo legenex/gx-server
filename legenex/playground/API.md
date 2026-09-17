@@ -136,7 +136,9 @@ The remaining Library endpoints:
 * **Read one asset.** `GET /api/media/assets/<id>` returns the asset plus
   `children[]` and `ancestors[]` (brief items).
 * **Lineage tree.** `GET /api/media/assets/<id>/lineage` returns
-  `{asset, root, tree: [{brief, children: [...]}]}`.
+  `{asset, root, tree: [...]}`. Each tree node carries the brief fields
+  (`id`, `type`, `operation`, `title`, `prompt`, `created_at`, `model_alias`,
+  `parent_id`, `thumbnail_url`) plus `children: [...]`.
 * **File.**
   `GET /api/media/assets/<id>/file[?download=1][&format=wav|flac|mp3]`
   supports Range requests.

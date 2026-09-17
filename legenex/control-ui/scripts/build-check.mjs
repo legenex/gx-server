@@ -17,7 +17,8 @@ import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const root = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'web');
+// GX-Playground reuses this checker with its own root, page list and budget.
+const root = process.env.GX_BUILD_ROOT || resolve(dirname(fileURLToPath(import.meta.url)), '..', 'web');
 const errors = [];
 const fail = (file, msg) => errors.push(`${relative(root, file) || file}: ${msg}`);
 
@@ -97,13 +98,15 @@ if (/\son[a-z]+\s*=/.test(html)) fail('index.html', 'inline event handler (block
 if (/\sstyle\s*=/.test(html)) fail('index.html', 'style attribute (blocked by CSP)');
 if (!/<html lang="/.test(html)) fail('index.html', 'missing lang attribute');
 
-const pages = ['dashboard', 'models', 'runtime', 'cluster', 'jobs', 'logs', 'playground', 'docs', 'settings'];
+const pages = (process.env.GX_BUILD_PAGES
+  || 'dashboard,models,resources,storage,setup,runtime,cluster,jobs,logs,playground,docs,settings').split(',');
+const navInHtml = process.env.GX_BUILD_NAV_IN_HTML !== '0';
 for (const p of pages) {
   if (!existsSync(join(root, 'js', 'pages', `${p}.js`))) fail('js/pages', `missing page ${p}`);
-  if (!html.includes(`data-page="${p}"`)) fail('index.html', `nav link for ${p} missing`);
+  if (navInHtml && !html.includes(`data-page="${p}"`)) fail('index.html', `nav link for ${p} missing`);
 }
 
-const BUDGET = 400 * 1024;
+const BUDGET = Number(process.env.GX_BUILD_BUDGET_KB || 400) * 1024;
 const total = files.reduce((n, f) => n + statSync(f).size, 0);
 if (total > BUDGET) fail('web/', `asset size ${total} B exceeds budget ${BUDGET} B`);
 

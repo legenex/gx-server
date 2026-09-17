@@ -1,1 +1,106 @@
-<!doctype html><title>t</title><p>placeholder</p>
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark light">
+<meta name="referrer" content="same-origin">
+<title>GX-Playground</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/css/app.css">
+<script type="module" src="/js/app.js"></script>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+
+<div id="boot" class="boot" role="status" aria-live="polite">
+  <span class="brand-mark brand-mark-lg" aria-hidden="true"></span>
+  <span class="boot-text">Loading GX-Playground…</span>
+</div>
+
+<div id="login-view" class="login" hidden>
+  <div class="login-glow" aria-hidden="true"></div>
+  <main class="login-main" id="login-main">
+    <div class="login-card">
+      <div class="login-brand">
+        <span class="brand-mark brand-mark-lg" aria-hidden="true"></span>
+        <div>
+          <p class="login-product">GX-Playground</p>
+          <p class="login-tag">Images, video and music on your own GPUs</p>
+        </div>
+      </div>
+      <h1 class="login-title">Sign in</h1>
+      <form id="login-form" class="stack" novalidate>
+        <div class="field">
+          <label class="field-label" for="login-user">Username</label>
+          <input class="input" id="login-user" name="username" autocomplete="username" autocapitalize="off" spellcheck="false" required>
+        </div>
+        <div class="field">
+          <label class="field-label" for="login-pass">Password</label>
+          <input class="input" id="login-pass" name="password" type="password" autocomplete="current-password" required>
+        </div>
+        <p id="login-error" class="form-error" role="alert" hidden></p>
+        <button id="login-submit" class="btn btn-primary btn-lg btn-block" type="submit">Sign in</button>
+      </form>
+      <p class="login-foot">One sign-in covers GX-Playground and the Control Center.</p>
+    </div>
+  </main>
+</div>
+
+<div id="app-view" class="shell" hidden>
+  <nav id="rail" class="rail" aria-label="Main">
+    <a class="brand" href="#/dashboard" aria-label="GX-Playground home">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <span class="brand-name">GX-Playground</span>
+    </a>
+    <ul class="rail-list">
+      <li><a class="rail-link" href="#/dashboard" data-page="dashboard"><span class="rail-ic" data-icon="home"></span><span class="rail-label">Dashboard</span></a></li>
+      <li><a class="rail-link" href="#/images" data-page="images"><span class="rail-ic" data-icon="image"></span><span class="rail-label">Images</span></a></li>
+      <li><a class="rail-link" href="#/video" data-page="video"><span class="rail-ic" data-icon="video"></span><span class="rail-label">Video</span></a></li>
+      <li><a class="rail-link" href="#/music" data-page="music"><span class="rail-ic" data-icon="music"></span><span class="rail-label">Music</span></a></li>
+      <li><a class="rail-link" href="#/library" data-page="library"><span class="rail-ic" data-icon="library"></span><span class="rail-label">Library</span></a></li>
+      <li><a class="rail-link" href="#/history" data-page="history"><span class="rail-ic" data-icon="history"></span><span class="rail-label">History</span><span id="rail-badge" class="rail-badge" hidden></span></a></li>
+    </ul>
+    <div class="rail-foot">
+      <p class="rail-version" id="app-version"></p>
+    </div>
+  </nav>
+
+  <header class="topbar">
+    <a class="brand brand-compact" href="#/dashboard" aria-label="GX-Playground home">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <span class="brand-name">GX-Playground</span>
+    </a>
+    <button id="cmd-btn" class="cmd-trigger" type="button" aria-keyshortcuts="Control+K Meta+K">
+      <span data-icon="search" data-size="16"></span>
+      <span class="cmd-text">Create or search…</span>
+      <kbd class="cmd-kbd">Ctrl K</kbd>
+    </button>
+    <div class="topbar-right">
+      <a id="res-pill" class="res-pill" href="#/dashboard" aria-label="Resources">
+        <span class="dot dot-idle" aria-hidden="true"></span>
+        <span class="res-text">Resources</span>
+      </a>
+      <button id="tray-btn" class="tray-btn" type="button" aria-label="Activity: no active jobs">
+        <span data-icon="activity" data-size="18"></span>
+        <span id="tray-count" class="tray-count" hidden></span>
+      </button>
+      <a id="cc-link" class="btn btn-ghost btn-sm cc-link" hidden target="_blank" rel="noopener" href="/" aria-label="Control Center (opens in a new tab)" title="Control Center">
+        <span data-icon="external" data-size="16"></span><span class="cc-text">Control Center</span>
+      </a>
+      <button id="theme-btn" class="icon-btn icon-btn-ghost" type="button" aria-label="Switch to light theme">
+        <span data-icon="sun" data-size="18"></span>
+      </button>
+      <span id="user-chip" class="user-chip"><span data-icon="user" data-size="16"></span><span id="user-name"></span></span>
+      <button id="logout-btn" class="btn btn-ghost btn-sm" type="button" aria-label="Sign out" title="Sign out">
+        <span data-icon="logout" data-size="16"></span><span class="logout-text">Sign out</span>
+      </button>
+    </div>
+  </header>
+
+  <main id="main" class="main" tabindex="-1"></main>
+</div>
+
+<div id="toasts" class="toasts" role="status" aria-live="polite"></div>
+</body>
+</html>

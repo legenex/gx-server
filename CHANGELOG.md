@@ -9,6 +9,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-09-17
+
+gx-music, GX-Playground, Resource Control, Storage & Cleanup and client
+Setup. See `TEST_RESULTS.md` §20.
+
+### Added
+- **gx-music (D-036).**
+  - ACE-Step 1.5 XL turbo on gx10-02 (`legenex/music/`), integrated from the
+    Stage A handoff. It is the eighth permanent alias (L-10 amended).
+  - A public music API on gx10-01 (`/v1/music/*`, gateway keys that allow
+    `gx-music`) and the Library import of WAV, FLAC and MP3 with sha256
+    checks.
+- **gx-max drain for music:** `legenex/lifecycle/node2-holds.sh` sets a hold,
+  verifies the music unload, and clears the hold on stop, unwind and restore.
+- **GX-Playground (D-037).** `gx-playground.service` on :8090. It provides
+  Dashboard, Images, Video, the Music studio, the unified Library and
+  History, and shares the Control Center sign-in.
+- **New Control Center pages:**
+  - **Resource Control:** profiles Auto / Text / Media / Music / Max /
+    Maintenance, live map, admission, computed compatibility, LOAD / UNLOAD /
+    DRAIN / PIN / UNPIN, and "why am I waiting";
+  - **Storage & Cleanup:** SAFE / REVIEW / PROTECTED, opaque ids, node-side
+    re-check, health states;
+  - **Setup:** Kilo Code, Open WebUI and generic clients, with live values,
+    a complete Kilo config and connection tests.
+- **Model Manager:** disk preflight before every install; music is its own
+  task class.
+- **Media Library schema 2:** audio assets with format variants, lyrics, tags,
+  BPM, key, time signature and waveform.
+- **Media router 2.3.0:** reads holds and pins, reports what is resident and
+  its last memory refusal.
+- **Maintenance hold** honoured by the resource guard, gx-reason's start,
+  the router and the music supervisor.
+- **Tests:** 227 new hermetic Control Center tests, router policy tests, music
+  maintenance / pin / requeue tests, lifecycle hold tests, and Playground
+  E2E tests.
+
+### Changed
+- The Control Center no longer hosts Create or Media Library; they moved to
+  GX-Playground.
+- Media jobs wait with a reason instead of failing when gx10-02 is busy.
+- Media unload goes through the media router (never ComfyUI `/free`).
+- gx-music frees idle ComfyUI weights only through the router
+  (`GX_MUSIC_EVICT_COMFY_WEIGHTS` is on by default again).
+- A music render interrupted by a gx-max or Maintenance reclaim is re-queued.
+- The Kilo Code and Open WebUI docs now use the labels of the installed
+  versions (7.7.2 / 0.11.3).
+- The registry records deleted rollbacks.
+
+### Fixed
+- API key Replace failed once LiteLLM required unique key aliases.
+- Storage scan could deadlock on a second Scan click.
+- A failed music download checksum left a temp file behind.
+
+### Resolved
+- B-026: the obsolete checkpoints were removed by the user. Disk is healthy
+  on both nodes.
+
 ## [0.15.0] - 2026-09-17
 
 V2 migration: uncensored models, media v2, and new Control UI pages. See

@@ -58,6 +58,8 @@ CRITICAL=(
   legenex/music/gx_music/service.py
   legenex/music/gx_music/config.py
   legenex/music/gx_music/server.py
+  legenex/playground/gx_playground/server.py
+  legenex/playground/systemd/gx-playground.service
   legenex/scripts/recover-node2.sh
   legenex/host/kernel-lock/verify-kernel-lock.sh
   ops/git-sync/common.sh
@@ -213,6 +215,15 @@ else
       r PASS "deployed unit matches rendered repo template: ${unit}"
     else
       r WARN "deployed unit differs from the rendered repo template: ${unit} (run legenex/control-ui/scripts/install.sh)"
+    fi
+  fi
+  # GX-Playground (D-037), rendered the same way by legenex/playground/scripts/install.sh.
+  punit="${HOME}/.config/systemd/user/gx-playground.service"
+  if [ -f "${punit}" ]; then
+    if sed "s#@REPO@#${GX_SYNC_REPO}#g" "${GX_SYNC_REPO}/legenex/playground/systemd/gx-playground.service" | cmp -s - "${punit}"; then
+      r PASS "deployed unit matches rendered repo template: ${punit}"
+    else
+      r WARN "deployed unit differs from the rendered repo template: ${punit} (run legenex/playground/scripts/install.sh)"
     fi
   fi
   # The running gateway must hold the media key from the ignored .env (a recreate

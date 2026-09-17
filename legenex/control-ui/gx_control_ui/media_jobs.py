@@ -228,8 +228,11 @@ class RouterClient:
         except ValueError:
             data = {}
         if not 200 <= res.status < 300:
-            msg = (data.get("error") or {}).get("message") if isinstance(data, dict) else None
+            err = data.get("error") if isinstance(data, dict) else None
+            msg = err.get("message") if isinstance(err, dict) else (err if isinstance(err, str) else None)
             raise JobError(f"media router HTTP {res.status}: {msg or res.text(300)}", 502)
+        if not isinstance(data, dict):
+            raise JobError("media router returned an unexpected response", 502)
         return data
 
 
@@ -391,10 +394,15 @@ class MediaJobs:
                     job.ended = time.time()
                     continue
                 job.phase = "failed"
-                job.error = redact(exc.message if isinstance(exc, HTTPError) else
-                                   str(exc) if isinstance(exc, (JobError, LibraryError)) else
-                                   f"{type(exc).__name__}: {exc}")[:1000]
-                log.warning("media job %s (%s) failed: %s", job.id, job.kind, job.error)
+                if isinstance(exc, (JobError, LibraryError)):
+                    job.error = redact(str(exc))[:1000]
+                elif isinstance(exc, HTTPError):
+                    job.error = "gx10-02 could not be reached; try again shortly"
+                else:
+                    # never show internal exception text to the user; the log has it
+                    job.error = "the job failed unexpectedly; an administrator can see the details in the logs"
+                log.warning("media job %s (%s) failed: %s: %s", job.id, job.kind, type(exc).__name__,
+                            redact(str(exc))[:500])
                 if self.results:
                     alias = "gx-video" if job.kind in ("t2v", "i2v", "v2v") else "gx-image"
                     self.results.record(alias, "inference", False, job.error[:200])
