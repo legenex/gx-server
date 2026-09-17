@@ -24,7 +24,12 @@ source "${here}/node2-holds.sh"
 # ------------------------------------------------------------------- node 1 --
 if [ -f "${gateway}/docker-compose.gateway.yml" ] && [ -f "${gateway}/.env" ]; then
   log "starting node-1 gateway stack"
-  ( cd "${gateway}" && docker compose --env-file .env -f docker-compose.gateway.yml up -d ) \
+  # A caller's environment beats --env-file in compose, and long-running
+  # callers (the orchestrator) can hold values older than .env -- a stale
+  # placeholder once replaced the media key. Drop every .env name first.
+  ( cd "${gateway}" \
+    && for v in $(sed -n 's/^[[:space:]]*\(export[[:space:]]\+\)\?\([A-Za-z_][A-Za-z0-9_]*\)=.*/\2/p' .env); do unset "${v}"; done \
+    && docker compose --env-file .env -f docker-compose.gateway.yml up -d ) \
     >/dev/null 2>&1 || log "WARN: gateway compose returned non-zero"
 
   # Wait for the gateway to answer rather than assuming it did.
