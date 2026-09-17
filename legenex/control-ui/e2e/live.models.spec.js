@@ -71,8 +71,9 @@ test('gx-fast: tool call through the UI, then UNLOAD and LOAD controls', async (
 test('gx-reason: real reasoning through the UI', async ({ page }) => {
   test.setTimeout(40 * 60_000);
   const r = await playgroundChat(page, {
-    // Qwen thinking models loop under greedy decoding; use the model card's sampling.
-    model: 'gx-reason', maxTokens: 6000, temperature: 0.6, timeout: 30 * 60_000,
+    // Qwen thinking models loop under greedy decoding; use the model card's thinking-mode
+    // temperature (top-p/top-k come from generation_config) and a budget that fits ~12 tok/s.
+    model: 'gx-reason', maxTokens: 12000, temperature: 1, timeout: 35 * 60_000,
     prompt: 'A bat and a ball cost $1.10 in total. The bat costs $1.00 more than the ball. How much does the ball cost? Give the final answer in cents.',
   });
   expect(r.answer).toMatch(/\b5\b|0\.05|five cents/i);
