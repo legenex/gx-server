@@ -48,10 +48,36 @@ class BusyError(RouterError):
 
 
 class InsufficientMemoryError(RouterError):
-    """gx10-02 does not have the memory this job needs (usually gx-reason is loaded)."""
+    """Starting this job now would take gx10-02 below the 30 GiB reserve (D-038).
+
+    ``details`` says why, with numbers: required / available / reserve GiB,
+    the blocking tenant and what happens next. A video job WAITS on this
+    error (``retryable``); a synchronous image request returns it as 503.
+    """
 
     status = 503
     code = "insufficient_memory"
+
+    def __init__(self, message: str, *, details: dict | None = None, retryable: bool = True) -> None:
+        super().__init__(message)
+        self.details = details or {}
+        self.retryable = retryable
+
+    def payload(self) -> dict:
+        body = super().payload()
+        body["error"]["details"] = self.details
+        return body
+
+
+class ExceedsNodeError(InsufficientMemoryError):
+    """The job can never run on gx10-02 while keeping the reserve (measured
+    growth + reserve is more than the node ever has available)."""
+
+    status = 422
+    code = "exceeds_node_reserve"
+
+    def __init__(self, message: str, *, details: dict | None = None) -> None:
+        super().__init__(message, details=details, retryable=False)
 
 
 class UpstreamError(RouterError):

@@ -20,6 +20,19 @@ def _int(name: str, default: int, lo: int, hi: int) -> int:
     return value
 
 
+def _float(name: str, default: float, lo: float, hi: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None or raw == "":
+        return default
+    try:
+        value = float(raw)
+    except ValueError as exc:  # pragma: no cover - start-up failure path
+        raise SystemExit(f"{name}: not a number: {raw!r}") from exc
+    if not lo <= value <= hi:
+        raise SystemExit(f"{name}: {value} out of range [{lo}, {hi}]")
+    return value
+
+
 @dataclass(frozen=True)
 class Config:
     """Immutable service configuration."""
@@ -71,24 +84,51 @@ class Config:
     free_on_model_switch: bool = True
     #: Free ComfyUI's model cache after this many idle seconds (0 disables).
     idle_free_seconds: int = 600
-    #: Memory admission (node 2 is shared with gx-reason, ~44 GiB when loaded).
-    #: Empty path disables the check. MemAvailable in GiB needed before a job
-    #: whose weights are not loaded yet; ``need_warm_gib`` when they are.
-    #: MEASURED 2026-09-17 on an idle node 2 (114 GiB available, cold start):
-    #: image generate/edit took MemAvailable down to 57.5 GiB (~57 used), t2v/i2v
-    #: to 42.3 GiB (~72 used), the keyframe video edit to 7.2 GiB (~107 used).
-    #: So with gx-reason loaded (~70 GiB left) images fit and video does not.
+    #: Memory admission (D-038). gx10-02 is shared with gx-reason and gx-music,
+    #: and NORMAL single-node operation must keep at least ``reserve_gib``
+    #: MemAvailable (the locked 30 GiB rule). A job is admitted only when
+    #:
+    #:     MemAvailable - other tenants' pending growth - this job's growth >= reserve
+    #:
+    #: ``footprint_*`` is the measured growth of a COLD job (weights not loaded).
+    #: MEASURED 2026-09-17 on an idle node 2 (114 GiB available): image
+    #: generate/edit took MemAvailable down to 57.5 GiB (~57 used), t2v/i2v to
+    #: 42.3 GiB (~72 used), the keyframe video edit to 7.2 GiB (~107 used).
+    #: A warm job grows by (footprint - what the resident weights already hold),
+    #: never by less than ``warm_growth_floor_gib``; when the held amount is not
+    #: known the full footprint is assumed.
+    #: Empty ``meminfo_path`` disables admission (unit tests only); a configured
+    #: but unreadable path REFUSES work.
     meminfo_path: str = ""
-    need_image_gib: float = 60.0
-    need_video_gib: float = 76.0
-    need_keyframe_gib: float = 110.0
-    need_warm_gib: float = 8.0
-    #: gx10-02's guard directory (read-only mount): holds and pins (D-036).
-    #: Empty disables the cluster policy (tests, development).
+    reserve_gib: float = 30.0
+    footprint_image_gib: float = 57.0
+    footprint_video_gib: float = 72.0
+    footprint_keyframe_gib: float = 107.0
+    warm_growth_floor_gib: float = 8.0
+    #: The most MemAvailable gx10-02 ever reports with nothing on-demand loaded
+    #: (measured 113-117 GiB). A job whose growth plus the reserve exceeds this
+    #: can never run and is refused at submit time instead of waiting.
+    node_capacity_gib: float = 117.0
+    #: gx10-02's guard directory (read-only mount): holds, pins, profile and the
+    #: residency ledger (D-036). Empty disables the cluster policy (tests, dev).
     guard_dir: str = ""
-    #: A pinned model set is kept past the idle timer only while at least this
-    #: much memory stays available (the cluster's 30 GiB reserve).
-    pin_reserve_gib: float = 30.0
+    #: The gx-music supervisor on the same node (D-038). Its open /health reports
+    #: the engine state and memory that is not materialised yet; with a key the
+    #: router may ask it to unload an IDLE, unpinned engine to make room.
+    music_url: str = ""
+    music_key_file: str = ""
+    evict_idle_music: bool = True
+    #: A video that does not fit waits (status queued, phase "waiting") this long
+    #: before it fails with the reason; the check repeats every retry seconds.
+    resource_wait_seconds: int = 1800
+    resource_retry_seconds: float = 15.0
+    #: How long an eviction may take to show up as released memory.
+    eviction_settle_seconds: float = 60.0
+
+    @property
+    def pin_reserve_gib(self) -> float:
+        """A pin keeps weights past the idle timer only above the reserve."""
+        return self.reserve_gib
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -117,5 +157,17 @@ class Config:
             free_on_model_switch=os.environ.get("GX_MEDIA_FREE_ON_SWITCH", "1") != "0",
             idle_free_seconds=_int("GX_MEDIA_IDLE_FREE", 600, 0, 86400),
             meminfo_path=os.environ.get("GX_MEDIA_MEMINFO", "/proc/meminfo"),
+            # The reserve can be raised, never lowered below the locked 30 GiB.
+            reserve_gib=_float("GX_MEDIA_RESERVE_GIB", 30.0, 30.0, 100.0),
+            footprint_image_gib=_float("GX_MEDIA_FOOTPRINT_IMAGE_GIB", 57.0, 57.0, 121.0),
+            footprint_video_gib=_float("GX_MEDIA_FOOTPRINT_VIDEO_GIB", 72.0, 72.0, 121.0),
+            footprint_keyframe_gib=_float("GX_MEDIA_FOOTPRINT_KEYFRAME_GIB", 107.0, 107.0, 121.0),
+            warm_growth_floor_gib=_float("GX_MEDIA_WARM_GROWTH_FLOOR_GIB", 8.0, 8.0, 121.0),
+            node_capacity_gib=_float("GX_MEDIA_NODE_CAPACITY_GIB", 117.0, 60.0, 121.0),
             guard_dir=os.environ.get("GX_MEDIA_GUARD_DIR", ""),
+            music_url=os.environ.get("GX_MEDIA_MUSIC_URL", "").rstrip("/"),
+            music_key_file=os.environ.get("GX_MEDIA_MUSIC_KEY_FILE", ""),
+            evict_idle_music=os.environ.get("GX_MEDIA_EVICT_IDLE_MUSIC", "1") != "0",
+            resource_wait_seconds=_int("GX_MEDIA_RESOURCE_WAIT", 1800, 30, 86400),
+            resource_retry_seconds=float(_int("GX_MEDIA_RESOURCE_RETRY", 15, 2, 600)),
         )
