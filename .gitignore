@@ -95,6 +95,9 @@ credentials*.json
 *.h5
 *.tflite
 models/
+# ...except the alias -> model registry (config, no weights; D-038)
+!legenex/models/
+!legenex/models/registry.json
 /srv/
 # --- generated media / ComfyUI output ---
 output/

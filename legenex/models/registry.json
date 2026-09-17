@@ -1,0 +1,428 @@
+{
+  "_about": "Alias -> model bindings for gx-cluster (D-030..D-034). Source of truth for the Control UI model cards and the Model Manager. Facts are from the pinned Hugging Face revision and live measurements (TEST_RESULTS.md section 18); runtime flags live in legenex/gateway/llama-swap/node0{1,2}.yaml, legenex/lifecycle/gx-max.conf and legenex/media/workflows/. Written by the Model Manager on assignment; reviewed in Git. Each alias's 'identity' block holds the verified facts about the repository it names; the Open WebUI identity sync (D-038) uses them only while identity.repository and identity.revision match the alias's current binding.",
+  "schema": 1,
+  "aliases": {
+    "gx-mini": {
+      "repository": "HauhauCS/Qwen3.5-4B-Uncensored-HauhauCS-Aggressive",
+      "revision": "c09cdbcdb1fefad6d335809d445621b5f5ba0c6e",
+      "files": [
+        "Qwen3.5-4B-Uncensored-HauhauCS-Aggressive-Q4_K_M.gguf",
+        "mmproj-Qwen3.5-4B-Uncensored-HauhauCS-Aggressive-BF16.gguf"
+      ],
+      "node": "gx10-01",
+      "path": "/srv/models/gguf/Qwen3.5-4B-Uncensored-HauhauCS-Aggressive",
+      "runtime": "llama.cpp (legenex/llama-cpp-spark) via llama-swap",
+      "binding": {
+        "file": "legenex/gateway/llama-swap/node01.yaml",
+        "macros": [
+          "gx_mini_model",
+          "gx_mini_mmproj"
+        ]
+      },
+      "family": "Qwen3.5 (hybrid Gated DeltaNet + attention)",
+      "parameters": "4B dense",
+      "active_parameters": null,
+      "quantization": "GGUF Q4_K_M + BF16 vision projector",
+      "context": 65536,
+      "max_output": 8192,
+      "vision": true,
+      "tools": true,
+      "reasoning": "thinking model; thinking disabled at the gateway for speed",
+      "uncensored": "yes: HauhauCS 'Aggressive' refusal removal (card: 0/465 refusals)",
+      "licence": "apache-2.0",
+      "startup": "resident: preloaded when llama-swap starts, never unloaded (ttl 0)",
+      "memory": "about 10 GiB on gx10-01",
+      "measured": "52 tok/s decode, 0.1 s warm TTFT, vision and tool calls correct (2026-09-17)",
+      "previous": {
+        "repository": "Qwen3.5-4B Q4_K_M GGUF (source repository not recorded in this project)",
+        "path": "/srv/models/gguf/Qwen3.5-4B",
+        "status": "superseded 2026-09-17; still on gx10-01 (3.2 GiB) as the rollback. Storage & Cleanup lists it for review",
+        "on_disk": true
+      },
+      "identity": {
+        "repository": "HauhauCS/Qwen3.5-4B-Uncensored-HauhauCS-Aggressive",
+        "revision": "c09cdbcdb1fefad6d335809d445621b5f5ba0c6e",
+        "base_model": "Qwen/Qwen3.5-4B",
+        "derivation": "a community fine-tune by HauhauCS (refusal removal, 'Aggressive' variant) of Qwen/Qwen3.5-4B",
+        "parameters": "about 4 billion (4B dense)",
+        "weights": "GGUF Q4_K_M quantized language model plus a BF16 vision projector (mmproj); not full precision",
+        "modalities": "text and image input, text output, tool calls",
+        "files_sha256": {
+          "Qwen3.5-4B-Uncensored-HauhauCS-Aggressive-Q4_K_M.gguf": "79e28ecacf84e75b6056cf4059636d435aa9eb67795780f7b7dbc7d32a962741",
+          "mmproj-Qwen3.5-4B-Uncensored-HauhauCS-Aggressive-BF16.gguf": "a1e32e86ea99aa7a56f3dcfe7e63c1d0be9439d31fd07087099f15bc0fda0f22"
+        },
+        "verified": "2026-09-17: both sha256 values equal the Hugging Face LFS hashes at this revision; the running llama-server reports this model_path and 2 slots x 65536 tokens; the model card says 'Based on Qwen3.5-4B' and '4B dense parameters'"
+      }
+    },
+    "gx-fast": {
+      "repository": "kyaky/Qwen3.6-35B-A3B-Uncensored-NVFP4",
+      "revision": "33d5cf837389a8f972913090d81da47886e08877",
+      "files": [
+        "model.safetensors"
+      ],
+      "node": "gx10-01",
+      "path": "/srv/models/vllm/Qwen3.6-35B-A3B-Uncensored-NVFP4",
+      "runtime": "vLLM 0.28 (jstarkg/vllm-gb10-flashnext:0.28-sm121-r6) via llama-swap",
+      "binding": {
+        "file": "legenex/gateway/llama-swap/node01.yaml",
+        "macros": [
+          "gx_fast_model_dir"
+        ]
+      },
+      "family": "Qwen3.6 MoE (qwen3_5_moe; hybrid attention)",
+      "parameters": "35B total",
+      "active_parameters": "3B (8 of 256 experts)",
+      "quantization": "compressed-tensors: NVFP4 W4A16 routed experts, FP8 block attention and shared experts, BF16 vision tower",
+      "context": 131072,
+      "max_output": 32768,
+      "vision": true,
+      "tools": true,
+      "reasoning": "thinking model; off by default at the gateway, on per request (reasoning_content)",
+      "uncensored": "yes: gentle abliteration + fine-tune + DPO (kyaky)",
+      "licence": "apache-2.0",
+      "startup": "resident: preloaded with gx-mini (ttl 0); cold load about 4 minutes",
+      "memory": "about 41-49 GiB on gx10-01; gx-mini + gx-fast leave 46-48 GiB MemAvailable",
+      "measured": "55 tok/s decode, 0.08 s warm TTFT, tool calls and vision correct (2026-09-17)",
+      "previous": {
+        "repository": "nvidia/Qwen3.6-35B-A3B-NVFP4",
+        "revision": "1355db6a052410cfd62085d94b58866fd0f2c3c5",
+        "path": "/srv/models/vllm/Qwen3.6-35B-A3B-NVFP4",
+        "status": "deleted by the user (2026-09-17, B-026 resolved); no rollback on disk",
+        "on_disk": false
+      },
+      "identity": {
+        "repository": "kyaky/Qwen3.6-35B-A3B-Uncensored-NVFP4",
+        "revision": "33d5cf837389a8f972913090d81da47886e08877",
+        "base_model": "Qwen/Qwen3.6-35B-A3B",
+        "derivation": "a community fine-tune by kyaky (abliteration, fine-tune and DPO) of Qwen/Qwen3.6-35B-A3B",
+        "parameters": "35B total, about 3B active per token (mixture of experts)",
+        "weights": "NVFP4 (W4A16) routed experts with FP8 attention and shared experts; not full precision",
+        "modalities": "text and image input, text output, tool calls, optional thinking",
+        "verified": "2026-09-17: repository, revision and base_model read from the live Hugging Face API (cardData.base_model)"
+      }
+    },
+    "gx-reason": {
+      "repository": "nvidia/Qwen3.6-27B-NVFP4",
+      "revision": "0893e1606ff3d5f97a441f405d5fc541a6bdf404",
+      "files": [],
+      "node": "gx10-02",
+      "path": "/srv/models/vllm/Qwen3.6-27B-NVFP4",
+      "runtime": "vLLM 0.28 via llama-swap on gx10-02",
+      "binding": {
+        "file": "legenex/gateway/llama-swap/node02.yaml",
+        "macros": [
+          "gx_reason_model_dir",
+          "gx_reason_host_dir"
+        ]
+      },
+      "family": "Qwen3.6 dense",
+      "parameters": "27B dense",
+      "active_parameters": null,
+      "quantization": "NVIDIA ModelOpt NVFP4",
+      "context": 65536,
+      "max_output": 16384,
+      "vision": true,
+      "tools": true,
+      "reasoning": "yes (reasoning_content)",
+      "uncensored": "NO: stock NVIDIA checkpoint. INTERIM ONLY (see target and B-025)",
+      "licence": "apache-2.0",
+      "startup": "on demand, unloads after 15 minutes idle; cold start about 6-7 minutes",
+      "memory": "about 44 GiB on gx10-02",
+      "measured": "12.4 tok/s; hard reasoning correct (2026-09-16)",
+      "interim": true,
+      "target": {
+        "repository": "iSkye/Qwen3.8-Flash-Next-NVFP4-ablit-a070",
+        "revision": "91c3e3d4daf14f8e9389b95f43112410f06ed3d5",
+        "gated": "auto (Hugging Face account token required; terms auto-approved)",
+        "size_bytes": 105935758025,
+        "layout": "Mia single-DGX-Spark recipe (34 shards; MXFP8 attention o_proj, NVFP4 routed experts, packed PLE); 41 of its files are byte-identical to Mia-AiLab/Qwen3.8-Flash-Next-NVFP4 @ 925d7be6c14c",
+        "runtime": "vLLM, the Mia single-Spark recipe (TP=1, in-checkpoint MTP)",
+        "status": "BLOCKED: no Hugging Face token on either node (anonymous download of config.json returns HTTP 401). Add a token in Control UI > Settings > Hugging Face, then install from Model Manager. B-025."
+      },
+      "identity": {
+        "repository": "nvidia/Qwen3.6-27B-NVFP4",
+        "revision": "0893e1606ff3d5f97a441f405d5fc541a6bdf404",
+        "base_model": "Qwen/Qwen3.6-27B",
+        "derivation": "NVIDIA's NVFP4 quantization of Qwen/Qwen3.6-27B, serving as gx-reason for now; the planned model is still waiting for its download (B-025)",
+        "parameters": "27B dense",
+        "weights": "NVIDIA ModelOpt NVFP4; not full precision",
+        "modalities": "text and image input, text output, tool calls, reasoning",
+        "verified": "2026-09-17: repository, revision and base_model read from the live Hugging Face API (cardData.base_model)"
+      }
+    },
+    "gx-max": {
+      "repository": "dealignai/DeepSeek-V4-Flash-0731-CRACK-NVFP4",
+      "revision": "c66fe3848cb85ba90613743319286eb70576db39",
+      "files": [],
+      "node": "gx10-01 + gx10-02",
+      "path": "/srv/models/deepseek/DeepSeek-V4-Flash-0731-CRACK",
+      "runtime": "SGLang (lmsysorg/sglang:dev-v4f-2dgx-v2), TP=2, nnodes=2, cookbook cell dgx-spark/flash-official/fp4",
+      "binding": {
+        "file": "legenex/lifecycle/gx-max.conf",
+        "macros": [
+          "GXMAX_MODEL_DIR",
+          "GXMAX_QUANT_CELL"
+        ]
+      },
+      "family": "DeepSeek-V4-Flash-0731 (43-layer MoE, 256 routed + 1 shared expert, DSpark MTP head)",
+      "parameters": "284B total (SGLang cookbook: Flash 284B)",
+      "active_parameters": "6 routed + 1 shared expert per token (the repository does not state a count)",
+      "quantization": "native DeepSeek FP8 (attention, shared experts) + FP4/MXFP4 routed experts; config and tensor index byte-identical to deepseek-ai/DeepSeek-V4-Flash-0731 (the '-NVFP4' in the repo name is the publisher's label)",
+      "context": 327680,
+      "max_output": 65536,
+      "vision": false,
+      "tools": true,
+      "reasoning": "yes (thinking, reasoning_content)",
+      "uncensored": "yes: dealign.ai 'CRACK' abliteration (card: HarmBench >=96% compliance, MMLU 86.7%, HumanEval pass@2 94.3%)",
+      "licence": "mit",
+      "startup": "explicit two-node takeover through the orchestrator only; never at boot",
+      "memory": "whole cluster (see gx-max.conf three-phase policy)",
+      "measured": "see TEST_RESULTS.md section 18",
+      "previous": {
+        "repository": "nvidia/DeepSeek-V4-Flash-0731-NVFP4",
+        "revision": "f1caa71142bd0be02f728c79f75042ac1e461579",
+        "path": "/srv/models/deepseek/DeepSeek-V4-Flash-0731-NVFP4",
+        "status": "deleted on both nodes by the user (2026-09-17, B-026 resolved); a rollback to it needs a fresh download of this pinned revision to both nodes",
+        "on_disk": false
+      },
+      "identity": {
+        "repository": "dealignai/DeepSeek-V4-Flash-0731-CRACK-NVFP4",
+        "revision": "c66fe3848cb85ba90613743319286eb70576db39",
+        "base_model": "deepseek-ai/DeepSeek-V4-Flash-0731",
+        "derivation": "a community abliterated ('CRACK') release by dealignai of deepseek-ai/DeepSeek-V4-Flash-0731",
+        "parameters": "284B total, mixture of experts",
+        "weights": "DeepSeek's FP8 attention and shared experts with FP4 routed experts; not full precision",
+        "modalities": "text input and output, tool calls, thinking",
+        "verified": "2026-09-17: repository, revision and base_model read from the live Hugging Face API (cardData.base_model)"
+      }
+    },
+    "gx-auto": {
+      "repository": null,
+      "runtime": "gx-orchestrator deterministic classifier (D-030) -> LiteLLM",
+      "node": "gx10-01",
+      "context": 57344,
+      "max_output": 8192,
+      "vision": true,
+      "tools": true,
+      "reasoning": "depends on the tier chosen",
+      "uncensored": "every tier it can pick is uncensored except the interim gx-reason",
+      "startup": "always available while the orchestrator runs; uses gx-max only when it is already READY",
+      "measured": "Kilo-shaped requests: presence check -> gx-mini, repo work -> gx-fast, hard debugging -> gx-reason (10/10, 2026-09-17)"
+    },
+    "gx-image": {
+      "runtime": "ComfyUI 0.35.0 behind gx-media-router 2.3 on gx10-02",
+      "node": "gx10-02",
+      "vision": false,
+      "tools": false,
+      "uncensored": "yes: no content filter in the pipeline; NSFW-capable adapter on by default for generation (strength 0.6), optional for edits",
+      "startup": "on demand; the first generation loads weights; the router frees other media models first",
+      "measured": "1024x1024 generation 29 s; instruction edit 31 s; variation 16 s (2026-09-17)",
+      "components": [
+        {
+          "role": "generation checkpoint",
+          "kind": "checkpoint",
+          "repository": "Comfy-Org/Qwen-Image_ComfyUI (Qwen-Image-2512; revision not recorded at download, MODELS.md)",
+          "file": "image/diffusion_models/qwen_image_2512_fp8_e4m3fn.safetensors",
+          "licence": "apache-2.0"
+        },
+        {
+          "role": "generation speed LoRA",
+          "kind": "lora",
+          "repository": "Qwen-Image-2512 Lightning 4-step LoRA (source revision not recorded at download)",
+          "file": "image/loras/Qwen-Image-2512-Lightning-4steps-V1.0-fp32.safetensors",
+          "licence": "apache-2.0"
+        },
+        {
+          "role": "generation uncensored adapter",
+          "kind": "lora",
+          "repository": "perpetual3x/Tumblr-NudeShot-NSFW-LoRA-v1",
+          "revision": "f8e7f2a115870639d14a5713ad6437a414a0189e",
+          "file": "image/loras/tumblr.safetensors",
+          "base_match": "exact (Qwen/Qwen-Image-2512)",
+          "licence": "non-commercial"
+        },
+        {
+          "role": "edit checkpoint",
+          "kind": "checkpoint",
+          "repository": "Comfy-Org/Qwen-Image-Edit_ComfyUI (Qwen-Image-Edit-2511)",
+          "revision": "7d41107b653d3039be20972fb82398b01b3213eb",
+          "file": "image/diffusion_models/qwen_image_edit_2511_fp8mixed.safetensors",
+          "licence": "apache-2.0"
+        },
+        {
+          "role": "edit speed LoRA",
+          "kind": "lora",
+          "repository": "lightx2v/Qwen-Image-Edit-2511-Lightning",
+          "revision": "d74eba145674fd7e31b949324e148e21e7118abd",
+          "file": "image/loras/Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
+          "base_match": "exact (Qwen/Qwen-Image-Edit-2511)",
+          "licence": "apache-2.0"
+        },
+        {
+          "role": "edit uncensored adapter (optional)",
+          "kind": "lora",
+          "repository": "ScottzillaSystems/qwen-image-edit-plus-nsfw-lora",
+          "revision": "66e89e998dd4ea1a359c4bf0dd5e17d2f0b06ef0",
+          "file": "image/loras/qwen-image-edit-plus-nsfw-lora.safetensors",
+          "base_match": "NOT exact: byte-identical to a Qwen-Image (original) LoRA; loads on 2511 by key; off unless requested",
+          "licence": "openrail++"
+        },
+        {
+          "role": "text encoder",
+          "kind": "text_encoder",
+          "file": "shared/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors"
+        },
+        {
+          "role": "VAE",
+          "kind": "vae",
+          "file": "shared/vae/qwen_image_vae.safetensors"
+        },
+        {
+          "role": "workflows",
+          "kind": "comfyui_workflow",
+          "file": "legenex/media/workflows/qwen-image-2512-uncensored, qwen-image-edit-2511, qwen-image-2512-lightning, qwen-image-2512-quality"
+        }
+      ]
+    },
+    "gx-video": {
+      "runtime": "ComfyUI 0.35.0 behind gx-media-router 2.3 on gx10-02 (asynchronous jobs)",
+      "node": "gx10-02",
+      "vision": false,
+      "tools": false,
+      "uncensored": "yes: rzgar uncensored LightX2V 4-step LoRAs on both experts",
+      "startup": "on demand; the router frees other media models first",
+      "measured": "3.06 s 640x640 clips, 49 distinct frames: text-to-video 45 s, image-to-video 70 s, keyframe video edit 75-90 s (2026-09-17)",
+      "components": [
+        {
+          "role": "text-to-video experts",
+          "kind": "checkpoint",
+          "repository": "Wan 2.2 T2V-A14B fp8 (same file names as Comfy-Org/Wan_2.2_ComfyUI_Repackaged; revision not recorded at download)",
+          "file": "video/diffusion_models/wan2.2_t2v_{high,low}_noise_14B_fp8_scaled.safetensors",
+          "licence": "apache-2.0"
+        },
+        {
+          "role": "image-to-video experts",
+          "kind": "checkpoint",
+          "repository": "Comfy-Org/Wan_2.2_ComfyUI_Repackaged",
+          "revision": "c4f60d30c55a624e35427060fdd217579a6c1d77",
+          "file": "video/diffusion_models/wan2.2_i2v_{high,low}_noise_14B_fp8_scaled.safetensors",
+          "licence": "apache-2.0"
+        },
+        {
+          "role": "uncensored 4-step LoRAs",
+          "kind": "lora",
+          "repository": "rzgar/Wan2.2_LightX2V_4Step_Uncensored",
+          "revision": "adc4ca92246994f55628e2aceef736f0a90443a8",
+          "file": "video/loras/Wan2.2_LightX2V_{high,low}_n54vv.safetensors",
+          "base_match": "Wan2.2 A14B T2V and I2V (card: both; key and shape check passed)",
+          "licence": "apache-2.0"
+        },
+        {
+          "role": "keyframe editor (video edit)",
+          "kind": "checkpoint",
+          "repository": "Comfy-Org/Qwen-Image-Edit_ComfyUI (Qwen-Image-Edit-2511)",
+          "file": "image/diffusion_models/qwen_image_edit_2511_fp8mixed.safetensors"
+        },
+        {
+          "role": "text encoder",
+          "kind": "text_encoder",
+          "file": "shared/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors"
+        },
+        {
+          "role": "VAE",
+          "kind": "vae",
+          "file": "shared/vae/wan_2.1_vae.safetensors"
+        },
+        {
+          "role": "workflows",
+          "kind": "comfyui_workflow",
+          "file": "legenex/media/workflows/wan22-t2v-a14b-uncensored, wan22-i2v-a14b-uncensored, wan22-v2v-keyframe-edit, wan22-v2v-a14b-light, wan22-v2v-a14b-uncensored"
+        }
+      ]
+    },
+    "gx-music": {
+      "node": "gx10-02",
+      "task": "music-generation",
+      "runtime": "ACE-Step 1.5 REST server (acestep.api_server) in gx-music-engine:acestep15-ca1e85f-t214, behind the gx-music supervisor (legenex/music)",
+      "runtime_repository": "https://github.com/ace-step/ACE-Step-1.5",
+      "runtime_revision": "ca1e85fe9430179831e6bc6be790c332190a3866",
+      "image": "gx-music-engine:acestep15-ca1e85f-t214",
+      "repository": "ACE-Step/acestep-v15-xl-turbo",
+      "revision": "d4a0b288b83ebb7e25a8c0b32c573c22e134e8ee",
+      "path": "/srv/models/music/acestep/checkpoints/acestep-v15-xl-turbo",
+      "family": "ACE-Step 1.5 XL (turbo, 8 steps, no CFG)",
+      "licence": "MIT (ACE-Step 1.5)",
+      "uncensored": null,
+      "memory": "24-28 GiB on gx10-02 while loaded; admission estimate 32 GiB + 30 GiB reserve",
+      "measured": "cold load 82-92 s; 12 s instrumental in 4.2 s; 30 s track in 11-46 s; bit-identical same-seed output with fixed metadata (Stage A, 2026-09-17)",
+      "startup": "supervisor starts at boot; the engine loads on the first job and unloads after 10 minutes idle",
+      "capabilities": [
+        "text2music",
+        "description (LM writes the song)",
+        "style tags",
+        "structured lyrics",
+        "instrumental",
+        "vocal language",
+        "duration 10-600 s",
+        "BPM",
+        "key",
+        "time signature",
+        "seed",
+        "batch 1-4",
+        "inference steps 1-20",
+        "ODE/SDE",
+        "LM planning",
+        "LM temperature",
+        "LM CFG",
+        "LM top-p",
+        "enhance prompt",
+        "reference audio",
+        "remix / cover",
+        "repaint (edit a section)",
+        "extend",
+        "WAV / FLAC / MP3, 48 kHz stereo"
+      ],
+      "not_supported": [
+        "extract",
+        "lego",
+        "complete (need ACE-Step XL base, not installed)",
+        "DiT CFG / guidance (turbo is distilled)"
+      ],
+      "components": [
+        {
+          "kind": "checkpoint",
+          "role": "DiT (music model)",
+          "repository": "ACE-Step/acestep-v15-xl-turbo",
+          "revision": "d4a0b288b83ebb7e25a8c0b32c573c22e134e8ee",
+          "file": "music/acestep/checkpoints/acestep-v15-xl-turbo"
+        },
+        {
+          "kind": "checkpoint",
+          "role": "5 Hz language model (song planner)",
+          "repository": "ACE-Step/acestep-5Hz-lm-4B",
+          "revision": "0a3ec94b557aea7d508da38b31cfe7341f6ff737",
+          "file": "music/acestep/checkpoints/acestep-5Hz-lm-4B"
+        },
+        {
+          "kind": "component",
+          "role": "VAE and Qwen3-Embedding-0.6B text encoder",
+          "repository": "ACE-Step/Ace-Step1.5",
+          "revision": "19671f406d603126926c1b7e2adc169acbcade22",
+          "file": "music/acestep/checkpoints/{vae,Qwen3-Embedding-0.6B}"
+        }
+      ]
+    }
+  },
+  "workflow_models": {
+    "qwen-image-2512-uncensored": "gx-image",
+    "qwen-image-2512-lightning": "gx-image",
+    "qwen-image-2512-quality": "gx-image",
+    "qwen-image-edit-2511": "gx-image",
+    "wan22-t2v-a14b-uncensored": "gx-video",
+    "wan22-t2v-a14b-lightning": "gx-video",
+    "wan22-i2v-a14b-uncensored": "gx-video",
+    "wan22-v2v-keyframe-edit": "gx-video",
+    "wan22-v2v-a14b-light": "gx-video",
+    "wan22-v2v-a14b-uncensored": "gx-video"
+  }
+}
