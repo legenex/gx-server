@@ -1341,8 +1341,20 @@ orchestrator 167 OK · lifecycle 22 OK · media router 74 OK · control UI 155 O
 
 ### 19.7 Honest notes
 
-* The first gx-reason live UI test (temperature 0, 4 000 tokens) returned
-  an empty answer after 478 s: the whole budget went to reasoning under
-  greedy decoding while node 2 was shared. The test now uses the model
-  card's sampling (temperature 0.6, 6 000 tokens).
+* The gx-reason live UI test returned an empty answer twice:
+  temperature 0 with 4 000 tokens (478 s), then temperature 0.6 with 6 000
+  tokens (618 s). At about 12 tok/s the whole budget went to thinking. The
+  direct gateway call with the model's default sampling finished in 1 181
+  tokens. The test now uses temperature 1.0 (Qwen's thinking-mode setting)
+  and 12 000 tokens.
+* **A regression was caught by the live UI test.** The 02:15 LiteLLM recreate
+  (done for the new size limits) ran from a shell with a stale
+  `GX_MEDIA_API_KEY`. The container fell back to `not-required`, so gx-image
+  and gx-video returned 401 through the gateway after that point. The Create
+  and Library runs were unaffected, because they call the router directly. The
+  gateway media run (01:54) had finished before the recreate. Fix: gx-litellm
+  was recreated with a clean environment, the key hash was checked against
+  `.env`, and a real 1024² image came back through the gateway. The integrity
+  audit on gx10-01 now FAILs when the running LiteLLM media key differs from
+  `.env`.
 * Obsolete checkpoints were **not** deleted (B-026).

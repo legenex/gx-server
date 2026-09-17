@@ -46,6 +46,15 @@ V2 migration: uncensored models, media v2, and new Control UI pages. See
 - ComfyUI runs with `--reserve-vram 40`. The Control UI unit has
   `MemoryMax=1G`.
 
+### Fixed
+- The gateway's media key had fallen back to `not-required` after a LiteLLM
+  recreate from a stale shell. It is now recreated, and `integrity-audit.sh`
+  (writer) checks the running key hash against `.env`.
+- Control UI: new pages clear the loading placeholder. `pre.code` blocks are
+  keyboard-focusable (axe `scrollable-region-focusable`). The API-key form
+  validates on the client. Live Playwright runs no longer write traces,
+  which had recorded the login body.
+
 ### Security
 - B-024: the media router key was rotated on both nodes.
 - Hugging Face content is never executed. The HF token is stored 0600 and

@@ -190,6 +190,19 @@ else
       r WARN "deployed unit differs from the rendered repo template: ${unit} (run legenex/control-ui/scripts/install.sh)"
     fi
   fi
+  # The running gateway must hold the media key from the ignored .env (a recreate
+  # from a shell with a stale variable once left it on the placeholder). Only
+  # hashes are compared; no key is printed.
+  envf="${GX_SYNC_REPO}/legenex/gateway/.env"
+  if [ -r "${envf}" ] && docker inspect gx-litellm >/dev/null 2>&1; then
+    want="$(sed -n 's/^GX_MEDIA_API_KEY=//p' "${envf}" | tail -1 | tr -d '\n' | sha256sum | cut -c1-16)"
+    have="$(docker exec gx-litellm printenv GX_MEDIA_API_KEY 2>/dev/null | tr -d '\n' | sha256sum | cut -c1-16)"
+    if [ "${want}" = "${have}" ]; then
+      r PASS "gx-litellm media key matches legenex/gateway/.env"
+    else
+      r FAIL "gx-litellm media key differs from legenex/gateway/.env (recreate: cd legenex/gateway && docker compose -f docker-compose.gateway.yml up -d --no-deps litellm)"
+    fi
+  fi
 fi
 
 echo "==== result: PASS=${PASS} WARN=${WARN} FAIL=${FAIL} ====" | tee -a "${OUT}"
