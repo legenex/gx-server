@@ -107,7 +107,7 @@ EDIT_MODES: dict[str, EditMode] = {m.id: m for m in (
              "Adds something new to the scene with matching light, perspective and scale.",
              "Add the following to the image: {instruction}. Place it naturally with matching lighting, "
              "perspective and scale. " + _KEEP,
-             "index_timestep_zero", (1.0, 1.0), (0.6, 1.0), True),
+             "index_timestep_zero", (0.92, 1.0), (0.6, 1.0), True),
     EditMode("remove", "Remove",
              "Removes something and fills the gap so it blends with its surroundings.",
              "Remove the following from the image: {instruction}. Fill the area it occupied so it blends "
@@ -271,6 +271,11 @@ def plan_edit(model: ImageModel, mode_id: str | None, instruction: str, strength
         params["reference_method"] = mode.qwen_reference
     if has_mask:
         params["mask_grow"] = mode.mask_grow
+        # Masked edits need slightly lower denoise so the masked region actually changes;
+        # at denoise=1.0 the reference-latent pins the whole image too tightly and the
+        # masked delta is drowned by the unmasked recovery (D-031 lesson).
+        if denoise >= 0.99:
+            params["denoise"] = 0.88
     if quality == "quality":
         # true-CFG path of the base model: no Lightning distill, real negative prompt
         params.update({"lightning_strength": 0.0, "steps": 20, "cfg": 4.0})

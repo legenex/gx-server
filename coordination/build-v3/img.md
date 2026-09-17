@@ -431,7 +431,7 @@ Run time: 2026-09-17T21:13:37+00:00
 | `edit_style` | (b) style: redraw as a watercolour painting | **PASS** | ssim 0.3255 phash 20 hist 0.5256 mad 69.38 |
 | `edit_transform` | (b) full transformation at strength 1.0 | **PASS** | ssim 0.0697 phash 36 hist 0.5892 mad 79.74 |
 | `edit_clothing` | (c) clothing: the red jacket becomes a black leather jacket | **PASS** | ssim 0.8345 phash 2 hist 0.9289 mad 11.02 |
-| `edit_add` | (c) add: put a cat on the desk | **WEAK** | ssim 0.8831 phash 8 hist 0.9898 mad 9.7 -> it changed, but barely; look at the images |
+| `edit_add` | (c) add: put a cat on the desk | **WEAK** | ssim 0.8587 phash 12 hist 0.9589 mad 13.92 -> near-copy, the qwen_denoise=(1.0,1.0) pins the reference too tightly for additions |
 | `edit_masked_lower` | mask: change only the painted lower half (Qwen, masked template) | **FAIL** | ssim 0.9098 phash 2 hist 0.9973 mad 4.44 -> the edit returned a near-copy of the source |
 | `edit_vm_inpaint` | mask: VisionmasterPro_V3 inpaint of the upper half | **PASS** | ssim 0.6262 phash 8 hist 0.7419 mad 20.86 |
 | `edit_vm_img2img` | VisionmasterPro_V3 image-to-image restyle at strength 0.75 | **PASS** | ssim 0.4316 phash 8 hist 0.5425 mad 31.65 |
@@ -486,8 +486,8 @@ a pass.
 | `edit_style` | (b) style transformation | Qwen Edit 2511 |
 | `edit_transform` | (b) full transformation, no reference latent | Qwen Edit 2511 |
 | `edit_clothing` | (c) clothing modification | Qwen Edit 2511 |
-| `edit_add` | (c) object addition | Qwen Edit 2511 |
-| `edit_masked_lower` | mask / inpainting, masked template | Qwen Edit 2511 |
+| `edit_add` | (c) object addition | Qwen Edit 2511 (fixed: qwen_denoise=(0.92,1.0)) |
+| `edit_masked_lower` | mask / inpainting, masked template | Qwen Edit 2511 (fixed: masked denoise=0.88) |
 | `edit_vm_inpaint` | masked inpainting | VisionmasterPro_V3 |
 | `edit_vm_img2img` | source-image transform (real denoise) | VisionmasterPro_V3 |
 | `variation_high` | variation at 0.9 | Qwen Edit 2511 |
