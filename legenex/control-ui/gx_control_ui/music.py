@@ -428,6 +428,18 @@ class MusicJobs:
         with self._lock:
             local = dict(self._jobs.get(job_id, {}))
         existing = {(a.get("settings") or {}).get("track_index"): a["id"] for a in self.library.find_by_job(job_id)}
+        parent_asset = local.get("parent_asset")
+        parent_job = job.get("parent_job_id")
+        if not parent_asset and parent_job:
+            # A source given as {"job_id", "index"} (music API): link to that track's asset.
+            pindex = int(job.get("parent_index") or 0)
+            parent_asset = next((a["id"] for a in self.library.find_by_job(parent_job)
+                                 if (a.get("settings") or {}).get("track_index") == pindex), None)
+            if parent_asset is None:
+                with self._lock:
+                    parent_pending = parent_job in self._jobs and not self._jobs[parent_job].get("final")
+                if parent_pending:
+                    return []  # the parent is still being saved; the next sweep imports this job
         req = job.get("request") or {}
         params = req.get("parameters") or {}
         ids: list[str] = []
@@ -469,7 +481,7 @@ class MusicJobs:
                     time_signature=_ts(track.get("time_signature")),
                     sample_rate=track.get("sample_rate"), channels=track.get("channels"),
                     waveform=track.get("waveform"),
-                    parent_id=local.get("parent_asset"), job_id=job_id,
+                    parent_id=parent_asset, job_id=job_id,
                     settings={"music_job_id": job_id, "track_index": index, "operation": job.get("operation"),
                               "request": req, "timings": job.get("timings"), "model": model,
                               "engine_seed": track.get("engine_seed"), "genres": track.get("genres"),

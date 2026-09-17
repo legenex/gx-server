@@ -214,6 +214,24 @@ class SubmitAndImportTests(StubBase):
         self.assertEqual(len(self.library.find_by_job(jid)), 2)
         self.assertEqual(list(self.library.root.joinpath("tmp").iterdir()), [])
 
+    def test_api_remix_of_a_job_links_to_the_parent_track(self):
+        parent = self.jobs.submit("generate", {"prompt": "source"}, user="key:app", via="api")["id"]
+        self.finish(parent)
+        child = self.jobs.submit("remix", {"source": {"job_id": parent, "index": 0}, "prompt": "cover"},
+                                 user="key:app", via="api")["id"]
+        self.finish(child)
+        raw = self.stub.view(self.stub.jobs[child])
+        self.assertEqual(raw["parent_job_id"], parent)
+        # the parent is not saved yet: the child waits instead of losing its lineage
+        self.assertEqual(self.jobs.import_job(raw), [])
+        self.assertEqual(self.library.find_by_job(child), [])
+        self.jobs.sweep()
+        self.jobs.sweep()
+        parent_asset = self.library.find_by_job(parent)[0]
+        child_asset = self.library.find_by_job(child)[0]
+        self.assertEqual(child_asset["parent_id"], parent_asset["id"])
+        self.assertEqual(self.jobs.pending(), [])
+
     def test_state_survives_a_restart(self):
         jid = self.jobs.submit("generate", {"prompt": "x"}, user="admin")["id"]
         again = MusicJobs(self.client, self.library, self.env.cfg.state_dir / "music-jobs.json", start_worker=False)
