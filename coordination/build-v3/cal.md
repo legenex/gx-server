@@ -288,8 +288,9 @@ to share more code; I can trim `call.js` if you would rather keep 600 KiB.
 3. First cold load **through `gx_guard_run`** (class `medium`, estimate 48 GiB),
    with MemAvailable sampled at 1 Hz, to produce the PLT section 7 FOOTPRINT
    line. gx-reason (~32 GiB) and any media job must be accounted for first.
-4. `--bench` on the bundled `turn_taking.wav` / `interruptions.wav` /
-   `tool_call.wav` for first-audio and per-frame timing.
+4. `--bench` on a test WAV (no bundled WAVs exist — one needs to be created
+    or borrowed from `legenex/voice/qa/test_files/`); for first-audio and
+    per-frame timing.
 5. One real browser call over **HTTPS** (`https://100.105.214.61:8443`, so the
    microphone is allowed) against the IntakePilot template: greeting heard,
    two answers saved into the intake through `update_intake_fields`, barge-in,
