@@ -9,12 +9,23 @@ outside Git:
     <root>/audio/<id>.<fmt>         one file per format (wav master, flac, mp3)
     <root>/thumbnails/<id>.jpg
     <root>/metadata/library.db      SQLite, schema versioned by PRAGMA user_version
+                                    plus named feature migrations (see below)
 
 Schema 2 (D-037) adds audio: the `audio` type, the music operations
 (remix, repaint, extend), and the columns a track needs (variants, lyrics,
 tags, bpm, key, time signature, waveform). The migration rebuilds the table
 (SQLite cannot alter a CHECK constraint) inside one transaction, after a
 copy of the version-1 database is written next to it.
+
+Named feature migrations (D-040): the application tables of later features
+(Creative Flows, Wan LoRAs, voices, call agents, live sessions) live in the
+same database. Each feature owns one or more ``gx_control_ui/migrations/
+NNN_<name>.sql`` files. A migration is applied once, recorded by file name in
+``schema_migrations``, inside one transaction, after a pre-migration copy
+``library.pre-<name>.db`` is written. Unlike ``user_version`` this does not
+depend on the order in which features land, so a later-numbered file never
+causes an earlier one to be skipped. Migrations only ADD tables, columns and
+indexes; they never rewrite the ``assets`` table.
 
 Rules:
 * Asset ids are server-generated (`a_<24 hex>`); no caller string ever
@@ -30,6 +41,7 @@ Rules:
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import io
 import json
 import os
@@ -58,7 +70,11 @@ TYPES = ("image", "video", "audio")
 FOLDERS = {"image": "images", "video": "videos", "audio": "audio"}
 SORTS = {"newest": "created_at DESC", "oldest": "created_at ASC", "title": "COALESCE(title, prompt) ASC",
          "size": "file_size DESC", "duration": "COALESCE(duration, 0) DESC"}
-OPERATIONS = ("generate", "edit", "variation", "i2v", "v2v", "upload", "remix", "repaint", "extend")
+OPERATIONS = ("generate", "edit", "variation", "i2v", "v2v", "upload", "remix", "repaint", "extend",
+              # D-040: voice, flows and composition
+              "tts", "voice_design", "voice_clone", "composite", "flow", "recording")
+MIGRATIONS_DIR = Path(__file__).resolve().parent / "migrations"
+_MIGRATION_NAME = re.compile(r"^[0-9]{3}_[a-z0-9_]{1,60}\.sql$")
 AUDIO_FORMATS = ("wav", "flac", "mp3")
 MAX_ZIP_ITEMS = 200
 MAX_ZIP_BYTES = 4 * 1024 ** 3
@@ -212,6 +228,12 @@ class NewAsset:
     sample_rate: int | None = None
     channels: int | None = None
     waveform: list | None = None
+    #: D-040 provenance
+    flow_id: str | None = None
+    flow_run_id: str | None = None
+    flow_node_id: str | None = None
+    source_kind: str | None = None
+    source_ref: str | None = None
 
 
 def new_id() -> str:
@@ -349,6 +371,48 @@ class MediaLibrary:
                 except Exception:
                     con.execute("ROLLBACK")
                     raise
+        self._apply_named_migrations()
+
+    def _apply_named_migrations(self, directory: Path | None = None) -> list[str]:
+        """Apply feature migrations that have not run yet (order-independent)."""
+        directory = directory or MIGRATIONS_DIR
+        files = sorted(f for f in directory.glob("*.sql") if _MIGRATION_NAME.match(f.name)) \
+            if directory.is_dir() else []
+        applied: list[str] = []
+        with self._lock, self._connect() as con:
+            con.execute("CREATE TABLE IF NOT EXISTS schema_migrations ("
+                        "name TEXT PRIMARY KEY, applied_at REAL NOT NULL, sha256 TEXT NOT NULL)")
+            done = {r[0] for r in con.execute("SELECT name FROM schema_migrations")}
+            for f in files:
+                if f.name in done:
+                    continue
+                sql = f.read_text(encoding="utf-8")
+                backup = self.db_path.with_name(f"library.pre-{f.stem}.db")
+                if not backup.exists():
+                    with sqlite3.connect(backup) as dst:
+                        con.backup(dst)
+                    os.chmod(backup, 0o640)
+                con.execute("BEGIN IMMEDIATE")
+                try:
+                    for statement in _split_sql(sql):
+                        con.execute(statement)
+                    con.execute("INSERT INTO schema_migrations (name, applied_at, sha256) VALUES (?, ?, ?)",
+                                (f.name, time.time(), hashlib.sha256(sql.encode()).hexdigest()))
+                    con.execute("COMMIT")
+                except Exception:
+                    con.execute("ROLLBACK")
+                    raise
+                applied.append(f.name)
+        return applied
+
+    def connect(self) -> contextlib.AbstractContextManager[sqlite3.Connection]:
+        """A connection to the application database for feature stores (D-040)."""
+        return self._connect()
+
+    def migrations(self) -> list[dict]:
+        with self._connect() as con:
+            return [dict(r) for r in con.execute(
+                "SELECT name, applied_at, sha256 FROM schema_migrations ORDER BY name")]
 
     @property
     def schema_version(self) -> int:
@@ -451,6 +515,8 @@ class MediaLibrary:
             "bpm": asset.bpm, "music_key": asset.music_key, "time_signature": asset.time_signature,
             "sample_rate": asset.sample_rate, "channels": asset.channels,
             "waveform": json.dumps(asset.waveform) if asset.waveform is not None else None,
+            "flow_id": asset.flow_id, "flow_run_id": asset.flow_run_id, "flow_node_id": asset.flow_node_id,
+            "source_kind": asset.source_kind, "source_ref": asset.source_ref,
         }
         cols = ", ".join(row)
         marks = ", ".join("?" for _ in row)
@@ -723,6 +789,12 @@ class MediaLibrary:
                     p.unlink()
             except OSError:
                 continue
+
+
+def _split_sql(sql: str) -> list[str]:
+    """Split a migration file into statements (no semicolons inside literals)."""
+    lines = [ln for ln in sql.splitlines() if not ln.lstrip().startswith("--")]
+    return [st.strip() for st in "\n".join(lines).split(";") if st.strip()]
 
 
 def _safe_name(text: str) -> str:
