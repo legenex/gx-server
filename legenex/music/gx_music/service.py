@@ -224,8 +224,13 @@ class MusicService:
         return self._disk_cache
 
     def health(self) -> dict:
+        """Open liveness plus what the node-2 media router needs to keep the
+        30 GiB reserve (D-038). No job content, no secrets."""
         return {"status": "ok", "service": "gx-music", "engine": self.engine.state,
-                "active_jobs": self.store.count_active()}
+                "active_jobs": self.store.count_active(), "busy": self._current is not None,
+                "pinned": self.engine.pinned(),
+                "idle_seconds": round(time.time() - self.engine.last_activity, 1),
+                "memory": self.engine.memory_view()}
 
     # ------------------------------------------------------------ worker --
     def _worker(self) -> None:
@@ -587,10 +592,21 @@ class MusicService:
         self.store.event("engine_loaded", seconds=self.engine.last_load_seconds)
         return self.engine.snapshot()
 
-    def unload(self) -> dict:
+    def unload(self, *, if_idle: bool = False) -> dict:
+        """Unload the engine. ``if_idle`` (the media router making room, D-038)
+        additionally refuses while music jobs are queued or a pin is honoured,
+        so a scheduler never takes the engine away from waiting work."""
         if self._current:
             raise ConflictError("a track is being generated; cancel it or wait before unloading")
-        info = self.engine.unload("requested")
+        if if_idle:
+            if self.store.count_active():
+                raise ConflictError("music jobs are queued; the engine stays loaded for them")
+            if self.engine.pinned() and self.engine.pin_honoured():
+                raise ConflictError("gx-music is pinned")
+            if self.engine.state != READY:
+                return {"reason": f"engine is {self.engine.state}", "container_gone":
+                        not self.engine.docker.exists(self.cfg.engine_container), "noop": True}
+        info = self.engine.unload("requested by the media router to keep the reserve" if if_idle else "requested")
         self.store.event("engine_unloaded", **info)
         return info
 

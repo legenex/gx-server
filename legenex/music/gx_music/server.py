@@ -155,6 +155,12 @@ class Handler(BaseHTTPRequestHandler):
             raise TooLargeError(f"request body larger than {limit // 1048576 or 1} MB")
         return self.rfile.read(length) if length else b""
 
+    def _optional_body(self) -> dict:
+        """An empty body is {}; anything else must be a JSON object."""
+        if not self.headers.get("Content-Length", "0").strip("0 "):
+            return {}
+        return self._body()
+
     def _body(self) -> dict:
         ctype = self.headers.get("Content-Type", "").split(";")[0].strip().lower()
         raw = self._read(JSON_LIMIT)
@@ -211,7 +217,8 @@ class Handler(BaseHTTPRequestHandler):
             ("GET", "/v1/music/model"): lambda: self._json(200, s.model_info()),
             ("GET", "/v1/music/tags"): self._tags,
             ("POST", "/v1/music/load"): lambda: self._json(200, s.load()),
-            ("POST", "/v1/music/unload"): lambda: self._json(200, s.unload()),
+            ("POST", "/v1/music/unload"): lambda: self._json(
+                200, s.unload(if_idle=self._optional_body().get("if_idle") is True)),
             ("POST", "/v1/music/generations"): lambda: self._submit("generate"),
             ("POST", "/v1/music/remix"): lambda: self._submit("remix"),
             ("POST", "/v1/music/edits"): lambda: self._submit("edit"),

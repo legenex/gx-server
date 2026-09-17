@@ -88,6 +88,7 @@ class Config:
     evict_comfy: bool
     evict_reason: bool
     media_router_container: str
+    media_router_url: str
     gxmax_hold_file: Path
     maintenance_hold_file: Path
     pins_file: Path
@@ -181,6 +182,9 @@ def load() -> Config:
         evict_comfy=_bool("GX_MUSIC_EVICT_COMFY_WEIGHTS", True),
         evict_reason=_bool("GX_MUSIC_EVICT_REASON", False),
         media_router_container=_env("GX_MUSIC_MEDIA_ROUTER_CONTAINER", "gx-media-router"),
+        # D-038: the router's open /health publishes the growth of its running
+        # job that MemAvailable does not show yet; admission subtracts it.
+        media_router_url=_env("GX_MUSIC_MEDIA_ROUTER_URL", "http://192.168.100.11:18800").rstrip("/"),
         gxmax_hold_file=Path(_env("GX_MUSIC_GXMAX_HOLD", "/srv/projects/gx-cluster/state/guard/node2.gxmax-hold")),
         maintenance_hold_file=Path(_env("GX_MUSIC_MAINTENANCE_HOLD",
                                         "/srv/projects/gx-cluster/state/guard/node2.maintenance-hold")),
@@ -190,5 +194,6 @@ def load() -> Config:
         gxmax_deadman_pidfile=Path(_env("GX_MUSIC_GXMAX_DEADMAN_PID",
                                         str(Path.home() / ".gx-guard" / "rank1-deadman.pid"))),
         control_plane_container=_env("GX_MUSIC_CONTROL_PLANE_CONTAINER", "gx-llama-swap-node02"),
-        reserve_gib=_float("GX_GUARD_RESERVE_GIB", 30.0, 0.0, 120.0),
+        # The locked normal-operation reserve: it may be raised, never lowered below 30 GiB.
+        reserve_gib=_float("GX_GUARD_RESERVE_GIB", 30.0, 30.0, 120.0),
     )

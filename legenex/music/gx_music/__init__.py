@@ -11,4 +11,4 @@ Two processes, same split as gx-media:
   node 2. Never exposed.
 """
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"

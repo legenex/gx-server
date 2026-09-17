@@ -65,6 +65,7 @@ class EngineController:
         self.cfg = cfg
         self.docker = docker or Docker()
         self.guard = guard or GuardAdapter(cfg)
+        self.guard.on_admitted = self._record_admission
         self.clock = clock
         self._lock = threading.RLock()
         self.state = UNLOADED
@@ -73,6 +74,11 @@ class EngineController:
         self.last_load_seconds: float | None = None
         self.last_unload: dict | None = None
         self.last_activity = clock()
+        #: D-038: MemAvailable when the load was admitted, and how much the
+        #: engine really took once ready (None until measured)
+        self.admit_avail_gib: float | None = None
+        self.loaded_gib: float | None = None
+        self.last_wait: dict | None = None
         self._key = self._engine_key()
         self._envfile = cfg.state_dir / "engine.env"
         self._write_envfile()
@@ -176,10 +182,38 @@ class EngineController:
                 "pinned": self.pinned(),
                 "pin_honoured": self.pin_honoured() if self.state == READY else None,
                 "blocked_by": (self.policy_block_reason() or (None, None))[1],
+                "memory": self.memory_view(),
+                "last_wait": self.last_wait,
             }
+
+    def pending_gib(self) -> float:
+        """Growth MemAvailable does not show yet (published for the media router).
+
+        loading: the estimate minus what has disappeared since admission;
+        ready:   the estimate minus the measured resident size (generation headroom);
+        otherwise nothing.
+        """
+        est = self.cfg.engine_estimate_gib
+        if self.state == LOADING:
+            if self.admit_avail_gib is None:
+                return est
+            now = meminfo().get("MemAvailable")
+            consumed = 0.0 if now is None else max(0.0, self.admit_avail_gib - now)
+            return round(max(0.0, est - consumed), 1)
+        if self.state == READY:
+            return round(max(0.0, est - (self.loaded_gib if self.loaded_gib is not None else 0.0)), 1)
+        return 0.0
+
+    def memory_view(self) -> dict:
+        return {"estimate_gib": self.cfg.engine_estimate_gib, "loaded_gib": self.loaded_gib,
+                "pending_gib": self.pending_gib(), "reserve_gib": self.cfg.reserve_gib}
 
     def touch(self) -> None:
         self.last_activity = self.clock()
+
+    def _record_admission(self) -> None:
+        self.admit_avail_gib = meminfo().get("MemAvailable")
+        self.loaded_gib = None
 
     def is_loaded(self) -> bool:
         return self.state == READY
@@ -241,21 +275,73 @@ class EngineController:
             self.state, self.state_detail = READY, ""
             self.loaded_at = self.clock()
             self.last_load_seconds = round(self.loaded_at - started, 1)
+            now = meminfo().get("MemAvailable")
+            if self.admit_avail_gib is not None and now is not None:
+                self.loaded_gib = round(min(self.cfg.engine_estimate_gib,
+                                            max(0.0, self.admit_avail_gib - now)), 1)
             self.touch()
             return self.last_load_seconds
+
+    def media_state(self) -> dict:
+        """The media router's open /health: busy, resident alias and the growth of
+        its running job that is not in MemAvailable yet (D-038)."""
+        url = self.cfg.media_router_url
+        if not url:
+            return {}
+        try:
+            with urllib.request.urlopen(f"{url}/health", timeout=3) as r:
+                body = json.load(r)
+        except (OSError, ValueError):
+            return {"reachable": False}
+        if not isinstance(body, dict):
+            return {"reachable": False}
+        mem = body.get("memory") if isinstance(body.get("memory"), dict) else {}
+        pending = mem.get("pending_gib")
+        if not isinstance(pending, (int, float)):
+            # an older router: a cold job that has just started may not show yet
+            pending = float(mem.get("need_gib", {}).get("video", 0) if body.get("busy") else 0) \
+                if isinstance(mem.get("need_gib"), dict) else 0.0
+        return {"reachable": True, "busy": bool(body.get("busy")), "held_by": body.get("held_by"),
+                "resident_alias": body.get("resident_alias"), "pending_gib": max(0.0, float(pending)),
+                "waiting": len(body.get("waiting") or [])}
 
     def _admit_and_start(self) -> None:
         tried_free = False
         while True:
+            media = self.media_state()
+            extra = float(media.get("pending_gib") or 0.0)
             try:
-                self.guard.launch(self._start_container)
+                self.guard.launch(self._start_container, extra_gib=extra)
+                self.last_wait = None
                 return
-            except ResourceWait:
-                if self.cfg.evict_comfy and not tried_free and self._free_media():
+            except ResourceWait as wait:
+                if wait.code == "insufficient_memory":
+                    wait = ResourceWait(self._memory_wait_reason(media, extra), code=wait.code)
+                    self.last_wait = {"at": self.clock(), "reason": wait.reason, "media": media}
+                if self.cfg.evict_comfy and not tried_free and wait.code == "insufficient_memory" \
+                        and self._free_media():
                     tried_free = True
                     time.sleep(5)
                     continue
-                raise
+                raise wait from None
+
+    def _memory_wait_reason(self, media: dict, extra: float) -> str:
+        """A specific, numeric reason for a music load that would break the reserve."""
+        c = self.cfg
+        avail = meminfo().get("MemAvailable")
+        need = c.engine_estimate_gib + extra + c.reserve_gib
+        numbers = (f"gx-music needs about {c.engine_estimate_gib:.0f} GiB plus the {c.reserve_gib:.0f} GiB reserve"
+                   + (f" plus {extra:.0f} GiB that the running media job has not taken yet" if extra >= 0.5 else "")
+                   + f", so {need:.0f} GiB must be available"
+                   + (f"; {avail:.0f} GiB is" if avail is not None else ""))
+        holder = str(media.get("held_by") or "")
+        if media.get("busy") and holder.startswith("video"):
+            return f"Waiting for gx-video to finish on gx10-02: {numbers}"
+        if media.get("busy") and holder.startswith("image"):
+            return f"Waiting for gx-image to finish on gx10-02: {numbers}"
+        if media.get("resident_alias"):
+            return f"Waiting for {media['resident_alias']} to release gx10-02 memory: {numbers}"
+        return f"Waiting for gx10-02 memory (gx-reason or another tenant holds it): {numbers}"
 
     def _free_media(self) -> bool:
         """Ask the media router to hand over IDLE ComfyUI weights.
@@ -351,6 +437,8 @@ class EngineController:
             after = meminfo()
             self.state, self.state_detail = UNLOADED, ""
             self.loaded_at = None
+            self.admit_avail_gib = None
+            self.loaded_gib = None
             self.last_unload = {
                 "reason": reason, "at": self.clock(), "seconds": round(self.clock() - t0, 1),
                 "mem_available_before_gib": before.get("MemAvailable"),
@@ -448,6 +536,8 @@ class EngineController:
 class GuardAdapter:
     """Binds the shared node admission guard (legenex/orchestrator)."""
 
+    on_admitted: Callable[[], None] | None = None
+
     def __init__(self, cfg: Config) -> None:
         self.cfg = cfg
         if str(cfg.orchestrator_dir) not in sys.path:
@@ -456,11 +546,16 @@ class GuardAdapter:
 
         self.rg = rg
 
-    def launch(self, start: Callable[[], None]) -> None:
+    def launch(self, start: Callable[[], None], extra_gib: float = 0.0) -> None:
+        """Admit the engine: MemAvailable - (estimate + other tenants' pending growth)
+        must keep the reserve. The ledger records the engine's own estimate."""
         rg, c = self.rg, self.cfg
         try:
-            with rg.guard_launch(c.node, WORKLOAD_NAME, rg.WorkloadClass.MEDIUM, c.engine_estimate_gib,
+            with rg.guard_launch(c.node, WORKLOAD_NAME, rg.WorkloadClass.MEDIUM,
+                                 c.engine_estimate_gib + max(0.0, extra_gib),
                                  state_dir=c.guard_dir, reserve_gib=c.reserve_gib, lock_timeout=30) as (_, ledger):
+                if self.on_admitted is not None:
+                    self.on_admitted()
                 start()
                 ledger.add(WORKLOAD_NAME, node=c.node, workload_class=rg.WorkloadClass.MEDIUM,
                            estimated_gib=c.engine_estimate_gib, container=c.engine_container)
