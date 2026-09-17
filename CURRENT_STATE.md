@@ -43,9 +43,11 @@ only from 127.0.0.1).
 * **Orchestrator** restarted. It has the new classifier and a routing journal in
   `/srv/logs/gx-auto-routing.jsonl` (`GET /routing/decisions`). It returns 503
   `gx_max_not_running` instead of silently downgrading.
-* **Media router 2.1.0** is deployed on gx10-02 with `legenex/media/deploy-node2.sh`.
+* **Media router 2.2.0** is deployed on gx10-02 with `legenex/media/deploy-node2.sh`.
   It adds uploads, edits, variations, i2v and video edit. It frees ComfyUI
-  after 600 s idle, and on request through `POST /v1/admin/free`.
+  after 600 s idle, and on request through `POST /v1/admin/free`. It refuses a
+  job node 2 cannot hold: video needs about 76 GiB free, so it does not run
+  while gx-reason is loaded. Unload gx-reason in the UI first.
   **ComfyUI** now runs with `--reserve-vram 40`, but that does not bound its
   host-side cache: a video edit can leave only 14 GiB free on node 2.
 * **node-2 llama-swap:** gx-reason's start command first asks the router to

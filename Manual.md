@@ -253,7 +253,9 @@ the models load. Edits never overwrite: the result is a new item linked to
 its source.
 
 **Errors.** "gx-max is running": media is unavailable until gx-max is
-released. An upload is refused if its type or size is wrong. Delete asks you
+released. "gx10-02 has N GiB free…": gx-reason is loaded, and a video job
+needs the node to itself. Unload gx-reason under **Models**, or wait
+15 minutes, then retry. Images still work next to gx-reason. An upload is refused if its type or size is wrong. Delete asks you
 to type `DELETE`.
 
 **Privacy.** Files stay in `/srv/projects/gx-cluster/media` on gx10-01. Uploads

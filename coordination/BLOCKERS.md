@@ -583,6 +583,9 @@ even reached.
    the `gx-max`/`gx-auto` aliases documented in ARCHITECTURE.md.
 
 ## B-018 (S2) — ComfyUI's compose-based start bypasses the resource-ownership admission guard entirely
+
+**Update 2026-09-17 (partial mitigation):** media router 2.2.0 now performs its own memory admission from `/proc/meminfo`, calibrated to measured footprints (see D-031 amendments). gx-reason's start first asks the router to free ComfyUI. ComfyUI's compose start still bypasses the resource guard's ledger.
+
 **Needs:** a decision on wiring `docker-compose.media.yml`'s `comfyui` service
 through the admission system, or an accepted convention (mirroring the
 gx-reason/gx-comfyui manual-unload discipline already documented in

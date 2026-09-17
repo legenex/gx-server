@@ -907,6 +907,15 @@ command now first asks the router to free ComfyUI (`POST /v1/admin/free`,
 refused while a generation runs), so node 2 is handed over explicitly
 instead of waiting for the idle timer.
 
+**Amendment (router 2.2.0).** Measured cold footprints on node 2: image
+about 57 GiB, t2v/i2v about 72 GiB, keyframe video edit about 107 GiB. gx-reason
+leaves about 67–70 GiB, so the two tiers cannot run video together. The
+router therefore does memory admission from `/proc/meminfo` (image 60,
+video 76, keyframe 110, warm 8 GiB). It waits for a just-freed ComfyUI and
+otherwise fails the job with a message telling the user to unload gx-reason.
+It never evicts gx-reason itself, because that would kill a user's reasoning
+request.
+
 ## D-032 — gx-max serves the CRACK abliterated DeepSeek-V4-Flash (amends L-6)
 
 **Date:** 2026-09-17. **Status:** ACCEPTED (the migration request asked for

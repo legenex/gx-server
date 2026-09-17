@@ -78,6 +78,11 @@ Status objects follow OpenAI's video API: `status` is `queued`,
 * Uploads: images up to 25 MB and 4096 px per side; videos up to 150 MB, of
   which the first 10 seconds are used.
 * Media generation is refused while gx-max holds the cluster.
+* **Video needs gx10-02 to itself.** A video job needs about 76 GiB free (a
+  video edit about 110 GiB), and gx-reason uses about 44 GiB. While gx-reason
+  is loaded, video jobs fail with "gx10-02 has N GiB free…". Unload
+  gx-reason under Models, or wait for it to idle out after 15 minutes, then
+  retry. Images (about 60 GiB) still work next to gx-reason.
 * Idle media models are unloaded after 10 minutes. A gx-reason request that
   has to start the model also unloads them straight away, unless an image or
   video is being generated at that moment. In that case gx-reason may fail to

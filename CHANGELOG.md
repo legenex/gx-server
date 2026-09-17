@@ -22,7 +22,7 @@ V2 migration: uncensored models, media v2, and new Control UI pages. See
   **API Keys** (D-034, D-035), and docs pages Kilo Code, Open WebUI, Clients,
   Media and Model Manager.
 - A loopback-only `acceptance` account (`gx-ui-passwd --acceptance`).
-- Media router 2.0.0: image edit and variation, multipart uploads,
+- Media router 2.2.0: image edit and variation, multipart uploads,
   image-to-video, video edit (keyframe propagation), video remix, a
   `/v1/workflows` list, thumbnails, and idle ComfyUI free (D-031). Also new
   Wan 2.2 A14B uncensored and Qwen-Image-2512 uncensored workflows, and
@@ -50,6 +50,10 @@ V2 migration: uncensored models, media v2, and new Control UI pages. See
 - The gateway's media key had fallen back to `not-required` after a LiteLLM
   recreate from a stale shell. It is now recreated, and `integrity-audit.sh`
   (writer) checks the running key hash against `.env`.
+- The media router (2.2.0) refuses a job that node 2 cannot hold (HTTP 503
+  `insufficient_memory`, naming gx-reason) instead of pushing the node into
+  swap. The thresholds come from measured footprints: image 57 GiB, video
+  72 GiB, keyframe edit 107 GiB.
 - gx-reason no longer fails to cold-start right after a media job. Media
   router 2.1.0 adds `POST /v1/admin/free` and
   `python -m gx_media_router.free_node`; gx-reason's llama-swap start command

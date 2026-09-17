@@ -1381,6 +1381,23 @@ orchestrator 167 OK · lifecycle 22 OK · media router 74 OK · control UI 155 O
   models at 04:10:01, and gx-reason loaded and answered "156" in 6 min 37 s.
   New router test: `test_free_request_hands_the_node_to_gx_reason` (router
   suite 75 tests).
+* **Media memory footprints were measured, and admission was added (router
+  2.2.0).** On an idle node 2 (114 GiB MemAvailable), with ComfyUI freed
+  before each step and 1 s sampling, the lowest MemAvailable was:
+  image generate/edit **57.5 GiB** (about 57 GiB used), t2v/i2v
+  **42.3 GiB** (about 72 GiB), keyframe video edit **7.2 GiB** (about
+  107 GiB). No swap was used. Evidence:
+  `/srv/logs/acceptance/media-memprobe-20260917.tsv` and `…-steps.txt`.
+  With gx-reason loaded (about 67–70 GiB left), images fit but no video job
+  does. The router now checks `/proc/meminfo` after its model switch: image
+  60 GiB, video 76 GiB, keyframe 110 GiB, warm 8 GiB. It waits up to 30 s for
+  a just-freed ComfyUI to hand memory back, and otherwise fails the job with
+  HTTP 503 / `insufficient_memory` and a message naming gx-reason. **Live:**
+  with gx-reason loaded, t2i passed (29 s) and t2v was refused in 0.1 s
+  ("gx10-02 has 15 GiB free and this video job needs about 76 GiB…"); swap
+  stayed unused. With gx-reason unloaded, t2v then video edit passed 2/2 (the
+  edit waited for the freed Wan weights and finished in 99.5 s). Router
+  suite: 76 tests.
 * Gateway media acceptance re-run after the LiteLLM fix: **6/6**. t2i 26 s,
   edit 36 s (source unchanged), variation 16 s, t2v 60 s, i2v 70 s, v2v
   120 s. Evidence: `/srv/logs/acceptance/media-20260917T031557Z/`.
