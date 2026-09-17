@@ -100,6 +100,10 @@ export default {
       err.hidden = true;
       const models = [...form.querySelectorAll('input[name=models]:checked')].map((x) => x.value);
       const body = { name: name.value.trim(), models, expiry: expiry.value };
+      const problem = !body.name ? 'Enter a name for the key.'
+        : !/^[A-Za-z0-9][A-Za-z0-9 ._-]*$/.test(body.name) ? 'Use letters, digits, spaces, dot, dash or underscore in the name.'
+          : !models.length ? 'Allow at least one alias.' : '';
+      if (problem) { err.hidden = false; err.textContent = problem; name.focus(); return; }
       if (rpm.value) body.rpm_limit = Number(rpm.value);
       if (par.value) body.max_parallel_requests = Number(par.value);
       try {
