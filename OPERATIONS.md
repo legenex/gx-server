@@ -48,6 +48,39 @@ LAN addresses above are for local health checks only, not routine SSH.
 | 15432 | Postgres (LiteLLM) | 1 | 127.0.0.1 |
 | 30000 | SGLang gx-max | 1 | 0.0.0.0 — see BLOCKERS B-003 |
 | 28080 | llama-swap | 2 | 192.168.100.11 + 127.0.0.1 |
+| 8088 | Control Center | 1 | 127.0.0.1 + Tailscale |
+| 8090 | GX-Playground (HTTP) | 1 | 127.0.0.1 + Tailscale |
+| **8443** | **GX-Playground (HTTPS)** — the secure context the microphone and camera need | 1 | 127.0.0.1 + Tailscale |
+| 18800 | media router (gx-image, gx-video) | 2 | 192.168.100.11 + 127.0.0.1 |
+| 18820 | gx-music supervisor | 2 | 192.168.100.11 + 127.0.0.1 |
+| **18830** | **gx-voice supervisor** | 2 | 192.168.100.11 + 127.0.0.1 |
+| **18840** | **gx-call supervisor** | 2 | 192.168.100.11 + 127.0.0.1 |
+| **18850** | **gx-live supervisor** | 2 | 192.168.100.11 + 127.0.0.1 |
+
+Every node-2 supervisor is fabric-only and bearer-key authenticated; none of
+them ever faces a browser. The browser reaches gx-call and gx-live through the
+Playground's WebSocket tunnel (`/rt/call/<id>`, `/rt/live/<id>`), which picks
+the upstream server-side — a client can never choose it.
+
+## Node-2 tenant services: check, unload, drain
+
+```bash
+# Health (open, no key needed) — state, busy, pinned, memory
+for p in 18820 18830 18840 18850; do curl -sS http://192.168.100.11:$p/health; echo; done
+
+# Unload one when idle (bearer key from /srv/projects/gx-cluster/secrets/gx-<svc>/api-key)
+curl -sS -X POST http://192.168.100.11:18830/v1/voice/unload \
+  -H "Authorization: Bearer $(cat /srv/projects/gx-cluster/secrets/gx-voice/api-key)" \
+  -H 'Content-Type: application/json' -d '{"if_idle": true}'
+```
+
+A 409 means busy or pinned — that is correct behaviour, not a fault. The gx-max
+drain uses `{"if_idle": false, "reason": "gxmax"}` and then verifies the
+container, the ledger entry and the engine processes are all gone.
+
+**Never** `docker stop` a tenant's engine container and **never** call ComfyUI
+`/free` directly — use the router's own free path
+(`docker exec gx-media-router python -m gx_media_router.free_node`). D-036.
 
 ## Starting and stopping
 

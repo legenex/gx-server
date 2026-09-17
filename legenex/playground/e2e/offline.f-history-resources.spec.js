@@ -13,18 +13,29 @@ test('History lists media and music jobs with phases, filters and actions', asyn
     const s = (await (await page.request.get('/api/music/jobs')).json()).jobs;
     return [m, s];
   };
-  let [media, music] = await jobsNow();
-  if (media.length + music.length === 0) {
-    const { csrf } = await (await page.request.get('/api/session')).json();
-    const origin = new URL(page.url()).origin;
-    const res = await page.request.post('/api/media/jobs', {
-      headers: { 'X-CSRF-Token': csrf, Origin: origin, Referer: `${origin}/` },
-      data: { kind: 't2i', prompt: 'e2e history seed', size: '512x512', n: 1, seed: 7 },
+  const { csrf } = await (await page.request.get('/api/session')).json();
+  const origin = new URL(page.url()).origin;
+  const seed = async (path, data) => {
+    const res = await page.request.post(path, {
+      headers: { 'X-CSRF-Token': csrf, Origin: origin, Referer: `${origin}/` }, data,
     });
-    expect(res.status(), await res.text()).toBe(202);
-    await expect.poll(async () => (await jobsNow())[0].length).toBeGreaterThan(0);
-    [media, music] = await jobsNow();
+    expect(res.status(), `${path}: ${await res.text()}`).toBe(202);
+  };
+  let [media, music] = await jobsNow();
+  // The later half of this test needs a COMPLETED music job (it opens its
+  // result in the Music workspace), so seed one too, not just a media job.
+  if (media.length === 0) {
+    await seed('/api/media/jobs', { kind: 't2i', prompt: 'e2e history seed', size: '512x512', n: 1, seed: 7 });
   }
+  if (music.length === 0) {
+    await seed('/api/music/jobs', { operation: 'generate', prompt: 'e2e history seed, calm piano',
+      instrumental: true, seconds: 10, seed: 7 });
+  }
+  await expect.poll(async () => {
+    const [m, s] = await jobsNow();
+    return m.length > 0 && s.length > 0 && s.every((j) => j.phase === 'complete' || j.phase === 'failed');
+  }, { timeout: 90_000 }).toBe(true);
+  [media, music] = await jobsNow();
   expect(media.length + music.length).toBeGreaterThan(0);
   await gotoPage(page, 'history');
   const list = page.locator('#history-list');
