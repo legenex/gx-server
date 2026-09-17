@@ -4,7 +4,14 @@
 import { api } from '../api.js';
 import { h, clear, toast, errorBox, table, stateBadge, confirmDialog, copyButton, codeBlock } from '../dom.js';
 
-const ALIASES = ['gx-mini', 'gx-fast', 'gx-reason', 'gx-max', 'gx-auto', 'gx-image', 'gx-video'];
+const ALIASES = ['gx-mini', 'gx-fast', 'gx-reason', 'gx-max', 'gx-auto', 'gx-image', 'gx-video', 'gx-music'];
+// Presets for the Setup page's "Create API key" buttons.
+const PRESETS = {
+  kilo: { name: 'kilo-code', models: ['gx-auto', 'gx-mini', 'gx-fast', 'gx-reason'] },
+  openwebui: { name: 'open-webui', models: ['gx-auto', 'gx-mini', 'gx-fast', 'gx-reason'] },
+  generic: { name: 'api-client', models: ['gx-auto', 'gx-mini', 'gx-fast', 'gx-reason'] },
+  music: { name: 'music-api', models: ['gx-music'] },
+};
 let listEl;
 let secretEl;
 let gatewayUrl = 'http://100.105.214.61:4000/v1';
@@ -73,12 +80,15 @@ async function loadKeys() {
 export default {
   title: 'API Keys',
   interval: 0,
-  async mount(el) {
+  async mount(el, { params } = {}) {
     clear(el);
+    const preset = PRESETS[(params || [])[0]];
     const form = h('form', { id: 'key-form', class: 'card', novalidate: true });
-    const name = h('input', { id: 'key-name', required: true, maxlength: 63, placeholder: 'e.g. kilo-code-laptop' });
+    const name = h('input', { id: 'key-name', required: true, maxlength: 63, placeholder: 'e.g. kilo-code-laptop',
+      value: preset ? preset.name : '' });
     const boxes = ALIASES.map((a) => h('label', { class: 'check' },
-      h('input', { type: 'checkbox', name: 'models', value: a, checked: !['gx-max'].includes(a) }), a));
+      h('input', { type: 'checkbox', name: 'models', value: a,
+        checked: preset ? preset.models.includes(a) : !['gx-max', 'gx-music'].includes(a) }), a));
     const expiry = h('select', { id: 'key-expiry' }, [['never', 'Never'], ['1d', '1 day'], ['7d', '7 days'], ['30d', '30 days'], ['90d', '90 days'], ['365d', '1 year']]
       .map(([v, l]) => h('option', { value: v }, l)));
     const rpm = h('input', { id: 'key-rpm', type: 'number', min: 1, max: 100000, placeholder: 'unlimited' });
@@ -92,7 +102,8 @@ export default {
         h('div', { class: 'field' }, h('label', { for: 'key-rpm' }, 'Requests per minute (optional)'), rpm),
         h('div', { class: 'field' }, h('label', { for: 'key-par' }, 'Parallel requests (optional)'), par)),
       h('fieldset', {}, h('legend', {}, 'Allowed aliases'), h('div', { class: 'checks' }, boxes),
-        h('p', { class: 'hint' }, 'gx-max takes over both nodes; only allow it for clients that should be able to start it.')),
+        h('p', { class: 'hint' }, 'gx-max takes over both nodes; only allow it for clients that should be able to start it. '
+          + 'gx-music is for the music API only (chat clients would list it as a model they cannot use).')),
       err,
       h('button', { type: 'submit', class: 'btn btn-primary', id: 'key-create' }, 'Create key'));
     form.addEventListener('submit', async (ev) => {
@@ -119,10 +130,11 @@ export default {
       h('p', { class: 'lead' }, 'Keys for Kilo Code, Open WebUI, scripts and agents. They are LiteLLM virtual keys: each one is '
         + 'limited to the aliases you pick and can be revoked at any time. The gateway master key is never shown here.'),
       h('p', {}, 'Base URL for every client: ', h('code', {}, gatewayUrl), ' ', copyButton(() => gatewayUrl, 'Copy URL'),
-        ' · Setup guides: ', h('a', { href: '#/docs/kilo-code' }, 'Kilo Code'), ', ', h('a', { href: '#/docs/openwebui' }, 'Open WebUI'),
-        ', ', h('a', { href: '#/docs/clients' }, 'other clients')),
+        ' · Setup: ', h('a', { href: '#/setup/kilo' }, 'Kilo Code'), ', ', h('a', { href: '#/setup/openwebui' }, 'Open WebUI'),
+        ', ', h('a', { href: '#/setup/generic' }, 'other clients')),
       secretEl, form, h('h2', {}, 'Existing keys'), listEl);
     await loadKeys();
+    if (preset) name.focus();
   },
   unmount() { if (secretEl) clear(secretEl); },
 };

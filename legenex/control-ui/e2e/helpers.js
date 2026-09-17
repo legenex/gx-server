@@ -3,10 +3,11 @@ import { expect } from '@playwright/test';
 
 export const PAGES = [
   ['dashboard', 'Dashboard'],
+  ['resources', 'Resource Control'],
   ['models', 'Models'],
-  ['create', 'Create'],
-  ['library', 'Media Library'],
   ['manager', 'Model Manager'],
+  ['storage', 'Storage & Cleanup'],
+  ['setup', 'Setup'],
   ['runtime', 'Runtime'],
   ['cluster', 'Cluster'],
   ['jobs', 'Jobs / Queue'],

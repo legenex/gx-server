@@ -91,8 +91,9 @@ def node_facts(role: str, avail: float) -> dict:
         "guard_lock": "free",
         "gxmax_watcher": {"present": False, "alive": False},
         "ssh_ms": 900,
-        "guard": {"dir": "/srv/projects/gx-cluster/state/guard", "ledger": {}, "holds": {}, "pins": {},
-                  "profile": None},
+        "guard": ({"dir": "/srv/projects/gx-cluster/state/guard", "ledger": {}, "holds": {}, "pins": {},
+                   "profile": None} if role == "node1" else
+                  {"dir": "/srv/projects/gx-cluster/state/guard", "ledger": {}, **NODE2_GUARD}),
         "disk": {"path": "/", "total": 916 * 10**9, "used": (377 if role == "node1" else 541) * 10**9,
                  "free": (492 if role == "node1" else 328) * 10**9, "percent": 44.0 if role == "node1" else 63.0},
         "music_engine_procs": 0,
@@ -100,6 +101,59 @@ def node_facts(role: str, avail: float) -> dict:
 
 
 KEYS: dict = {}
+NODE2_GUARD: dict = {"pins": {}, "holds": {}, "profile": None}
+
+
+def _fake_node2_write(app, name: str, content: str) -> bool:
+    """Stand-in for the SSH guard-file write on gx10-02 (no SSH in tests)."""
+    import json as _json  # noqa: PLC0415
+
+    if name == "pins.json":
+        NODE2_GUARD["pins"] = _json.loads(content)
+    elif name == "profile.json":
+        NODE2_GUARD["profile"] = _json.loads(content)
+    elif name == "node2.maintenance-hold":
+        if content:
+            NODE2_GUARD["holds"] = {"maintenance": {"age_seconds": 1, "active": True}}
+        else:
+            NODE2_GUARD["holds"] = {}
+    app.cluster.node2.invalidate()
+    return True
+
+
+SCAN_STATE = {"cleaned": set()}
+
+
+def _fake_storage_runner(node: str, req: dict, timeout: float) -> dict:
+    """Synthetic scan/delete results for the two nodes (no filesystem access)."""
+    cands = [
+        {"kind": "path", "target": f"/srv/cache/pip-{node}", "class": "safe", "bytes": 2 * GIB,
+         "reason": "pip download cache", "name": "pip", "category": "caches",
+         "consequence": "re-downloaded when needed", "mtime": int(time.time()) - 86400},
+        {"kind": "docker_build_cache", "target": "builder", "class": "safe", "bytes": 3 * GIB,
+         "reason": "Docker build cache", "name": "Docker build cache", "category": "docker_build_cache",
+         "consequence": "slower next build", "mtime": None},
+        {"kind": "path", "target": "/srv/models/image/diffusion_models/unused.safetensors", "class": "review",
+         "bytes": 16 * GIB, "reason": "model file not referenced by any media workflow or alias",
+         "name": "unused.safetensors", "category": "models", "consequence": "must be downloaded again",
+         "mtime": 1},
+        {"kind": "path", "target": "/srv/models/deepseek/DeepSeek-V4-Flash-0731-CRACK", "class": "protected",
+         "bytes": 155 * GIB, "reason": "protected: gx-max (current)", "name": "DeepSeek-V4-Flash-0731-CRACK",
+         "category": "models", "consequence": "", "mtime": None},
+    ]
+    cands = [c for c in cands if (node, c["target"]) not in SCAN_STATE["cleaned"]]
+    if req["mode"] == "scan":
+        return {"node": node, "usage": {"total": 916 * 10**9, "used": 377 * 10**9, "free": 492 * 10**9,
+                                        "percent": 44.0, "categories": {"models": 180 * GIB,
+                                                                        "docker_images": 64 * GIB}},
+                "candidates": cands, "largest": [{"path": "/srv/models/deepseek", "bytes": 155 * GIB}],
+                "seconds": 0.1}
+    results = []
+    for item in req["items"]:
+        SCAN_STATE["cleaned"].add((node, item["target"]))
+        results.append({"kind": item["kind"], "target": item["target"], "ok": True, "freed": 2 * GIB})
+    return {"node": node, "results": results, "freed": sum(r["freed"] for r in results),
+            "free_after": 494 * 10**9}
 
 
 def key_generate(handler, body):
@@ -184,6 +238,8 @@ def main() -> int:
         "sglang": {"ok": False, "status": 0},
     }
     app.resources.probe_music = True
+    app.resources._node2_writer = lambda name, content: _fake_node2_write(app, name, content)
+    app.storage._runner = _fake_storage_runner
     token_file = os.environ.get("GX_E2E_PROXY_TOKEN_FILE")
     if token_file:  # the Playground proxy under test reads the same shared token
         Path(token_file).parent.mkdir(parents=True, exist_ok=True)

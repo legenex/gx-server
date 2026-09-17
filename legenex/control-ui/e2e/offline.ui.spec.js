@@ -40,13 +40,15 @@ test('every page renders with real data, no console errors and no serious a11y v
   expect(problems).toEqual([]);
 });
 
-test('dashboard shows both nodes, rails, seven aliases and git sync', async ({ page }) => {
+test('dashboard shows both nodes, rails, eight aliases and git sync', async ({ page }) => {
   await login(page, PASSWORD);
   const main = page.locator('#page-dashboard');
   await expect(main.getByRole('heading', { name: 'gx10-01' })).toBeVisible();
   await expect(main.getByRole('heading', { name: 'gx10-02' })).toBeVisible();
-  await expect(main.locator('.model-tile')).toHaveCount(7);
-  for (const alias of ['gx-mini', 'gx-fast', 'gx-reason', 'gx-max', 'gx-auto', 'gx-image', 'gx-video']) {
+  await expect(main.locator('.model-tile')).toHaveCount(8);
+  await expect(main.locator('#dash-playground')).toHaveAttribute('href', /:8090\/$/);
+  await expect(main.getByText('HEALTHY').first()).toBeVisible();
+  for (const alias of ['gx-mini', 'gx-fast', 'gx-reason', 'gx-max', 'gx-auto', 'gx-image', 'gx-video', 'gx-music']) {
     await expect(main.locator('.model-tile .model-name').getByText(alias, { exact: true })).toHaveCount(1);
   }
   await expect(main.getByText('All three HEADs match')).toBeVisible();
@@ -235,59 +237,108 @@ test('theme toggle, keyboard skip link and logout', async ({ page }) => {
   expect(status).toBe(401);
 });
 
-test('create: image generation runs through the job phases and lands in the library', async ({ page }) => {
+test('creative work links to GX-Playground (no second creative app here)', async ({ page }) => {
   const problems = watchPage(page);
   await login(page, PASSWORD);
-  await gotoPage(page, 'create', 'Create');
-  await expect(page.getByRole('tab', { name: 'Generate Image' })).toHaveAttribute('aria-selected', 'true');
-  await page.click('#go-image');
-  await expect(page.locator('#form-image .form-error')).toContainText('Enter a prompt');
-  await page.fill('#prompt-image', 'e2e: a red kite over the sea');
-  await page.click('#go-image');
-  const card = page.locator('.job-card').first();
-  await expect(card).toContainText('Ready', { timeout: 30_000 });
-  await expect(card.locator('img.media-view')).toBeVisible();
-  await expect(card.getByRole('link', { name: 'Open in Library' })).toBeVisible();
-  // tabs are keyboard operable
-  await page.getByRole('tab', { name: 'Generate Image' }).focus();
-  await page.keyboard.press('ArrowRight');
-  await expect(page.getByRole('tab', { name: 'Edit Image' })).toHaveAttribute('aria-selected', 'true');
-  await page.click('#go-edit');
-  await expect(page.locator('#form-edit .form-error')).toBeVisible();
+  await expect(page.locator('#nav-playground')).toHaveAttribute('href', /^http:\/\/127\.0\.0\.1:8090\/$/);
+  await page.goto('/#/create');
+  await expect(page.locator('.page-title')).toHaveText('GX-Playground');
+  await expect(page.locator('#open-playground')).toHaveAttribute('href', 'http://127.0.0.1:8090/');
+  await page.goto('/#/library');
+  await expect(page.locator('#open-playground')).toBeVisible();
   expect(problems).toEqual([]);
 });
 
-test('library: search, select all / none, favourite, rename, viewer, delete with confirmation', async ({ page }) => {
+test('resource control: profiles, live map, admission, compatibility, pin and maintenance', async ({ page }) => {
   const problems = watchPage(page);
   await login(page, PASSWORD);
-  await gotoPage(page, 'library', 'Media Library');
-  const tiles = page.locator('.media-grid .media-tile');
-  await expect(tiles.first()).toBeVisible();
-  const before = await tiles.count();
-  expect(before).toBeGreaterThanOrEqual(2);
-  await page.click('#lib-select-all');
-  await expect(page.locator('.sel-count')).toHaveText(`${before} selected`);
-  await page.click('#lib-select-none');
-  await expect(page.locator('.sel-count')).toHaveText('0 selected');
-  await page.fill('#lib-search', 'lighthouse');
-  await expect(tiles).toHaveCount(1);
-  await tiles.first().locator('.tile-open').click();
-  const viewer = page.locator('dialog.viewer');
-  await expect(viewer).toBeVisible();
-  await expect(viewer).toContainText('e2e seeded lighthouse');
-  await axeCheck(page, 'library-viewer');
-  await page.click('#viewer-fav');
-  await expect(page.locator('#viewer-fav')).toHaveAttribute('aria-pressed', 'true');
-  await page.fill('#viewer-title', 'Renamed in e2e');
-  await viewer.getByRole('button', { name: 'Rename' }).click();
-  await expect(page.locator('.toast').last()).toContainText('Title saved');
-  await page.click('#viewer-delete');
+  await gotoPage(page, 'resources', 'Resource Control');
+  await expect(page.locator('#active-profile')).toHaveText('Auto');
+  for (const alias of ['gx-mini', 'gx-fast', 'gx-reason', 'gx-image', 'gx-video', 'gx-music']) {
+    await expect(page.locator(`.rt-tile[data-alias="${alias}"]`).first()).toBeVisible();
+  }
+  await expect(page.getByRole('heading', { name: 'gx10-02' })).toBeVisible();
+  // compatibility explains itself
+  await page.locator('[data-pair="gx-reason|gx-video"]').click();
+  await expect(page.locator('.compat-detail')).toContainText('gx-reason + gx-video');
+  await expect(page.locator('.compat-detail')).toContainText('needs 76 GiB');
+  await page.locator('[data-pair="gx-mini|gx-reason"]').click();
+  await expect(page.locator('.compat-detail')).toContainText('different nodes');
+  // harmless switch: no dialog
+  await page.locator('[data-profile="text"]').click();
+  await expect(page.locator('#active-profile')).toHaveText('Text / Agent', { timeout: 15_000 });
+  // pin gx-music (node-2 guard write is stubbed by the fixture)
+  await page.locator('[data-control="gx-music:pin"]').click();
+  await expect(page.locator('[data-control="gx-music:unpin"]')).toBeVisible({ timeout: 15_000 });
+  await page.locator('[data-control="gx-music:unpin"]').click();
+  await expect(page.locator('[data-control="gx-music:pin"]')).toBeVisible({ timeout: 15_000 });
+  // Max needs a typed confirmation: cancel it
+  await page.locator('[data-profile="max"]').click();
+  await expect(page.locator('#confirm-dialog')).toBeVisible();
   await expect(page.locator('#confirm-ok')).toBeDisabled();
-  await page.fill('#confirm-phrase', 'DELETE');
+  await page.click('#confirm-cancel');
+  await expect(page.locator('#active-profile')).toHaveText('Text / Agent');
+  // Maintenance: confirm, then end it
+  await page.click('#enter-maintenance');
+  await expect(page.locator('#confirm-dialog')).toBeVisible();
   await page.click('#confirm-ok');
-  await expect(page.locator('.toast').last()).toContainText('Deleted 1');
-  await page.fill('#lib-search', '');
-  await expect(tiles).toHaveCount(before - 1);
+  await expect(page.locator('#active-profile')).toHaveText('Maintenance', { timeout: 15_000 });
+  await expect(page.locator('#exit-maintenance')).toBeVisible();
+  await axeCheck(page, 'resources-maintenance');
+  await page.click('#exit-maintenance');
+  await expect(page.locator('#active-profile')).toHaveText('Auto', { timeout: 15_000 });
+  expect(problems).toEqual([]);
+});
+
+test('storage: live health, scan with progress, safe cleanup with dry run, protected items locked', async ({ page }) => {
+  const problems = watchPage(page);
+  await login(page, PASSWORD);
+  await gotoPage(page, 'storage', 'Storage & Cleanup');
+  await expect(page.locator('[data-health="node1"]')).toHaveText('HEALTHY');
+  await expect(page.locator('[data-health="node2"]')).toHaveText('HEALTHY');
+  await page.click('#scan-storage');
+  await expect(page.locator('#scan-state')).toHaveText('done', { timeout: 30_000 });
+  await expect(page.getByRole('heading', { name: 'SAFE TO CLEAN' })).toBeVisible();
+  await page.click('#select-safe');
+  await expect(page.locator('#clean-selected')).toBeEnabled();
+  await page.click('#clean-selected');
+  await expect(page.locator('#confirm-body')).toContainText('Dry run');
+  await page.click('#confirm-ok');
+  await expect(page.locator('#last-freed')).toBeVisible({ timeout: 30_000 });
+  await page.getByRole('button', { name: 'Show' }).click();
+  await expect(page.locator('table').filter({ hasText: 'Why it is protected' })).toContainText('gx-max');
+  await expect(page.locator('input[data-candidate]').filter({ has: page.locator('xpath=ancestor::table[.//th[text()="Why it is protected"]]') })).toHaveCount(0);
+  await axeCheck(page, 'storage');
+  expect(problems).toEqual([]);
+});
+
+test('setup: kilo, open webui and generic pages with live values and a real test', async ({ page }) => {
+  const problems = watchPage(page);
+  await login(page, PASSWORD);
+  await gotoPage(page, 'setup', 'Setup');
+  await expect(page.locator('#kilo-base-url')).toHaveText('http://100.105.214.61:4000/v1');
+  await expect(page.locator('#kilo-model')).toHaveText('gx-auto');
+  await expect(page.getByText('"npm": "@ai-sdk/openai-compatible"')).toBeVisible();
+  await expect(page.getByText('YOUR_GX_API_KEY')).toHaveCount(0);
+  await page.fill('#test-key-kilo', 'not-a-key');
+  await page.click('#test-kilo');
+  await expect(page.locator('#test-result-kilo')).toContainText('paste a gateway key');
+  await page.getByRole('tab', { name: 'Open WebUI' }).click();
+  await expect(page.locator('#owui-url')).toHaveText('http://100.105.214.61:4000/v1');
+  await expect(page.getByText('Manage OpenAI API Connections')).toBeVisible();
+  await page.keyboard.press('ArrowRight');
+  await expect(page.getByRole('tab', { name: 'OpenAI-compatible clients' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByText('export GX_API_KEY=YOUR_GX_API_KEY')).toBeVisible();
+  await page.fill('#test-key-generic', `sk-e2e-${'y'.repeat(30)}`);
+  await page.click('#test-generic');
+  await expect(page.locator('#test-verdict-generic')).toHaveText('CONNECTED');
+  await page.getByRole('tab', { name: 'Kilo Code' }).click();
+  await page.click('#create-key-kilo');
+  await expect(page.locator('.page-title')).toHaveText('API Keys');
+  await expect(page.locator('#key-name')).toHaveValue('kilo-code');
+  await expect(page.locator('input[name=models][value="gx-auto"]')).toBeChecked();
+  await expect(page.locator('input[name=models][value="gx-max"]')).not.toBeChecked();
+  await expect(page.locator('input[name=models][value="gx-music"]')).not.toBeChecked();
   expect(problems).toEqual([]);
 });
 

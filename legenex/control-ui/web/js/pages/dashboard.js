@@ -6,9 +6,36 @@ import { nodeCard, modelTile, gitBlock, unitBadge, servicesTable, lockLedger } f
 
 let root;
 
+const HEALTH = { ok: 'ok', watch: 'warn', warn: 'warn', crit: 'crit' };
+
+function quickCards(res, storage) {
+  const pg = `${location.protocol}//${location.hostname}:8090/`;
+  const rows = (res && res.rows) || [];
+  const disks = storage ? Object.values(storage.overview || {}) : [];
+  return h('section', { class: 'card hero quick', 'aria-label': 'Creative, resources and storage' },
+    h('div', { class: 'quick-grid' },
+      h('div', {},
+        h('h2', { class: 'card-title' }, 'GX-Playground'),
+        h('p', { class: 'muted small' }, 'Images, video, music and the Library.'),
+        h('a', { class: 'btn btn-primary', href: pg, target: '_blank', rel: 'noopener', id: 'dash-playground' }, 'Open GX-Playground ↗')),
+      h('div', {},
+        h('h2', { class: 'card-title' }, 'Resource profile: ', res ? res.profile_label : '—'),
+        h('p', { class: 'small' }, rows.map((r) => h('span', { class: 'chip' }, `${r.label}: ${r.status}`))),
+        h('p', { class: 'small muted' }, res ? `${res.queued} creative job(s) queued` : ''),
+        h('a', { class: 'btn btn-ghost btn-sm', href: '#/resources' }, 'Resource Control →')),
+      h('div', {},
+        h('h2', { class: 'card-title' }, 'Storage'),
+        disks.map((d) => h('p', { class: 'small' }, `${d.name}: `, levelBadge(HEALTH[(d.health || {}).level] || 'unknown',
+          (d.health || {}).label || 'UNKNOWN'), ` ${bytes(d.free)} free (${Math.round(d.percent || 0)} % used)`)),
+        h('a', { class: 'btn btn-ghost btn-sm', href: '#/storage' }, 'Storage & Cleanup →'))));
+}
+
+let extra = { res: null, storage: null };
+
 function render(ov) {
   const gx = ov.gxmax || {};
   const grid = h('div', { class: 'grid grid-dash' });
+  grid.append(quickCards(extra.res, extra.storage));
 
   grid.append(h('section', { class: `card hero level-${ov.overall}`, 'aria-label': 'Cluster summary' },
     h('div', { class: 'card-head' }, h('h2', { class: 'card-title' }, 'Cluster'), levelBadge(ov.overall)),
@@ -81,7 +108,12 @@ export default {
   },
   async refresh({ signal }) {
     try {
-      const ov = await api.get('/api/overview', { signal });
+      const [ov, res, storage] = await Promise.all([
+        api.get('/api/overview', { signal }),
+        api.get('/api/resources/summary', { signal }).catch(() => null),
+        api.get('/api/storage', { signal }).catch(() => null),
+      ]);
+      extra = { res, storage };
       render(ov);
     } catch (err) {
       if (err.name === 'AbortError') throw err;

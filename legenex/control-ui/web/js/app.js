@@ -9,13 +9,16 @@ import logs from './pages/logs.js';
 import playground from './pages/playground.js';
 import docs from './pages/docs.js';
 import settings from './pages/settings.js';
-import create from './pages/create.js';
-import library from './pages/library.js';
+import creative from './pages/creative.js';
 import manager from './pages/manager.js';
 import keys from './pages/keys.js';
+import resources from './pages/resources.js';
+import storage from './pages/storage.js';
+import setup from './pages/setup.js';
 
 const PAGES = {
-  dashboard, models, create, library, manager, runtime, cluster, jobs, logs, playground, docs, keys, settings,
+  dashboard, models, resources, storage, manager, keys, setup, runtime, cluster, jobs, logs, playground, docs,
+  settings, create: creative, library: creative,
 };
 const $ = (id) => document.getElementById(id);
 
@@ -199,6 +202,8 @@ function pageContext() {
 }
 
 function initShell() {
+  // Same host, Playground port: works on the Tailscale address and on loopback.
+  $('nav-playground').href = `${location.protocol}//${location.hostname}:8090/`;
   window.addEventListener('hashchange', () => {
     // Only '#/page' hashes are routes; anything else is an in-page anchor.
     if (location.hash.startsWith('#/') || !location.hash) route();
