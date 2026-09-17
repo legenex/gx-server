@@ -100,23 +100,36 @@ def run(spec: str, out: Path) -> dict:
             if not src_url:
                 ok, detail = False, {"error": "no source image for i2v", "http": 0}
             else:
-                with urllib.request.urlopen(ROUTER + src_url, timeout=60) as r:
-                    png = r.read()
-                status, created = router_multipart("/v1/videos", {"model": "gx-video", "prompt": "TEST footprint: "
-                                                    "a slow pan across a harbour at sunset", "size": f"{w}x{h}",
-                                                    "length": count_i, "fps": 16, "seed": 11},
-                                                    "input_reference", "src.png", png)
-                vid = created.get("id")
-                result = {}
-                for _ in range(1800):
-                    _, result = router("GET", f"/v1/videos/{vid}")
-                    if result.get("status") in ("completed", "failed"):
-                        break
-                    time.sleep(2)
-                ok = result.get("status") == "completed"
-                detail = {"create_http": status, "frames": result.get("frames"), "error": result.get("error"),
-                          "cold": result.get("cold_start"), "elapsed": result.get("elapsed_seconds"),
-                          "waiting": result.get("waiting")}
+                png, fetch_http = b"", 0
+                try:
+                    req = urllib.request.Request(ROUTER + src_url,
+                                                 headers={"Authorization": f"Bearer {media_key()}"})
+                    with urllib.request.urlopen(req, timeout=60) as r:
+                        png = r.read()
+                        fetch_http = r.status
+                except urllib.error.HTTPError as exc:
+                    fetch_http = exc.code
+                except urllib.error.URLError as exc:
+                    fetch_http = -1
+                    src_url = f"{src_url} ({exc.reason})"
+                if fetch_http != 200 or not png:
+                    ok, detail = False, {"error": "source image fetch failed", "http": fetch_http, "url": src_url}
+                else:
+                    status, created = router_multipart("/v1/videos", {"model": "gx-video", "prompt": "TEST footprint: "
+                                                        "a slow pan across a harbour at sunset", "size": f"{w}x{h}",
+                                                        "length": count_i, "fps": 16, "seed": 11},
+                                                        "input_reference", "src.png", png)
+                    vid = created.get("id")
+                    result = {}
+                    for _ in range(1800):
+                        _, result = router("GET", f"/v1/videos/{vid}")
+                        if result.get("status") in ("completed", "failed"):
+                            break
+                        time.sleep(2)
+                    ok = result.get("status") == "completed"
+                    detail = {"create_http": status, "frames": result.get("frames"), "error": result.get("error"),
+                              "cold": result.get("cold_start"), "elapsed": result.get("elapsed_seconds"),
+                              "waiting": result.get("waiting")}
         else:
             status, result = router("POST", "/v1/images/generations", {"model": "gx-image", "prompt": "TEST footprint:"
                                     " a lighthouse on a cliff", "size": f"{w}x{h}", "n": count_i, "seed": 11,
@@ -141,8 +154,14 @@ def main() -> int:
     out.mkdir(parents=True, exist_ok=True)
     results = []
     for spec in sys.argv[1:]:
-        results.append(run(spec, out))
-        if results[-1]["min_gib"] is not None and results[-1]["min_gib"] < RESERVE + 4:
+        try:
+            results.append(run(spec, out))
+        except Exception as exc:  # a failed job must not lose the other measurements
+            rec = {"job": spec, "ok": False, "error": f"{type(exc).__name__}: {exc}"}
+            print(json.dumps(rec), flush=True)
+            results.append(rec)
+            continue
+        if results[-1].get("min_gib") is not None and results[-1]["min_gib"] < RESERVE + 4:
             print("stopping: the last job came within 4 GiB of the reserve", flush=True)
             break
     free_and_settle()
