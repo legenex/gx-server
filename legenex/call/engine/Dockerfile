@@ -33,11 +33,43 @@ RUN uv venv /opt/build --python /usr/bin/python3.12 \
     && uv pip install --python /opt/build/bin/python --index-strategy unsafe-best-match \
          --index-url https://download.pytorch.org/whl/cu130 --extra-index-url https://pypi.org/simple \
          ${TORCH_SPEC} ninja packaging wheel "setuptools>=70" pip
-RUN mkdir -p /wheels && cd /wheels \
+# Both CUDA extensions are built from PATCHED sdists (patch-cuda-ext.py), not
+# straight from PyPI, for two reasons found by measurement on 2026-09-17
+# (/srv/logs/gx-call/build-20260917T192556Z.log on gx10-02):
+#
+#   1. C++ STANDARD. mamba-ssm and causal-conv1d hardcode "-std=c++17" in both
+#      extra_compile_args["cxx"] and ["nvcc"]. torch 2.14's headers require
+#      C++20 -- ATen/ATen.h:5 is literally
+#        "#error C++20 or later compatible compiler is required to use ATen."
+#      and c10/util/intrusive_ptr.h:775 uses std::strong_ordering -- so
+#      mamba-ssm failed with 18 such errors after 480 s. Environment variables
+#      cannot fix this: torch 2.14.0's torch/utils/cpp_extension.py contains
+#      ZERO references to NVCC_APPEND_FLAGS, NVCC_PREPEND_FLAGS or CXXFLAGS
+#      (checked against the v2.14.0 tag), and one of mamba-ssm's sources
+#      (csrc/selective_scan/selective_scan.cpp) is a host .cpp compiled with
+#      the "cxx" flags, which an nvcc-only override would not reach anyway.
+#      causal-conv1d happened to compile under C++17 because its sources do not
+#      pull in ATen.h; it is patched too so both agree with the torch headers.
+#   2. ARCHITECTURES. Both build a nine-entry -gencode list by hand
+#      (sm_75, 80, 87, 90, 100, 120, 103, 110, 121) and pass it as
+#      "... + cc_flag". Because the caller already supplies -gencode, torch's
+#      own _get_cuda_arch_flags stays out of the way and TORCH_CUDA_ARCH_LIST
+#      has no effect at all. GB10 is sm_121 and executes sm_120 cubins (see
+#      legenex/media/README.md), so eight of the nine were wasted compile time.
+#
+# The patch asserts what it expects to find, so a future version that changes
+# those lines fails the build here instead of silently building the wrong thing.
+COPY patch-cuda-ext.py /opt/patch-cuda-ext.py
+RUN mkdir -p /wheels /src && cd /src \
+    && /opt/build/bin/python -m pip download --no-build-isolation --no-deps --no-binary :all: \
+         causal-conv1d==1.6.2.post1 mamba-ssm==2.3.2.post1 \
+    && for f in *.tar.gz; do tar xzf "$f"; done \
+    && /opt/build/bin/python /opt/patch-cuda-ext.py \
+         causal_conv1d-1.6.2.post1 mamba_ssm-2.3.2.post1 \
     && /opt/build/bin/python -m pip wheel --no-build-isolation --no-deps -w /wheels \
-         causal-conv1d==1.6.2.post1 \
+         ./causal_conv1d-1.6.2.post1 \
     && /opt/build/bin/python -m pip wheel --no-build-isolation --no-deps -w /wheels \
-         mamba-ssm==2.3.2.post1 \
+         ./mamba_ssm-2.3.2.post1 \
     && ls -la /wheels
 
 # ---------------------------------------------------------------- runtime --
