@@ -2,7 +2,8 @@
 # LiteLLM — the single OpenAI-compatible gateway for the gx cluster
 # ==============================================================================
 # Runs on NODE 1 (gx10-01), container port 4000.
-# This file is the ONLY user-facing surface. It exposes EXACTLY seven aliases:
+# This file is the gateway for seven of the eight public aliases (gx-music is
+# served by GX-Playground's /v1/music API, D-036):
 #
 #   gx-mini    gx-fast    gx-reason    gx-max    gx-auto    gx-image    gx-video
 #
@@ -279,6 +280,14 @@ model_list:
 litellm_settings:
   drop_params: true
   set_verbose: false
+
+  # --- D-039: context budgeting + text latency metrics ----------------------
+  # gx-mini / gx-fast / gx-reason: max_tokens is clamped so input + output +
+  # margin fits the served window, and an input that cannot fit is refused
+  # at once (400 context_length_exceeded, x-should-retry: false). Uses the
+  # orchestrator's budget module (mounted read-only). Also appends one
+  # privacy-safe timing line per text request to /srv/logs/gx-text/.
+  callbacks: ["gx_hooks.gx_budget_hook.proxy_handler_instance"]
 
   # Long enough for a cold start of a large model behind llama-swap.
   request_timeout: 1800

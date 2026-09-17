@@ -101,8 +101,15 @@ services:
       GX_ORCHESTRATOR_API_KEY: ${GX_ORCHESTRATOR_API_KEY:-not-required}
       GX_MEDIA_API_KEY: ${GX_MEDIA_API_KEY:-not-required}
       LITELLM_LOG: ${LITELLM_LOG_LEVEL:-INFO}
+      # D-039 budget hook: metrics file location inside the container.
+      GX_TEXT_METRICS_LOG: /var/log/gx-text/gateway-text.jsonl
     volumes:
       - ./litellm/config.yaml:/app/config.yaml:ro
+      # D-039: context-budget pre-call hook + text latency metrics. Directory
+      # mounts (not single files) so a checkout update is picked up on restart.
+      - ./litellm/gx_hooks:/app/gx_hooks:ro
+      - ../orchestrator/gx_orchestrator:/app/gx_lib/gx_orchestrator:ro
+      - ${GX_TEXT_METRICS_DIR:-/srv/logs/gx-text}:/var/log/gx-text
     command:
       - "--config"
       - "/app/config.yaml"
