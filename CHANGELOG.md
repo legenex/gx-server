@@ -9,6 +9,110 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-09-17
+
+Build V3 integration: the complete creative and realtime product is deployed
+and verified in a real browser. See `TEST_RESULTS.md` §22, D-040, D-041, B-030
+and B-031.
+
+### Fixed
+
+- **The deployed web apps served a snapshot of the checkout taken at start-up
+  (B-031).** The Playground had been running since 10:29 while the frontend was
+  edited until 17:17, so 21 of 32 files were stale and **11 files that existed
+  on disk returned HTTP 404** — including `js/routes.js` and the whole Voice,
+  Models, Logs and Settings pages. Every symptom read as "the UI is broken"
+  rather than "the UI is not deployed".
+  - Both servers now re-read a static file when its mtime, size or inode
+    changes. Path resolution rejects traversal, hidden segments and anything
+    outside `web/`.
+  - `legenex/{playground,control-ui}/scripts/deploy.sh` is the only sanctioned
+    deployment path and **fails unless the ETag of every served file matches
+    sha256 of the file in the checkout**.
+- **The Music page was dead.** `web/js/pages/music.js` used six
+  `music-form.js` exports without importing the module, so it rendered only
+  "This page could not be loaded: aiPanel is not defined".
+- **A fast-failing media job could deliver `failed` before `submitted`.**
+  `MediaJobs.submit()` enqueued the job before notifying observers, so an
+  observer that inserts its row on `submitted` lost the result and kept a
+  `queued` row for ever; `WanVideo.observe` had that exposure.
+- **A playing video restarted whenever the viewer re-rendered.**
+  `workspace.js renderViewer()` rebuilt its `<video>` element, so a job card
+  ticking or a favourite being toggled threw a watching user back to 0.
+- **Call Agents audits were silently discarded.** `audit or (lambda **_: None)`
+  treated an empty list sink as falsy, so every audit went to the no-op.
+- **A call recording could not be fetched.** `end_session` waited on an event
+  poller that never runs offline and answered 409 "session not ended".
+- **`config.py` declared `voice_base` twice** and the test fixture wrote the
+  voice key to a different path than the one the service clients read, so the
+  Voice capability row was missing from the offline fixture.
+- **`aria-label` on an xyflow handle** — a plain `<div>`, where that attribute
+  is prohibited (axe WCAG 2.2 AA, serious) — on Creative Flows.
+- **`gx-voice` was unreachable through the gateway.** `docker-compose.gateway.yml`
+  never passed `GX_VOICE_API_KEY`, so `config.yaml`'s
+  `api_key: os.environ/GX_VOICE_API_KEY` referenced a variable that did not
+  exist. A restart alone would not have fixed it.
+- **Hugging Face "access denied" was one message for several causes (B-030).**
+  401 and 403 are now separate machine codes with separate human actions, and
+  Hugging Face's own error text is passed through verbatim.
+
+### Added
+
+- **Creative Flows** — 67 node types, graph validation, versioning, templates
+  and AI flow creation, with a React/`@xyflow/react` editor. The editor had no
+  entry point at all before this pass: no `main.tsx`, no app shell, no
+  stylesheet, so it could never have been built.
+- **`gx-voice`** (Qwen3-TTS 1.7B) — node-2 supervisor, Voice Studio page,
+  OpenAI-compatible `POST /v1/audio/speech` on the gateway.
+- **`gx-live`** (MiniCPM-o 4.5) — node-2 supervisor, Live page with microphone
+  and camera capture, barge-in and server-side tools.
+- **`gx-call`** (NemotronLabs VoiceChat 11B) — node-2 supervisor and the Call
+  Agents page.
+- **Wan 2.2 LoRAs** — catalogue, high/low classification and pairing, presets,
+  and branch-safe graph building.
+- **HTTPS listener on :8443**, backed by a local private CA that the service
+  creates and renews itself. This is the secure context `getUserMedia`
+  requires, so Live and Call Agents can work over Tailscale.
+- **Realtime WebSocket tunnel** with single-use tickets, per-owner limits and
+  fixed server-side targets.
+- **Playground Models, Logs and Settings** pages fed by live data.
+- **Migrations `060_live.sql` and `070_images.sql`**; all eight are now applied.
+- **`live.navigation.spec.js`** — a deployed-site gate asserting all 13 pages,
+  no dead links, no error boundary, accessible names, keyboard focus and axe
+  WCAG 2.2 AA. It generates nothing and costs no GPU.
+- **`test_hf_access.py`** — 12 hermetic tests pinning the 401/403 distinction.
+- **A per-module asset budget** (`GX_BUILD_MODULE_KB`, 64 KiB) and
+  `GX_BUILD_EXCLUDE` for generated bundles.
+
+### Measured
+
+- **I2V 640x640 x33** — the missing media footprint: baseline 111.9 GiB,
+  minimum **40.59 GiB**, growth **71.3 GiB**, 0 s below the 30 GiB reserve,
+  51.3 s generating, memory fully returned. Essentially the same cost as T2V.
+- **gx-voice** — 9.45 GiB peak on a cold load, 6.5 GiB resident, 35.0 s cold
+  start, RTF 0.72-1.00. Verified independently with ffprobe and ASR.
+- **Wan t2v + LoRA pair 640x640 x49** — growth 73.30 GiB, minimum 39.26 GiB.
+- **gx-live** — 34 GiB cold, 31 GiB resident, 102 s startup.
+
+### Changed
+
+- L-10 now reads **eleven** public aliases (D-040); L-2 names gx10-02 as the
+  home of every tenant service.
+- The media router on gx10-02 is **2.5.0** (was 2.4.1).
+- `legenex/models/registry.json` carries all eleven aliases, and `gx-image`
+  publishes its three selectable variants.
+
+### Known blockers
+
+- **B-030** — the approved gx-reason checkpoint is gated per user and the
+  account is not on its authorized list. A valid token with the gated-repo
+  permission is already configured; **a human must accept the model's terms in
+  a browser**. gx-reason keeps serving the interim `nvidia/Qwen3.6-27B-NVFP4`,
+  which is not deleted.
+- **gx-call runtime is unproven** — the engine image build was interrupted and
+  the model has never been loaded, so no footprint can be published.
+
+
 ## [0.17.0] - 2026-09-17
 
 Final cleanup pass: production Open WebUI identity, the 30 GiB reserve for

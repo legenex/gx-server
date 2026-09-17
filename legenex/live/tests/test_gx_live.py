@@ -56,6 +56,9 @@ class StubEngineHandler(BaseHTTPRequestHandler):
     key = ""
     sessions: list = []
     received: list = []
+    #: the real engine needs ~1.5 s per session (speaker prompt encode) before
+    #: it answers session.ready; tests that care about that window raise this.
+    ready_delay = 0.0
 
     def log_message(self, *a):
         return
@@ -76,6 +79,8 @@ class StubEngineHandler(BaseHTTPRequestHandler):
         ws = rtws.accept(self)
         start = json.loads(ws.recv().text())
         type(self).sessions.append(start)
+        if type(self).ready_delay:
+            time.sleep(type(self).ready_delay)
         ws.send_text(json.dumps({"type": "session.ready", "system_prefill_ms": 5}))
         response = 0
         while True:
@@ -453,6 +458,37 @@ class LifecycleTests(ServiceHarness):
         for _, fields in self.metrics.lines:
             for bad in ("text", "transcript", "prompt", "join_token", "instructions"):
                 self.assertNotIn(bad, fields)
+
+    def test_client_attached_reaches_the_engine_when_it_linked_first(self):
+        """A warm model links the engine before the browser connects (B-LIV-4).
+
+        The engine drops microphone audio while ``client_attached`` is false, so
+        the supervisor must announce the attach even though the start payload
+        was built without a client.
+        """
+        StubEngineHandler.ready_delay = 2.0
+        self.addCleanup(setattr, StubEngineHandler, "ready_delay", 0.0)
+        s, body = self.create()
+        deadline = time.time() + 20
+        while not StubEngineHandler.sessions and time.time() < deadline:
+            time.sleep(0.02)
+        self.assertTrue(StubEngineHandler.sessions, "engine link never opened")
+        self.assertFalse(StubEngineHandler.sessions[0]["client_attached"],
+                         "this test needs the engine link to open before the client attaches")
+        ws = self.attach(s, body["join_token"])
+        self.assertFalse(self.service.sessions[s].engine_ready,
+                         "this test needs the client to attach before the engine is ready")
+        self.read_until(ws, "session.ready", timeout=30)
+        deadline = time.time() + 10
+        while ("json", "client.attached") not in StubEngineHandler.received and time.time() < deadline:
+            time.sleep(0.05)
+        self.assertIn(("json", "client.attached"), StubEngineHandler.received)
+        # and the microphone now actually reaches the engine
+        ws.send_binary(proto.pack(proto.KIND_MIC, b"\x00\x11" * 1600))
+        deadline = time.time() + 5
+        while ("binary", b"\x01") not in StubEngineHandler.received and time.time() < deadline:
+            time.sleep(0.05)
+        self.assertIn(("binary", b"\x01"), StubEngineHandler.received)
 
     def test_one_session_at_a_time(self):
         self.create()

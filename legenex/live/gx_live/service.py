@@ -345,9 +345,16 @@ class LiveService:
             "tools": list(toolspec.NAMES) if sess.config.get("tools") else [],
             "limits": proto.LIMITS, "resumed": gen > 1})
         self._send_json(sess, ws, {"type": "model.state", **state})
+        if sess.engine is not None:
+            # The engine gates microphone audio on client_attached, and the
+            # engine.session.start payload was built when the link opened. On a
+            # warm model that happens BEFORE the browser's WebSocket arrives
+            # (create -> link -> connect), so the engine was told "no client"
+            # and would drop every microphone frame for the whole session
+            # unless it is told now. Found by the 2026-09-17 GPU acceptance.
+            self._engine_send(sess, {"type": "client.attached"})
         if sess.engine_ready:
             self._send_json(sess, ws, {"type": "session.ready", "load_ms": sess.load_ms, "resumed": True})
-            self._engine_send(sess, {"type": "client.attached"})
         self._ensure_engine_async()
         try:
             self._client_loop(sess, ws)
