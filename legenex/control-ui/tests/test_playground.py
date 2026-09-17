@@ -7,7 +7,7 @@ from support import StubUpstream, TempEnv, env_vars, fake_key
 
 from gx_control_ui.models import ResultLog
 from gx_control_ui.playground import (
-    Playground, PlaygroundError, build_chat, summarise_request, validate_image_data_url,
+    _JOB_ID, Playground, PlaygroundError, build_chat, summarise_request, validate_image_data_url,
 )
 
 PNG = base64.b64encode(b"\x89PNG\r\n\x1a\n" + b"\x00" * 64).decode()
@@ -161,9 +161,15 @@ class TestPlaygroundCalls(unittest.TestCase):
         calls = len(self.stub.calls)
         self.pg.video_content("abc-123")  # served from the cache
         self.assertEqual(len(self.stub.calls), calls)
-        for bad in ("../x", "a/b", "x" * 65, ""):
+        for bad in ("../x", "a/b", "x" * 201, "", "a+b", "a b"):
             with self.assertRaises(PlaygroundError):
                 self.pg.video_status(bad)
+        # The router hands out gateway-encoded ids (D-031); they must be accepted.
+        encoded = "video_" + base64.b64encode(
+            b"litellm:custom_llm_provider:openai;model_id:gx-video;video_id:video-2f6becf656f647e8").decode()
+        encoded = encoded.replace("+", "-").replace("/", "_")
+        self.assertGreater(len(encoded), 64)
+        self.assertTrue(_JOB_ID.match(encoded))
         with self.assertRaises(PlaygroundError):
             self.pg.video_submit({"prompt": "x", "seconds": 60})
         with self.assertRaises(PlaygroundError):

@@ -683,12 +683,12 @@ def api_pg_video(h: Handler) -> None:
     h._json(202, h.app.playground.video_submit(h._body(MAX_BODY)))
 
 
-@route("GET", r"/api/playground/video/(?P<job_id>[A-Za-z0-9\-]{1,64})")
+@route("GET", r"/api/playground/video/(?P<job_id>[A-Za-z0-9_=\-]{1,200})")
 def api_pg_video_status(h: Handler, job_id: str) -> None:
     h._json(200, h.app.playground.video_status(job_id))
 
 
-@route("GET", r"/api/playground/video/(?P<job_id>[A-Za-z0-9\-]{1,64})/content")
+@route("GET", r"/api/playground/video/(?P<job_id>[A-Za-z0-9_=\-]{1,200})/content")
 def api_pg_video_content(h: Handler, job_id: str) -> None:
     data, ctype = h.app.playground.video_content(job_id)
     headers = {"Cache-Control": "private, max-age=3600", "Accept-Ranges": "bytes",

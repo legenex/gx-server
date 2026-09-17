@@ -32,7 +32,9 @@ VIDEO_SIZES = ("480x480", "640x640", "832x480", "480x832")
 MAX_PROMPT = 16000
 MAX_SYSTEM = 8000
 MAX_IMAGE_BYTES = 8 * 1024 * 1024
-_JOB_ID = re.compile(r"^[A-Za-z0-9\-]{1,64}$")
+# Plain router ids ("video-<hex>") or the gateway-encoded form the router hands
+# out ("video_<base64 with - _ =>", about 110 characters).
+_JOB_ID = re.compile(r"^[A-Za-z0-9_=\-]{1,200}$")
 
 SAMPLE_TOOL = {
     "type": "function",

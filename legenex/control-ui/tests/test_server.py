@@ -296,6 +296,9 @@ class TestAuthenticatedApi(ServerBase):
         status, _, body = self.post("/api/playground/video", {"prompt": ""})
         self.assertEqual(status, 400)
         self.assertEqual(self.req("GET", "/api/playground/video/..%2fx")[0], 404)
+        # A gateway-encoded id is routed (it reaches the upstream, which is down here).
+        encoded = "video_" + "bGl0ZWxsbTpjdXN0b21fbGxtX3Byb3ZpZGVy" * 3 + "=="
+        self.assertNotEqual(self.req("GET", f"/api/playground/video/{encoded}")[0], 404)
 
     def test_system_view_hides_secret_values(self):
         _, _, body = self.req("GET", "/api/system")
