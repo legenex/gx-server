@@ -81,6 +81,28 @@ def get_json(
         raise UpstreamError(exc.code, exc.read().decode("utf-8", "replace")) from exc
 
 
+def open_post(
+    url: str,
+    payload: Mapping[str, Any],
+    *,
+    headers: Mapping[str, str] | None = None,
+    timeout: float = 900.0,
+):
+    """POST JSON and return the open response once the status is known.
+
+    The caller relays the body. An HTTP error is raised as UpstreamError
+    BEFORE anything has been sent to the client, so a streamed request can
+    still be answered with a proper error status (D-039: the old relay sent
+    `200` first and then wrote the error into the chunked stream, which left
+    clients waiting until their own timeout and retrying).
+    """
+    req = _request(url, payload, headers or {}, timeout)
+    try:
+        return urllib.request.urlopen(req, timeout=timeout)
+    except urllib.error.HTTPError as exc:
+        raise UpstreamError(exc.code, exc.read().decode("utf-8", "replace")) from exc
+
+
 def stream_post(
     url: str,
     payload: Mapping[str, Any],

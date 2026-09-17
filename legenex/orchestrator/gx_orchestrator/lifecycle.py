@@ -99,9 +99,16 @@ class LifecycleStatus:
     phase_since: float = 0.0
     last_startup_seconds: int | None = None
     idle_ttl: int = 0
+    in_flight: int = 0
 
     def as_dict(self) -> dict:
         now = time.time()
+        ttl_remaining = None
+        if self.state is State.READY and self.idle_ttl > 0 and self.last_used:
+            if self.in_flight:
+                ttl_remaining = self.idle_ttl
+            else:
+                ttl_remaining = max(0, round(self.idle_ttl - (now - self.last_used)))
         return {
             "state": self.state.value,
             "seconds_in_state": round(now - self.since, 1),
@@ -114,6 +121,10 @@ class LifecycleStatus:
             "phase_seconds": round(now - self.phase_since, 1) if self.phase_since else None,
             "last_startup_seconds": self.last_startup_seconds,
             "idle_ttl": self.idle_ttl,
+            # Keep-warm (D-039): requests in progress hold gx-max; the TTL
+            # counts from the end of the last one.
+            "in_flight": self.in_flight,
+            "ttl_remaining_seconds": ttl_remaining,
         }
 
 
@@ -150,6 +161,7 @@ class GxMaxLifecycle:
         self._since = time.time()
         self._last_used: float | None = None
         self._waiters = 0
+        self._in_flight = 0
         self._detail = ""
         self._last_error = ""
         self._worker: threading.Thread | None = None
@@ -250,6 +262,7 @@ class GxMaxLifecycle:
                 phase_since=self._phase_since,
                 last_startup_seconds=self._last_startup_seconds(),
                 idle_ttl=self._idle_ttl,
+                in_flight=self._in_flight,
             )
 
     def is_ready(self) -> bool:
@@ -260,6 +273,17 @@ class GxMaxLifecycle:
     def mark_used(self) -> None:
         """Record activity so the idle reaper does not release under load."""
         with self._cv:
+            self._last_used = time.time()
+
+    def begin_use(self) -> None:
+        """A request is being served: the reaper must not release."""
+        with self._cv:
+            self._in_flight += 1
+            self._last_used = time.time()
+
+    def end_use(self) -> None:
+        with self._cv:
+            self._in_flight = max(0, self._in_flight - 1)
             self._last_used = time.time()
 
     def _set_state(self, state: State, detail: str = "") -> None:
@@ -582,7 +606,8 @@ class GxMaxLifecycle:
                 ready = self._state is State.READY
                 idle_for = (time.time() - self._last_used) if self._last_used else 0.0
                 waiters = self._waiters
-            if ready and waiters == 0 and idle_for > self._idle_ttl:
+                busy = self._in_flight
+            if ready and waiters == 0 and busy == 0 and idle_for > self._idle_ttl:
                 log.info("gx-max idle %.0fs > TTL %ss; releasing both nodes", idle_for, self._idle_ttl)
                 try:
                     self.release()

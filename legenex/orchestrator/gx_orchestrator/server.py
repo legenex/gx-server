@@ -27,12 +27,15 @@ from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable
 
+from dataclasses import asdict, dataclass, replace
+
+from . import budget as B
 from .classifier import request_fingerprint, route
 from .config import CONFIG, Config
 from .health import AliasState, TierHealth, TierStatus
 from .lifecycle import AcquisitionError, GxMaxLifecycle, LifecycleStatus, State
 from .tiers import TIERS, ROUTABLE, Tier
-from .upstream import UpstreamError, post_json, stream_post
+from .upstream import UpstreamError, open_post
 
 log = logging.getLogger("gx.server")
 
@@ -89,22 +92,84 @@ class RoutingJournal:
         return out
 
 
-def clamp_output_budget(payload: dict[str, Any], tier: Tier) -> dict[str, Any]:
-    """Return a copy of `payload` whose output budget fits `tier`.
+def tier_budget(payload: dict[str, Any], tier: Tier, estimate: B.InputEstimate | None = None) -> B.ContextBudget:
+    """The context budget of `payload` on `tier`'s served window (D-039)."""
+    spec = TIERS[tier]
+    return B.compute_budget(
+        payload,
+        model=tier.value,
+        context_limit=spec.max_context,
+        max_output_limit=spec.max_output,
+        estimate=estimate,
+    )
 
-    Agent clients request their whole advertised output window on every turn;
-    forwarding that unchanged makes vLLM reject the request when prompt +
-    max_tokens exceeds the served context.
-    """
-    limit = TIERS[tier].max_output if tier in TIERS else None
-    out = dict(payload)
-    if not limit:
+
+def clamp_output_budget(payload: dict[str, Any], tier: Tier) -> dict[str, Any]:
+    """A copy of `payload` whose output budget fits `tier`'s window."""
+    return B.apply_budget(payload, tier_budget(payload, tier))
+
+
+#: A deterministic request failure is never retried by the orchestrator, and
+#: OpenAI SDKs honour this header, so clients do not retry it either.
+NO_RETRY_HEADERS = {"x-should-retry": "false"}
+#: At most one immediate correction after the engine reports its exact count.
+MAX_ATTEMPTS = 2
+
+_USAGE_PROMPT = re.compile(rb'"prompt_tokens"\s*:\s*(\d+)')
+_USAGE_COMPLETION = re.compile(rb'"completion_tokens"\s*:\s*(\d+)')
+_FIRST_TOKEN = re.compile(rb'"(content|reasoning_content|reasoning)"\s*:\s*"[^"]|"tool_calls"\s*:\s*\[')
+
+
+@dataclass
+class RelayOutcome:
+    """What happened to one proxied request (journal + Control Center)."""
+
+    status: int = 0
+    attempts: int = 0
+    retry_reason: str | None = None
+    error_code: str | None = None
+    error: str | None = None
+    streamed: bool = False
+    ttft_ms: float | None = None
+    elapsed_ms: float = 0.0
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    tokens_per_s: float | None = None
+    output_tokens: int | None = None
+    clamped: bool = False
+
+    @property
+    def outcome(self) -> str:
+        if self.status == 200 and not self.error:
+            return "ok"
+        return self.error_code or ("error" if self.status else "aborted")
+
+    def as_dict(self) -> dict[str, Any]:
+        out = asdict(self)
+        out["outcome"] = self.outcome
         return out
-    for key in ("max_tokens", "max_completion_tokens"):
-        value = out.get(key)
-        if isinstance(value, int) and value > limit:
-            out[key] = limit
-    return out
+
+
+class TextMetrics:
+    """Last request outcome per text alias served through this orchestrator."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._last: dict[str, dict[str, Any]] = {}
+
+    def record(self, alias: str, record: dict[str, Any]) -> None:
+        with self._lock:
+            self._last[alias] = dict(record)
+
+    def seed(self, records: list[dict[str, Any]]) -> None:
+        for rec in reversed(records):
+            if rec.get("event") == "completed" and rec.get("tier"):
+                with self._lock:
+                    self._last.setdefault(rec["tier"], rec)
+
+    def snapshot(self) -> dict[str, dict[str, Any]]:
+        with self._lock:
+            return {k: dict(v) for k, v in self._last.items()}
 
 #: How lifecycle.State maps onto the shared AliasState vocabulary (see
 #: health.py). RELEASING has no exact match in that six-word vocabulary; it is
