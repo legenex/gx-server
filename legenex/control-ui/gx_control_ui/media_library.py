@@ -327,10 +327,11 @@ class MediaLibrary:
     def _migrate(self) -> None:
         with self._lock, self._connect() as con:
             current = con.execute("PRAGMA user_version").fetchone()[0]
+            existing = current > 0  # a brand-new library has nothing to roll back to
             for version in sorted(_MIGRATIONS):
                 if version <= current:
                     continue
-                if current:
+                if existing:
                     # Keep the pre-migration database next to it (rollback point).
                     backup = self.db_path.with_name(f"library.pre-v{version}.db")
                     if not backup.exists():

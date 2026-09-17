@@ -179,10 +179,12 @@ class StorageManager:
     # --------------------------------------------------------------- scan
     def start_scan(self, *, user: str) -> dict:
         with self._lock:
-            if self.state["state"] == "scanning":
-                return self.status()
-            self.state = {"state": "scanning", "progress": {n: "queued" for n in NODES}, "result": None,
-                          "started": time.time(), "finished": None, "error": None}
+            already = self.state["state"] == "scanning"
+            if not already:
+                self.state = {"state": "scanning", "progress": {n: "queued" for n in NODES}, "result": None,
+                              "started": time.time(), "finished": None, "error": None}
+        if already:  # status() takes the lock itself: never call it while holding it
+            return self.status()
         self.audit(user=user, ip="", action="storage.scan", outcome="started")
         threading.Thread(target=self._scan, args=(user,), daemon=True, name="storage-scan").start()
         return self.status()

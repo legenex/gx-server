@@ -442,12 +442,12 @@ class MusicJobs:
                     if not meta:
                         continue
                     dest = self.library.tmp_file("." + fmt)
+                    paths[fmt] = dest  # registered first, so a failed check below still cleans it up
                     size = self.client.download(f"/v1/music/{job_id}/content?index={index}&format={fmt}", dest)
                     if meta.get("sha256") and _sha256(dest) != meta["sha256"]:
                         raise MusicError(f"{fmt} of track {index} failed its SHA-256 check", 502, "checksum")
                     if meta.get("bytes") and size != meta["bytes"]:
                         raise MusicError(f"{fmt} of track {index} has the wrong size", 502, "checksum")
-                    paths[fmt] = dest
                 if "wav" not in paths and not paths:
                     raise MusicError("the track has no downloadable audio", 502, "no_audio")
                 primary = "wav" if "wav" in paths else next(iter(paths))

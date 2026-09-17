@@ -322,16 +322,6 @@ def classify(ctx: dict, docker: dict, now: float) -> list[dict]:
     ):
         for path, size, mt in files_older_than(d, age, now):
             add_path(path, "safe", what, "temporary_uploads", "none: temporary data")
-    # old test traces (ignored paths inside the checkout are still inside a
-    # protected Git tree, so only the well-known disposable dirs qualify)
-    repo = os.path.join(HOME, "Documents/Projects/Server/gx-cluster")
-    for rel in ("legenex/control-ui/test-results", "legenex/control-ui/playwright-report",
-                "legenex/playground/test-results", "legenex/playground/playwright-report"):
-        path = os.path.join(repo, rel)
-        if os.path.isdir(path) and not os.path.islink(path) and now - newest_mtime(path) > DAY:
-            cands.append(candidate("path", path, "safe", du(path), "Playwright traces older than 24 h",
-                                   name=rel, category="projects", consequence="none: test output",
-                                   mtime=newest_mtime(path)))
     # rotated logs
     for root, _dirs, files in os.walk("/srv/logs"):
         if inside(root, "/srv/logs/gx-git-sync") or inside(root, "/srv/logs/acceptance"):
