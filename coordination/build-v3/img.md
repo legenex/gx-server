@@ -414,10 +414,39 @@ row that says `queued` for ever.
 
 ---
 
-## 10. Live acceptance plan (ready to run, NOT run)
+## 10. Live acceptance run — 2026-09-17T210423Z
 
-**Blocked on:** the lead's exclusive node-2 media memory measurement. Nothing
-in this wave submitted a job to ComfyUI.
+Evidence: `/srv/logs/acceptance/build-v3/img/20260917T210423Z`
+Router: gx10-02
+Run time: 2026-09-17T21:13:37+00:00
+
+| Case | What | Verdict | Evidence |
+|---|---|---|---|
+| `src_portrait` | Source A: a person in a room (Qwen Image 2512) | **PASS** | 1024x1024, 1223460 bytes |
+| `src_street` | Source B: a street scene (Qwen Image 2512) | **PASS** | 1024x1024, 1823740 bytes |
+| `src_vm` | Source C: VisionmasterPro_V3 text-to-image | **PASS** | 832x1216, 1462309 bytes |
+| `edit_background` | (a) background replacement: office -> beach at sunset | **PASS** | ssim 0.6336 phash 18 hist 0.747 mad 38.16 |
+| `edit_object` | (a) object replacement: the blue car becomes a yellow taxi | **PASS** | ssim 0.8162 phash 14 hist 0.9828 mad 15.61 |
+| `edit_remove` | (a) object removal: remove the car and fill the road | **PASS** | ssim 0.8233 phash 10 hist 0.9593 mad 13.46 |
+| `edit_style` | (b) style: redraw as a watercolour painting | **PASS** | ssim 0.3255 phash 20 hist 0.5256 mad 69.38 |
+| `edit_transform` | (b) full transformation at strength 1.0 | **PASS** | ssim 0.0697 phash 36 hist 0.5892 mad 79.74 |
+| `edit_clothing` | (c) clothing: the red jacket becomes a black leather jacket | **PASS** | ssim 0.8345 phash 2 hist 0.9289 mad 11.02 |
+| `edit_add` | (c) add: put a cat on the desk | **WEAK** | ssim 0.8831 phash 8 hist 0.9898 mad 9.7 -> it changed, but barely; look at the images |
+| `edit_masked_lower` | mask: change only the painted lower half (Qwen, masked template) | **FAIL** | ssim 0.9098 phash 2 hist 0.9973 mad 4.44 -> the edit returned a near-copy of the source |
+| `edit_vm_inpaint` | mask: VisionmasterPro_V3 inpaint of the upper half | **PASS** | ssim 0.6262 phash 8 hist 0.7419 mad 20.86 |
+| `edit_vm_img2img` | VisionmasterPro_V3 image-to-image restyle at strength 0.75 | **PASS** | ssim 0.4316 phash 8 hist 0.5425 mad 31.65 |
+| `variation_high` | variation at strength 0.9 (reference latent dropped) | **PASS** | ssim 0.1186 phash 26 hist 0.8799 mad 57.52 |
+| `edit_adapter_off` | A/B: background edit with adapter_strength 0 (the new default) | **PASS** | ssim 0.6347 phash 22 hist 0.8002 mad 41.17 |
+| `edit_adapter_on` | A/B: the same edit with adapter_strength 0.8 (the old default) | **PASS** | ssim 0.6415 phash 20 hist 0.7752 mad 41.24 |
+| `regression_strength` | control: strength 0.6 on an instruction edit must be IGNORED, so this must still change the picture | **PASS** | ssim 0.7892 phash 12 hist 0.8842 mad 21.78 |
+
+Counts: PASS=14, WEAK=1, FAIL=1, SKIP=0
+
+Summary: 14/16 cases PASS. 1 WEAK (`edit_add`: adding a cat on the desk produced only a barely noticeable change - ssim 0.8831, phash 8). 1 FAIL (`edit_masked_lower`: masked template inpainting returned a near-duplicate of the source - ssim 0.9098, the mask did not produce any meaningful change).
+
+VisionmasterPro_V3 first load (`src_vm`, `edit_vm_inpaint`, `edit_vm_img2img`): **all PASS** — the checkpoint loads and generates on gx10-02 despite never being run before.
+
+Adapter A/B: `edit_adapter_off` (0.0) and `edit_adapter_on` (0.8) produce nearly identical results (ssim 0.635 vs 0.642), so the adapter does not materially help or hurt for background edits.
 
 Runner: `legenex/media/tools/image_accept.py` (new), which drives the existing
 `legenex/media/tools/image_eval.py` (SSIM, 64-bit perceptual-hash distance,
