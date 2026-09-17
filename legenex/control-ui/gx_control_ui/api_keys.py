@@ -146,15 +146,30 @@ class KeyManager:
         return {"revoked": key_id, "name": k["name"]}
 
     def replace(self, key_id: str, *, user: str) -> dict:
+        """New secret, same name, aliases, expiry and limits; the old key stops working.
+
+        LiteLLM requires unique key aliases, so the new key is created under a
+        temporary alias, the old key is deleted, and the new key then takes the
+        original name.
+        """
         old = self._find(key_id)
         expiry = _remaining_days(old.get("expires"))
         if expiry == "expired":
             raise KeyError_("the key has already expired; create a new key instead")
-        new = self.create({"name": old["name"], "models": old["models"] or list(PUBLIC_ALIASES),
+        temp_name = f"{old['name'][:50]}-rotating"
+        new = self.create({"name": temp_name, "models": old["models"] or list(PUBLIC_ALIASES),
                            "expiry": expiry,
                            **{f: old[f] for f in ("rpm_limit", "tpm_limit", "max_parallel_requests") if old.get(f)}},
                           user=user)
         self._call("POST", "/key/delete", {"keys": [key_id]})
+        try:
+            self._call("POST", "/key/update", {"key": new["id"], "key_alias": old["name"],
+                                                "metadata": {"created_by": "gx-control-ui", "name": old["name"],
+                                                             "ui_user": user, "replaced": key_id[:12],
+                                                             "created_at": int(time.time())}})
+            new["name"] = old["name"]
+        except KeyError_:
+            new["note"] = (f"{new['note']} The key kept the temporary name '{temp_name}'; rename it later.")
         new["replaced"] = key_id
         return new
 

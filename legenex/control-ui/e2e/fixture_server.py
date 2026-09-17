@@ -157,11 +157,21 @@ def _fake_storage_runner(node: str, req: dict, timeout: float) -> dict:
 
 
 def key_generate(handler, body):
-    token = f"{len(KEYS) + 1:064x}"
+    if any(k["key_alias"] == body["key_alias"] for k in KEYS.values()):
+        return 400, {"error": {"message": f"Key with alias '{body['key_alias']}' already exists."}}
+    token = f"{len(KEYS) + 100:064x}"
     KEYS[token] = {"token": token, "key_alias": body["key_alias"], "key_name": "sk-...e2e0",
                    "models": body["models"], "metadata": body.get("metadata") or {}, "expires": None,
                    "created_at": "2026-09-17T00:00:00Z", "last_active": None}
     return 200, {"key": "sk-e2e-" + "x" * 30, "token": token, "expires": None}
+
+
+def key_update(handler, body):
+    entry = KEYS.get(body["key"])
+    if entry is None:
+        return 404, {"error": {"message": "no such key"}}
+    entry["key_alias"] = body["key_alias"]
+    return 200, {"key": body["key"]}
 
 
 def key_delete(handler, body):
@@ -181,6 +191,7 @@ def main() -> int:
         ("GET", "/key/list"): lambda h, b: (200, {"keys": list(KEYS.values())}),
         ("POST", "/key/generate"): key_generate,
         ("POST", "/key/delete"): key_delete,
+        ("POST", "/key/update"): key_update,
         ("GET", "/v1/models"): (200, {"data": [{"id": "gx-mini"}, {"id": "gx-fast"}]}),
         ("POST", "/v1/chat/completions"): (200, {
             "id": "e2e", "model": "gx-mini",

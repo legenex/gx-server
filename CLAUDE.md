@@ -17,15 +17,15 @@
 | # | Constraint |
 |---|---|
 | L-1 | Two **separate** 128 GB nodes. They are NOT a coherent 256 GB pool. Budget memory per node. |
-| L-2 | Node roles fixed: gx10-01 = control/gateway/lifecycle/gx-mini/gx-fast. gx10-02 = gx-reason/media/rank 1. |
+| L-2 | Node roles fixed: gx10-01 = control/gateway/lifecycle/gx-mini/gx-fast, Control Center and GX-Playground (the only browser-facing apps). gx10-02 = gx-reason/media/music (gx-music)/rank 1. |
 | L-3 | **Tailscale is management only.** Model and NCCL traffic run ONLY on the ConnectX/RoCE fabric (192.168.100.x / 192.168.101.x). |
 | L-4 | **Kernel pinned to `6.17.0-1032-nvidia` on both nodes. NEVER upgrade to 7.0** — it breaks RDMA memory registration and kills gx-max. |
 | L-5 | Do **not** attempt GPUDirect RDMA, `nvidia-peermem`, GDRCopy, or `NCCL_NET_GDR_LEVEL` hacks. DGX Spark does not support it in this topology. |
-| L-6 | **gx-max = SGLang, TP=2, 2 nodes, DeepSeek-V4-Flash-0731 NVFP4.** Served checkpoint since D-032: `dealignai/DeepSeek-V4-Flash-0731-CRACK-NVFP4` (cell `fp4`); rollback `nvidia/DeepSeek-V4-Flash-0731-NVFP4` (cell `nvfp4`). Never vLLM, never another model family, never a silent downgrade. |
+| L-6 | **gx-max = SGLang, TP=2, 2 nodes, DeepSeek-V4-Flash-0731 NVFP4.** Served checkpoint since D-032: `dealignai/DeepSeek-V4-Flash-0731-CRACK-NVFP4` (cell `fp4`). The former rollback `nvidia/DeepSeek-V4-Flash-0731-NVFP4` (cell `nvfp4`) was deleted from both nodes on 2026-09-17 (B-026); rolling back needs a fresh download. Never vLLM, never another model family, never a silent downgrade. |
 | L-7 | Do **not** modify MTU, Netplan, RDMA setup, ConnectX firmware, or routing without concrete evidence of a fault. |
 | L-8 | Keep `/swapfile-sglang` (48 G) on both nodes. |
 | L-9 | Stack is LiteLLM + llama-swap + llama.cpp + vLLM + SGLang + ComfyUI. **Do not replace it with Ollama.** |
-| L-10 | The gateway exposes exactly: `gx-mini`, `gx-fast`, `gx-reason`, `gx-max`, `gx-auto`, `gx-image`, `gx-video`. No `gx-vision` — vision is a model capability. |
+| L-10 | Exactly **eight** public aliases (amended by D-036 with the user's explicit approval, 2026-09-17): `gx-mini`, `gx-fast`, `gx-reason`, `gx-max`, `gx-auto`, `gx-image`, `gx-video` on the LiteLLM gateway, and `gx-music` through the gx10-01 music API (GX-Playground, `/v1/music/*`; it is not a LiteLLM chat model). No `gx-vision`: vision is a model capability. Never repurpose an alias. |
 
 ## Operating style for this cluster
 
@@ -82,6 +82,19 @@ Do not run, on either node, without a specific proven reason and human sign-off:
 prune -a`, `rm -rf` on `/srv`, netplan/MTU/RDMA changes, or `git push --force`.
 
 Do **not** auto-start gx-max at boot. It takes over both nodes.
+
+## Resource control, Maintenance and storage (D-036, D-037)
+
+* Profiles, pins and Maintenance live as files in `state/guard/` on each node
+  (`profile.json`, `pins.json`, `node{1,2}.maintenance-hold`); gx-max writes
+  `node2.gxmax-hold` during its drain. Change them through the Control Center
+  (Resource Control), never by hand while work is running.
+* Manual lifecycle controls must go through the Resource Controller /
+  ActionRunner / router free path / music supervisor. Never `docker stop` a
+  model container directly, and never call ComfyUI `/free` directly (use the
+  media router; D-036).
+* Disk cleanup goes through Storage & Cleanup (opaque ids, node-side
+  re-check). Generated media is never cache.
 
 ---
 

@@ -227,7 +227,10 @@ class FakeLiteLLM(BaseHTTPRequestHandler):
             return self._json(401, {"error": {"message": "no"}})
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         if self.path == "/key/generate":
-            token = f"{len(FakeLiteLLM.keys):064x}"
+            # like LiteLLM: key aliases must be unique
+            if any(k["key_alias"] == body["key_alias"] for k in FakeLiteLLM.keys.values()):
+                return self._json(400, {"error": {"message": f"Key with alias '{body['key_alias']}' already exists."}})
+            token = f"{len(FakeLiteLLM.keys) + 1000:064x}"
             FakeLiteLLM.keys[token] = {"token": token, "key_alias": body["key_alias"], "key_name": "sk-...zzzz",
                                        "models": body["models"], "metadata": body["metadata"], "expires": None,
                                        "created_at": "2026-09-17T00:00:00Z"}
@@ -236,6 +239,15 @@ class FakeLiteLLM(BaseHTTPRequestHandler):
             for k in body["keys"]:
                 FakeLiteLLM.keys.pop(k, None)
             return self._json(200, {"deleted_keys": body["keys"]})
+        if self.path == "/key/update":
+            entry = FakeLiteLLM.keys.get(body["key"])
+            if entry is None:
+                return self._json(404, {"error": {"message": "no such key"}})
+            if any(k["key_alias"] == body["key_alias"] and t != body["key"] for t, k in FakeLiteLLM.keys.items()):
+                return self._json(400, {"error": {"message": "alias exists"}})
+            entry["key_alias"] = body["key_alias"]
+            entry["metadata"] = body.get("metadata", entry["metadata"])
+            return self._json(200, {"key": body["key"]})
         self._json(404, {})
 
 
@@ -260,7 +272,13 @@ class KeyTests(unittest.TestCase):
         self.assertTrue(listing[0]["managed_by_ui"])
         new = self.km.replace(listing[0]["id"], user="admin")
         self.assertEqual(new["replaced"], listing[0]["id"])
-        self.assertEqual(len(self.km.list()), 1)
+        after = self.km.list()
+        self.assertEqual(len(after), 1)
+        # same name and policy under the unique-alias rule (live bug 2026-09-17)
+        self.assertEqual(after[0]["name"], "kilo")
+        self.assertEqual(new["name"], "kilo")
+        self.assertEqual(after[0]["models"], ["gx-mini", "gx-fast"])
+        self.assertNotEqual(after[0]["id"], listing[0]["id"])
         self.km.revoke(self.km.list()[0]["id"])
         self.assertEqual(self.km.list(), [])
         with self.assertRaises(KeyError_):
