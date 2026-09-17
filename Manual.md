@@ -600,6 +600,71 @@ and children of an item. Nothing is ever deleted automatically.
   copied to gx10-02 only for processing.
 * The browser never receives an API key or reaches gx10-02 directly.
 
+### 7.9 Voice (gx-voice)
+
+**Purpose.** Turn text into speech with a preset voice, a voice you design from
+a description, or a voice cloned from a recording you are authorised to use.
+
+**Prerequisites.** A Control Center account. Nothing to install: the model
+loads on gx10-02 on the first job and unloads after ten idle minutes.
+
+**Steps.**
+
+1. Open **Voice**.
+2. Type the text (up to 10 000 characters).
+3. Pick a voice:
+   * **Preset** — one of the built-in speakers.
+   * **Design a voice** — describe it ("a warm, unhurried narrator in her
+     fifties") and the model invents one. Keep a take you like as a saved voice.
+   * **Clone a voice** — upload a reference recording, confirm you are
+     authorised to use it, and save the result. **The consent confirmation is
+     required**; without it the request is refused with
+     `403 consent_required`.
+4. Optional: **instructions** for style, emotion, delivery or pacing; language;
+   number of takes (up to 4); speed; seed; output format.
+5. Press **Generate**.
+
+**Expected result.** Each take appears with a waveform, its duration and its
+loudness, and plays in the browser. **Save to Library** keeps one. First audio
+arrives in about 6-9 seconds for a short line; a cold start adds about 35
+seconds while the model loads.
+
+**Error handling.**
+
+* *"the voice service on gx10-02 is not reachable"* — the supervisor is down.
+  Check `systemctl --user status gx-voice` on gx10-02.
+* A job that waits explains what it is waiting for and how much memory is
+  needed. It is queued, not lost.
+* Style **instructions apply to preset and designed voices only**. On a cloned
+  or saved voice the job carries a note saying they were not applied — they are
+  never silently dropped.
+
+**Mobile.** The form and the player work at phone width; takes stack vertically.
+
+**Accessibility.** Every control has a visible label, generation status is
+announced, and the page passes axe WCAG 2.2 AA. Audio is never the only
+channel: the text, duration and loudness are shown as well.
+
+**Offline behaviour.** The Playground needs the server. A generation already
+running on gx10-02 continues and is still there when you come back.
+
+**Privacy.** Reference recordings and takes stay on this cluster. Consent
+statements are recorded with the saved voice. Prompts, transcripts and audio
+are never written to the metrics or activity logs.
+
+**From a client.** `gx-voice` is on the gateway as an OpenAI-compatible
+endpoint:
+
+```bash
+curl -s http://100.105.214.61:4000/v1/audio/speech \
+  -H "Authorization: Bearer <your gateway key>" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"gx-voice","input":"Hello from the cluster.","voice":"ryan","response_format":"wav"}' \
+  -o hello.wav
+```
+
+`mp3`, `wav`, `flac`, `opus`, `aac` and `pcm` all work.
+
 ## 8. Resource Control, Maintenance, and Storage & Cleanup (Control Center)
 
 **Resource Control.**

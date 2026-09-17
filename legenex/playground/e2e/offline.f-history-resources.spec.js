@@ -5,8 +5,26 @@ import { axeCheck, gotoPage, login, watchPage } from './helpers.js';
 test('History lists media and music jobs with phases, filters and actions', async ({ page }) => {
   const problems = watchPage(page);
   await login(page);
-  const media = (await (await page.request.get('/api/media/jobs')).json()).jobs;
-  const music = (await (await page.request.get('/api/music/jobs')).json()).jobs;
+  // This test used to rely on OTHER spec files having left jobs behind, so it
+  // failed whenever it ran first or alone. Make it self-sufficient: submit one
+  // real job through the API if the history is empty.
+  const jobsNow = async () => {
+    const m = (await (await page.request.get('/api/media/jobs')).json()).jobs;
+    const s = (await (await page.request.get('/api/music/jobs')).json()).jobs;
+    return [m, s];
+  };
+  let [media, music] = await jobsNow();
+  if (media.length + music.length === 0) {
+    const { csrf } = await (await page.request.get('/api/session')).json();
+    const origin = new URL(page.url()).origin;
+    const res = await page.request.post('/api/media/jobs', {
+      headers: { 'X-CSRF-Token': csrf, Origin: origin, Referer: `${origin}/` },
+      data: { kind: 't2i', prompt: 'e2e history seed', size: '512x512', n: 1, seed: 7 },
+    });
+    expect(res.status(), await res.text()).toBe(202);
+    await expect.poll(async () => (await jobsNow())[0].length).toBeGreaterThan(0);
+    [media, music] = await jobsNow();
+  }
   expect(media.length + music.length).toBeGreaterThan(0);
   await gotoPage(page, 'history');
   const list = page.locator('#history-list');
