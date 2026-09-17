@@ -3,7 +3,7 @@
 The central safety property is that a free requested by another tenant
 (gx-music through `free_node`, gx-reason's start command) resets the
 router's resident-model bookkeeping, so the NEXT image or video job is judged
-cold (60/76 GiB) and never warm (8 GiB).
+cold (57/72 GiB + the 30 GiB reserve) and never warm.
 """
 
 from __future__ import annotations
@@ -112,15 +112,15 @@ class ServicePolicyTests(unittest.TestCase):
         self.assertTrue(result["freed"])
         self.assertEqual(self.svc.health()["resident_models"], [])
         self.assertIsNone(self.svc.health()["resident_alias"])
-        # 30 GiB available: a cold image needs 60 GiB, so it must be refused.
-        meminfo(self.meminfo, 30)
+        # 80 GiB available: a cold image needs 57 + 30 GiB, so it must be refused.
+        meminfo(self.meminfo, 80)
         with self.assertRaises(InsufficientMemoryError) as ctx:
             self.image("after free")
-        self.assertIn("60 GiB", ctx.exception.message)
+        self.assertIn("so 87 GiB must be available", ctx.exception.message)
         refusal = self.svc.health()["last_refusal"]
         self.assertTrue(refusal["cold"])
-        self.assertEqual(refusal["need_gib"], 60.0)
-        self.assertIn("gx-music", ctx.exception.message)
+        self.assertEqual(refusal["need_gib"], 87.0)
+        self.assertIn("gx-reason", ctx.exception.message)
 
     def test_refused_cold_job_is_not_remembered_as_resident(self):
         meminfo(self.meminfo, 20)
@@ -157,9 +157,16 @@ class ServicePolicyTests(unittest.TestCase):
 
     def test_health_reports_policy_and_memory(self):
         h = self.svc.health()
-        self.assertEqual(h["version"], "2.3.0")
+        self.assertEqual(h["version"], "2.4.0")
         self.assertTrue(h["policy"]["guard_dir_mounted"])
-        self.assertEqual(h["memory"]["need_gib"]["video"], 76.0)
+        self.assertEqual(h["policy"]["profile"], "auto")
+        self.assertEqual(h["memory"]["reserve_gib"], 30.0)
+        self.assertEqual(h["memory"]["footprint_gib"], {"image": 57.0, "video": 72.0, "keyframe_edit": 107.0})
+        self.assertEqual(h["memory"]["need_gib"]["video"], 102.0)
+        self.assertEqual(h["memory"]["need_gib"]["keyframe_edit"], 137.0)
+        self.assertEqual(h["memory"]["pending_gib"], 0.0)
+        self.assertIsNone(h["tenants"]["gx-music"])
+        self.assertEqual(h["waiting"], [])
         self.assertAlmostEqual(h["memory"]["available_gib"], 110.0, places=0)
 
 

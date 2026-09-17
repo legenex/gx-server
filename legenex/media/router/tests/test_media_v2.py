@@ -432,7 +432,7 @@ class MediaApiTests(unittest.TestCase):
         self.assertIn("test-job", body["reason"])
         self.assertEqual(self.comfy.frees, before + 1)
 
-    def test_memory_admission_refuses_instead_of_swapping(self):
+    def test_memory_admission_keeps_the_reserve_instead_of_swapping(self):
         svc = self.service
         meminfo = Path(self.tmp.name) / "meminfo"
 
@@ -442,54 +442,90 @@ class MediaApiTests(unittest.TestCase):
             tmp.replace(meminfo)
 
         original_cfg = svc.cfg
-        svc.cfg = dataclasses.replace(original_cfg, meminfo_path=str(meminfo))
+        svc.cfg = dataclasses.replace(original_cfg, meminfo_path=str(meminfo), resource_wait_seconds=0,
+                                      resource_retry_seconds=0.05)
         svc._settle_poll = 0.02
         svc._settle_flat_seconds = 0.6
+        svc._held_measure_seconds = 0
         try:
-            # gx-reason loaded, nothing of ours resident: an image needs 60 GiB -> refused, nothing freed
+            # gx-reason loaded, nothing of ours resident: an image needs 57 + 30 GiB -> refused, nothing freed
             svc.comfy.free(unload_models=True, free_memory=True)
-            svc._resident_models = frozenset()
+            svc._set_resident(frozenset(), None)
             before = self.comfy.frees
             set_avail(20)
             status, body = self.call("POST", "/v1/images/generations", {"prompt": "no room"})
             self.assertEqual(status, 503)
             self.assertEqual(body["error"]["code"], "insufficient_memory")
             self.assertIn("gx-reason", body["error"]["message"])
+            self.assertEqual(body["error"]["details"]["required_gib"], 87.0)
+            self.assertEqual(body["error"]["details"]["reserve_gib"], 30.0)
             self.assertEqual(self.comfy.frees, before)
             self.assertEqual(svc._resident_models, frozenset(), "refused weights are not resident")
-            # enough memory -> runs
+            # 70 GiB used to be enough for an image; with the reserve it is not (70 - 57 < 30)
             set_avail(70)
+            status, _ = self.call("POST", "/v1/images/generations", {"prompt": "no reserve left"})
+            self.assertEqual(status, 503)
+            # enough memory -> runs
+            set_avail(90)
             status, _ = self.call("POST", "/v1/images/generations", {"prompt": "room"})
             self.assertEqual(status, 200)
-            # same weights already loaded: only the warm need applies
-            set_avail(10)
+            # same weights loaded and their size measured: only the growth + reserve applies
+            svc._held_gib = 50.0
+            set_avail(40)
             status, _ = self.call("POST", "/v1/images/generations", {"prompt": "warm"})
             self.assertEqual(status, 200)
-            # a video job while memory is short fails its job, with the reason
-            set_avail(70)  # what is left with gx-reason loaded
+            # a video that cannot keep the reserve waits, then fails with the reason (wait limit 0 here)
+            set_avail(90)
             status, created = self.call("POST", "/v1/videos", {"prompt": "no room for video"})
             self.assertEqual(status, 202)
             job = self.wait_video(created["id"])
             self.assertEqual(job["status"], "failed")
-            self.assertIn("needs about 76 GiB", json.dumps(job))
+            self.assertEqual(job["error"]["code"], "insufficient_memory")
+            self.assertIn("so 102 GiB must be available", json.dumps(job))
             # right after a model switch the freed memory arrives late: wait for it
-            set_avail(70)
+            set_avail(90)
             status, _ = self.call("POST", "/v1/images/generations", {"prompt": "image weights resident"})
             self.assertEqual(status, 200)
             set_avail(10)
-            timer = threading.Timer(0.3, set_avail, args=(80,))
+            timer = threading.Timer(0.3, set_avail, args=(110,))
             timer.start()
             status, created = self.call("POST", "/v1/videos", {"prompt": "memory comes back"})
             timer.join()
             self.assertEqual(self.wait_video(created["id"])["status"], "completed")
-            # unreadable meminfo never blocks generation
-            svc.cfg = dataclasses.replace(original_cfg, meminfo_path=str(Path(self.tmp.name) / "missing"))
-            status, _ = self.call("POST", "/v1/images/generations", {"prompt": "no meminfo"})
-            self.assertEqual(status, 200)
+            # unreadable meminfo refuses instead of guessing
+            svc.cfg = dataclasses.replace(svc.cfg, meminfo_path=str(Path(self.tmp.name) / "missing"))
+            status, body = self.call("POST", "/v1/images/generations", {"prompt": "no meminfo"})
+            self.assertEqual(status, 503)
+            self.assertIn("cannot be read", body["error"]["message"])
         finally:
             svc.cfg = original_cfg
             svc._settle_poll = type(svc)._settle_poll
             svc._settle_flat_seconds = type(svc)._settle_flat_seconds
+            svc._held_measure_seconds = type(svc)._held_measure_seconds
+
+    def test_keyframe_video_edit_is_refused_with_422_when_memory_admission_is_on(self):
+        svc = self.service
+        meminfo = Path(self.tmp.name) / "meminfo-kf"
+        meminfo.write_text("MemAvailable: 119000000 kB\n")
+        original_cfg = svc.cfg
+        svc.cfg = dataclasses.replace(original_cfg, meminfo_path=str(meminfo))
+        try:
+            ctype, data = multipart({"prompt": "make it night", "strength": "0.85"},
+                                    [("video", "clip.mp4", "video/mp4", MP4_STUB)])
+            staged_before = self.staged_files()
+            status, body = self.call("POST", "/v1/videos/edits", data, ctype=ctype)
+            self.assertEqual(status, 422)
+            self.assertEqual(body["error"]["code"], "exceeds_node_reserve")
+            self.assertEqual(body["error"]["details"]["required_gib"], 137.0)
+            self.assertEqual(self.staged_files(), staged_before, "the staged source is removed")
+            # the restyle edit (strength < 0.5) is a 72 GiB job and is accepted
+            ctype, data = multipart({"prompt": "restyle", "strength": "0.3"},
+                                    [("video", "clip.mp4", "video/mp4", MP4_STUB)])
+            status, body = self.call("POST", "/v1/videos/edits", data, ctype=ctype)
+            self.assertIn(status, (200, 202), body)
+            self.wait_video(body["id"])
+        finally:
+            svc.cfg = original_cfg
 
     def test_listing_and_workflows(self):
         status, body = self.call("GET", "/v1/videos")

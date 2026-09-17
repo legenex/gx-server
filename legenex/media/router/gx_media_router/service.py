@@ -297,8 +297,13 @@ class MediaService:
                     if line.startswith("MemAvailable:"):
                         return int(line.split()[1]) / (1024 * 1024)
         except (OSError, ValueError, IndexError):
-            log.warning("cannot read %s", path)
+            now = time.monotonic()
+            if now - self._meminfo_warned > 60:
+                self._meminfo_warned = now
+                log.warning("cannot read %s", path)
         return None
+
+    _meminfo_warned = -1e9
 
     # -- memory admission (D-038) ------------------------------------------
     def _footprint_gib(self, workflow_name: str) -> float:
@@ -514,7 +519,9 @@ class MediaService:
             log.info("job %s %s", job.id, decision["reason"])
             return
         self._forget_unloaded(job, held_before)
-        log.warning("job %s refused: %s", job.id, decision["reason"])
+        previous = self.last_refusal or {}
+        if previous.get("job") != job.id or previous.get("reason") != decision["reason"]:
+            log.warning("job %s refused: %s", job.id, decision["reason"])
         details = decision["details"]
         self.last_refusal = {"at": time.time(), "job": job.id, "kind": job.kind, "workflow": job.workflow,
                              "cold": job.cold_start, "need_gib": details["required_gib"],
