@@ -121,8 +121,14 @@ export function styleTagEditor({ groups = {}, max = 24, lock, onChange } = {}) {
     if (!li) return;
     const old = tags[i];
     const box = textInput({ value: old, maxLength: TAG_MAX, attrs: { 'aria-label': `Edit tag ${old}`, class: 'input token-edit' } });
+    // Enter commits, then render() removes the <li> that holds this input, which
+    // fires its own blur while the removal is still running. Without the latch
+    // the blur handler re-enters render() and the outer clear() then fails with
+    // "removeChild: the node to be removed is no longer a child of this node".
+    let finished = false;
     const done = (commit) => {
-      if (!box.isConnected) return;
+      if (finished || !box.isConnected) return;
+      finished = true;
       const t = clean(box.value);
       if (commit && t && t !== old && !tags.some((x, k) => k !== i && x.toLowerCase() === t.toLowerCase())) {
         tags[i] = t;

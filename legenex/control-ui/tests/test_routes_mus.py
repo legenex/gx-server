@@ -50,6 +50,14 @@ class MusRouteTests(V2Base):
         self.assertEqual(status, 200, out)
         self.assertEqual(out["conditioning"]["caption"], "intimate vocal, cinematic, female vocals. leaving Cape Town.")
         self.assertEqual(out["vocal_mode"], "vocals")
+        # the Playground previews the exact body it would submit, which carries
+        # "operation" (B-032: it used to be refused, so the panel always said
+        # "This would be refused: unsupported field(s): operation")
+        status, _, out2 = self.post("/api/music/preview", {**body, "operation": "generate"})
+        self.assertEqual((status, out2["conditioning"]), (200, out["conditioning"]))
+        status, _, out2 = self.post("/api/music/preview", {**body, "operation": "remix"})
+        self.assertEqual(status, 400)
+        self.assertIn("Create", out2["error"]["message"])
         status, _, out = self.post("/api/music/preview", {"style_tags": ["female vocals"]})
         self.assertEqual((status, out["error"]["code"]), (400, "lyrics_required"))
         status, _, out = self.post("/api/music/preview", {**body, "lyrics": "", "lyrics_source": "assistant"})

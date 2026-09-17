@@ -17,7 +17,7 @@
 | # | Constraint |
 |---|---|
 | L-1 | Two **separate** 128 GB nodes. They are NOT a coherent 256 GB pool. Budget memory per node. |
-| L-2 | Node roles fixed: gx10-01 = control/gateway/lifecycle/gx-mini/gx-fast, Control Center and GX-Playground (the only browser-facing apps). gx10-02 = gx-reason/media/music (gx-music)/rank 1. |
+| L-2 | Node roles fixed: gx10-01 = control/gateway/lifecycle/gx-mini/gx-fast, Control Center and GX-Playground (the only browser-facing apps). gx10-02 = gx-reason/media/rank 1 and every tenant service: gx-music, gx-voice, gx-call, gx-live. A service on gx10-01 needs explicit sign-off. |
 | L-3 | **Tailscale is management only.** Model and NCCL traffic run ONLY on the ConnectX/RoCE fabric (192.168.100.x / 192.168.101.x). |
 | L-4 | **Kernel pinned to `6.17.0-1032-nvidia` on both nodes. NEVER upgrade to 7.0** — it breaks RDMA memory registration and kills gx-max. |
 | L-5 | Do **not** attempt GPUDirect RDMA, `nvidia-peermem`, GDRCopy, or `NCCL_NET_GDR_LEVEL` hacks. DGX Spark does not support it in this topology. |
@@ -25,7 +25,7 @@
 | L-7 | Do **not** modify MTU, Netplan, RDMA setup, ConnectX firmware, or routing without concrete evidence of a fault. |
 | L-8 | Keep `/swapfile-sglang` (48 G) on both nodes. |
 | L-9 | Stack is LiteLLM + llama-swap + llama.cpp + vLLM + SGLang + ComfyUI. **Do not replace it with Ollama.** |
-| L-10 | Exactly **eight** public aliases (amended by D-036 with the user's explicit approval, 2026-09-17): `gx-mini`, `gx-fast`, `gx-reason`, `gx-max`, `gx-auto`, `gx-image`, `gx-video` on the LiteLLM gateway, and `gx-music` through the gx10-01 music API (GX-Playground, `/v1/music/*`; it is not a LiteLLM chat model). No `gx-vision`: vision is a model capability. Never repurpose an alias. |
+| L-10 | Exactly **eleven** public aliases (amended by D-036, then by D-040, each with the user's explicit approval, 2026-09-17): `gx-mini`, `gx-fast`, `gx-reason`, `gx-max`, `gx-auto`, `gx-image`, `gx-video` on the LiteLLM gateway; `gx-music` and `gx-voice` through the gx10-01 APIs (GX-Playground `/v1/music/*` and `/v1/voice/*`; `gx-voice` is additionally an OpenAI-compatible `POST /v1/audio/speech` on the gateway, neither is a LiteLLM chat model); and `gx-call` and `gx-live` as realtime services reached over the Playground's WebSocket tunnel. No `gx-vision`: vision is a model capability. Never repurpose an alias. |
 
 ## Operating style for this cluster
 

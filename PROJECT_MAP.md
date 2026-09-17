@@ -1,9 +1,11 @@
 # Project map — gx-cluster (two-node GX10)
 
-**Current phase:** production operation of all eight aliases. There is
-automated source control, the admin Control Center
+**Current phase:** production operation of **eleven** aliases (L-10 as amended
+by D-040). There is automated source control, the admin Control Center
 (`http://100.105.214.61:8088/`) and the creative GX-Playground
-(`http://100.105.214.61:8090/`).
+(`http://100.105.214.61:8090/`, and over HTTPS at
+`https://100.105.214.61:8443/`, which is the secure context the Live and Call
+Agents pages need for the microphone and camera).
 Version: see `VERSION`.
 **Canonical remote:** https://github.com/legenex/gx-server (`main`). This
 repository is **public**.
@@ -22,9 +24,15 @@ repository is **public**.
 | `legenex/gateway/` | LiteLLM + llama-swap configs and compose files (node 1 gateway, node 2 worker) |
 | `legenex/orchestrator/` | gx-auto routing and gx-max lifecycle service (stdlib Python), with tests |
 | `legenex/lifecycle/` | gx-max start/stop/unwind/status, the safety rules, both watchdogs, the resource guard |
-| `legenex/media/` | gx-image / gx-video router (2.4.0: 30 GiB reserve admission, waiting video jobs, idle-music eviction, holds, pins, truthful residency) and ComfyUI compose (node 2) |
+| `legenex/media/` | gx-image / gx-video router (**2.5.0**: Wan 2.2 LoRA catalogue, pairing and branch-safe graph building, on top of 2.4.0's 30 GiB reserve admission, waiting video jobs, idle-music eviction, holds, pins, truthful residency) and ComfyUI compose (node 2) |
 | `legenex/music/` | gx-music: node-2 supervisor, ACE-Step engine Dockerfiles, unit, tests (D-036) |
-| `legenex/playground/` | GX-Playground: static SPA + allow-listed proxy, unit, E2E, API contract (D-037) |
+| `legenex/playground/` | GX-Playground: static SPA + allow-listed proxy + realtime WebSocket tunnel + HTTPS listener, unit, E2E, API contract (D-037, D-040, D-041). `scripts/deploy.sh` is the only sanctioned deployment path |
+| `legenex/playground/flows-ui/` | Creative Flows editor: React + TypeScript + `@xyflow/react`, built by Vite into `web/flows/` |
+| `legenex/voice/` | gx-voice: node-2 supervisor, Qwen3-TTS engine, unit, tests (D-040) |
+| `legenex/call/` | gx-call: node-2 supervisor, NemotronLabs VoiceChat engine, unit, tests (D-040) |
+| `legenex/live/` | gx-live: node-2 supervisor, MiniCPM-o 4.5 engine, `PROTOCOL.md`, unit, tests (D-040) |
+| `legenex/control-ui/gx_control_ui/migrations/` | Application-database migrations, one per feature; applied on Control Center start after a pre-migration copy |
+| `coordination/build-v3/` | Per-workstream logs, evidence, measured footprints and blockers for D-040 |
 | `legenex/host/` | Host watchdog and the kernel-lock tooling |
 | `legenex/models/registry.json` | Alias → model bindings (repository, revision, path, previous, interim target, media components, verified `identity` facts). Tracked in Git since D-038 |
 | `legenex/scripts/hf-verify.py` | Pinned-revision sha256 verifier; writes `.gx-manifest.json` |
@@ -35,9 +43,10 @@ repository is **public**.
 
 ## Implemented
 
-* **Eight aliases (D-036):** gx-mini, gx-fast, gx-reason, gx-max, gx-auto,
-  gx-image and gx-video on the gateway, plus gx-music through the gx10-01
-  music API.
+* **Eleven aliases (D-036, D-040):** gx-mini, gx-fast, gx-reason, gx-max,
+  gx-auto, gx-image and gx-video on the gateway; gx-music and gx-voice through
+  the gx10-01 APIs; gx-call and gx-live as realtime services exposed on the
+  Playground over the WebSocket tunnel.
 * **gx-max** on SGLang, TP=2 across both nodes over RoCE, with:
   * a cluster-takeover admission policy;
   * phase-aware safety rules on both nodes;
@@ -85,6 +94,40 @@ repository is **public**.
 
   Create and Media Library moved to the Playground.
 
+* **Build V3 (D-040, D-041) — the complete creative + realtime product,
+  deployed and verified in a real browser (14/14, axe WCAG 2.2 AA clean):**
+  * **GX-Playground navigation:** Create (Dashboard, Creative Flows, Images,
+    Video, Music, Voice) · Realtime (Live, Call Agents) · Manage (Library,
+    History, Models, Logs, Settings).
+  * **Creative Flows:** 67 node types, graph validation, versioning, templates,
+    AI flow creation, and a React/`@xyflow/react` editor built into
+    `web/flows/`.
+  * **Wan 2.2 LoRAs:** catalogue with bounded safetensors header analysis,
+    high/low classification and pairing, presets, and branch-safe graph
+    building (high LoRAs only on the high-noise expert, low only on low, no
+    shared nodes). Proven by a real generation.
+  * **gx-voice:** Qwen3-TTS 1.7B (CustomVoice / VoiceDesign / Base +
+    12 Hz tokenizer + whisper-large-v3-turbo) behind a node-2 supervisor, with
+    a Voice Studio page.
+  * **gx-live:** MiniCPM-o 4.5 behind a node-2 supervisor, with VAD turn-taking
+    and barge-in over a full-duplex transport (native `as_duplex` is not
+    realtime on GB10 — measured), camera vision, and server-side tools.
+  * **gx-call:** NemotronLabs VoiceChat 11B and the Call Agents page (agent
+    editor, live call, transcript, intake, dispositions, recordings).
+  * **Platform:** realtime WebSocket tunnel with tickets and per-owner limits,
+    an HTTPS listener on :8443 backed by a local CA (the secure context
+    `getUserMedia` requires), the observability helper, and the Models, Logs
+    and Settings pages fed by live data.
+  * **Application database:** eight migrations applied — provenance, WAN,
+    flows, voice, call, live, images, platform.
+* **Deployment is proven, not assumed (D-041, B-031).** Both browser-facing
+  servers re-read a static file when it changes, and
+  `legenex/{playground,control-ui}/scripts/deploy.sh` fails unless the ETag of
+  every served file matches sha256 of the file in the checkout.
+* **Hugging Face access is diagnosed, not guessed (D-041, B-030).** 401 and 403
+  are separate machine codes with separate human actions, and the Model Manager
+  renders live token and per-repository accessibility state only.
+
 ## Runtime layout (outside Git)
 
 | Path | Contents |
@@ -118,11 +161,19 @@ repository is **public**.
 
 ## Pending decisions and limitations
 
-* **B-025:** the required gx-reason checkpoint is gated.
-  * The only expected human blocker.
-  * No Hugging Face token has reached gx10-01 (Settings > Model Manager >
-    Hugging Face token).
-  * The interim `nvidia/Qwen3.6-27B-NVFP4` keeps serving.
+* **B-030** (supersedes B-025): the approved gx-reason checkpoint
+  `iSkye/Qwen3.8-Flash-Next-NVFP4-ablit-a070` is gated **per user**, and the
+  account is not on its authorized list.
+  * The only genuine human blocker in the project.
+  * A valid fine-grained token IS configured; it authenticates as `legenex`
+    and already carries `canReadGatedRepos: true`. Metadata reads return 200;
+    file reads return **403 `X-Error-Code: GatedRepo`**. **Another token cannot
+    change this.**
+  * Human action: open the model page in a browser signed in as `legenex` and
+    accept its terms (the repository is `gated: auto`, so access is granted
+    immediately).
+  * The interim `nvidia/Qwen3.6-27B-NVFP4` keeps serving and is **not
+    deleted**.
 * **B-023:** node 1 still reaches the swap ceiling during the gx-max load. It
   was re-measured on 2026-09-17: minimum 9.4 GiB available, swap at the
   ceiling. Whether the drain should also stop Open WebUI and AgentOS remains
@@ -139,12 +190,21 @@ repository is **public**.
 * **Server-side status:** GitHub branch protection and secret scanning are
   not configured from here.
 
+* **gx-call runtime is unproven.** The checkpoint is downloaded and verified on
+  gx10-02, but the engine image build was interrupted and the model has never
+  been loaded, so no footprint can be published and Resource Control shows
+  "not measured yet" for `gx-call`.
+* **Native full-duplex is not realtime on GB10** (measured: 1.5-1.6 s per 1 s
+  unit while speaking). gx-live ships VAD turn-taking with barge-in instead.
+* **Wan LoRAs apply to text-to-video only**; the public `gx-video` gateway path
+  does not pass `loras`.
+
 ## Test commands
 
 ```bash
 (cd legenex/orchestrator && python3 -m unittest discover -s tests)
 (cd legenex && python3 -m unittest discover -s lifecycle/tests -t .)
-(cd legenex/media/router && bash qa.sh)             # router: templates, compose, 111 tests, secret scan
+(cd legenex/media/router && bash qa.sh)             # router 2.5.0: templates, compose, 174 tests, secret scan
 legenex/tests/gx_tier_acceptance.py gx-mini          # per-tier real checks
 legenex/tests/gx_media_acceptance.py                 # t2i/edit/variation/t2v/i2v/v2v through the gateway
 legenex/tests/gx_ui_live_check.py keys library manager
@@ -162,8 +222,47 @@ legenex/tests/owui_identity_acceptance.py            # production Open WebUI via
 legenex/tests/owui_identity_browser.py               # the same in system Chrome
 legenex/tests/reserve_live_acceptance.py             # gx10-02 video + music with 1 Hz memory sampling
 (cd legenex/control-ui && python3 -m gx_control_ui.owui_identity check)
+
+# Build V3 (D-040, D-041)
+(cd legenex/voice && ./qa.sh)                        # gx-voice supervisor + engine (hermetic)
+(cd legenex/call  && ./qa.sh)                        # gx-call supervisor (hermetic)
+(cd legenex/live  && ./qa.sh)                        # gx-live supervisor + engine (hermetic)
+(cd legenex/playground/flows-ui && npm run qa)       # Creative Flows editor: tsc, eslint, vitest, bundle freshness
+legenex/playground/scripts/deploy.sh                 # deploy AND prove what the browser is served
+legenex/control-ui/scripts/deploy.sh                 # same for the Control Center; also applies pending migrations
+(cd legenex/playground && npx playwright test --project=live e2e/live.navigation.spec.js)
+                                                     # the deployed product: 13 pages, no dead links, axe WCAG 2.2 AA
+(cd legenex/control-ui && .venv/bin/python -m gx_control_ui.footprints sync)
+                                                     # record measured footprints from coordination/build-v3/*.md
+python3 legenex/tests/media_footprint_probe.py i2v:640x640:33   # media memory growth, 1 Hz, admission-guarded
 ```
+
+**Invocation note:** these suites import `tests/support.py` as a top-level
+module, so `python -m unittest tests.test_x` fails with
+`ModuleNotFoundError: support`. Always use
+`python3 -m unittest discover -s tests [-p 'test_x.py']`.
+
+**Running Playwright while another workstream is:** give your run its own
+output directory and ports, or the runs delete each other's traces —
+`GX_E2E_OUTPUT_DIR=test-results/<name> GX_E2E_BACKEND_PORT=<n> GX_E2E_PORT=<n+1>`.
 
 ## Next logical step
 
-Close B-025: save an HF token in the Control Center, then use Model Manager to stage, test and assign the iSkye checkpoint on gx10-02 (the disk preflight passes; 328 GB is free). Then decide B-023.
+**Close B-030 — the one thing an agent cannot do.** Open
+<https://huggingface.co/iSkye/Qwen3.8-Flash-Next-NVFP4-ablit-a070> in a browser
+signed in to Hugging Face as **`legenex`** and accept the model's terms. The
+token is already configured and already has the gated-repo permission; the
+account simply is not on the repository's authorized list, and no token change
+can alter that. Once access is granted, Model Manager stages, verifies,
+test-serves and assigns the checkpoint on gx10-02 without further input, and
+the interim `nvidia/Qwen3.6-27B-NVFP4` is deleted only after that acceptance
+passes.
+
+Then, in order:
+
+1. Finish the `gx-call-engine` image build on gx10-02 and run the first guarded
+   cold load to publish a measured `gx-call` footprint.
+2. Decide B-023 (node 1 reaches the swap ceiling during the gx-max load).
+3. Decide B-028 (split the keyframe video edit into two stages, or keep it
+   refused).
+4. Decide B-029 (give production Open WebUI its own gateway key).

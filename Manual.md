@@ -325,7 +325,7 @@ own revocable key.
 **Privacy.** The UI never stores the secret and never shows the gateway
 master key.
 
-## 7. GX-Playground: images, video and music
+## 7. GX-Playground: images, video, music, voice, flows and realtime
 
 **Purpose.** The creative app. Open `http://100.105.214.61:8090/` (Tailscale)
 or `http://127.0.0.1:8090/` on gx10-01. The Control Center sign-in works here
@@ -334,6 +334,58 @@ too; a second sign-in is not needed when both apps are opened on the same host.
 **Prerequisites.** A Control Center account. The **Playground** link in the
 Control Center navigation opens it; **Control Center** in the Playground top
 bar goes back.
+
+**What is where.** The left rail has three groups:
+
+| Group | Pages |
+|---|---|
+| **Create** | Dashboard · Creative Flows · Images · Video · Music · Voice |
+| **Realtime** | Live · Call Agents |
+| **Manage** | Library · History · Models · Logs · Settings |
+
+On a phone the rail becomes a bottom bar with three buttons, one per group.
+
+### 7.0 Use HTTPS for Live and Call Agents (microphone and camera)
+
+**Purpose.** Browsers only allow the microphone and camera in a *secure
+context*. `http://100.105.214.61:8090` is not one, so **Live** and **Call
+Agents** cannot capture audio there. Two addresses work:
+
+* `http://127.0.0.1:8090/` — only when you are sitting at gx10-01;
+* `https://100.105.214.61:8443/` — from anywhere on the tailnet, once you trust
+  the Playground's certificate authority.
+
+**Steps (once per computer).**
+
+1. Download the certificate authority: open `http://100.105.214.61:8090/pg/ca.crt`
+   (or `https://100.105.214.61:8443/pg/ca.crt`). It is the **public**
+   certificate; the private key never leaves gx10-01 and is mode 0600.
+2. Trust it:
+   * **macOS** — open it in Keychain Access → System → set *Always Trust*.
+   * **Windows** — Install Certificate → Local Machine → *Trusted Root
+     Certification Authorities*.
+   * **Linux (Chrome/Chromium)** — Settings → Privacy and security →
+     Security → Manage certificates → Authorities → Import → trust for
+     identifying websites.
+   * **Firefox** — Settings → Privacy & Security → Certificates → View
+     Certificates → Authorities → Import.
+3. Open `https://100.105.214.61:8443/` and sign in.
+
+**Expected result.** No certificate warning, and the Live and Call Agents pages
+stop showing the "this page needs a secure context" callout.
+
+**Error handling.** If a page still says the context is insecure, you are on
+the `http://` address — the callout links to Settings, which repeats these
+steps. If the browser rejects the certificate, it was issued for
+`gx10-01`, `gx10-01.taila7ef6a.ts.net`, `100.105.214.61` and `127.0.0.1` only;
+use one of those names.
+
+**Privacy.** The certificate authority is local to this cluster. It is not
+published, and trusting it does not affect any other website.
+
+**Mobile.** The same page works on a phone; the certificate must be installed
+in the phone's own trust store first, which on iOS also needs
+Settings → General → About → Certificate Trust Settings.
 
 **Steps (music).**
 
@@ -628,3 +680,56 @@ or ≥ 97 %).
     * **Privacy:** the prompts contain only public model facts.
 * **Other OpenAI clients.** The page shows curl, Python and JavaScript
   examples with `YOUR_GX_API_KEY`.
+
+## 10. Deploying a change to either web app (operators)
+
+**Purpose.** To make sure the browser is really being served the checkout. Both
+apps cache their static files in memory. They now re-read a file when it
+changes on disk, but the Python package is still loaded once per process, and
+Creative Flows ships a bundle that has to be built — so "I edited the source"
+and "the site changed" are two different statements, and only this script
+settles which one happened.
+
+**Prerequisites.** You are on gx10-01. Nothing else is deploying (the script
+takes `state/build-v3/restart.lock` itself).
+
+**Steps.**
+
+```bash
+legenex/playground/scripts/deploy.sh          # build if needed, restart if needed, verify
+legenex/playground/scripts/deploy.sh --verify # verify only; change nothing
+legenex/playground/scripts/deploy.sh --force  # restart even when nothing looks stale
+
+legenex/control-ui/scripts/deploy.sh          # the same for the Control Center
+```
+
+**Expected result.** The last two lines are:
+
+```
+43 files served match the checkout; 0 stale, 0 not served
+
+DEPLOY OK — the browser is being served this checkout
+```
+
+**Error handling.**
+
+* `N stale` — the running server is answering with an older copy of a file.
+  Run without `--verify` so it restarts.
+* `HTTP 404 (on disk but not served)` — the file exists in the checkout but the
+  server will not serve it. Check that the path has no leading dot and is
+  inside `web/`.
+* `could not take ... restart.lock` — another deploy is running. Wait.
+* `the Creative Flows bundle did not build, but web/js/pages/flows.js ships it`
+  — run `cd legenex/playground/flows-ui && npm run build` and read its error.
+
+**Note on the Control Center.** Its `deploy.sh` also **applies any pending
+database migration**, writing `library.pre-<name>.db` next to `library.db`
+first, and prints the applied list afterwards. Never edit a migration file that
+has already been applied — add a new one.
+
+**Why this exists.** The deployed Playground once served a seven-hour-old copy
+of itself while the source on disk was current: 21 files were stale and 11 —
+including the whole Voice, Models, Logs and Settings pages — returned 404
+because they had been created after the service started. Every symptom read as
+"the UI is broken" rather than "the UI is not deployed". See B-031 and D-041.
+

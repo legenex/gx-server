@@ -146,7 +146,11 @@ test('Build with AI fills the form, respects locks and can be undone', async ({ 
 });
 
 test('Improve My Prompt keeps locked fields and shows what changed', async ({ page }) => {
-  const problems = watchPage(page);
+  // Improve is asked NOT to touch the lyrics (improve_lyrics: false) and proposes a
+  // female vocal, so the form ends up "vocals requested, no lyrics". That is refused
+  // by the conditioning preview on purpose (400) and shown as a callout: Improve must
+  // not invent lyrics the user did not ask for, nor silently go instrumental.
+  const problems = watchPage(page, { allow: [/status of 400/] });
   const form = await openCreate(page);
   await page.fill('#music-description', 'a song about rain');
   await page.fill('#music-prompt', 'my exact style words');
@@ -171,6 +175,11 @@ test('Improve My Prompt keeps locked fields and shows what changed', async ({ pa
   await expect(changes.locator('.change-refined')).toContainText('a song about rain');
   await expect(changes.locator('.change-kept_locked')).toContainText('Style prompt');
   await expect(changes.locator('.change-suggested').filter({ hasText: 'BPM' })).toContainText('your value was kept');
+  // the vocal contradiction Improve left behind is surfaced, not hidden
+  await expect(form.locator('.vocal-status'))
+    .toHaveText('Vocals need lyrics. Write them, pick “Write with AI”, or turn Instrumental on.');
+  await expect(page.locator('#music-conditioning')).toContainText('This would be refused');
+  await expect(page.locator('#music-conditioning')).toContainText('Vocals need lyrics');
   await axeCheck(page, 'music after Improve');
   expect(problems).toEqual([]);
 });

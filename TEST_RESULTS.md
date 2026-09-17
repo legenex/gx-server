@@ -1771,3 +1771,168 @@ and all of them are in the committed code:
 | lifecycle | **38** |
 | git-sync `sync-regression.sh` | **19/19** |
 | kernel lock verifier | gx10-01 **13/13**, gx10-02 **13/13** (`6.17.0-1032-nvidia`) |
+
+## 22. Build V3 integration pass (2026-09-17 20:30-22:00 SAST, gx10-01)
+
+Lead integration of the IMG, WAN, CAL, LIV, FLO, VOI and MUS workstreams, plus
+the deployment and Hugging Face diagnosis work (D-041, B-030, B-031).
+
+### 22.1 The deployment gap this pass found and closed
+
+`legenex/playground/scripts/deploy.sh --verify` compares the ETag the running
+server returns for every file under `web/` with `sha256` of that file on disk.
+Against the live Playground **before** the fix:
+
+```
+32 files checked: 21 stale, 11 on disk but returning HTTP 404
+```
+
+The 404s were every file created after the process started at 10:29, including
+`js/routes.js`, `js/wan.js`, `js/realtime.js`, `js/music-form.js` and the
+Voice, Models, Logs and Settings pages. After the fix, and after each
+integration step since:
+
+```
+43 files served match the checkout; 0 stale, 0 not served
+```
+
+Revalidation was proven live with **zero restarts** (`NRestarts` stayed `0`): a
+file created in `web/js/` after start-up was served 200 immediately, changing it
+changed the served ETag, deleting it returned 404.
+
+### 22.2 Deployed-site browser acceptance (new permanent spec)
+
+`legenex/playground/e2e/live.navigation.spec.js`, project `live`, against the
+deployed Playground. Evidence + screenshots:
+`/srv/logs/acceptance/build-v3/plt/navigation-final/`.
+
+**14/14 passed.** The navigation test asserts all 13 pages in the right three
+groups with the right labels and hrefs and the Control Center link in the
+header; each page test asserts the page opens, is not a placeholder, **did not
+throw while loading**, has an accessible name on every visible control, is
+keyboard-focusable with a visible ring, produces no console or network errors,
+and has **no axe WCAG 2.2 AA violations**.
+
+| Page | Rendered |
+|---|---|
+| dashboard | 2 335 chars |
+| flows | 193 |
+| images | 799 |
+| video | 1 984 |
+| music | 2 596 |
+| voice | 5 650 |
+| live | 929 |
+| call | 388 |
+| library | 2 859 |
+| history | 7 009 |
+| models | 8 028 |
+| logs | 12 445 |
+| settings | 2 847 |
+
+Defects this spec caught, each fixed and re-verified:
+
+1. **Music rendered nothing but an error.** `web/js/pages/music.js` used six
+   `music-form.js` exports without importing the module → "This page could not
+   be loaded: aiPanel is not defined". 53 chars → 2 596 chars.
+2. **The spec itself had two faults**, corrected before trusting it: it used
+   `innerText` for accessible names (empty for a label inside a collapsed
+   section, so correctly labelled controls read as unnamed), and it judged
+   pages while skeleton loaders were still up.
+
+### 22.3 I2V footprint — the missing media measurement
+
+`python3 legenex/tests/media_footprint_probe.py i2v:640x640:33`, gx10-02,
+1 Hz, 82 samples. Evidence `/srv/logs/acceptance/media-footprint-20260917T183849Z/`.
+
+| | |
+|---|---|
+| Baseline MemAvailable | 111.9 GiB |
+| Minimum | **40.59 GiB** |
+| Growth | **71.3 GiB** |
+| Seconds below the 30 GiB reserve | **0** |
+| Swap free minimum | 60.88 GiB (no swapping) |
+| Generation elapsed | 51.32 s (82.2 s total incl. the source image) |
+| Frames | 33 requested, 33 returned |
+| After unload | 112.5 GiB |
+
+Preconditions verified first: gx-max unloaded, gx-reason unloaded, gx-music
+`engine: unloaded`, router idle with an empty queue, ComfyUI freed through the
+router's own path (never ComfyUI `/free` directly), memory settled, no holds.
+
+### 22.4 Wan 2.2 LoRA live acceptance (WAN)
+
+Four real generations on gx10-02 through media router **2.5.0**. Evidence
+`/srv/logs/acceptance/build-v3/wan/`.
+
+* Branch placement traced on the real graph: KSampler 12 ← 7 ← **1000 user-high
+  LoRA** ← 5 base-high ← 3 UNET high_noise; KSampler 13 ← 8 ← **2000 user-low
+  LoRA** ← 6 base-low ← 4 UNET low_noise. **Shared nodes between the two model
+  paths: none.**
+* Same seed, LoRA pair on vs off: different sha256 and +34 % bitrate, so the
+  LoRA measurably changed the output.
+* `ffprobe` on both: h264 640x640, `nb_read_frames=49`, duration 3.0625 s;
+  library analysis agrees (49 distinct frames, no frozen frames).
+* Router refusals proven live: high file on the low branch → 400
+  `lora_branch_mismatch`; unknown name → 400 `lora_not_found`; strength 99 →
+  400 `lora_invalid_strength`.
+* Memory, 1 087 samples at 1 Hz: baseline 112.56 → minimum **39.26 GiB**,
+  growth 73.30 GiB, 9.26 GiB clear of the reserve, swap flat, final 111.55 GiB.
+
+### 22.5 Suites (this pass, all really run)
+
+| Suite | Result |
+|---|---|
+| Control Center `unittest discover -s tests` | **708 passed, OK** |
+| Control Center `tests/test_calls.py` | **15 OK** (was 3 failures + 1 error) |
+| Control Center `tests/test_live.py` (new) | **29 OK** |
+| Control Center `tests/test_hf_access.py` (new) | **12 OK** |
+| Control Center `tests/test_flows*.py` | **58 OK** |
+| Control Center `tests/test_wan_video.py` | **35 OK** |
+| Control Center `tests/test_media_manager_keys.py` | **18 OK** under `.venv` (was 5 errors + 1 failure: Pillow was missing from the venv, now installed and bootstrapped by `qa.sh`) |
+| media router `qa.sh` | **174 OK**, 15 templates validated, QA PASSED |
+| media router `tests/test_wan_loras.py` | **40 OK** |
+| GX-Playground unit/proxy/tunnel | **OK** |
+| gx-live service + engine `qa.sh` | **46 OK** (29 supervisor + 17 engine) |
+| gx-voice service | **46 OK** |
+| gx-call service | **28 OK** |
+| flows-ui `npm run qa` | tsc clean, **eslint 0 problems** (was 30 errors), vitest **13/13** |
+| Deployed-site navigation (`live.navigation.spec.js`) | **14/14** |
+| Deployed-site viewer regression (`live.viewer-playback.spec.js`, new) | **1/1** |
+
+### 22.6 Real defects found in shared code and fixed
+
+1. **`MediaJobs.submit()` delivered `submitted` after enqueueing.** A
+   fast-failing job therefore delivered `failed` from the worker thread *before*
+   `submitted`, so an observer that inserts its row on `submitted` lost the
+   result and kept a `queued` row for ever. `WanVideo.observe` had exactly that
+   exposure. Observers are now notified before the worker can see the job, and a
+   `cancel()` that arrives in that window is honoured.
+2. **`workspace.js renderViewer()` rebuilt its `<video>` on every re-render**, so
+   a user watching a clip was thrown back to 0 whenever a job card ticked or a
+   favourite was toggled. Proven fixed in the deployed browser: playback ran
+   1.20 s → 2.14 s across a re-render, `paused: false`, `error: null`.
+3. **The Call Agents audit sink was silently a no-op.** `self.audit = audit or
+   (lambda **_: None)` — the test's sink was an empty `list` subclass, which is
+   falsy, so every audit went to the no-op. Same for `CallManager.metric`.
+4. **`end_session` waited on an event poller that never runs offline**, so the
+   recording route answered 409 "session not ended". It now finalises from
+   gx-call's own authoritative response, single-shot.
+5. **An `aria-label` on an xyflow handle** (a plain `<div>`, where that attribute
+   is prohibited) — a serious axe WCAG 2.2 AA violation on Creative Flows.
+
+### 22.7 Hugging Face access diagnosis (B-030)
+
+`tests/test_hf_access.py`, 12 hermetic tests against a stub Hub that serves
+metadata 200 and files 401/403, pins the distinction that had been collapsed
+into one misleading message:
+
+| Situation | Code | Action the UI now gives |
+|---|---|---|
+| No usable token | `unauthenticated` (401) | save a token; a fine-grained one also needs the gated-repo permission |
+| Token valid, account not granted | `gated_not_granted` (403 `GatedRepo`) | accept the model's terms in a browser as that user — **"A new token cannot fix this"** |
+| Granted | `granted` | — |
+| Not gated | `public` | — |
+
+Against the real repository, with the real token: metadata **200**, files
+**403 GatedRepo**, token user `legenex`, `canReadGatedRepos: true`.
+

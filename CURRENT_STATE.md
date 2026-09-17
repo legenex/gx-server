@@ -3,7 +3,128 @@
 **This file must always reflect reality.** If you are a new agent resuming this
 work, read this first, then ARCHITECTURE.md (what is locked), then BLOCKERS.md.
 
-## LATEST UPDATE — 2026-09-17 11:00 SAST (final integration pass: gx-music, GX-Playground, Resource Control) — read this first
+## LATEST UPDATE — 2026-09-17 21:35 SAST (Build V3 integration: the complete creative + realtime product is deployed) — read this first
+
+Eleven public aliases (L-10 as amended by D-040). This pass took the Build V3
+workstreams from "code written" to "deployed and provable", and fixed the
+reason that was hard to see: **the deployed apps were serving a snapshot of the
+checkout taken at start-up** (B-031).
+
+### The deployment bug that hid everything else (B-031, D-041)
+
+`Static`/`StaticFiles` read `web/` into memory once per process. The Playground
+had been running since 10:29 while the frontend was edited until 17:17, so:
+
+* 21 of 32 files were **stale**, and
+* 11 files that existed on disk returned **HTTP 404** because they were created
+  after start-up — including `js/routes.js` and the whole Voice, Models, Logs
+  and Settings pages.
+
+Both servers now re-read a file when its mtime, size or inode changes, and
+`legenex/{playground,control-ui}/scripts/deploy.sh` is the only sanctioned
+deployment path: it rebuilds what needs rebuilding, restarts only when the
+Python package changed, and then **fails unless the ETag of every served file
+matches sha256 of the file in the checkout**. Current: `43 files served match
+the checkout; 0 stale, 0 not served`.
+
+### The deployed GX-Playground (verified in a real browser)
+
+`legenex/playground/e2e/live.navigation.spec.js` runs against the deployed site
+and **passes 14/14**. Evidence and screenshots:
+`/srv/logs/acceptance/build-v3/plt/navigation-final/`.
+
+| Group | Pages |
+|---|---|
+| **Create** | Dashboard · Creative Flows · Images · Video · Music · Voice |
+| **Realtime** | Live · Call Agents |
+| **Manage** | Library · History · Models · Logs · Settings |
+
+No dead links, no placeholder pages, the Control Center link is in the header,
+and every page opens without console or network errors, is keyboard-reachable
+with a visible focus ring, has an accessible name on every visible control, and
+reports **no axe WCAG 2.2 AA violations**.
+
+Two page-level defects were found and fixed by that spec:
+* **Music was dead** — `web/js/pages/music.js` used six `music-form.js` exports
+  (`aiPanel`, `conditioningPreview`, `lockButton`, `referencePanel`,
+  `styleTagEditor`, `vocalControls`) and never imported the module, so the page
+  rendered only "This page could not be loaded: aiPanel is not defined".
+* **Creative Flows had no frontend entry point at all** — no `main.tsx`, no app
+  shell, no stylesheet, so `vite build` could never have run.
+
+### Services
+
+| Node | Service | Address | State |
+|---|---|---|---|
+| gx10-01 | Control Center | :8088 | healthy |
+| gx10-01 | GX-Playground | :8090 **and :8443 (HTTPS)** | healthy |
+| gx10-01 | LiteLLM gateway | :4000 | healthy |
+| gx10-01 | orchestrator | :18900 | healthy |
+| gx10-02 | media router | 192.168.100.11:18800 | **2.5.0** (was 2.4.1), 15 workflows, LoRA mounts read-only |
+| gx10-02 | gx-music supervisor | :18820 | healthy, engine unloaded |
+| gx10-02 | **gx-voice** supervisor | :18830 | healthy (new) |
+| gx10-02 | **gx-live** supervisor | :18850 | healthy (new), estimate 34 GiB |
+| gx10-02 | gx-call supervisor | :18840 | **not yet running** — its engine image is still being built |
+
+**HTTPS is now real.** It had never been wired: `gx_playground/tls.py` existed
+but there were no certificates, no port and no setup script. There is now a
+local private CA in `/srv/projects/gx-cluster/secrets/playground-tls/` (keys
+0600), the unit runs `python3 -m gx_playground.tls ensure` at every start
+(creates on a fresh node, renews within 30 days of expiry), and the listener
+binds loopback + Tailscale only. `https://100.105.214.61:8443/` and
+`https://127.0.0.1:8443/` answer; the public CA certificate downloads from
+`/pg/ca.crt`. **This is what the Live and Call Agents pages need for
+`getUserMedia`** — plain `http://100.105.214.61:8090` is not a secure context.
+
+### Database
+
+All eight migrations are applied to `/srv/projects/gx-cluster/media/metadata/library.db`
+(`010` provenance, `020` WAN, `030` flows, `040` voice, `050` call, **`060` live**,
+**`070` images**, `080` platform). 060 and 070 did not exist at the start of this
+pass; both were dry-run against a copy before being applied. `integrity_check ok`,
+29 assets intact, 38 tables across the `img_ / live_ / call_ / voice_ / wan_ /
+flow_ / plt_` prefixes.
+
+### Measured footprints
+
+| Workload | Baseline | Minimum | Growth | Notes |
+|---|---|---|---|---|
+| T2I 1024x1024 x1 | 113.8 | 56.69 | 57.1 GiB | previously measured |
+| T2V 640x640 x33 | 112.2 | 40.26 | 72.0 GiB | previously measured |
+| **I2V 640x640 x33** | **111.9** | **40.59** | **71.3 GiB** | **measured this pass** — the missing one; 0 s below the reserve, 82.2 s total, memory returned to 112.5 GiB. Evidence `/srv/logs/acceptance/media-footprint-20260917T183849Z/` |
+| Wan t2v + LoRA pair, 640x640 x49 | 112.56 | 39.26 | 73.30 GiB | WAN live acceptance, 1 087 samples at 1 Hz |
+| gx-live (MiniCPM-o 4.5) | — | — | 34 cold / 31 resident, 102 s | probe 1, in the registry |
+
+I2V costs essentially the same as T2V of the same size. Neither can run beside
+gx-reason (≈32 GiB): 71.3 + 32 + 30 > 121.6 GiB.
+
+### Live facts (21:35)
+
+| | Kernel | MemAvailable | Swap used | Disk free |
+|---|---|---|---|---|
+| gx10-01 | 6.17.0-1032-nvidia | 48 GiB | 6.8 GiB of 63 | 483 GiB (45 % used) |
+| gx10-02 | 6.17.0-1032-nvidia | 111 GiB | 3 GiB of 63 | 217 GiB (76 % used) |
+
+Resource profile **auto**; no maintenance hold, no gx-max hold, no pins.
+gx-max has not been started at any point in this pass.
+
+### gx-reason: unchanged, and the blocker is now precise (B-030)
+
+gx-reason still serves the interim `nvidia/Qwen3.6-27B-NVFP4`, which is **not
+deleted**. The approved target
+`iSkye/Qwen3.8-Flash-Next-NVFP4-ablit-a070` @ `91c3e3d4…` (92.68 B parameters,
+98.66 GiB — both confirmed against the live HF API) returns **403
+`X-Error-Code: GatedRepo`, "you are not in the authorized list"** for its files,
+while its metadata returns 200. The token is valid, fine-grained, identifies
+user **`legenex`**, and already carries `canReadGatedRepos: true`. **No token can
+fix this**; a human must accept the model's terms in a browser. See B-030.
+
+The Model Manager no longer blurs this: 401 and 403 are separate machine codes
+with separate human actions, Hugging Face's own error message is passed through
+verbatim, and the token panel shows configured/valid/user/type/token
+name/created/gated-repo permission from live state only.
+
+## Previous update — 2026-09-17 11:00 SAST (final integration pass: gx-music, GX-Playground, Resource Control)
 
 **Eight public aliases (L-10 amended by D-036).** Everything below was
 measured live. Evidence: `TEST_RESULTS.md` §20 and

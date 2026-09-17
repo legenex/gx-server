@@ -21,7 +21,7 @@ explicit human decision. If a task seems to require changing one, stop and ask.
 | L-7 | **Do not modify** MTU, Netplan, RDMA setup, ConnectX firmware, or routing without concrete evidence of a fault. | The fabric is measured-good (~21.3 GB/s bus bandwidth, zero errors). |
 | L-8 | **`/swapfile-sglang` (48 G) stays on both nodes.** | Load-time OOM mitigation for gx-max weight loading. |
 | L-9 | **The stack is LiteLLM + llama-swap + llama.cpp + vLLM + SGLang + ComfyUI.** Do not replace it with Ollama. | Each engine is chosen per tier for a concrete reason; see MODELS.md. |
-| L-10 | **Eight public aliases** (D-036): gx-mini, gx-fast, gx-reason, gx-max, gx-auto, gx-image, gx-video on LiteLLM, and gx-music through the gx10-01 music API. No gx-vision. | The user approved gx-music as the eighth alias on 2026-09-17. |
+| L-10 | **Eleven public aliases** (D-036, amended by D-040): gx-mini, gx-fast, gx-reason, gx-max, gx-auto, gx-image, gx-video on LiteLLM; gx-music and gx-voice through the gx10-01 APIs (gx-voice also as OpenAI-compatible `POST /v1/audio/speech` on the gateway); gx-call and gx-live as realtime services exposed on the Playground over the WebSocket tunnel. No gx-vision — vision is a model capability. | The user approved gx-music as the eighth alias on 2026-09-17, then gx-voice, gx-call and gx-live as the ninth to eleventh (D-040). Never repurpose an alias. |
 
 ## 2. Physical layout
 
@@ -458,6 +458,91 @@ Center backend.
   Maintenance.
 * **Control Center.** It no longer contains Create or Media Library; it links
   to the Playground.
+
+### 13.1 Navigation (D-040)
+
+Three groups, and nothing outside them:
+
+| Group | Pages |
+|---|---|
+| **Create** | Dashboard · Creative Flows · Images · Video · Music · Voice |
+| **Realtime** | Live · Call Agents |
+| **Manage** | Library · History · Models · Logs · Settings |
+
+Adding a page means five edits and nothing else: one line in
+`web/js/routes.js`, one `<li>` in `web/index.html`, the name in `SPA_ROUTE` and
+tight regexes in `ALLOW` (both in `gx_playground/server.py`), and the name in
+`GX_BUILD_PAGES`. Every page is lazy-loaded, so a visitor downloads the shell
+plus one page; the build check therefore bounds each module (64 KiB) as well as
+the tree.
+
+### 13.2 The realtime tunnel and HTTPS (D-040)
+
+* `GET /rt/{call,live}/<session_id>` upgrades to a WebSocket. The Playground
+  authorises the session with the Control Center, then opens a **fixed**
+  server-side target (`192.168.100.11:18840` / `:18850`) — a client can never
+  choose it. Client cookies and authorization are stripped; the service key is
+  added server-side. Extensions are stripped, so frames are plain RFC 6455.
+  Limits: idle 120 s, 4 MiB per frame, 4 GiB per direction, 4 tunnels per
+  owner, 32 overall. Payloads are never logged.
+* API clients use a single-use 60 s HMAC ticket bound to the session and owner.
+* **HTTPS on :8443** serves the same app from a local private CA in
+  `/srv/projects/gx-cluster/secrets/playground-tls/` (keys 0600), bound to
+  loopback and Tailscale only. `python3 -m gx_playground.tls ensure` runs at
+  every service start: it creates the CA and certificate on a fresh node and
+  renews the certificate within 30 days of expiry. The public CA certificate is
+  downloadable from `/pg/ca.crt`.
+  **This exists because `getUserMedia` requires a secure context**, so the Live
+  and Call Agents pages cannot work over plain `http://<tailscale-ip>:8090`.
+  HTTPS uses a separate `__Host-` session cookie; signing in on HTTP carries
+  over to HTTPS but not the other way round.
+
+### 13.3 Deployment is proven, not assumed (D-041, B-031)
+
+Both browser-facing servers cache `web/` in memory but **revalidate per
+lookup**: one `stat()`, and the entry is rebuilt when mtime, size or inode
+changed. Files created after start-up appear; deleted files 404.
+
+`legenex/{playground,control-ui}/scripts/deploy.sh` is the only sanctioned
+deployment path. It builds what needs building, restarts only when the Python
+package or the unit changed (holding `state/build-v3/restart.lock`), and then
+compares the ETag of **every** served file with `sha256` of the file in the
+checkout, failing the deploy on any mismatch or any file on disk that is not
+served. Changing the source is not deploying it, and only that comparison
+settles which one happened.
+
+## 13A. Node-2 tenant services (D-040)
+
+`gx-music` (:18820), `gx-voice` (:18830), `gx-call` (:18840) and `gx-live`
+(:18850) all follow the same contract:
+
+* bound to `192.168.100.11` and `127.0.0.1` only, never browser-facing, bearer
+  key at `/srv/projects/gx-cluster/secrets/gx-<svc>/api-key` (0600 on both
+  nodes);
+* a light supervisor that starts at boot and loads **no** model; the engine
+  container starts on the first request through `gx_guard_run`, so the node
+  flock, the residency ledger and the 30 GiB reserve apply, and unloads when
+  idle;
+* an open `GET /health` publishing `state`, `busy`, `pinned` and
+  `memory.{pending_gib, resident_gib, estimate_gib}` — the D-038 pending-memory
+  contract, so peers can subtract each other's loads in progress;
+* `POST /v1/<svc>/unload {"if_idle": true}` (409 while busy or pinned), and
+  `{"if_idle": false, "reason": "gxmax"}` for the gx-max drain, which then
+  verifies the container, the ledger entry and the engine processes are all
+  gone;
+* honours `node2.gxmax-hold` and `node2.maintenance-hold`.
+
+Admission everywhere: `MemAvailable − Σ peers' pending − own growth ≥ 30 GiB`.
+
+## 13B. The application database (D-040)
+
+One database, `/srv/projects/gx-cluster/media/metadata/library.db`. Each
+feature owns numbered migrations in
+`legenex/control-ui/gx_control_ui/migrations/`, applied once in name order
+inside a transaction on Control Center start, after a `library.pre-<name>.db`
+copy is written beside it. Tables are prefixed per feature (`wan_`, `flow_`,
+`voice_`, `call_`, `live_`, `img_`, `plt_`). Migrations only add; a file that
+has been applied on gx10-01 is never edited — a new one is added instead.
 
 ## 14. Resource Control (D-037)
 

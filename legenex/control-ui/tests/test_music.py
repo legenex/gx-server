@@ -347,6 +347,43 @@ class SubmitAndImportTests(StubBase):
         self.assertIs(self.jobs.model(), first)  # cached for 5 s
         self.assertEqual(len(self.stub.calls), calls)
 
+    def test_preview_takes_the_same_body_as_a_submit(self):
+        """The Playground previews the body it is about to POST to /api/music/jobs,
+        which carries ``operation``; the preview must not refuse it (B-032)."""
+        body = {"operation": "generate", "prompt": "warm Rhodes", "style_tags": ["afro house"],
+                "instrumental": True, "description": "A night drive along the coast.",
+                "reference_asset_id": "a_" + "1" * 24}
+        out = self.jobs.preview(dict(body))
+        self.assertEqual(out["object"], "music.preview")
+        self.assertEqual(out["conditioning"]["caption"],
+                         "warm Rhodes, afro house, instrumental. A night drive along the coast.")
+        self.assertEqual(body["operation"], "generate")  # the caller's dict is not mutated
+        # node 2 runs the real validator and refuses unknown fields, so a 200 here
+        # proves operation/reference_asset_id were stripped before forwarding.
+        self.assertEqual(self.stub.calls[-1], ("POST", "/v1/music/preview"))
+
+    def test_preview_only_covers_create(self):
+        for op in ("remix", "edit", "extend"):
+            with self.assertRaises(MusicError) as cm:
+                self.jobs.preview({"operation": op, "prompt": "x"})
+            self.assertEqual(cm.exception.status, 400)
+            self.assertIn("Create", str(cm.exception))
+        with self.assertRaises(MusicError) as cm:
+            self.jobs.preview({"prompt": "x", "engine_url": "http://evil"})
+        self.assertIn("engine_url", str(cm.exception))
+
+    def test_preview_marks_lyrics_gx_auto_will_write(self):
+        out = self.jobs.preview({"operation": "generate", "prompt": "x", "vocal_intent": "female",
+                                 "lyrics_source": "assistant"})
+        self.assertIs(out["lyrics_pending"], True)
+        self.assertEqual(out["conditioning"]["lyrics"], "")
+        self.assertTrue(any("gx-auto" in n for n in out["conditioning"]["notes"]))
+
+    def test_preview_refuses_vocals_without_lyrics(self):
+        with self.assertRaises(MusicError) as cm:
+            self.jobs.preview({"operation": "generate", "prompt": "x", "vocal_intent": "female"})
+        self.assertEqual((cm.exception.status, cm.exception.code), (400, "lyrics_required"))
+
     def test_edit_needs_a_source(self):
         with self.assertRaises(MusicError) as cm:
             self.jobs.submit("edit", {"prompt": "x"}, user="admin")
