@@ -264,6 +264,7 @@ class App:
                                  cfg.media_dir / "voice", audit=self.actions.audit, results=self.results,
                                  explain=lambda alias: self.resources.explain(alias),
                                  start_worker=not cfg.offline)
+        self.activity.register("voice", self.voice.activity)
         # --- Build V3 FLO: Creative Flows engine, templates and AI creation (flows/, routes_flo.py)
         from .flows.wiring import build_flows
         self.flows = build_flows(self)

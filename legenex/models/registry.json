@@ -560,8 +560,8 @@
       "family": "Qwen3-TTS 12 Hz 1.7B",
       "licence": "apache-2.0",
       "uncensored": null,
-      "memory": "not measured yet",
-      "measured": null,
+      "memory": "9.45 GiB peak on a cold load, 6.5 GiB resident with one variant (measured 2026-09-17); admission estimate 12 GiB",
+      "measured": "cold start 35.0 s (3.5 s container + 31.5 s variant), warm variant switch 26-29 s, first audio 6.0-8.7 s, RTF 0.72-1.00; MemAvailable returned fully after unload (2026-09-17)",
       "startup": "supervisor starts at boot; the engine loads on the first job and unloads when idle",
       "capabilities": [
         "tts",
