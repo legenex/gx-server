@@ -15,7 +15,7 @@ and *API key* works:
 | Setting | Value |
 |---|---|
 | Base URL | `http://100.105.214.61:4000/v1` |
-| API key | your LiteLLM key |
+| API key | a key from Control UI → API Keys |
 | Model | one of the seven `gx-*` aliases |
 
 Endpoints you will use:
@@ -25,7 +25,7 @@ Endpoints you will use:
 | `GET /v1/models` | lists the seven aliases |
 | `POST /v1/chat/completions` | `gx-mini`, `gx-fast`, `gx-reason`, `gx-max`, `gx-auto` |
 | `POST /v1/images/generations` | `gx-image` |
-| media router `POST /v1/videos` | `gx-video` (see Video generation) |
+| `POST /v1/images/edits`, `POST /v1/videos`, `POST /v1/videos/edits` | `gx-image`, `gx-video` (see Images and video) |
 
 Rules that matter:
 
@@ -232,51 +232,16 @@ print(final.choices[0].message.content)
 `gx-mini` supports tools too; the gateway buffers its streaming output
 (`fake_stream`) because llama.cpp's streaming tool parser is unreliable.
 
-## Image generation
+## Images and video
 
-```bash
-curl -sS "$GX_BASE/images/generations" \
-  -H "Authorization: Bearer $GX_API_KEY" -H "Content-Type: application/json" \
-  -d '{"model": "gx-image", "prompt": "a lighthouse at dusk, oil painting",
-       "size": "1024x1024", "n": 1, "response_format": "b64_json"}' \
-  | python3 -c 'import sys,json,base64; d=json.load(sys.stdin); open("out.png","wb").write(base64.b64decode(d["data"][0]["b64_json"]))'
-```
+Image generation, image editing, text-to-video, image-to-video and video
+editing all go through the gateway with your key. Examples and parameters:
+[Media: generate and edit](/#/docs/media).
 
-| Field | Default | Notes |
-|---|---|---|
-| `prompt` | required | up to 4,000 characters |
-| `size` | `1328x1328` | `WxH`, each 256–2048 and a multiple of 16 |
-| `n` | 1 | 1–4 |
-| `quality` | `standard` | `standard` = 4-step Lightning; `hd` = full sampling (~4 min) |
-| `seed` | random | set it to reproduce an image |
-| `negative_prompt` | — | what to avoid |
-
-One image generates at a time across the cluster; others wait.
-
-## Video generation
-
-gx-video is asynchronous and is served by the media router on the fabric, so
-run these from **gx10-01** (or use the control UI playground from anywhere).
-The key is `GX_MEDIA_API_KEY` from the gateway `.env`.
-
-```bash
-MEDIA=http://192.168.100.11:18800/v1
-ID=$(curl -sS -X POST "$MEDIA/videos" -H "Authorization: Bearer $GX_MEDIA_API_KEY" \
-       -H "Content-Type: application/json" \
-       -d '{"prompt": "waves rolling onto a beach at sunset", "seconds": 2, "size": "640x640"}' \
-     | python3 -c 'import sys,json; print(json.load(sys.stdin)["id"])')
-# poll until "completed" (about a minute)
-curl -sS "$MEDIA/videos/$ID" -H "Authorization: Bearer $GX_MEDIA_API_KEY"
-curl -sS "$MEDIA/videos/$ID/content" -H "Authorization: Bearer $GX_MEDIA_API_KEY" -o clip.mp4
-```
-
-| Field | Default | Notes |
-|---|---|---|
-| `prompt` | required | |
-| `seconds` | 3 | 0.5–20 (frames = seconds × fps, snapped to 4k+1, max 161) |
-| `length` | — | frame count instead of seconds |
-| `fps` | 16 | 4–30 |
-| `size` | `640x640` | multiples of 16 |
-| `seed` | random | |
-
-Status values: `queued`, `running`, `completed`, `failed`.
+| Endpoint | Alias |
+|---|---|
+| `POST /v1/images/generations` | `gx-image` |
+| `POST /v1/images/edits` (multipart: `image`, `prompt`) | `gx-image` |
+| `POST /v1/videos` (JSON or multipart; `input_reference` = image-to-video) | `gx-video` |
+| `GET /v1/videos/{id}`, `GET /v1/videos/{id}/content` | `gx-video` |
+| `POST /v1/videos/edits`, `POST /v1/videos/{id}/remix` | `gx-video` |

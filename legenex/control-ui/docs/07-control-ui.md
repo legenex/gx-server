@@ -21,7 +21,11 @@ operation.
 | Page | What it shows / does |
 |---|---|
 | Dashboard | overall state, both nodes, rails, models, gx-max lifecycle, locks and ledger, Git sync, services, warnings, queue |
-| Models | the seven aliases with facts, live state, last results, and LOAD / UNLOAD / RESTART |
+| Models | the seven aliases with the exact model, revision, size class, quantization, uncensored status, live state, last results, and LOAD / UNLOAD / RESTART |
+| Create | generate and edit images and videos (five tabs) with live job phases |
+| Media Library | every generated, edited or uploaded item: preview, search, filters, selection, ZIP, favourites, rename, lineage, delete |
+| Model Manager | Hugging Face search and inspection, pinned install + verification, test-serve, alias assignment with rollback, delete-if-unused, HF token |
+| API Keys | create, list, replace and revoke gateway keys (secret shown once) |
 | Runtime | per-node memory, swap, PSI, load, temperatures, containers, units; llama-swap, orchestrator, media, hostwatch |
 | Cluster | topology of the two nodes, both RoCE rails with live throughput, Tailscale, SSH |
 | Jobs / Queue | gx-max phases, live lifecycle output, job history, media queue, UI operations |
@@ -40,7 +44,11 @@ pauses when it is hidden. Use the pause button in the top bar to freeze it.
 * Every state-changing call needs a per-session CSRF token and a same-origin
   request.
 * Five failed logins from one address lock that address out for 15 minutes.
-* The browser never receives a LiteLLM, llama-swap or media key.
+* The browser never receives a LiteLLM, llama-swap or media key. A new API
+  key's secret is returned once, to the page that created it.
+* An optional second account, `acceptance`, exists for automated live tests.
+  It can sign in only from `127.0.0.1` on gx10-01. Remove it with
+  `legenex/control-ui/scripts/gx-ui-passwd --remove-acceptance`.
 
 **Set or reset the password** (on gx10-01, in a terminal):
 
@@ -66,8 +74,10 @@ curl -sS http://127.0.0.1:8088/api/ready
 legenex/control-ui/scripts/install.sh      # (re)install the unit; idempotent
 ```
 
-The unit restarts on failure, is capped at 512 MB of memory, and never
-starts a model.
+The unit restarts on failure, is capped at 1 GB of memory, and never starts
+a model on its own. It writes only its state and secrets, `/srv/logs`, the
+media library, `/srv/models` (Model Manager) and the three binding files an
+alias assignment edits.
 
 ## Safety of operations
 
@@ -77,6 +87,11 @@ starts a model.
   `FORCE RELEASE`; other disruptive operations need a confirmation.
 * Only one model/infrastructure operation runs at a time.
 * There is no shell, no arbitrary command, no file browser, and no upgrade,
-  kernel or firmware button.
+  kernel or firmware button. Model Manager commands are fixed argument lists
+  with validated repository ids, revisions and paths confined to
+  `/srv/models/{gguf,vllm,deepseek,staging}`.
+* Media files are served only by asset id from the library database; ZIP
+  downloads contain exactly the selected items plus a manifest and use a
+  single-use link.
 * Every operation, login and refusal is written to the audit log with user,
   client address, outcome and duration.

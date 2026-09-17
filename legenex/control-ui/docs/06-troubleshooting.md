@@ -98,7 +98,8 @@ weights are on the GPU.
 **Can I use the fabric addresses from my laptop?** No; they are a direct
 cable between the two nodes.
 
-**Where do I get an API key?** From the administrator (a LiteLLM virtual key).
+**Where do I get an API key?** Control UI → API Keys → Create key. The key
+is shown once; if it is lost, use Replace on the same row.
 
 **How do I reset the control-UI password?** On gx10-01:
 `legenex/control-ui/scripts/gx-ui-passwd`. See the Control UI page.

@@ -41,7 +41,7 @@ Tailscale carries management and client traffic only.
 
 **Locked decisions** (change only with a human decision): kernel
 `6.17.0-1032-nvidia` on both nodes; gx-max is SGLang TP=2 across two nodes
-with `nvidia/DeepSeek-V4-Flash-0731-NVFP4`; node roles as above; no GPUDirect
+with DeepSeek-V4-Flash-0731 (`dealignai/DeepSeek-V4-Flash-0731-CRACK-NVFP4`, D-032); node roles as above; no GPUDirect
 RDMA; the stack is LiteLLM + llama-swap + llama.cpp + vLLM + SGLang + ComfyUI.
 
 ## Resource safety

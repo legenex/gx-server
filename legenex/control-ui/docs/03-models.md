@@ -1,99 +1,92 @@
 # Models
 
+The seven aliases and the exact models behind them (pinned revisions are in
+`legenex/models/registry.json` and on each card in **Models**).
+
 ## Which model should I use?
 
 | If you need… | Use | Why |
 |---|---|---|
-| A quick answer, extraction, classification, short vision task | `gx-mini` | Always loaded, sub-second, vision-capable |
-| An agent that calls tools, reads images, writes longer answers | `gx-fast` | 35B MoE on vLLM, native tool calling, 65k context |
-| Careful reasoning, maths, tricky code, planning | `gx-reason` | Dense 27B with separated reasoning output |
-| The strongest model for long, high-stakes work, and you can wait | `gx-max` | DeepSeek V4 Flash across both nodes; ~9 min cold start |
-| "Just pick for me" | `gx-auto` | Orchestrator chooses mini / fast / reason per request |
-| A picture | `gx-image` | Qwen-Image-2512 through ComfyUI |
-| A short video clip | `gx-video` | Wan 2.2 T2V through ComfyUI, asynchronous |
+| A quick answer, extraction, classification, a simple image question | `gx-mini` | Always loaded, ~52 tok/s, vision and tools |
+| Coding, tools, agents, Kilo Code, longer answers | `gx-fast` | 35B MoE (3B active), kept warm, ~55 tok/s, 131k context |
+| Hard maths, architecture, difficult debugging | `gx-reason` | Single-node reasoning tier on gx10-02 |
+| The strongest model for the hardest work, and you can wait | `gx-max` | DeepSeek V4 Flash 0731 across both nodes; ~10 min cold start |
+| "Just pick for me" (works well in Kilo) | `gx-auto` | Routes on the task, not on the size of the tool list |
+| A picture, or an edit of a picture | `gx-image` | Qwen-Image-2512 / Qwen-Image-Edit-2511 |
+| A short clip, an animated image, or an edited video | `gx-video` | Wan 2.2 A14B |
 
-| Alias | Node(s) | Engine | Context | Vision | Tools | Cold start |
-|---|---|---|---|---|---|---|
-| `gx-mini` | gx10-01 | llama.cpp | 65,536 | yes | yes | resident (always hot) |
-| `gx-fast` | gx10-01 | vLLM | 65,536 | yes | yes | minutes, on demand |
-| `gx-reason` | gx10-02 | vLLM | 65,536 | yes | yes | ~6–7 min, on demand |
-| `gx-max` | both | SGLang TP=2 | 327,680 (gateway caps input at 65,536) | no | yes | ~8.5–9.5 min |
-| `gx-auto` | router | orchestrator | 24,576 (safe common size) | via chosen tier | yes | n/a |
-| `gx-image` | gx10-02 | ComfyUI | n/a | n/a | n/a | first image loads weights |
-| `gx-video` | gx10-02 | ComfyUI | n/a | n/a | n/a | first video loads weights |
+| Alias | Model (Hugging Face) | Node(s) | Engine | Context / output | Vision | Tools | Uncensored | Start |
+|---|---|---|---|---|---|---|---|---|
+| `gx-mini` | `HauhauCS/Qwen3.5-4B-Uncensored-HauhauCS-Aggressive` (Q4_K_M) | gx10-01 | llama.cpp | 65,536 / 8,192 | yes | yes | yes | resident |
+| `gx-fast` | `kyaky/Qwen3.6-35B-A3B-Uncensored-NVFP4` | gx10-01 | vLLM | 131,072 / 32,768 | yes | yes | yes | resident (cold load ~4 min) |
+| `gx-reason` | `nvidia/Qwen3.6-27B-NVFP4` (**interim**, see below) | gx10-02 | vLLM | 65,536 / 16,384 | yes | yes | no | on demand, ~6–7 min |
+| `gx-max` | `dealignai/DeepSeek-V4-Flash-0731-CRACK-NVFP4` | both | SGLang TP=2 | 327,680 / 65,536 | no | yes | yes | explicit, ~10 min |
+| `gx-auto` | router | gx10-01 | orchestrator | 57,344 / 8,192 | via tier | yes | via tier | always |
+| `gx-image` | Qwen-Image-2512 + Qwen-Image-Edit-2511 | gx10-02 | ComfyUI | n/a | n/a | n/a | yes | first job loads |
+| `gx-video` | Wan 2.2 T2V/I2V A14B + rzgar uncensored LoRAs | gx10-02 | ComfyUI | n/a | n/a | n/a | yes | first job loads |
 
 ## gx-mini
 
-* **Model:** Qwen3.5-4B (Q4_K_M GGUF) with a BF16 vision projector, on
-  llama.cpp.
-* **Best at:** fast chat, summaries, JSON extraction, simple vision (read a
-  chart, spot shapes, read digits).
-* **Behaviour:** never unloaded (llama-swap `ttl: 0`). About 48 tokens/s.
-  Thinking is disabled so answers come straight back.
-* **Limits:** 65,536 tokens shared across two parallel slots; 4,096 output
-  tokens.
+* **Model:** HauhauCS Qwen3.5-4B Uncensored "Aggressive", Q4_K_M GGUF with the
+  BF16 vision projector, on llama.cpp. 4B dense, hybrid Gated DeltaNet
+  attention.
+* **Behaviour:** always loaded (preloaded when llama-swap starts), 65,536
+  tokens per request, two requests in parallel. Thinking is off at the
+  gateway.
+* **Measured:** 52 tok/s; 0.1 s warm time to first token; vision (shapes,
+  colours, digits) and tool calls correct.
 
 ## gx-fast
 
-* **Model:** `nvidia/Qwen3.6-35B-A3B-NVFP4` on vLLM.
-* **Best at:** tool-using agents, vision, general assistant work.
-* **Behaviour:** loads on the first request (a few minutes on a cold node) and
-  unloads after 30 minutes idle. Tool calls use the `qwen3_xml` parser and
-  come back as standard OpenAI `tool_calls`.
-* **Limits:** 65,536 context, 8,192 output tokens.
+* **Model:** kyaky Qwen3.6-35B-A3B Uncensored, NVFP4 (compressed-tensors),
+  on vLLM 0.28. 35B total, 3B active (8 of 256 experts). Vision tower
+  included.
+* **Behaviour:** kept loaded next to gx-mini (both together leave about
+  46 GiB free on gx10-01). Thinking is off by default; send
+  `"chat_template_kwargs": {"enable_thinking": true}` to turn it on
+  (reasoning then arrives in `reasoning_content`).
+* **Measured:** 55 tok/s; 0.08 s warm time to first token; coding, tools,
+  vision and a 1,900-token answer correct.
 
 ## gx-reason
 
-* **Model:** `nvidia/Qwen3.6-27B-NVFP4` (dense) on vLLM, on gx10-02.
-* **Best at:** multi-step reasoning, maths, careful coding.
-* **Behaviour:** loads on demand (measured 401 s cold) and unloads after
-  15 minutes idle. Its thinking is returned separately as
-  `reasoning_content`, and it counts against the output budget, so give it a
-  generous `max_tokens` (1,500–4,000 for real problems).
-* **Limits:** 49,152 input, 16,384 output tokens. About 12 tokens/s.
+* **Target model:** `iSkye/Qwen3.8-Flash-Next-NVFP4-ablit-a070` (92.7B,
+  abliterated, single-DGX-Spark layout). It is **gated** on Hugging Face and
+  no token with access is configured, so it is not installed yet.
+* **Serving now (interim):** `nvidia/Qwen3.6-27B-NVFP4`, a stock (not
+  uncensored) 27B dense model, so the tier keeps working.
+* **To finish:** Model Manager → Hugging Face access → save a read token
+  whose account accepted the model terms, then install and assign the target.
 
 ## gx-max
 
-* **Model:** `nvidia/DeepSeek-V4-Flash-0731-NVFP4` on SGLang
-  (`lmsysorg/sglang:dev-v4f-2dgx-v2`), **TP=2, nnodes=2**: rank 0 on
-  gx10-01, rank 1 on gx10-02.
-* **Best at:** the hardest and longest tasks.
-* **Behaviour:** not running by default. A direct `gx-max` request (or LOAD in
-  the control UI) takes over **both** nodes. Normal models are drained, the
-  engine loads for about 9 minutes, then serves at roughly 41–45 tokens/s.
-  It releases itself after 30 minutes idle and the normal models come back.
-* **Never downgrades:** if gx-max cannot be brought up, the request fails
-  with HTTP 503 `gx_max_unavailable`. It is never answered by another model.
-* See [gx-max explained](/#/docs/operations) for the full lifecycle.
+* **Model:** dealign.ai DeepSeek-V4-Flash-0731 "CRACK" (abliterated). Its
+  configuration and tensor layout are identical to the official
+  `deepseek-ai/DeepSeek-V4-Flash-0731` (native FP8 + FP4), and it runs with
+  the official SGLang DGX Spark recipe for that checkpoint.
+* **Topology:** SGLang, tensor parallel 2 across both nodes, rank 0 on
+  gx10-01, rank 1 on gx10-02, over both ConnectX rails.
+* **Behaviour:** starting it stops every other model on both nodes. It is
+  never started at boot and gx-auto never starts it. It releases itself after
+  30 idle minutes.
+* **Measured:** ready in 595 s; 40–47 tok/s; factual, reasoning and
+  executable-code checks correct; 4–6 GiB of RDMA traffic per generation.
 
 ## gx-auto
 
-* **What it is:** a routing alias. The orchestrator reads the request (length,
-  images, tools, wording) and forwards it to `gx-mini`, `gx-fast` or
-  `gx-reason` through the gateway.
-* **gx-auto never acquires gx-max.** If a prompt looks gx-max-worthy but
-  gx-max is not already running, gx-auto picks the best available tier
-  instead. If gx-max is already READY, gx-auto may use it.
-* The response header `X-GX-Routed-To` names the tier that answered (visible
-  when you call the orchestrator directly; the playground shows the model
-  that answered).
+Reads the task (Kilo's `<task>` / `<user_message>`), not the attached tool
+schema or system prompt:
 
-## gx-image
+| Request | Tier |
+|---|---|
+| "are you there?", greetings, "what can you help me with in this repo?" | gx-mini |
+| real repository changes, coding, tool loops | gx-fast |
+| hard debugging, architecture, proofs | gx-reason |
+| explicit "entire codebase / formal verification" work | gx-max, only if already running |
 
-* **Model:** Qwen-Image-2512 fp8 with the 4-step Lightning LoRA (default) or
-  full sampling (`quality: "hd"`).
-* **Endpoint:** `POST /v1/images/generations` on the gateway.
-* **Speed:** about 13–30 s per image with Lightning, about 4 minutes with
-  `hd`.
-* Sizes: width and height 256–2048, multiples of 16. 1328×1328 is native.
+A tool-result turn in an agent loop stays on the tier of the original task.
+`max_tokens` is capped to the chosen tier's output limit.
 
-## gx-video
+## gx-image and gx-video
 
-* **Model:** Wan 2.2 T2V-A14B fp8 (two experts plus 4-step LoRAs).
-* **Endpoint:** the media router's asynchronous API (`POST /v1/videos`, then
-  poll, then fetch the MP4). There is no OpenAI video standard, so this is
-  not a normal chat/image call.
-* **Reachability:** the router listens on the fabric (`192.168.100.11:18800`),
-  so scripts must run on gx10-01. From anywhere else, use the control UI
-  playground.
-* **Speed:** about 1 minute for 2–3 s of 640×640 video at 16 fps.
+See **Media: generate and edit**.

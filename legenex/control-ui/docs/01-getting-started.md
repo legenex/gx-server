@@ -34,10 +34,13 @@ answers in well under a second.
 **Which alias?** Start with `gx-auto` if you do not want to choose. See
 [Which model should I use?](/#/docs/models) for the full table.
 
-**Getting a key.** Keys are LiteLLM keys. The master key lives only in the
-ignored file `legenex/gateway/.env` on gx10-01. Ask the administrator for a
-virtual key per application instead of sharing the master key. Never paste a
-key into a ticket, a chat or a Git commit.
+**Getting a key.** Open **Control UI → API Keys → Create key**. Pick a name
+and the aliases the client may use; the key is shown once, with a Copy
+button. Create one key per application so you can revoke it alone. Never
+paste a key into a ticket, a chat or a Git commit.
+
+Setup guides: [Kilo Code](/#/docs/kilo-code), [Open WebUI](/#/docs/openwebui),
+[other clients](/#/docs/clients).
 
 ## Remote access
 
