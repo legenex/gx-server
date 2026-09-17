@@ -219,6 +219,15 @@ def main() -> int:
             "style_tags": ["deep house", "warm pads", "analog synth", "smooth"], "instrumental": True,
             "duration": 20, "bpm": 122, "key": "F minor", "time_signature": "4/4", "seed": 777,
             "thinking": False}, audio_dir)
+    if want("tags_a_repeat"):
+        # The control for the style-tag claim: byte-identical request to tags_a.
+        # Whatever distance this run shows against tags_a is the engine's own
+        # run-to-run noise; only a bigger distance to tags_b is "the tags did it".
+        run_case(c, results, sampler, "tags_a_repeat", "/v1/music/generations", {
+            "title": "MUS acceptance — tags A (repeat)", "prompt": GROOVE_PROMPT,
+            "style_tags": ["deep house", "warm pads", "analog synth", "smooth"], "instrumental": True,
+            "duration": 20, "bpm": 122, "key": "F minor", "time_signature": "4/4", "seed": 777,
+            "thinking": False}, audio_dir)
     if want("tags_b"):
         run_case(c, results, sampler, "tags_b", "/v1/music/generations", {
             "title": "MUS acceptance — tags B", "prompt": GROOVE_PROMPT,
