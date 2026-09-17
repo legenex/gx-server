@@ -57,6 +57,8 @@ export async function gotoPage(page, name) {
 }
 
 export async function axeCheck(page, label) {
+  // Colour contrast is only meaningful once entrance animations have finished.
+  await page.waitForFunction(() => document.getAnimations().every((a) => a.playState !== 'running'), null, { timeout: 5000 }).catch(() => {});
   const results = await new AxeBuilder({ page })
     .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'])
     .analyze();
