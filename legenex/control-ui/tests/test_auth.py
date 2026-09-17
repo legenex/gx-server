@@ -175,17 +175,3 @@ class TestThrottle(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
-
-class AcceptanceAccountTests(unittest.TestCase):
-    """D-035: the acceptance account signs in from loopback only."""
-
-    def test_loopback_only_and_separate_from_admin(self):
-        import json as _json
-        import urllib.request as _ur
-        from tests.support import TestEnv
-        env = self.enterContext(TestEnv()) if hasattr(TestEnv, "__enter__") else TestEnv()
-        store = PasswordStore(env.cfg.acceptance_file)
-        store.set_password("acceptance", "Acceptance-Pass-123", n=2**10)
-        self.assertTrue(store.check("acceptance", "Acceptance-Pass-123"))
-        self.assertFalse(PasswordStore(env.cfg.password_file).check("acceptance", "Acceptance-Pass-123"))

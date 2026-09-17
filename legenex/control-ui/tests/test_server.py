@@ -227,7 +227,7 @@ class TestAuthenticatedApi(ServerBase):
         aliases = [m["alias"] for m in body["models"]]
         self.assertEqual(aliases, ["gx-mini", "gx-fast", "gx-reason", "gx-max", "gx-auto", "gx-image", "gx-video"])
         gx = next(m for m in body["models"] if m["alias"] == "gx-max")
-        self.assertEqual(gx["model"], "nvidia/DeepSeek-V4-Flash-0731-NVFP4")
+        self.assertEqual(gx["model"], "dealignai/DeepSeek-V4-Flash-0731-CRACK-NVFP4")  # D-032
         self.assertEqual(gx["topology"]["tp"], 2)
         self.assertEqual(gx["topology"]["nnodes"], 2)
         self.assertEqual(set(gx["actions"]), {"load", "unload", "restart", "force_release"})
@@ -364,3 +364,33 @@ class TestBindSafety(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestAcceptanceAccount(ServerBase):
+    """D-035: a second, loopback-only account for automated live tests."""
+
+    def setUp(self):
+        super().setUp()
+        # Generated at run time: no credential-shaped literal in the repository.
+        self.acc_pw = "Acc-" + __import__("secrets").token_hex(8)
+        auth.PasswordStore(self.env.cfg.acceptance_file).set_password("acceptance", self.acc_pw, n=2**10)
+
+    def test_signs_in_from_loopback(self):
+        status, _, body = self.req("POST", "/api/login", {"username": "acceptance", "password": self.acc_pw})
+        self.assertEqual(status, 200)
+        self.assertEqual(body["user"], "acceptance")
+
+    def test_refused_from_any_other_address(self):
+        original = srv.Handler._client_ip
+        srv.Handler._client_ip = lambda self: "100.104.35.71"
+        try:
+            status, _, _ = self.req("POST", "/api/login", {"username": "acceptance", "password": self.acc_pw})
+        finally:
+            srv.Handler._client_ip = original
+        self.assertEqual(status, 401)
+
+    def test_is_not_the_admin_credential(self):
+        status, _, _ = self.req("POST", "/api/login", {"username": "admin", "password": self.acc_pw})
+        self.assertEqual(status, 401)
+        status, _, _ = self.req("POST", "/api/login", {"username": "acceptance", "password": PASSWORD})
+        self.assertEqual(status, 401)

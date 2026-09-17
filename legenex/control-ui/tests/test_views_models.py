@@ -150,7 +150,7 @@ class TestLiveState(unittest.TestCase):
     def test_catalog_is_complete_and_locked(self):
         self.assertEqual(tuple(CATALOG), ALL_ALIASES)
         gx = CATALOG["gx-max"]
-        self.assertEqual(gx["model"], "nvidia/DeepSeek-V4-Flash-0731-NVFP4")
+        self.assertEqual(gx["model"], "dealignai/DeepSeek-V4-Flash-0731-CRACK-NVFP4")  # D-032
         self.assertIn("SGLang", gx["engine"])
         self.assertEqual(gx["topology"]["rank0"], "gx10-01")
         self.assertEqual(gx["topology"]["rank1"], "gx10-02")
@@ -188,3 +188,24 @@ class TestGitView(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestRegistryMatchesBindings(__import__("unittest").TestCase):
+    """The model cards come from legenex/models/registry.json; it must describe
+    exactly what the live binding files serve."""
+
+    def test_registry_paths_match_the_binding_files(self):
+        import json
+        from gx_control_ui.model_manager import read_macros
+        from support import REPO
+        reg = json.loads((REPO / "legenex/models/registry.json").read_text())["aliases"]
+        n1 = read_macros((REPO / "legenex/gateway/llama-swap/node01.yaml").read_text())
+        n2 = read_macros((REPO / "legenex/gateway/llama-swap/node02.yaml").read_text())
+        conf = read_macros((REPO / "legenex/lifecycle/gx-max.conf").read_text())
+        self.assertEqual("/srv" + n1["gx_mini_model"].rsplit("/", 1)[0], reg["gx-mini"]["path"])
+        self.assertEqual("/srv" + n1["gx_fast_model_dir"], reg["gx-fast"]["path"])
+        self.assertEqual("/srv" + n2["gx_reason_model_dir"], reg["gx-reason"]["path"])
+        self.assertEqual(conf["GXMAX_MODEL_DIR"], reg["gx-max"]["path"])
+        self.assertEqual(conf["GXMAX_QUANT_CELL"], "fp4")
+        for alias in ("gx-mini", "gx-fast", "gx-reason", "gx-max"):
+            self.assertRegex(reg[alias]["revision"], r"^[0-9a-f]{40}$", alias)

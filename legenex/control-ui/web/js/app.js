@@ -9,8 +9,14 @@ import logs from './pages/logs.js';
 import playground from './pages/playground.js';
 import docs from './pages/docs.js';
 import settings from './pages/settings.js';
+import create from './pages/create.js';
+import library from './pages/library.js';
+import manager from './pages/manager.js';
+import keys from './pages/keys.js';
 
-const PAGES = { dashboard, models, runtime, cluster, jobs, logs, playground, docs, settings };
+const PAGES = {
+  dashboard, models, create, library, manager, runtime, cluster, jobs, logs, playground, docs, keys, settings,
+};
 const $ = (id) => document.getElementById(id);
 
 const state = {
@@ -149,7 +155,8 @@ async function updateOverall() {
 function route() {
   if (!state.user) return;
   const hash = location.hash.replace(/^#\/?/, '');
-  const [name, ...rest] = hash.split('/');
+  const [rawName, ...rest] = hash.split('/');
+  const name = rawName.split('?')[0];
   const pageName = PAGES[name] ? name : 'dashboard';
   if (!PAGES[name]) {
     history.replaceState(null, '', '#/dashboard');

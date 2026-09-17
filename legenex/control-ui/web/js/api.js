@@ -65,3 +65,27 @@ export async function waitJob(id, onUpdate, { interval = 2000, signal } = {}) {
     await new Promise((r) => setTimeout(r, interval));
   }
 }
+
+// Raw-body upload (images/videos for editing). The CSRF token is sent as a
+// header like every other state-changing request; the file never touches
+// any third party.
+export async function upload(path, file, { title, onProgress } = {}) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', path);
+    xhr.withCredentials = true;
+    xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
+    if (csrf) xhr.setRequestHeader('X-CSRF-Token', csrf);
+    if (title) xhr.setRequestHeader('X-Title', encodeURIComponent(title).slice(0, 600));
+    xhr.upload.onprogress = (ev) => { if (onProgress && ev.lengthComputable) onProgress(ev.loaded / ev.total); };
+    xhr.onerror = () => reject(new ApiError(0, 'Upload failed (network).', 'network'));
+    xhr.onload = () => {
+      let data = null;
+      try { data = JSON.parse(xhr.responseText); } catch { /* not JSON */ }
+      if (xhr.status === 401) listeners.forEach((fn) => fn());
+      if (xhr.status >= 200 && xhr.status < 300) resolve(data);
+      else reject(new ApiError(xhr.status, (data && data.error && data.error.message) || `HTTP ${xhr.status}`, 'http'));
+    };
+    xhr.send(file);
+  });
+}

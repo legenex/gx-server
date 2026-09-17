@@ -35,7 +35,7 @@ class TempEnv:
         self._tmp = tempfile.TemporaryDirectory()
         root = Path(self._tmp.name)
         self.root = root
-        for d in ("secrets", "state", "logs", "guard", "srvlogs"):
+        for d in ("secrets", "state", "logs", "guard", "srvlogs", "media", "hf"):
             (root / d).mkdir()
         (root / "guard" / "node1-residency.json").write_text("{}")
         (root / "guard" / "node2-residency.json").write_text("{}")
@@ -43,7 +43,8 @@ class TempEnv:
             hosts=("127.0.0.1",), port=0, repo_root=REPO, static_dir=UI_DIR / "web",
             docs_dir=UI_DIR / "docs", secret_dir=root / "secrets", state_dir=root / "state",
             log_dir=root / "logs", guard_dir=root / "guard", gx_state_root=root,
-            srv_logs=root / "srvlogs", offline=True,
+            srv_logs=root / "srvlogs", offline=True, media_dir=root / "media",
+            hf_token_file=root / "hf" / "token",
             orchestrator_base="http://127.0.0.1:9", litellm_base="http://127.0.0.1:9",
             node1_swap_base="http://127.0.0.1:9", node2_swap_base="http://127.0.0.1:9",
             media_base="http://127.0.0.1:9", gxmax_base="http://127.0.0.1:9",

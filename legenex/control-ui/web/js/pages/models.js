@@ -92,7 +92,8 @@ function gxmaxPanel(m) {
   return h('div', { class: 'gxmax-panel' },
     h('h3', {}, 'Two-node engine'),
     kv([
-      ['Model', 'nvidia/DeepSeek-V4-Flash-0731-NVFP4'],
+      ['Model', m.model],
+      ['Revision', m.revision || '—'],
       ['Engine', 'SGLang · lmsysorg/sglang:dev-v4f-2dgx-v2'],
       ['Topology', 'TP=2 · nnodes=2 · rank 0 on gx10-01 · rank 1 on gx10-02'],
       ['Bootstrap', '192.168.100.10:5000 (RoCE rail 1)'],
@@ -125,28 +126,53 @@ function gxmaxPanel(m) {
   );
 }
 
+function repoLink(m) {
+  if (!m.repository) return m.model;
+  return h('a', { href: `https://huggingface.co/${m.repository}/tree/${m.revision || 'main'}`, target: '_blank', rel: 'noopener noreferrer' }, m.repository);
+}
+
+function componentsTable(m) {
+  if (!m.components || !m.components.length) return null;
+  return h('details', {}, h('summary', {}, `Components (${m.components.length})`),
+    table(['Role', 'Kind', 'Repository', 'Revision', 'File', 'Base match'], m.components.map((c) => [
+      c.role, c.kind, c.repository || '—', c.revision ? c.revision.slice(0, 12) : '—', h('code', {}, c.file || '—'), c.base_match || '—',
+    ]), { caption: `${m.alias} components` }));
+}
+
 function modelCard(m) {
   const res = m.results || {};
   const facts = kv([
     ['Purpose', m.purpose],
-    ['Underlying model', m.model],
+    ['Model', repoLink(m)],
+    ['Revision (pinned)', m.revision ? h('code', {}, m.revision) : '—'],
+    ['Family', m.family || undefined],
+    ['Parameters', m.parameters || undefined],
+    ['Active parameters (MoE)', m.active_parameters || undefined],
+    ['Quantization', m.quantization || undefined],
+    ['Uncensored / abliterated', m.uncensored || '—'],
     ['Engine / runtime', m.engine],
-    ['Node(s)', m.nodes.join(', ')],
+    ['Node(s)', (m.nodes || []).join(', ') || '—'],
+    ['Local path', m.path ? h('code', {}, m.path) : undefined],
     ['Context window', m.context ? `${m.context.toLocaleString()} tokens` : 'n/a'],
     ['Max output', m.max_output ? `${m.max_output.toLocaleString()} tokens` : 'n/a'],
     ['Vision', yesno(m.vision)],
     ['Tool calling', yesno(m.tools)],
-    ['Reasoning output', yesno(m.reasoning)],
+    ['Reasoning output', typeof m.reasoning === 'string' ? m.reasoning : yesno(m.reasoning)],
     ['Startup behaviour', m.startup],
-    ['Resource impact', m.resource],
+    ['Memory impact', m.resource],
     ['Endpoint path', h('code', {}, m.endpoint)],
     ['Measured', m.measured],
+    ['Licence', m.licence || undefined],
     ['Last health check', m.live && m.live.orchestrator_view && m.live.orchestrator_view.state
       ? `${m.live.orchestrator_view.state}${m.live.orchestrator_view.reason ? ` (${m.live.orchestrator_view.reason})` : ''}` : m.state_detail],
     ['Last real inference', resultLine(res.inference)],
     ['Last load', resultLine(res.load)],
     ['Last unload', resultLine(res.unload)],
+    ['Previous model', m.previous ? `${m.previous.repository || m.previous.path} — ${m.previous.status || ''}` : undefined],
   ]);
+  const interim = m.interim && m.target ? h('div', { class: 'callout callout-danger', role: 'note' },
+    h('strong', {}, 'Interim model. '), `Target: ${m.target.repository} @ ${String(m.target.revision).slice(0, 12)}. `,
+    m.target.status || '', ' ', h('a', { href: '#/manager' }, 'Model Manager →')) : null;
   const card = h('section', {
     class: `card model-card state-${m.state}${focusAlias === m.alias ? ' focused' : ''}`,
     id: `model-${m.alias}`, 'aria-labelledby': `mt-${m.alias}`,
@@ -155,8 +181,10 @@ function modelCard(m) {
     h('h2', { class: 'card-title', id: `mt-${m.alias}` }, m.alias),
     stateBadge(m.state)),
   h('p', { class: 'muted small' }, m.state_detail || ''),
+  interim,
   controls(m),
   facts,
+  componentsTable(m),
   m.alias === 'gx-max' ? gxmaxPanel(m) : null);
   return card;
 }

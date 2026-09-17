@@ -45,6 +45,12 @@ services:
       - nvidia.com/gpu=all
     ipc: host
     # Loopback only. Deliberately NOT 0.0.0.0 and NOT the fabric address.
+    # Appended to the image ENTRYPOINT. On unified memory ComfyUI treats the
+    # whole 121 GiB as VRAM and would keep every model it ever loaded; the
+    # keyframe video edit (image-edit + I2V weights in one graph) measured
+    # ~102 GiB resident (MemAvailable 13 GiB). --reserve-vram makes ComfyUI
+    # evict models before loading more (D-031, B-018).
+    command: ["--reserve-vram", "${GX_COMFY_RESERVE_GB:-40}"]
     ports:
       - "127.0.0.1:8188:8188"
     volumes:
@@ -100,6 +106,8 @@ services:
       GX_MEDIA_API_KEY: ${GX_MEDIA_API_KEY:?GX_MEDIA_API_KEY must be set - refusing to run unauthenticated}
       GX_MEDIA_WORKFLOW_DIR: /opt/router/workflows
       GX_MEDIA_INPUT_DIR: /srv/comfy-input
+      # Free ComfyUI's models after this many idle seconds (0 = never).
+      GX_MEDIA_IDLE_FREE: "${GX_MEDIA_IDLE_FREE:-600}"
       GX_MEDIA_QUEUE_WAIT: "${GX_MEDIA_QUEUE_WAIT:-900}"
       GX_MEDIA_IMAGE_TIMEOUT: "${GX_MEDIA_IMAGE_TIMEOUT:-1800}"
       GX_MEDIA_VIDEO_TIMEOUT: "${GX_MEDIA_VIDEO_TIMEOUT:-3600}"

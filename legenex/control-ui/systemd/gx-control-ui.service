@@ -37,17 +37,28 @@ StandardOutput=append:/srv/logs/gx-control-ui/control-ui.log
 StandardError=append:/srv/logs/gx-control-ui/control-ui.log
 
 # Resource limits: this must never compete with a model for memory.
-MemoryMax=512M
-MemoryHigh=384M
+# 1G since D-034: media uploads (up to 150 MB), ZIP export and model-manager
+# downloads are streamed through temporary files, but a video edit request
+# still holds its source in memory while it is sent to gx10-02.
+MemoryMax=1G
+MemoryHigh=768M
 CPUQuota=150%
 TasksMax=256
 
 # Hardening, mirroring gx-orchestrator.service. The UI reads /proc, /sys,
-# the checkout and logs; it writes only its own state, secrets and logs
-# (plus the Git-sync log directory used by the integrity audit it can run).
+# the checkout and logs. It writes only:
+#   * its own state, secrets and logs (plus the Git-sync log directory used by
+#     the integrity audit it can run);
+#   * the media library (D-034);
+#   * /srv/models (Model Manager staging, install and approved removal) and the
+#     Hugging Face token directory;
+#   * the three reviewed binding files an alias assignment edits in place
+#     (autosync then commits them) and the model registry directory.
 NoNewPrivileges=true
 ProtectSystem=strict
 ReadWritePaths=/srv/logs /srv/projects/gx-cluster/state /srv/projects/gx-cluster/secrets/control-ui
+ReadWritePaths=/srv/projects/gx-cluster/media /srv/projects/gx-cluster/secrets/hf /srv/models
+ReadWritePaths=@REPO@/legenex/models @REPO@/legenex/gateway/llama-swap/node01.yaml @REPO@/legenex/gateway/llama-swap/node02.yaml @REPO@/legenex/lifecycle/gx-max.conf
 PrivateTmp=true
 UMask=0077
 

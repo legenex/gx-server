@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import gzip
 import hashlib
+import secrets
 import json
 import logging
 import mimetypes
@@ -44,6 +45,12 @@ from .playground import Playground, PlaygroundError
 from .redact import redact
 from .services import Cluster
 from . import views
+from .api_keys import KeyError_, KeyManager
+from .api_keys import probe as key_probe
+from .hf import HFClient, HFError
+from .media_jobs import IMAGE_SIZES, KIND_LABEL, VIDEO_SIZES, JobError, MediaJobs, RouterClient, import_upload
+from .media_library import LibraryError, MediaLibrary, MediaTools, read_range
+from .model_manager import ManagerError, ModelManager, gateway_probe
 
 log = logging.getLogger("gx.ui")
 
@@ -51,10 +58,13 @@ MAX_BODY = 64 * 1024
 #: Client-side routes that fall back to index.html. Anything else that is not
 #: a known asset is a plain 404.
 _SPA_ROUTE = re.compile(
-    r"/(dashboard|models|runtime|cluster|jobs|logs|playground|docs|settings)(/[a-z0-9\-]{0,64}){0,2}"
+    r"/(dashboard|models|create|library|manager|keys|runtime|cluster|jobs|logs|playground|docs|settings)"
+    r"(/[a-z0-9_\-]{0,64}){0,2}"
 )
 ACCESS_LOG = os.environ.get("GX_UI_ACCESS_LOG", "1") != "0"
 MAX_BODY_PLAYGROUND = 12 * 1024 * 1024
+MAX_UPLOAD = 150 * 1024 * 1024
+UPLOAD_PATH = "/api/media/upload"
 
 CSP = (
     "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; "
@@ -121,8 +131,30 @@ class App:
         self.playground = Playground(cfg, self.cluster, self.results)
         self.docs = DocLibrary(cfg.docs_dir)
         self.static = StaticFiles(cfg.static_dir)
+        self.library = MediaLibrary(cfg.media_dir, MediaTools(enabled=not cfg.offline))
+        self.media = MediaJobs(
+            self.library, RouterClient(cfg.media_base, lambda: cfg.secret("GX_MEDIA_API_KEY")),
+            results=self.results, model_identity=self.workflow_identity, audit=self.actions.audit)
+        self.hf = HFClient(cfg.hf_token_file)
+        self.manager = ModelManager(cfg, self.cluster, self.hf, audit=self.actions.audit)
+        self.keys = KeyManager(cfg.litellm_base, lambda: cfg.secret("LITELLM_MASTER_KEY"))
+        self.zips: dict[str, tuple[Path, float, str]] = {}
+        self._zip_lock = threading.Lock()
         self._gen_seen: int | None = None
         self._gen_lock = threading.Lock()
+
+    def workflow_identity(self, workflow: str) -> dict:
+        """Which model repository/revision produced media from `workflow`."""
+        reg = self.manager.registry()
+        alias = (reg.get("workflow_models") or {}).get(workflow)
+        spec = (reg.get("aliases") or {}).get(alias or "", {})
+        comps = spec.get("components") or []
+        main = next((c for c in comps if c.get("kind") == "checkpoint" and (
+            ("edit" in workflow) == ("edit" in c.get("role", "")))), comps[0] if comps else {})
+        if workflow.startswith("wan22-i2v") or workflow.startswith("wan22-v2v-keyframe"):
+            main = next((c for c in comps if "image-to-video" in c.get("role", "")), main)
+        return {"repository": main.get("repository"), "revision": main.get("revision"),
+                "components": [{k: c.get(k) for k in ("role", "repository", "revision", "file")} for c in comps]}
 
     def generation(self) -> int:
         try:
@@ -215,6 +247,16 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError:
             self.close_connection = True
             self._body_error = ValueError("invalid Content-Length")
+            return
+        if path == UPLOAD_PATH:
+            # Uploads are streamed to a temp file by the route itself (after
+            # authentication and CSRF), never read into memory here. The body
+            # may stay unread (refused request), so never reuse the socket.
+            self.close_connection = True
+            self._upload_length = length
+            if length <= 0 or length > MAX_UPLOAD:
+                self.close_connection = True
+                self._body_error = OverflowError(f"upload must be 1 byte to {MAX_UPLOAD // 2**20} MiB")
             return
         limit = MAX_BODY_PLAYGROUND if path == "/api/playground/chat" else MAX_BODY
         if length < 0 or length > limit:
@@ -322,6 +364,8 @@ class Handler(BaseHTTPRequestHandler):
             self._error(exc.status, str(exc), "playground")
         except ActionRefused as exc:
             self._error(exc.status, str(exc), "refused")
+        except (LibraryError, JobError, ManagerError, HFError, KeyError_) as exc:
+            self._error(exc.status, str(exc), type(exc).__name__.lower().rstrip("_"))
         except (BrokenPipeError, ConnectionResetError):
             pass
         except Exception as exc:  # noqa: BLE001
@@ -330,6 +374,35 @@ class Handler(BaseHTTPRequestHandler):
                 self._error(500, f"internal error: {type(exc).__name__}", "internal")
         finally:
             self._finish(path)
+
+    def _send_file(self, path: Path, ctype: str, extra: dict[str, str] | None = None) -> None:
+        """Stream a file from disk, with single-range support (video seeking)."""
+        size = path.stat().st_size
+        headers = {"Accept-Ranges": "bytes", **(extra or {})}
+        rng = parse_range(self.headers.get("Range"), size)
+        if rng == "invalid":
+            self._send(416, b"", "text/plain", {**headers, "Content-Range": f"bytes */{size}"})
+            return
+        if rng is not None and not isinstance(rng, str):
+            start, end = rng
+            self._send(206, read_range(path, start, end), ctype,
+                       {**headers, "Content-Range": f"bytes {start}-{end}/{size}"})
+            return
+        self._status = 200
+        self.send_response(200)
+        for k, v in {**SECURITY_HEADERS, **headers}.items():
+            self.send_header(k, v)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(size))
+        self.end_headers()
+        if self.command == "HEAD":
+            return
+        with path.open("rb") as fh:
+            while True:
+                chunk = fh.read(1 << 20)
+                if not chunk:
+                    break
+                self.wfile.write(chunk)
 
     def _finish(self, path: str | None) -> None:
         entry = {
@@ -629,6 +702,282 @@ def api_pg_video_content(h: Handler, job_id: str) -> None:
     else:
         start, end = rng
         h._send(206, data[start:end + 1], ctype, {**headers, "Content-Range": f"bytes {start}-{end}/{len(data)}"})
+
+
+
+# ================================================================== media
+def _q(h: Handler, key: str, default: str = "") -> str:
+    return (h.query.get(key) or [default])[0]
+
+
+@route("GET", r"/api/media/assets")
+def api_media_assets(h: Handler) -> None:
+    fav = _q(h, "favourite")
+    h._json(200, h.app.library.search(
+        q=_q(h, "q"), type_=_q(h, "type"), model=_q(h, "model"), operation=_q(h, "operation"),
+        favourite=None if fav == "" else fav in ("1", "true"), sort=_q(h, "sort", "newest"),
+        limit=int(_q(h, "limit", "60") or 60), offset=int(_q(h, "offset", "0") or 0)))
+
+
+@route("GET", r"/api/media/assets/(?P<asset_id>a_[0-9a-f]{24})")
+def api_media_asset(h: Handler, asset_id: str) -> None:
+    h._json(200, h.app.library.get(asset_id, lineage=True))
+
+
+@route("GET", r"/api/media/assets/(?P<asset_id>a_[0-9a-f]{24})/file")
+def api_media_file(h: Handler, asset_id: str) -> None:
+    asset = h.app.library.get(asset_id)
+    path = h.app.library.file_path(asset)
+    if not path.is_file():
+        h._error(404, "the file is missing from the library store", "not_found")
+        return
+    disposition = "attachment" if _q(h, "download") == "1" else "inline"
+    base = re.sub(r"[^A-Za-z0-9._-]+", "-", (asset.get("title") or asset_id))[:60] or asset_id
+    h._send_file(path, asset["media_type"], {
+        "Content-Disposition": f'{disposition}; filename="{base}.{asset["ext"]}"',
+        "Cache-Control": "private, max-age=86400"})
+
+
+@route("GET", r"/api/media/assets/(?P<asset_id>a_[0-9a-f]{24})/thumbnail")
+def api_media_thumb(h: Handler, asset_id: str) -> None:
+    asset = h.app.library.get(asset_id)
+    thumb = h.app.library.thumb_path(asset_id)
+    if thumb.is_file():
+        h._send_file(thumb, "image/jpeg", {"Cache-Control": "private, max-age=86400"})
+    elif asset["type"] == "image":
+        h._send_file(h.app.library.file_path(asset), asset["media_type"], {"Cache-Control": "private, max-age=3600"})
+    else:
+        h._error(404, "no thumbnail", "not_found")
+
+
+@route("POST", r"/api/media/assets/(?P<asset_id>a_[0-9a-f]{24})")
+def api_media_update(h: Handler, asset_id: str) -> None:
+    body = h._body(MAX_BODY)
+    fav = body.get("favourite")
+    if fav is not None and not isinstance(fav, bool):
+        raise ValueError("favourite must be true or false")
+    title = body.get("title")
+    if title is not None and not isinstance(title, str):
+        raise ValueError("title must be text")
+    h._json(200, h.app.library.update(asset_id, title=title, favourite=fav))
+
+
+@route("POST", r"/api/media/delete")
+def api_media_delete(h: Handler) -> None:
+    assert h.session is not None  # noqa: S101
+    body = h._body(MAX_BODY)
+    ids = body.get("ids")
+    if body.get("confirm") is not True:
+        raise ValueError("deleting media must be confirmed")
+    if not isinstance(ids, list):
+        raise ValueError("ids must be a list")
+    result = h.app.library.delete([str(i) for i in ids])
+    h.app.actions.audit(user=h.session.username, ip=h._client_ip(), action="media.delete", outcome="ok",
+                        deleted=result["deleted"])
+    h._json(200, result)
+
+
+@route("POST", r"/api/media/zip")
+def api_media_zip(h: Handler) -> None:
+    assert h.session is not None  # noqa: S101
+    body = h._body(MAX_BODY)
+    ids = body.get("ids")
+    if not isinstance(ids, list):
+        raise ValueError("ids must be a list")
+    path, count = h.app.library.build_zip([str(i) for i in ids])
+    token = secrets.token_urlsafe(24)
+    with h.app._zip_lock:
+        now = time.time()
+        for t, (p, created, _) in list(h.app.zips.items()):
+            if now - created > 900:
+                p.unlink(missing_ok=True)
+                h.app.zips.pop(t, None)
+        h.app.zips[token] = (path, now, h.session.username)
+    h._json(200, {"token": token, "count": count, "bytes": path.stat().st_size,
+                  "url": f"/api/media/zip/{token}"})
+
+
+@route("GET", r"/api/media/zip/(?P<token>[A-Za-z0-9_\-]{20,64})")
+def api_media_zip_get(h: Handler, token: str) -> None:
+    assert h.session is not None  # noqa: S101
+    with h.app._zip_lock:
+        entry = h.app.zips.pop(token, None)
+    if entry is None or entry[2] != h.session.username:
+        h._error(404, "this download link has expired", "not_found")
+        return
+    path = entry[0]
+    try:
+        h._send_file(path, "application/zip", {
+            "Content-Disposition": f'attachment; filename="gx-media-{time.strftime("%Y%m%d-%H%M%S")}.zip"',
+            "Cache-Control": "no-store"})
+    finally:
+        path.unlink(missing_ok=True)
+
+
+@route("POST", r"/api/media/upload")
+def api_media_upload(h: Handler) -> None:
+    if h._body_error is not None:
+        raise h._body_error
+    ctype = (h.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+    if not (ctype.startswith("image/") or ctype.startswith("video/")):
+        raise ValueError("upload an image or a video")
+    title = urllib.parse.unquote(h.headers.get("X-Title") or "")[:200] or None
+    tmp = h.app.library.tmp_file(".upload")
+    remaining = getattr(h, "_upload_length", 0)
+    try:
+        with tmp.open("wb") as fh:
+            while remaining > 0:
+                chunk = h.rfile.read(min(1 << 20, remaining))
+                if not chunk:
+                    raise ValueError("the upload was interrupted")
+                fh.write(chunk)
+                remaining -= len(chunk)
+        asset = import_upload(h.app.library, tmp, ctype, title)
+    finally:
+        tmp.unlink(missing_ok=True)
+    assert h.session is not None  # noqa: S101
+    h.app.actions.audit(user=h.session.username, ip=h._client_ip(), action="media.upload", outcome="ok",
+                        asset=asset["id"], bytes=asset["file_size"])
+    h._json(200, asset)
+
+
+@route("GET", r"/api/media/options")
+def api_media_options(h: Handler) -> None:
+    h._json(200, {"kinds": KIND_LABEL, "image_sizes": IMAGE_SIZES, "video_sizes": VIDEO_SIZES,
+                  "stats": h.app.library.stats()})
+
+
+@route("POST", r"/api/media/jobs")
+def api_media_job_submit(h: Handler) -> None:
+    assert h.session is not None  # noqa: S101
+    if h.app.cluster.gxmax_state() in ("acquiring", "ready", "releasing"):
+        h._error(409, "gx-max holds the cluster; media generation is available again after it is released",
+                 "refused")
+        return
+    h._json(202, h.app.media.submit(h._body(MAX_BODY), user=h.session.username, ip=h._client_ip()))
+
+
+@route("GET", r"/api/media/jobs")
+def api_media_jobs(h: Handler) -> None:
+    h._json(200, {"jobs": h.app.media.list()})
+
+
+@route("GET", r"/api/media/jobs/(?P<job_id>[0-9a-f]{16})")
+def api_media_job(h: Handler, job_id: str) -> None:
+    h._json(200, h.app.media.get(job_id))
+
+
+# ========================================================== model manager
+@route("GET", r"/api/manager/inventory")
+def api_mm_inventory(h: Handler) -> None:
+    inv = h.app.manager.inventory()
+    inv["tests"] = h.app.manager.last_tests()
+    inv["jobs"] = h.app.manager.jobs()
+    inv["models"] = live_state(h.app.cluster, h.app.results)
+    h._json(200, inv)
+
+
+@route("GET", r"/api/manager/search")
+def api_mm_search(h: Handler) -> None:
+    h._json(200, {"results": h.app.hf.search(_q(h, "q"), limit=int(_q(h, "limit", "30") or 30),
+                                             sort=_q(h, "sort", "downloads"))})
+
+
+@route("POST", r"/api/manager/lookup")
+def api_mm_lookup(h: Handler) -> None:
+    h._json(200, h.app.manager.lookup(str(h._body(MAX_BODY).get("ref", ""))))
+
+
+@route("POST", r"/api/manager/plan")
+def api_mm_plan(h: Handler) -> None:
+    h._json(200, h.app.manager.plan(h._body(MAX_BODY)))
+
+
+def _mm_op(name: str):
+    def fn(h: Handler) -> None:
+        assert h.session is not None  # noqa: S101
+        method = getattr(h.app.manager, name)
+        h._json(202 if name in ("stage", "test", "assign", "rollback", "delete") else 200,
+                method(h._body(MAX_BODY), user=h.session.username))
+    return fn
+
+
+for _op in ("stage", "test", "assign", "rollback", "accept", "delete"):
+    route("POST", rf"/api/manager/{_op}")(_mm_op(_op))
+
+
+@route("GET", r"/api/manager/jobs")
+def api_mm_jobs(h: Handler) -> None:
+    h._json(200, {"jobs": h.app.manager.jobs()})
+
+
+@route("GET", r"/api/manager/jobs/(?P<job_id>[0-9a-f]{16})")
+def api_mm_job(h: Handler, job_id: str) -> None:
+    h._json(200, h.app.manager.job(job_id))
+
+
+@route("POST", r"/api/manager/probe")
+def api_mm_probe(h: Handler) -> None:
+    alias = h._body(MAX_BODY).get("alias")
+    if alias not in ("gx-mini", "gx-fast", "gx-reason"):
+        raise ValueError("probe gx-mini, gx-fast or gx-reason (gx-max has its own page controls)")
+    result = gateway_probe(h.app.cfg, alias)
+    h.app.results.record(alias, "inference", bool(result.get("ok")), result.get("answer") or
+                         result.get("error") or "", latency_ms=int((result.get("seconds") or 0) * 1000))
+    h._json(200, result)
+
+
+@route("GET", r"/api/manager/hf-token")
+def api_hf_token(h: Handler) -> None:
+    h._json(200, h.app.hf.token_state())
+
+
+@route("POST", r"/api/manager/hf-token")
+def api_hf_token_set(h: Handler) -> None:
+    assert h.session is not None  # noqa: S101
+    body = h._body(4096)
+    if body.get("clear"):
+        h._json(200, h.app.manager.clear_token(user=h.session.username))
+    else:
+        h._json(200, h.app.manager.set_token(str(body.get("token") or ""), user=h.session.username))
+
+
+# ================================================================ API keys
+@route("GET", r"/api/keys")
+def api_keys(h: Handler) -> None:
+    h._json(200, {"keys": h.app.keys.list(), "gateway_url": h.app.cfg.public_gateway_url})
+
+
+@route("POST", r"/api/keys")
+def api_keys_create(h: Handler) -> None:
+    assert h.session is not None  # noqa: S101
+    created = h.app.keys.create(h._body(MAX_BODY), user=h.session.username)
+    h.app.actions.audit(user=h.session.username, ip=h._client_ip(), action="keys.create", outcome="ok",
+                        key=created.get("id"), name=created.get("name"), models=created.get("models"))
+    h._json(200, created)
+
+
+@route("POST", r"/api/keys/(?P<key_id>[0-9a-f]{32,128})/(?P<op>revoke|replace)")
+def api_keys_op(h: Handler, key_id: str, op: str) -> None:
+    assert h.session is not None  # noqa: S101
+    body = h._body(MAX_BODY)
+    if body.get("confirm") is not True:
+        raise ValueError(f"{op} must be confirmed")
+    result = h.app.keys.revoke(key_id) if op == "revoke" else h.app.keys.replace(key_id, user=h.session.username)
+    h.app.actions.audit(user=h.session.username, ip=h._client_ip(), action=f"keys.{op}", outcome="ok", key=key_id)
+    h._json(200, result)
+
+
+@route("POST", r"/api/keys/test")
+def api_keys_test(h: Handler) -> None:
+    body = h._body(4096)
+    secret = body.get("secret")
+    model = body.get("model", "gx-mini")
+    if not isinstance(secret, str) or not re.fullmatch(r"sk-[A-Za-z0-9_\-]{8,200}", secret):
+        raise ValueError("paste a gateway key (sk-...)")
+    if model not in ("gx-mini", "gx-fast", "gx-reason", "gx-auto"):
+        raise ValueError("test with a text alias")
+    h._json(200, key_probe(h.app.cfg.litellm_base, secret, model))
 
 
 def parse_range(header: str | None, size: int):

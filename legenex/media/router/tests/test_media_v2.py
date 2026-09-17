@@ -402,6 +402,16 @@ class MediaApiTests(unittest.TestCase):
             self.comfy.wait = original
         self.assertEqual((status, content), (200, MP4_STUB))
 
+    def test_idle_free_hands_the_node_back(self):
+        self.call("POST", "/v1/images/generations", {"prompt": "idle"})
+        before = self.comfy.frees
+        svc = self.service
+        self.assertFalse(svc.free_if_idle(), "must not free right after a job")
+        svc._last_activity -= svc.cfg.idle_free_seconds + 1
+        self.assertTrue(svc.free_if_idle())
+        self.assertEqual(self.comfy.frees, before + 1)
+        self.assertFalse(svc.free_if_idle(), "nothing left to free")
+
     def test_listing_and_workflows(self):
         status, body = self.call("GET", "/v1/videos")
         self.assertEqual(status, 200)

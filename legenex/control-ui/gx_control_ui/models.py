@@ -17,104 +17,97 @@ from typing import Any
 
 from .services import ALL_ALIASES, Cluster
 
-CATALOG: dict[str, dict[str, Any]] = {
+#: Behaviour that is a property of the alias, not of the model bound to it.
+ALIAS_ROLE: dict[str, dict[str, Any]] = {
     "gx-mini": {
-        "purpose": "Fast, cheap everyday chat, extraction, classification and vision. Always hot.",
-        "model": "Qwen3.5-4B (Q4_K_M GGUF) + BF16 mmproj",
-        "engine": "llama.cpp (llama-swap managed)",
-        "nodes": ["gx10-01"],
-        "context": 65536, "max_output": 4096,
-        "vision": True, "tools": True, "reasoning": False,
-        "startup": "Resident (ttl 0). Loaded at all times; cold start ~10 s if it was unloaded.",
-        "resource": "~10 GiB on gx10-01 (resident group, 14 GiB cap).",
+        "purpose": "Fastest tier: chat, extraction, classification, simple vision, lightweight tools. Always hot.",
         "endpoint": "LiteLLM gx-mini -> gx-llama-swap-node01 -> 127.0.0.1:19001",
         "controls": ["load", "unload", "restart"],
-        "measured": "~48 tok/s; vision verified (shapes, digits).",
     },
     "gx-fast": {
-        "purpose": "Agentic / tool-using workhorse with vision and long answers.",
-        "model": "nvidia/Qwen3.6-35B-A3B-NVFP4",
-        "engine": "vLLM (jstarkg/vllm-gb10-flashnext:0.28-sm121-r6, llama-swap managed)",
-        "nodes": ["gx10-01"],
-        "context": 65536, "max_output": 8192,
-        "vision": True, "tools": True, "reasoning": False,
-        "startup": "On demand. First request cold-starts vLLM (a few minutes); unloads after 30 min idle.",
-        "resource": "~66% GPU pool on gx10-01 (heavy group, one at a time).",
+        "purpose": "Primary interactive coding / tools / agent tier (Kilo Code). Kept warm.",
         "endpoint": "LiteLLM gx-fast -> gx-llama-swap-node01 -> vLLM",
         "controls": ["load", "unload", "restart"],
-        "measured": "Correct arithmetic; tool call parsed (qwen3_xml).",
     },
     "gx-reason": {
-        "purpose": "Hard reasoning, maths and careful coding. Emits reasoning_content.",
-        "model": "nvidia/Qwen3.6-27B-NVFP4 (dense 27B)",
-        "engine": "vLLM (llama-swap managed on gx10-02, reached over the RoCE fabric)",
-        "nodes": ["gx10-02"],
-        "context": 65536, "max_output": 16384,
-        "vision": True, "tools": True, "reasoning": True,
-        "startup": "On demand. Cold start measured 401 s; unloads after 15 min idle.",
-        "resource": "~44 GiB on gx10-02 (MemAvailable 114 -> 70 GiB).",
+        "purpose": "Single-node deep reasoning: hard maths, architecture, difficult debugging.",
         "endpoint": "LiteLLM gx-reason -> 192.168.100.11:28080 (fabric) -> vLLM",
         "controls": ["load", "unload", "restart"],
-        "measured": "12.4 tok/s; bat-and-ball and multi-step problems correct.",
     },
     "gx-max": {
-        "purpose": "The largest model: long, difficult, high-stakes work. Takes over BOTH nodes.",
-        "model": "nvidia/DeepSeek-V4-Flash-0731-NVFP4",
-        "engine": "SGLang (lmsysorg/sglang:dev-v4f-2dgx-v2), TP=2, nnodes=2",
-        "nodes": ["gx10-01 (rank 0)", "gx10-02 (rank 1)"],
-        "context": 327680, "max_output": 16384,
-        "vision": False, "tools": True, "reasoning": True,
-        "startup": "Sanctioned orchestrator lifecycle only: drain -> admission -> rank1 -> rank0 -> "
-                   "health. Cold load ~508-559 s. Released after 30 min idle.",
-        "resource": "Exclusive two-node takeover. Normal models on both nodes are drained first. "
-                    "Load transient: node 1 MemAvailable ~2.5-3.3 GiB and swap up to ~64 GiB for a few "
-                    "seconds; node 2 swap ~51-55 GiB. Steady: ~15-18 GiB free per node.",
+        "purpose": "The largest model: explicit hardest work. Takes over BOTH nodes.",
         "endpoint": "LiteLLM gx-max -> gx-orchestrator :18900 -> SGLang :30000 (rank 0)",
         "controls": ["load", "unload", "restart", "force_release"],
-        "measured": "~41-45 tok/s long generation; traffic on both ConnectX rails.",
         "topology": {"tp": 2, "nnodes": 2, "rank0": "gx10-01", "rank1": "gx10-02",
                      "dist_init_addr": "192.168.100.10:5000", "image": "lmsysorg/sglang:dev-v4f-2dgx-v2"},
     },
     "gx-auto": {
-        "purpose": "Let the orchestrator pick mini / fast / reason per request. Never acquires gx-max.",
-        "model": "Routing alias (gx-orchestrator classifier)",
-        "engine": "gx-orchestrator -> LiteLLM",
-        "nodes": ["gx10-01 (router)"],
-        "context": 24576, "max_output": 8192,
-        "vision": True, "tools": True, "reasoning": False,
-        "startup": "Always available while the orchestrator runs. Uses gx-max only if it is already READY.",
-        "resource": "None of its own; the chosen tier's footprint applies.",
+        "purpose": "Let the orchestrator pick mini / fast / reason per request (Kilo-aware). Uses gx-max only if it "
+                   "is already running.",
         "endpoint": "LiteLLM gx-auto -> gx-orchestrator :18900",
         "controls": [],
-        "measured": "Routes to mini and reason correctly; gx-max-worthy prompts are downgraded.",
     },
     "gx-image": {
-        "purpose": "Text-to-image generation.",
-        "model": "Qwen-Image-2512 fp8 (+ 4-step Lightning LoRA by default)",
-        "engine": "ComfyUI behind gx-media-router (gx10-02)",
-        "nodes": ["gx10-02"],
-        "context": None, "max_output": None,
-        "vision": False, "tools": False, "reasoning": False,
-        "startup": "On demand. The first generation loads weights; one generation at a time.",
-        "resource": "Up to ~60 GiB on gx10-02 while warm; unloadable.",
-        "endpoint": "LiteLLM /v1/images/generations -> 192.168.100.11:18800 (fabric)",
+        "purpose": "Uncensored text-to-image, instruction image editing and variations.",
+        "endpoint": "LiteLLM /v1/images/generations and /v1/images/edits -> 192.168.100.11:18800 (fabric)",
         "controls": ["unload"],
-        "measured": "1024x1024 in ~26 s (Lightning); 1328x1328 ~13 s warm.",
     },
     "gx-video": {
-        "purpose": "Text-to-video generation (short clips).",
-        "model": "Wan 2.2 T2V-A14B fp8 (two experts + 4-step LoRAs)",
-        "engine": "ComfyUI behind gx-media-router (gx10-02), asynchronous jobs",
-        "nodes": ["gx10-02"],
-        "context": None, "max_output": None,
-        "vision": False, "tools": False, "reasoning": False,
-        "startup": "On demand, asynchronous: submit -> poll -> fetch MP4.",
-        "resource": "Up to ~80 GiB on gx10-02 while warm; unloadable.",
-        "endpoint": "gx-media-router POST /v1/videos (fabric)",
+        "purpose": "Uncensored text-to-video, image-to-video and video editing (asynchronous jobs).",
+        "endpoint": "LiteLLM /v1/videos, /v1/videos/edits -> 192.168.100.11:18800 (fabric)",
         "controls": ["unload"],
-        "measured": "33-49 frames @16 fps, 640x640, ~48-57 s.",
     },
 }
+
+REGISTRY_PATH = Path(__file__).resolve().parents[2] / "models" / "registry.json"
+
+
+def catalog(path: Path | None = None) -> dict[str, dict[str, Any]]:
+    """Model-card facts: alias role + the bound model from legenex/models/registry.json."""
+    try:
+        reg = json.loads((path or REGISTRY_PATH).read_text(encoding="utf-8")).get("aliases", {})
+    except (OSError, ValueError):
+        reg = {}
+    out: dict[str, dict[str, Any]] = {}
+    for alias, role in ALIAS_ROLE.items():
+        spec = reg.get(alias, {})
+        node = spec.get("node") or ""
+        components = spec.get("components") or []
+        model = spec.get("repository")
+        if not model and components:
+            model = "; ".join(c.get("repository") or c.get("file") for c in components if c.get("kind") == "checkpoint")
+        out[alias] = {
+            **role,
+            "model": model or spec.get("runtime") or "—",
+            "repository": spec.get("repository"),
+            "revision": spec.get("revision"),
+            "engine": spec.get("runtime", "—"),
+            "nodes": [n.strip() for n in node.split("+")] if node else [],
+            "context": spec.get("context"),
+            "max_output": spec.get("max_output"),
+            "vision": bool(spec.get("vision")),
+            "tools": bool(spec.get("tools")),
+            "reasoning": spec.get("reasoning") or False,
+            "startup": spec.get("startup", "—"),
+            "resource": spec.get("memory", "—"),
+            "measured": spec.get("measured", "—"),
+            "parameters": spec.get("parameters"),
+            "active_parameters": spec.get("active_parameters"),
+            "quantization": spec.get("quantization"),
+            "uncensored": spec.get("uncensored"),
+            "licence": spec.get("licence"),
+            "family": spec.get("family"),
+            "path": spec.get("path"),
+            "interim": bool(spec.get("interim")),
+            "target": spec.get("target"),
+            "previous": spec.get("previous"),
+            "components": components,
+        }
+    return out
+
+
+#: Back-compatible name used by older callers and tests.
+CATALOG = catalog()
 
 
 class ResultLog:
@@ -174,8 +167,9 @@ def live_state(cluster: Cluster, results: ResultLog) -> list[dict]:
     media_body: dict = raw_media if media.get("ok") and isinstance(raw_media, dict) else {}
     out = []
 
+    cards = catalog()
     for alias in ALL_ALIASES:
-        info = dict(CATALOG[alias])
+        info = dict(cards[alias])
         state, detail = "unavailable", ""
         extra: dict[str, Any] = {}
 

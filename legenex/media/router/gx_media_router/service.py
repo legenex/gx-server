@@ -35,6 +35,7 @@ class MediaService:
         self._client_id = f"gx-media-router-{uuid.uuid4().hex[:8]}"
         #: model files of the last generation (see _switch_models)
         self._resident_models: frozenset[str] = frozenset()
+        self._last_activity = time.monotonic()
         self._video_queue: "queue.Queue[str]" = queue.Queue()
         self._worker = threading.Thread(target=self._video_worker, name="video-worker", daemon=True)
         self._worker.start()
@@ -64,14 +65,35 @@ class MediaService:
             self.inputs.remove(name)
 
     def _purge_loop(self) -> None:
+        last_purge = 0.0
         while True:
             try:
-                removed = self.inputs.purge_stale()
-                if removed:
-                    log.info("purged %d stale staged input(s)", removed)
+                if time.monotonic() - last_purge > 3600:
+                    removed = self.inputs.purge_stale()
+                    last_purge = time.monotonic()
+                    if removed:
+                        log.info("purged %d stale staged input(s)", removed)
+                self.free_if_idle()
             except Exception:  # pragma: no cover - janitor must never die
-                log.exception("input purge failed")
-            time.sleep(3600)
+                log.exception("janitor failed")
+            time.sleep(30)
+
+    def free_if_idle(self) -> bool:
+        """Hand the node back after media work: free ComfyUI's models when idle."""
+        idle = self.cfg.idle_free_seconds
+        if not idle or not self._resident_models:
+            return False
+        if time.monotonic() - self._last_activity < idle or not self._video_queue.empty():
+            return False
+        if not self.slot.acquire("idle-free", 0.0):
+            return False
+        try:
+            log.info("idle for %ss: freeing ComfyUI models %s", idle, sorted(self._resident_models))
+            self.comfy.free(unload_models=True, free_memory=True)
+            self._resident_models = frozenset()
+            return True
+        finally:
+            self.slot.release()
 
     # -- images (synchronous) ---------------------------------------------
     def generate_image(self, workflow_name: str, params: dict, *, staged: tuple[str, ...] = (),
@@ -144,6 +166,7 @@ class MediaService:
         return cold
 
     def _run(self, job: Job, graph: dict, timeout: float, thumbnail_node: str | None) -> None:
+        self._last_activity = time.monotonic()
         job.cold_start = self._switch_models(job.workflow)
         job.status = "running"
         job.started_at = time.time()
@@ -168,6 +191,8 @@ class MediaService:
             job.error = f"{type(exc).__name__}: {exc}"
             job.finished_at = time.time()
             raise UpstreamError(job.error) from exc
+        finally:
+            self._last_activity = time.monotonic()
 
     # -- retrieval ---------------------------------------------------------
     def content(self, job: Job, index: int = 0, variant: str | None = None) -> tuple[bytes, str, str]:

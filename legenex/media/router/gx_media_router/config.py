@@ -69,6 +69,8 @@ class Config:
     max_edit_seconds: float = 10.0
     #: Free ComfyUI's model cache when the next job needs different weights.
     free_on_model_switch: bool = True
+    #: Free ComfyUI's model cache after this many idle seconds (0 disables).
+    idle_free_seconds: int = 600
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -95,4 +97,5 @@ class Config:
             input_dir=Path(os.environ.get("GX_MEDIA_INPUT_DIR", "/srv/comfy-input")),
             max_video_upload_bytes=_int("GX_MEDIA_MAX_VIDEO_UPLOAD", 150 * 1024 * 1024, 1024, 1 << 31),
             free_on_model_switch=os.environ.get("GX_MEDIA_FREE_ON_SWITCH", "1") != "0",
+            idle_free_seconds=_int("GX_MEDIA_IDLE_FREE", 600, 0, 86400),
         )

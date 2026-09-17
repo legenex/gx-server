@@ -29,8 +29,12 @@ if [ "${1:-}" = "--check" ]; then
   exit 0
 fi
 
-mkdir -p "${secret_dir}" "${state_dir}" "${log_dir}" "$(dirname "${unit_dst}")"
-chmod 700 "${secret_dir}" "${state_dir}"
+media_dir="/srv/projects/gx-cluster/media"
+hf_secret_dir="/srv/projects/gx-cluster/secrets/hf"
+mkdir -p "${secret_dir}" "${state_dir}" "${log_dir}" "$(dirname "${unit_dst}")" \
+  "${media_dir}" "${hf_secret_dir}" /srv/models/staging "${repo}/legenex/models"
+chmod 700 "${secret_dir}" "${state_dir}" "${hf_secret_dir}"
+chmod 750 "${media_dir}"
 chmod 750 "${log_dir}"
 chmod +x "${ui_dir}/scripts/"*.sh "${ui_dir}/scripts/gx-ui-passwd"
 

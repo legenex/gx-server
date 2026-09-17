@@ -107,6 +107,12 @@ class UIConfig:
         default_factory=lambda: Path(_env("GX_STATE_ROOT", "/srv/projects/gx-cluster/state"))
     )
     srv_logs: Path = field(default_factory=lambda: Path(_env("GX_LOG_DIR", "/srv/logs")))
+    #: Permanent media library (D-034), outside Git.
+    media_dir: Path = field(default_factory=lambda: Path(_env("GX_MEDIA_LIBRARY", "/srv/projects/gx-cluster/media")))
+    #: Hugging Face read token for the Model Manager (0600, outside Git).
+    hf_token_file: Path = field(
+        default_factory=lambda: Path(_env("GX_HF_TOKEN_FILE", "/srv/projects/gx-cluster/secrets/hf/token"))
+    )
 
     # --- upstreams (all internal; the browser never talks to these) -------
     orchestrator_base: str = field(default_factory=lambda: _env("GX_UI_ORCH_BASE", "http://127.0.0.1:18900"))
