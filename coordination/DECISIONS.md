@@ -1118,3 +1118,107 @@ page:
   decision;
 * gx-auto is the recommended Kilo model;
 * API keys may now also allow gx-music.
+
+## D-038 — Media and music keep the locked 30 GiB reserve; Open WebUI identity comes from the registry
+
+**Date:** 2026-09-17 (final cleanup pass). **Status:** ACCEPTED. Enforces the
+existing rule (normal single-node operation keeps at least 30 GiB
+MemAvailable); it does not change it.
+
+**Why.** The final Playground run started a cold gx-video load while gx-music
+was loaded, and gx10-02 fell to about 18.6 GiB MemAvailable (TEST_RESULTS
+§20.4). That was recorded as acceptable. It was not: media router 2.3's
+"cold 60 / 76 / 110 GiB" thresholds were the measured footprints plus
+3-4 GiB, with **no** reserve. The Control Center used the same numbers, and
+nothing stopped the router and the music supervisor from loading at the same
+time.
+
+**Admission rule (media router 2.4.0, gx-music 1.1.0, Control Center).**
+
+    MemAvailable - memory other tenants have been granted but not taken yet
+                 - the job's growth                               >= 30 GiB
+
+* **Growth (measured 2026-09-17):**
+  * cold image or edit: 57 GiB; cold t2v, i2v or v2v: 72 GiB; keyframe
+    video edit: 107 GiB;
+  * warm jobs: the footprint minus what the resident weights hold. The router
+    measures that after each cold job, and the measurement is discarded if
+    gx-music changed state in the meantime. The floor is 8 GiB. If the held
+    amount is unknown, the full footprint is used; if that does not fit, the
+    router frees its own weights and judges the job cold.
+* **Pending memory:**
+  * the router publishes `memory.pending_gib` on its open `/health`: the
+    running job's growth minus what has already left MemAvailable;
+  * the music supervisor publishes the same: while loading, 32 GiB minus
+    what has gone; when ready, 32 GiB minus the measured resident size;
+  * each side subtracts the other's pending memory, so two loads that start
+    together cannot both pass on the same free memory.
+* **Configuration:** `GX_MEDIA_RESERVE_GIB` and `GX_GUARD_RESERVE_GIB` can
+  raise the reserve but are refused below 30. The footprints can only be
+  raised. A configured but unreadable `/proc/meminfo` refuses work.
+* **Never fits:** a job whose growth plus the reserve exceeds what gx10-02
+  ever has available (117 GiB) is refused at submit (HTTP 422
+  `exceeds_node_reserve`). Today that is only the keyframe video edit
+  (107 + 30). See **B-028**.
+
+**Making room without bypassing the router.**
+* **Router → idle gx-music.** The router may unload an IDLE gx-music engine
+  through the supervisor's own lifecycle path:
+  `POST /v1/music/unload {"if_idle": true}`. The supervisor refuses while a
+  render runs, jobs are queued or a pin is honoured. The router mounts the
+  supervisor key read-only and never touches the engine container.
+  * **Allowed only when** unloading would actually make enough room, and never
+    with a pin, the Music / Maintenance / Max profile or a policy hold.
+  * **Verified:** the engine reports unloaded, the container is gone, the
+    ledger no longer lists gx-music, and MemAvailable is re-read. Only then is
+    admission recomputed. An unverified unload does not admit.
+* **gx-music → ComfyUI.** Unchanged: music still frees idle ComfyUI weights
+  only through the router's free path.
+* **Control Center.** The creative gate uses the same numbers, subtracts
+  pending memory, no longer submits behind a busy router, unloads idle music
+  with `if_idle`, and fails a never-fits job immediately.
+
+**Waiting instead of failing.**
+* **Router video jobs:** a video that does not fit stays `queued` with
+  `phase: "waiting"` and a `waiting` object (code, reason, required /
+  available / reserve / pending GiB, blocker, next step, since). This covers
+  gateway clients too. It re-checks every 15 s for up to 30 minutes, then
+  fails with `insufficient_memory` and the reason. The worker also waits,
+  instead of starting, when a gx-max or Maintenance hold appears after
+  submit.
+* **Synchronous images:** refused with 503 and the same details. The
+  Control Center queue turns that into a wait.
+* **Music:** waits with a numeric reason naming the media job it waits for.
+
+**Unchanged:** gx-max takeover, its drain of music and media, the
+supervisor's gx-max handling, the profiles' preemption rules, pins, and
+Maintenance.
+
+**Open WebUI identity (production `open-webui`, chat.legenex.co).**
+* **Cause:** the instance had no model entries for the gx aliases, so no
+  system prompt reached the model. Asked "what model are you?", the 4B
+  fine-tune answered from its training ("official Qwen3.5", in another chat
+  "Grok-3 Mini"). Routing was correct.
+* **Fix:** `gx_control_ui/owui_identity.py` writes one Open WebUI model entry
+  per text alias (id and name = alias) with a short system prompt built
+  **only** from `legenex/models/registry.json`:
+  * each alias has an `identity` block with facts verified against the
+    Hugging Face API and sha256;
+  * the block is used only while its repository and revision match the
+    alias's current binding. After a Model Manager reassignment, the prompt
+    shrinks to the repository, revision and runtime.
+* **How it is written:** through Open WebUI's own model layer inside the
+  container. Entries are owned by the oldest admin and have no grants, so
+  visibility is unchanged. Rows the sync did not create are never
+  overwritten (`--adopt` is explicit).
+* **Kept in sync by:**
+  * Model Manager, after assign and rollback;
+  * Setup → Open WebUI → *Sync identity*;
+  * `python3 -m gx_control_ui.owui_identity check|apply`;
+  * the daily integrity audit, which reports drift.
+* **gx-auto** gets a router prompt that names no model.
+
+**The registry is now tracked in Git.** `.gitignore`'s `models/` pattern had
+excluded `legenex/models/registry.json`, the file the Control Center, the
+tests and the documentation all treat as the source of truth. It is now
+re-included; model weights stay ignored.

@@ -1246,3 +1246,49 @@ recent growth is a separate `gx-music` workstream on gx10-02
 (`/srv/models/music` 28 G, two `gx-music-engine` images of about 23 G) and
 20 G of Docker build cache. That work is outside this repo; ask its owner
 before pruning it.
+
+## B-028 (S2) — the keyframe video edit cannot keep the 30 GiB reserve
+
+**Status:** OPEN, needs a human decision. **Found:** 2026-09-17, final
+cleanup pass (D-038).
+
+**The measurement.** The keyframe edit (video edit with strength of 0.5 or
+more, the default being 0.85) runs Qwen-Image-Edit and both Wan 2.2 i2v
+experts in ONE ComfyUI graph. On an idle node it took MemAvailable from 114
+to 7.2 GiB (about 107 GiB). With the locked 30 GiB reserve it would need
+137 GiB, and gx10-02 never has more than about 117 GiB available.
+
+**What happens now.** Router 2.4.0 refuses it at submit with HTTP 422
+`exceeds_node_reserve` and a plain explanation. The Control Center fails
+such a job immediately instead of queueing it. The restyle edit (strength
+below 0.5, about 72 GiB) still works. Before D-038 this edit silently ran the
+node down to 7 GiB.
+
+**Options (pick one):**
+1. **Recommended:** split the keyframe edit into two ComfyUI prompts: edit
+   the keyframe (about 57 GiB), free, then propagate with i2v (about
+   72 GiB). Each stage keeps the reserve on an otherwise idle node. This
+   needs a new workflow, a router change and a quality check.
+2. Keep it refused (the current state), and document the restyle edit as the
+   only video edit.
+
+Lowering the reserve for this job is not an option (locked rule).
+
+## B-029 (S3) — production Open WebUI uses the Kilo Code gateway key
+
+**Status:** OPEN (hygiene). **Found:** 2026-09-17, final cleanup pass.
+
+The production `open-webui` connection to `http://100.105.214.61:4000/v1`
+authenticates with the LiteLLM virtual key aliased `kilo-code` (matched by
+hash; nothing was printed). Both clients therefore share one key: revoking
+or rotating it for Kilo Code cuts Open WebUI off too, and gateway logs cannot
+tell the two apart. The key is not the master key, and it allows only the
+five text aliases.
+
+**Action (human, optional):**
+1. Control Center → API Keys → create `open-webui`, allowing `gx-auto`,
+   `gx-mini`, `gx-fast`, `gx-reason` and `gx-max`.
+2. Open WebUI → Admin Settings → Connections → paste the new key → Save.
+
+Not changed by the agent: it is a production client credential, and the
+current key works.
