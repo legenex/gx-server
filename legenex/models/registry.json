@@ -496,6 +496,152 @@
           "file": "music/acestep/checkpoints/{vae,Qwen3-Embedding-0.6B}"
         }
       ]
+    },
+    "gx-voice": {
+      "node": "gx10-02",
+      "task": "text-to-speech",
+      "runtime": "Qwen3-TTS 1.7B (transformers) in gx-voice-engine, behind the gx-voice supervisor (legenex/voice), port 18830",
+      "image": "gx-voice-engine",
+      "repository": "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice",
+      "revision": "0c0e3051f131929182e2c023b9537f8b1c68adfe",
+      "path": "/srv/models/voice/Qwen3-TTS-12Hz-1.7B-CustomVoice",
+      "family": "Qwen3-TTS 12 Hz 1.7B",
+      "licence": "apache-2.0",
+      "uncensored": null,
+      "memory": "not measured yet",
+      "measured": null,
+      "startup": "supervisor starts at boot; the engine loads on the first job and unloads when idle",
+      "capabilities": [
+        "tts",
+        "preset voices",
+        "custom voice",
+        "voice design",
+        "authorized reference voice cloning",
+        "saved voices",
+        "emotion/style instructions",
+        "dialogue segments",
+        "multiple takes",
+        "seed",
+        "speed",
+        "WAV/FLAC/MP3"
+      ],
+      "components": [
+        {
+          "kind": "checkpoint",
+          "role": "preset and saved-voice synthesis (CustomVoice)",
+          "repository": "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice",
+          "revision": "0c0e3051f131929182e2c023b9537f8b1c68adfe",
+          "file": "voice/Qwen3-TTS-12Hz-1.7B-CustomVoice"
+        },
+        {
+          "kind": "checkpoint",
+          "role": "voice design from a description (VoiceDesign)",
+          "repository": "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign",
+          "revision": "5ecdb67327fd37bb2e042aab12ff7391903235d3",
+          "file": "voice/Qwen3-TTS-12Hz-1.7B-VoiceDesign"
+        },
+        {
+          "kind": "checkpoint",
+          "role": "reference-prompt cloning (Base)",
+          "repository": "Qwen/Qwen3-TTS-12Hz-1.7B-Base",
+          "revision": "fd4b254389122332181a7c3db7f27e918eec64e3",
+          "file": "voice/Qwen3-TTS-12Hz-1.7B-Base"
+        },
+        {
+          "kind": "component",
+          "role": "12 Hz speech tokenizer",
+          "repository": "Qwen/Qwen3-TTS-Tokenizer-12Hz",
+          "revision": "7dd38ad4e9bad454aae9cd937d0cd577604fe229",
+          "file": "voice/Qwen3-TTS-Tokenizer-12Hz"
+        },
+        {
+          "kind": "component",
+          "role": "reference-audio transcription for cloning",
+          "repository": "openai/whisper-large-v3-turbo",
+          "revision": "41f01f3fe87f28c78e2fbf8b568835947dd65ed9",
+          "file": "voice/whisper-large-v3-turbo"
+        }
+      ]
+    },
+    "gx-call": {
+      "node": "gx10-02",
+      "task": "realtime-voice-conversation",
+      "runtime": "NVIDIA NemotronLabs VoiceChat 11B in gx-call-engine, behind the gx-call supervisor (legenex/call), port 18840",
+      "runtime_repository": "https://github.com/NVIDIA-NeMo/Speech",
+      "runtime_revision": "branch nemotron-labs-voicechat",
+      "image": "gx-call-engine",
+      "repository": "nvidia/NVIDIA-NemotronLabs-VoiceChat-11B",
+      "revision": "a4c40ca5b4fe77db13e9840ca4a2b91becf030c8",
+      "path": "/srv/models/voicechat/NVIDIA-NemotronLabs-VoiceChat-11B",
+      "family": "NemotronLabs VoiceChat 11B",
+      "licence": "openmdw-1.1",
+      "uncensored": null,
+      "memory": "not measured yet",
+      "measured": null,
+      "startup": "supervisor starts at boot; the engine loads when a call session opens and unloads when idle",
+      "capabilities": [
+        "realtime speech-to-speech",
+        "turn taking",
+        "interruptions",
+        "tool calls",
+        "call agents",
+        "transcripts",
+        "dispositions",
+        "recordings"
+      ],
+      "components": [
+        {
+          "kind": "checkpoint",
+          "role": "speech-to-speech conversation model",
+          "repository": "nvidia/NVIDIA-NemotronLabs-VoiceChat-11B",
+          "revision": "a4c40ca5b4fe77db13e9840ca4a2b91becf030c8",
+          "file": "voicechat/NVIDIA-NemotronLabs-VoiceChat-11B"
+        }
+      ]
+    },
+    "gx-live": {
+      "node": "gx10-02",
+      "task": "realtime-omnimodal-conversation",
+      "runtime": "MiniCPM-o 4.5 transformers remote code (4.51.0) on torch 2.14/cu130, SDPA (no flash-attn on sm_121), in gx-live-engine:minicpmo45-503e754-t214, behind the gx-live supervisor (legenex/live), port 18850",
+      "image": "gx-live-engine:minicpmo45-503e754-t214",
+      "repository": "openbmb/MiniCPM-o-4_5",
+      "revision": "503e754207c94da6bb26850b4469f367c9ea3582",
+      "path": "/srv/models/live/MiniCPM-o-4_5",
+      "family": "MiniCPM-o 4.5",
+      "licence": "apache-2.0",
+      "uncensored": null,
+      "memory": "not measured yet",
+      "measured": null,
+      "startup": "supervisor starts at boot; the engine loads when a live session opens and unloads when idle",
+      "capabilities": [
+        "realtime speech conversation",
+        "barge-in",
+        "live camera vision",
+        "image understanding",
+        "ASR",
+        "tool calls",
+        "delegation to the text aliases"
+      ],
+      "notes": [
+        "Native full-duplex (as_duplex) is not realtime on GB10 (1.5-1.6 s per 1 s unit while speaking); the shipped mode is VAD turn-taking with barge-in over a full-duplex transport. See coordination/build-v3/liv.md."
+      ],
+      "components": [
+        {
+          "kind": "checkpoint",
+          "role": "omni-modal conversation model",
+          "repository": "openbmb/MiniCPM-o-4_5",
+          "revision": "503e754207c94da6bb26850b4469f367c9ea3582",
+          "file": "live/MiniCPM-o-4_5"
+        }
+      ],
+      "measured_footprint": {
+        "node": "gx10-02",
+        "cold_gib": 34.0,
+        "resident_gib": 31.0,
+        "startup_s": 102.0,
+        "measured": "2026-09-17",
+        "evidence": "/srv/logs/acceptance/build-v3/liv/probe1-feasibility"
+      }
     }
   },
   "workflow_models": {

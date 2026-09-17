@@ -34,8 +34,8 @@ export function readDraft(storage: AutosaveOptions['storage'], flowId: string): 
   try {
     const raw = storage?.getItem(draftKey(flowId));
     if (!raw) return null;
-    const draft = JSON.parse(raw) as Draft;
-    return draft.doc && Array.isArray(draft.doc.nodes) ? draft : null;
+    const draft = JSON.parse(raw) as Partial<Draft>;
+    return draft.doc && Array.isArray(draft.doc.nodes) ? (draft as Draft) : null;
   } catch {
     return null;
   }

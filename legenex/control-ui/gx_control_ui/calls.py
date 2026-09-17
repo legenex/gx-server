@@ -186,7 +186,7 @@ class CallManager:
         self.library = library
         self.secrets = secrets_store
         self.audit = audit
-        self.metric = metric or (lambda *a, **k: None)
+        self.metric = (lambda *a, **k: None) if metric is None else metric
         self.fetch = fetch
         self.clock = clock
         self.ffmpeg_image = ffmpeg_image
@@ -303,12 +303,21 @@ class CallManager:
         row = self._session_row(sid)
         if row["state"] != "ended":
             try:
-                self.client.request("POST", f"/v1/call/sessions/{sid}/end", {"reason": reason}, timeout=30)
+                view = self.client.request("POST", f"/v1/call/sessions/{sid}/end", {"reason": reason}, timeout=30)
             except CallError as exc:
                 if exc.status != 404:
                     raise
                 self._finalize(sid, {"type": "session.ended", "reason": reason, "disposition": "failed",
                                      "error": {"code": "lost", "message": "gx-call no longer knows this call"}})
+            else:
+                # gx-call's answer is authoritative and already final in almost every case. Finalise from it
+                # instead of waiting for the event poller, which does not run in offline mode and which can be
+                # a long-poll away. _finalize is idempotent, so the poller's own session.ended is harmless.
+                if isinstance(view, dict) and view.get("state") == "ended":
+                    self._finalize(sid, {"type": "session.ended", "reason": view.get("end_reason") or reason,
+                                         "disposition": view.get("disposition") or "completed",
+                                         "summary": view.get("summary"), "error": view.get("error"),
+                                         "duration_s": view.get("duration_s")})
         self.audit(user=user_label, action="call.session.end", outcome="ok", session=sid, reason=reason)
         deadline = self.clock() + 10
         while self._session_row(sid)["state"] != "ended" and self.clock() < deadline:
@@ -759,10 +768,14 @@ class CallManager:
         duration = event.get("duration_s") if event.get("duration_s") is not None else \
             (round(now - live_at, 1) if live_at else 0.0)
         with self.connect() as con:
-            con.execute("UPDATE call_sessions SET state = 'ended', disposition = ?, end_reason = ?, ended_at = ?, "
-                        "duration_s = ?, metrics = ?, error = ? WHERE session_id = ? AND state != 'ended'",
-                        (disposition, event.get("reason"), now, duration, json.dumps(metrics),
-                         json.dumps(event["error"]) if event.get("error") else None, sid))
+            cur = con.execute("UPDATE call_sessions SET state = 'ended', disposition = ?, end_reason = ?, "
+                              "ended_at = ?, duration_s = ?, metrics = ?, error = ? "
+                              "WHERE session_id = ? AND state != 'ended'",
+                              (disposition, event.get("reason"), now, duration, json.dumps(metrics),
+                               json.dumps(event["error"]) if event.get("error") else None, sid))
+            finalised_here = cur.rowcount == 1
+        if not finalised_here:
+            return  # another thread (poller, explicit end or timer) finalised this call first
         try:
             self.realtime.end(sid, REALTIME_DISPOSITION.get(disposition, "completed"))
         except Exception:  # noqa: BLE001 - the registry may not know it (restart)

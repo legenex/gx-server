@@ -12,13 +12,18 @@ vetted template plus the parameters that genuinely differ per mode: the
 instruction template, the reference-latent method, the denoise and the
 mask handling. Pure: no I/O, unit-tested.
 
-Why Qwen edits always run a full denoise (measured 2026-09-17, see
-coordination/build-v3/img.md): Qwen-Image-Edit-2511 is conditioned on the
-source through its reference latent. The latent it samples FROM is only a
-canvas. A partial denoise of the VAE-encoded source on the 4-step Lightning
-schedule kept the source almost pixel for pixel (the "edit returns the
-original" bug), because the Playground sent strength 0.6 and the router
-bound strength 1:1 to KSampler.denoise.
+Why Qwen edits run a full denoise: Qwen-Image-Edit-2511 is conditioned on the
+source through its reference latent (TextEncodeQwenImageEditPlus feeds the
+source to the text encoder and to FluxKontextMultiReferenceLatentMethod). The
+latent the sampler starts FROM is only a canvas that fixes the size. Until
+Build V3 the Playground sent strength 0.6 and the router bound strength 1:1 to
+KSampler.denoise, so on the 4-step Lightning schedule the VAE-encoded source
+was barely disturbed and the edit came back as a near-copy ("the edit returns
+the original", D-031). strength is therefore no longer a denoise for the
+reference-latent modes; only `transform` and `variation`, which drop the
+reference latent, map it. The numbers that quantify this come from the IMG
+live acceptance run (see "Live acceptance" in coordination/build-v3/img.md);
+it has NOT run yet, so nothing here claims a measurement.
 """
 
 from __future__ import annotations
@@ -280,8 +285,10 @@ def plan_variation(strength: float | None, prompt: str) -> EditPlan:
     """A variation is a Qwen edit whose strength sets how far it may drift.
 
     Low strength keeps the reference latent (same scene, new details); from
-    0.5 up the reference latent is dropped and the result is re-imagined from
-    the source's description (measured: coordination/build-v3/img.md)."""
+    0.5 up the reference latent is dropped (the transform template) and the
+    result is re-imagined from the source's vision tokens, so the variation can
+    actually move. The split is a design decision from the graphs, not a
+    measurement; the live A/B is the IMG acceptance run."""
     applied = 0.75 if strength is None else strength
     if applied >= 0.5:
         denoise = _scale((0.85, 1.0), (applied - 0.5) / 0.5)

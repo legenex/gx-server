@@ -12,6 +12,7 @@ function isObj(v: unknown): v is Json {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unnecessary-type-parameters -- the caller names the checked shape
 function expect<T>(value: unknown, check: (v: Json) => boolean, what: string): T {
   if (!isObj(value) || !check(value)) {
     throw new HttpError(0, `The server sent an unexpected ${what}. Reload the page and try again.`, 'bad_response');
@@ -21,7 +22,7 @@ function expect<T>(value: unknown, check: (v: Json) => boolean, what: string): T
 
 const hasArray = (key: string) => (v: Json) => Array.isArray(v[key]);
 const isFlow = (v: Json) => typeof v.id === 'string' && typeof v.version === 'number' && isObj(v.graph)
-  && Array.isArray((v.graph as Json).nodes) && Array.isArray((v.graph as Json).edges);
+  && Array.isArray(v.graph.nodes) && Array.isArray(v.graph.edges);
 const isRun = (v: Json) => typeof v.id === 'string' && typeof v.status === 'string';
 
 export interface ApiErrorLike { status?: number; code?: string; message?: string; detail?: { issues?: Issue[] } }

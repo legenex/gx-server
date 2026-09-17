@@ -7,10 +7,16 @@ and Control Center tests exercise the same event stream the model produces.
 
 Scripted "model": when the caller has spoken and then been quiet for 480 ms,
 the stub transcribes the utterance as ``utterance N``, answers with one
-second of a 300 Hz tone (agent speech) and, if the session has a tool called
-``update_intake_fields``, first calls it once with fixed arguments and waits
-for the result (like the model's two-phase function calling). Caller speech
-while the stub is "speaking" stops the tone (barge-in).
+second of a 300 Hz tone (agent speech) and, if the session has any tool,
+first calls one of them once with fixed arguments and waits for the result
+(like the model's two-phase function calling). The tool it picks is
+``update_intake_fields`` when the agent has it, otherwise the first tool the
+agent does have, so an agent whose only tool is ``end_call`` exercises that
+path. Caller speech while the stub is "speaking" stops the tone (barge-in).
+
+Like the real engine, the socket is drained by its own thread, so a tool
+result can arrive while the "model" is waiting for it and audio keeps being
+buffered meanwhile.
 """
 
 from __future__ import annotations
@@ -18,6 +24,7 @@ from __future__ import annotations
 import hmac
 import json
 import math
+import queue
 import secrets
 import socket
 import struct
@@ -126,39 +133,57 @@ class EngineStub:
 
         cfg = json.loads(ws.recv().text())
         self.configs.append(cfg)
-        tools = {t["name"] for t in cfg.get("tools", [])}
+        tools = [t["name"] for t in cfg.get("tools", [])]
+        tool_name = "update_intake_fields" if "update_intake_fields" in tools else (tools[0] if tools else None)
         send({"type": "session.ready", "protocol": "gx-call.v1", "input_rate": 16000, "output_rate": 22050,
               "chunk_ms": 80, "prefill_ms": 5, "prompt_chars": len(cfg.get("system_prompt", "")),
               "voice": "Aria", "tools": sorted(tools)})
         tracker = Tracker(emit=send)
         results: dict[str, threading.Event] = {}
+        inbox: queue.Queue = queue.Queue()
+        ended = threading.Event()
+        why = {"reason": "ended"}
+
+        def reader() -> None:
+            """The engine never stops reading the socket, not even during a tool call."""
+            try:
+                while True:
+                    msg = ws.recv()
+                    if not msg.is_text:
+                        inbox.put(msg.data)
+                        continue
+                    body = json.loads(msg.text())
+                    if body.get("type") == "tool.result":
+                        self.tool_results.append(body)
+                        ev = results.get(body.get("call_id"))
+                        if ev:
+                            ev.set()
+                    elif body.get("type") == "session.end":
+                        why["reason"] = body.get("reason", "ended")
+                        break
+            except (WSClosed, OSError):
+                why["reason"] = "disconnected"
+            finally:
+                ended.set()
+                for ev in list(results.values()):
+                    ev.set()
+                inbox.put(None)
+
+        rt = threading.Thread(target=reader, name="engine-stub-reader", daemon=True)
+        rt.start()
+
         buf = bytearray()
         speaking = 0          # remaining agent frames
         utterance = 0
         heard = False
         quiet = 0
         tool_done = False
-        reason = "ended"
         phase = 0
-        while True:
-            try:
-                msg = ws.recv()
-            except (WSClosed, OSError):
-                reason = "disconnected"
+        while not ended.is_set():
+            data = inbox.get()
+            if data is None:
                 break
-            if msg.is_text:
-                body = json.loads(msg.text())
-                if body.get("type") == "tool.result":
-                    self.tool_results.append(body)
-                    ev = results.get(body.get("call_id"))
-                    if ev:
-                        ev.set()
-                    continue
-                if body.get("type") == "session.end":
-                    reason = body.get("reason", "ended")
-                    break
-                continue
-            buf.extend(msg.data)
+            buf.extend(data)
             while len(buf) >= IN_CHUNK:
                 chunk = bytes(buf[:IN_CHUNK])
                 del buf[:IN_CHUNK]
@@ -174,11 +199,11 @@ class EngineStub:
                     heard = False
                     asr = f"utterance {utterance}"
                     utterance += 1
-                    if "update_intake_fields" in tools and not tool_done:
+                    if tool_name and not tool_done:
                         tool_done = True
                         call_id = "tc_" + secrets.token_hex(8)
                         results[call_id] = threading.Event()
-                        send({"type": "tool.call", "call_id": call_id, "name": "update_intake_fields",
+                        send({"type": "tool.call", "call_id": call_id, "name": tool_name,
                               "arguments": self.tool_args, "raw": "<TOOLCALL>[...]</TOOLCALL>", "known": True})
                         results[call_id].wait(5)
                     speaking = 12
@@ -191,10 +216,14 @@ class EngineStub:
                 else:
                     out = b"\x00\x00" * OUT_SAMPLES
                     level = -120.0
-                send(out)
+                try:
+                    send(out)
+                except (WSClosed, OSError):
+                    ended.set()
+                    break
                 tracker.step(in_pcm16=chunk, in_wall=time.time(), out_level_dbfs=level, out_ms=80,
                              text_delta=text, asr_delta=asr, asr_reset=bool(asr) and utterance > 1)
-        summary = {**tracker.finish(), "reason": reason, "type": "engine.stats", "rtf_session": 0.01}
+        summary = {**tracker.finish(), "reason": why["reason"], "type": "engine.stats", "rtf_session": 0.01}
         try:
             send({"type": "session.ended", "summary": summary})
         except (WSClosed, OSError):

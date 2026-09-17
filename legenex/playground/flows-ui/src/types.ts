@@ -272,7 +272,6 @@ export interface Host {
   upload: (file: File, opts: { title?: string }) => Promise<Asset>;
   showAsset: (assetId: string) => void;
   confirm: (opts: { title: string; message: string; okLabel?: string; danger?: boolean }) => Promise<boolean>;
-  openLink: (href: string) => void;
 }
 
 export class HttpError extends Error {

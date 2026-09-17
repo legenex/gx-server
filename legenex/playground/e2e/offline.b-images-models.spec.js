@@ -161,3 +161,45 @@ test('edit modes, edit quality and a masked edit (keyboard and rectangle entry)'
   expect((await req3.response()).status()).toBe(202);
   expect(problems).toEqual([]);
 });
+
+test('the NSFW adapter and the quality tags are only offered where they do something', async ({ page }) => {
+  const problems = watchPage(page);
+  await login(page);
+  await gotoPage(page, 'images');
+
+  // Generation: the adapter matches Qwen Image 2512 and is on by default.
+  const adapter = page.getByRole('switch', { name: 'Uncensored adapter' });
+  await expect(adapter).toBeChecked();
+  await page.fill('#image-prompt', 'e2e adapter default on generation');
+  const [gen] = await Promise.all([submitted(page), page.click('#generate-btn')]);
+  expect(gen.postDataJSON()).toMatchObject({ kind: 't2i', uncensored: true });
+
+  // Editing: the only edit adapter is a Qwen-Image LoRA, so it starts off.
+  await page.getByRole('tab', { name: 'Edit' }).click();
+  await expect(adapter).not.toBeChecked();
+  await expect(page.locator('.switch-field', { hasText: 'Uncensored adapter' }).locator('.field-hint'))
+    .toContainText('off by default for edits');
+  await page.getByRole('button', { name: 'Choose from Library' }).click();
+  await page.locator('dialog[open] .pick-tile').first().click();
+  await page.fill('#image-prompt', 'e2e adapter default on an edit');
+  const [edit] = await Promise.all([submitted(page), page.click('#generate-btn')]);
+  expect(edit.postDataJSON()).toMatchObject({ kind: 'edit', uncensored: false });
+
+  // Turning it on for the edit does not change the generation default.
+  await page.locator('label.switch', { hasText: 'Uncensored adapter' }).click();
+  await expect(adapter).toBeChecked();
+  const [edit2] = await Promise.all([submitted(page), page.click('#generate-btn')]);
+  expect(edit2.postDataJSON()).toMatchObject({ kind: 'edit', uncensored: true });
+  await page.getByRole('tab', { name: 'Generate' }).click();
+  await expect(adapter).toBeChecked();
+
+  // Quality tags reach the router only on generation, so the switch is hidden on edits.
+  const tags = page.getByRole('switch', { name: 'Quality tags' });
+  await page.getByLabel('Model', { exact: true }).selectOption('visionmaster-pro-v3');
+  await expect(tags).toBeVisible();
+  await page.getByRole('tab', { name: 'Edit' }).click();
+  await page.getByLabel('Model', { exact: true }).selectOption('visionmaster-pro-v3');
+  await expect(tags).toBeHidden();
+  await axeCheck(page, 'images edit with VisionmasterPro_V3 and no decorative switches');
+  expect(problems).toEqual([]);
+});

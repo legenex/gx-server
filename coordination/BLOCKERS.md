@@ -1135,9 +1135,14 @@ systemctl --user restart gx-orchestrator.service gx-control-ui.service   # only 
 Then verify: control UI → Playground → gx-image and gx-video, and Settings →
 credential hygiene shows `GX_MEDIA_API_KEY: set`.
 
-## B-025 (S2) — gx-reason's required model is gated and no Hugging Face token exists
+## B-025 (S2) — SUPERSEDED 2026-09-17 20:45 by B-030 — a Hugging Face token now exists; the repository gate itself is what blocks gx-reason
 
-**Status:** OPEN, needs a human. **Found:** 2026-09-17 (V2 migration).
+**Status:** SUPERSEDED. A fine-grained token for user `legenex` is now at
+`/srv/projects/gx-cluster/secrets/hf/token` (0600) and validates. The remaining
+blocker is the per-user repository gate, measured and written up as **B-030**.
+The original text is kept below as the record of what was checked.
+
+**Status (original):** OPEN, needs a human. **Found:** 2026-09-17 (V2 migration).
 **Re-checked 2026-09-17 10:25 (final integration pass), still blocked.**
 The user reported saving a token in the Control Center, but it never reached
 gx10-01:
@@ -1292,3 +1297,171 @@ five text aliases.
 
 Not changed by the agent: it is a production client credential, and the
 current key works.
+
+## B-030 (S2) — gx-reason's approved model is gated per user and `legenex` is not on its authorized list
+
+**Status:** OPEN. **Needs a human action that cannot be performed from a
+terminal.** **Found:** 2026-09-17 20:40 SAST (brownfield completion pass).
+Supersedes B-025.
+
+**Repository:** `iSkye/Qwen3.8-Flash-Next-NVFP4-ablit-a070`
+**Pinned revision:** `91c3e3d4daf14f8e9389b95f43112410f06ed3d5`
+(≈ 92.68 B parameters, ≈ 98.7 GiB of model files, NVFP4/MXFP8 mix, vision,
+abliterated; base model `Mia-AiLab/Qwen3.8-Flash-Next-NVFP4`).
+**Target:** gx10-02, alias `gx-reason`, vLLM single node.
+
+### What is now proven (measured, not assumed)
+
+| Check | Result |
+|---|---|
+| Token file `/srv/projects/gx-cluster/secrets/hf/token` | present, mode 0600 |
+| `GET /api/whoami-v2` with that token | **200**, user **`legenex`**, type `user` |
+| Token type | fine-grained, display name `GX-CLUSTER`, created 2026-09-17T18:19:43Z |
+| Token permission `canReadGatedRepos` | **`true`** |
+| Token scope | `repo.content.read` scoped to the entity `legenex` |
+| `GET /api/models/<repo>/revision/<rev>` (metadata) | **200** — `gated: "auto"`, `private: false`, 53 files, sha matches the pinned revision |
+| `GET /<repo>/resolve/<rev>/config.json` **with** the token | **403** |
+| `GET /<repo>/resolve/<rev>/amax.safetensors` **with** the token | **403** |
+| Same two requests **without** a token | **401** |
+
+The 403 response carries the decisive header:
+
+```
+X-Error-Code: GatedRepo
+X-Error-Message: Access to model iSkye/Qwen3.8-Flash-Next-NVFP4-ablit-a070 is
+restricted and you are not in the authorized list. Visit
+https://huggingface.co/iSkye/Qwen3.8-Flash-Next-NVFP4-ablit-a070 to ask for access.
+```
+
+### What this rules out
+
+* **Not a missing or invalid token.** It authenticates as `legenex` and
+  metadata reads succeed with it (anonymous reads of the same paths give 401,
+  authenticated ones give 403 — the token is being accepted and then refused
+  on authorization).
+* **Not a missing token scope.** `canReadGatedRepos` is already `true`, and
+  `repo.content.read` is granted for the `legenex` entity. Creating another
+  token cannot change a 403 whose reason is "not in the authorized list".
+* **Not a Model Manager probe bug.** The Model Manager's "Accessible: False"
+  matches a direct `urllib` request made outside the application, with the
+  same token, against both a small metadata file and a weight shard.
+* **Not a metadata-versus-file-gate difference in our code.** Metadata (200)
+  and files (403) differ *at Hugging Face*, which is exactly how a gated repo
+  behaves for a user who has not been granted access.
+
+### The remaining cause
+
+The repository is `gated: auto`, which means access is granted automatically
+**once the signed-in user accepts the model's terms on its page**. The account
+`legenex` has not done so (or the acceptance has not been recorded), so it is
+not on the authorized list.
+
+### Human action required
+
+> **Human action required: accept/request access for
+> `iSkye/Qwen3.8-Flash-Next-NVFP4-ablit-a070` while logged into Hugging Face as
+> user `legenex`.**
+>
+> Open <https://huggingface.co/iSkye/Qwen3.8-Flash-Next-NVFP4-ablit-a070> in a
+> browser, signed in as `legenex`, and click **"Agree and access repository"**
+> (a `gated: auto` repository grants access immediately). No new token is
+> needed — the existing one already carries `canReadGatedRepos`.
+
+### What happens after that, with no further human input
+
+1. Re-run the access probe (Control Center → Model Manager → the repository's
+   *Accessible* row, or the same authenticated `resolve` request).
+2. Download at the pinned revision to `/srv/models/vllm/` on **gx10-02 only**,
+   verify with `legenex/scripts/hf-verify.py`.
+3. Load under vLLM, measure the footprint (1 Hz `MemAvailable`), startup and
+   generation speed, run real inference plus the tool-call and vision tests.
+4. Assign to `gx-reason` and prove a real request **through** the alias.
+5. Only then delete the interim `/srv/models/vllm/Qwen3.6-27B-NVFP4`.
+
+### Meanwhile
+
+`gx-reason` keeps serving on the interim `nvidia/Qwen3.6-27B-NVFP4` (D-033).
+The interim model is **not** deleted and **no substitute was chosen**. The
+retired `gx10-vllm/Qwen3.8-27B-Uncensored` runtime stays retired; this is a
+different model and must not be confused with it.
+
+### Disk
+
+gx10-02 needs about 99 GiB free for the download. Checked 2026-09-17: the
+`/srv/models` tree holds 156 G deepseek + 71 G image + 58 G video + 42 G
+voicechat + 31 G shared + 28 G music + 21 G vllm + 19 G live + 13 G voice.
+Confirm free space before staging.
+
+## B-031 (S2) — RESOLVED 2026-09-17 — the deployed GX-Playground served a snapshot of the checkout taken at start-up
+
+**Status:** RESOLVED and verified live. **Found:** 2026-09-17 20:35 SAST
+(brownfield completion pass). **Severity while open:** every frontend change
+made after the service started was invisible in the browser, and the source on
+disk looked correct, so the bug read as "the UI is broken" rather than "the UI
+is not deployed".
+
+### The cause
+
+`gx_playground/server.py`'s `Static.__init__` walked `web/` once and read every
+file into a dict, keyed by path, with a body, a gzip copy and an ETag. Requests
+were answered from that dict for the lifetime of the process. Nothing ever
+re-read the tree. The service had been running since 10:29:42; the frontend had
+been edited until 17:17.
+
+### The measurement that proved it
+
+`legenex/playground/scripts/deploy.sh --verify` compares the ETag the running
+server returns for every file under `web/` with `sha256` of that file on disk.
+Before the fix, against the live service on `http://127.0.0.1:8090`:
+
+* **21 of 32 files stale** — served an ETag that no longer matched the checkout
+  (`index.html`, `app.js`, `ui.js`, `jobs.js`, `assets.js`, `dom.js`, `icons.js`,
+  `nav.js`, `app.css`, `pages/dashboard.js`, `pages/history.js`,
+  `pages/images.js`, `pages/music.js`, `pages/video.js`, …);
+* **11 files returned HTTP 404** although they existed on disk, because they
+  were created after start-up: `js/routes.js`, `js/prefs.js`, `js/realtime.js`,
+  `js/wan.js`, `js/maskpaint.js`, `js/music-form.js`, `js/music-recipe.js`,
+  `js/pages/voice.js`, `js/pages/models.js`, `js/pages/logs.js`,
+  `js/pages/settings.js`.
+
+The Voice, Models, Logs and Settings pages were therefore not reachable in the
+deployed product at all, and the page router itself (`routes.js`) was missing.
+
+### The fix
+
+1. **`Static` now revalidates.** Each lookup stats the file and rebuilds the
+   cached entry when `mtime_ns`, size or inode changed; a path that did not
+   exist at start-up is picked up the first time it is requested; a deleted file
+   becomes a 404. An unchanged file still costs only one `stat()` — the body,
+   the gzip copy and the ETag come from the cache. Path resolution rejects
+   traversal (`..`), hidden segments and anything outside `web/`. A thread lock
+   guards the cache. `GX_PG_STATIC_FREEZE=1` keeps the old snapshot behaviour
+   for tests that assert on a fixed ETag.
+2. **`legenex/playground/scripts/deploy.sh`** is now the single sanctioned
+   deployment path. It builds what needs building, restarts **only** when the
+   Python package or the unit changed (holding
+   `state/build-v3/restart.lock`, BUILD_V3 rule 9), then re-runs the
+   ETag-versus-disk comparison and **fails the deploy** on any mismatch or any
+   file that is on disk but not served.
+
+### Verified live after the fix
+
+```
+== 4/4 served-bundle verification (ETag == sha256 of the file on disk) ==
+32 files served match the checkout; 0 stale, 0 not served
+DEPLOY OK — the browser is being served this checkout
+```
+
+And, with **zero restarts** (`NRestarts` stayed `0`):
+
+* a file created in `web/js/` after start-up was served `200` immediately;
+* changing it changed the served `ETag`;
+* deleting it returned `404`.
+
+### Standing rule this establishes
+
+After any frontend change: run `legenex/playground/scripts/deploy.sh`. Never
+assume that changing the source changed the live site — the deploy script
+proves it by comparing what the server hands the browser with what is in the
+checkout.
+

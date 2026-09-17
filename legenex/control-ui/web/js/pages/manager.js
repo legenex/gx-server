@@ -194,25 +194,84 @@ async function loadInventory() {
   } catch (e) { clear(invEl).append(errorBox(e)); }
 }
 
+function tokenRows(state) {
+  // Every row is live state from /api/manager/hf-token. Nothing here is hard-coded:
+  // a stale "gated, needs a token" sentence is what sent an earlier pass round in
+  // circles minting tokens for a repository gate no token can open (B-030).
+  if (!state || !state.configured) {
+    return [['Status', 'Not configured'], ['Effect', 'Public repositories only']];
+  }
+  if (!state.valid) {
+    return [['Status', 'Configured, but Hugging Face rejected it'],
+      ['Reason', state.error || 'unknown'],
+      ['Code', state.code || '—']];
+  }
+  return [
+    ['Status', 'Configured and valid'],
+    ['Hugging Face user', state.user || '—'],
+    ['Account type', state.account_type || '—'],
+    ['Token type', state.type || '—'],
+    ['Token name', state.token_name || '—'],
+    ['Created', state.created_at ? new Date(state.created_at).toLocaleString() : '—'],
+    ['Can read gated repos', state.gated_repos === true ? 'yes'
+      : state.gated_repos === false ? 'no — grant that permission on the token' : 'unknown'],
+  ];
+}
+
 function renderToken(state) {
   const input = h('input', { type: 'password', id: 'hf-token', autocomplete: 'off', placeholder: 'hf_…', 'aria-label': 'Hugging Face token' });
+  const configured = !!(state && state.configured);
   clear(tokenEl).append(
-    h('p', {}, state && state.configured
-      ? (state.valid ? `Token configured for Hugging Face user “${state.user}”.` : `Token configured but rejected: ${state.error}`)
-      : 'No token configured: public repositories only. Gated models (for example the gx-reason target) need a read token '
-        + 'whose account has accepted the model terms.'),
+    kv(tokenRows(state)),
+    configured && state.valid && state.gated_repos === false
+      ? h('p', { class: 'callout callout-warning' },
+        'This fine-grained token cannot read gated repositories. On huggingface.co, edit the token and enable '
+        + '“Read access to contents of all public gated repos you can access”.')
+      : null,
     h('div', { class: 'btn-row' }, input,
       h('button', {
         type: 'button', class: 'btn btn-sm',
         onclick: async () => {
           try { const s = await api.post('/api/manager/hf-token', { token: input.value }); input.value = ''; toast(`Token saved (${s.user})`); loadInventory(); } catch (e) { toast(e.message, 'crit'); }
         },
-      }, 'Save token'),
-      state && state.configured ? h('button', {
+      }, configured ? 'Replace token' : 'Save token'),
+      configured ? h('button', {
         type: 'button', class: 'btn btn-sm btn-ghost',
         onclick: async () => { await api.post('/api/manager/hf-token', { clear: true }); toast('Token removed'); loadInventory(); },
       }, 'Remove token') : null),
-    h('p', { class: 'muted small' }, 'Stored on gx10-01 in /srv/projects/gx-cluster/secrets/hf/token (0600). It is never shown again or sent to the browser.'));
+    h('p', { class: 'muted small' }, 'Stored on gx10-01 in /srv/projects/gx-cluster/secrets/hf/token (0600). It is never shown again or sent to the browser.'),
+    h('p', { class: 'muted small' },
+      'Repository accessibility is reported per repository by the look-up below: a gated repository answers for its '
+      + 'metadata but refuses its files until this account has been granted access, so metadata alone proves nothing.'));
+}
+
+// What the FILE gate says, which is not what the metadata gate says: a gated
+// repository serves its metadata and refuses its files until this account has
+// been granted access (B-030). `info.access` is the probe's verdict.
+const ACCESS_LABEL = {
+  public: 'public — no gate',
+  granted: 'granted for this account',
+  gated_not_granted: 'REFUSED — this account is not on the authorized list',
+  unauthenticated: 'REFUSED — no usable token',
+  forbidden: 'REFUSED by Hugging Face',
+  not_found: 'file not found',
+  not_probed: 'not verified (no small file to probe)',
+};
+
+function accessLabel(info) {
+  const a = info.access;
+  if (!a) return info.accessible ? 'accessible' : 'NOT accessible';
+  const label = ACCESS_LABEL[a.reason] || (a.ok ? 'accessible' : 'NOT accessible');
+  return a.probed_file ? `${label} (probed ${a.probed_file})` : label;
+}
+
+function accessCallout(info) {
+  const a = info.access;
+  if (!a || a.ok) return null;
+  return h('div', { class: 'callout callout-warning' },
+    h('p', {}, h('strong', {}, 'Hugging Face says: '), a.message || 'access refused'),
+    a.action ? h('p', {}, h('strong', {}, 'What to do: '), a.action) : null,
+    a.token_user ? h('p', { class: 'muted small' }, `The stored token authenticated as “${a.token_user}”.`) : null);
 }
 
 function renderLookup(info) {
@@ -265,7 +324,8 @@ function renderLookup(info) {
       ['Architecture', (info.architecture || []).toString() || '—'], ['Parameters', info.parameters ? `${(info.parameters / 1e9).toFixed(2)} B` : '—'],
       ['MoE', yes(info.moe)], ['Vision', yes(info.vision)], ['Context', info.context ? info.context.toLocaleString() : '—'],
       ['Size', bytes(info.size_bytes)], ['Files', String(info.file_count)], ['Licence', info.licence || '—'],
-      ['Gated', info.gated ? `${info.gated}${info.accessible ? ' (accessible)' : ' — NOT accessible with the current token'}` : 'no'],
+      ['Gated', info.gated ? String(info.gated) : 'no'],
+      ['File access', accessLabel(info)],
       ['Uncensored / abliterated', yes(info.uncensored)], ['trust_remote_code', yes(info.trust_remote_code)],
       ['Base model', Array.isArray(info.base_model) ? info.base_model.join(', ') : (info.base_model || '—')],
       ['Likely runtime', (info.runtimes || []).join(', ') || 'none recognised'],
@@ -273,7 +333,7 @@ function renderLookup(info) {
       ['Updated', info.last_modified || '—'], ['Downloads', String(info.downloads ?? '—')],
     ]),
     (info.warnings || []).length ? h('ul', { class: 'problems' }, info.warnings.map((w) => h('li', {}, w))) : null,
-    info.access_note ? h('p', { class: 'callout callout-warning' }, info.access_note) : null,
+    accessCallout(info),
     h('details', {}, h('summary', {}, `Files (${info.file_count})`),
       table(['Path', 'Size'], info.files.map((f) => [f.path, bytes(f.size)]), { caption: 'Files' })),
     info.readme_excerpt ? h('details', {}, h('summary', {}, 'Model card (untrusted text)'), h('pre', { class: 'code card-text', tabindex: '0' }, info.readme_excerpt)) : null,

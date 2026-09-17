@@ -18,7 +18,12 @@ const session = { results: [], jobs: [], done: new Set(), selectedId: null, comp
 // size and generation model start from Settings (ignored when the model does not offer them)
 const draft = {
   mode: 'generate', source: null, prompt: '', negative: '', size: pref('default_image_size'), n: 1, quality: 'standard',
-  steps: null, guidance: null, strength: 0.6, title: '', uncensored: true, qualityTags: true,
+  steps: null, guidance: null, strength: 0.6, title: '', qualityTags: true,
+  // The NSFW adapter is a real LoRA, not a label. On for generation (its LoRA matches
+  // Qwen-Image-2512 exactly); off for edits, where the only adapter available is a
+  // Qwen-Image LoRA that merely loads on 2511 by key and costs instruction following.
+  // The media router uses the same two defaults (T2I_ADAPTER_DEFAULT / EDIT_ADAPTER_DEFAULT).
+  uncensored: { generate: true, edit: false },
   model: { generate: pref('default_image_model'), edit: null }, editMode: {}, editQuality: 'fast',
 };
 
@@ -114,8 +119,11 @@ export default {
     const strength = slider({ label: 'Strength', min: 0, max: 1, step: 0.05, value: draft.strength, format: (v) => v.toFixed(2), hint: 'How far the result may move away from the source.' });
     const seed = seedField('image');
     const title = textInput({ value: draft.title, maxLength: 200, placeholder: 'Optional' });
-    const uncensored = toggle('Uncensored adapter', draft.uncensored, { hint: 'Qwen only: applies the NSFW-capable adapter (the default for this studio).' });
-    const qualityTags = toggle('Quality tags', draft.qualityTags, { hint: 'VisionmasterPro_V3 only: appends the quality tags this checkpoint was trained with.' });
+    const uncensored = toggle('Uncensored adapter', draft.uncensored.generate,
+      { hint: 'Qwen only: applies the NSFW-capable adapter.' });
+    const uncensoredHint = uncensored.querySelector('.field-hint');
+    const qualityTags = toggle('Quality tags', draft.qualityTags, { hint: 'VisionmasterPro_V3 only: appends the quality tags this checkpoint was trained with. Edits with this model always apply them.' });
+    uncensored.input.addEventListener('change', () => { draft.uncensored[adapterSlot()] = uncensored.input.checked; });
     const negative = h('textarea', { class: 'input', rows: 2, maxlength: 4000, placeholder: 'blurry, text, watermark…' });
     negative.value = draft.negative;
     const steps = numberInput({ min: 1, max: 100, step: 1, placeholder: 'Auto', value: draft.steps });
@@ -147,6 +155,8 @@ export default {
 
     // ------------------------------------------------------------ behaviour
     const current = () => pick(draft.mode);
+    // Generation and editing use different adapters, so they keep different defaults.
+    const adapterSlot = () => (draft.mode === 'generate' ? 'generate' : 'edit');
     const currentEditMode = () => {
       const m = current();
       if (!m || draft.mode !== 'edit') return null;
@@ -228,7 +238,12 @@ export default {
       genSection.hidden = !isGen;
       qualityField.hidden = !(isGen && m && (m.qualities || []).length);
       uncensored.hidden = !qwen;
-      qualityTags.hidden = !sdxl;
+      uncensored.input.checked = draft.uncensored[adapterSlot()];
+      uncensoredHint.textContent = isGen
+        ? 'Qwen only: applies the NSFW-capable adapter (matched to Qwen Image 2512; on by default in this studio).'
+        : 'Qwen only: applies the NSFW-capable adapter. It is a Qwen-Image LoRA, not a 2511 one: it loads, but it can weaken instruction following, so it is off by default for edits.';
+      // Only generation sends quality_tags; VisionmasterPro_V3 edits always apply them.
+      qualityTags.hidden = !(sdxl && isGen);
       // The negative prompt only matters where real guidance runs (not on 4-step Qwen edits).
       negField.hidden = !(isGen || (isEdit && (sdxl || quality === 'quality')));
       guidanceField.hidden = !isGen && !sdxl;
@@ -281,7 +296,7 @@ export default {
       steps.value = req.steps ?? a.steps ?? '';
       guidance.value = req.guidance ?? a.guidance ?? '';
       if (req.negative_prompt || a.negative_prompt) negative.value = req.negative_prompt || a.negative_prompt;
-      if (typeof req.uncensored === 'boolean') uncensored.input.checked = req.uncensored;
+      if (typeof req.uncensored === 'boolean') draft.uncensored[kind === 't2i' ? 'generate' : 'edit'] = req.uncensored;
       if (typeof req.quality_tags === 'boolean') qualityTags.input.checked = req.quality_tags;
       if (typeof req.strength === 'number') strength.setValue(req.strength);
       syncControls();
@@ -337,7 +352,7 @@ export default {
       if (kind !== 't2i' && !draft.source) return fail('Choose or upload a source image first.', sourceSection.querySelector('button'));
       const body = { kind, seed: seed.next() };
       if (model) body.image_model = model.id;
-      if (model && model.family === 'qwen-image') body.uncensored = uncensored.input.checked;
+      if (model && model.family === 'qwen-image') body.uncensored = draft.uncensored[adapterSlot()];
       if (model && model.family === 'sdxl' && kind === 't2i') body.quality_tags = qualityTags.input.checked;
       if (text) body.prompt = text;
       if (title.value.trim()) body.title = title.value.trim();
@@ -396,7 +411,7 @@ export default {
       Object.assign(draft, {
         prompt: prompt.textarea.value, negative: negative.value, n: Number(countChips.getValue()),
         quality: qualityChips.getValue(), steps: readNumber(steps, { integer: true }), guidance: readNumber(guidance),
-        strength: strength.getValue(), title: title.value, uncensored: uncensored.input.checked,
+        strength: strength.getValue(), title: title.value,
         qualityTags: qualityTags.input.checked, editQuality: editQualityChips.getValue(),
       });
       stage.destroy();

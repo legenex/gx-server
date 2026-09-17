@@ -43,9 +43,26 @@ UNCENSORED_TAGS = ("uncensored", "abliterated", "abliteration", "heretic", "nsfw
 
 
 class HFError(Exception):
-    def __init__(self, message: str, status: int = 502) -> None:
+    """A Hugging Face failure.
+
+    ``code`` is the machine-readable reason. It matters because "denied" has
+    several very different causes that need very different human actions, and
+    collapsing them into one message is what sent an earlier pass round in
+    circles creating new tokens for a gate that no token can open (B-030):
+
+    ``unauthenticated``   no token was sent, or the token is not accepted
+    ``gated_not_granted`` the token IS accepted, but this account has not been
+                          granted access to this repository
+    ``forbidden``         some other refusal
+    ``not_found`` / ``upstream``
+    """
+
+    def __init__(self, message: str, status: int = 502, code: str = "upstream",
+                 http_status: int | None = None) -> None:
         super().__init__(message)
         self.status = status
+        self.code = code
+        self.http_status = http_status
 
 
 def parse_ref(text: str) -> tuple[str, str | None]:
@@ -98,15 +115,38 @@ class HFClient:
         return value or None
 
     def token_state(self) -> dict:
+        """What the UI shows about the stored token. Never includes the token."""
         tok = self.token()
         if not tok:
+            # A file that exists but is group/world readable is refused by token().
+            try:
+                st = self.token_file.stat()
+            except FileNotFoundError:
+                return {"configured": False}
+            if st.st_mode & 0o077:
+                return {"configured": True, "valid": False, "code": "bad_permissions",
+                        "error": f"{self.token_file} must be mode 0600 "
+                                 f"(it is {oct(st.st_mode & 0o777)}); it is ignored until that is fixed"}
             return {"configured": False}
         try:
             who = self._get_json("/api/whoami-v2", auth=True, cache=False)
-            return {"configured": True, "valid": True, "user": who.get("name"),
-                    "type": (who.get("auth") or {}).get("accessToken", {}).get("role")}
         except HFError as exc:
-            return {"configured": True, "valid": False, "error": str(exc)}
+            return {"configured": True, "valid": False, "code": exc.code, "error": str(exc)}
+        at = (who.get("auth") or {}).get("accessToken") or {}
+        fine = at.get("fineGrained") or {}
+        role = at.get("role")
+        return {
+            "configured": True,
+            "valid": True,
+            "user": who.get("name"),
+            "account_type": who.get("type"),
+            "type": role,
+            "token_name": at.get("displayName"),
+            "created_at": at.get("createdAt"),
+            # The permission that governs gated repositories. `read`/`write`
+            # tokens carry it implicitly; a fine-grained token must be given it.
+            "gated_repos": bool(fine.get("canReadGatedRepos")) if role == "fineGrained" else role in ("read", "write"),
+        }
 
     def set_token(self, value: str) -> dict:
         value = (value or "").strip()
@@ -142,12 +182,25 @@ class HFClient:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 data = resp.read(limit + 1)
         except urllib.error.HTTPError as exc:
-            if exc.code in (401, 403):
-                raise HFError("access denied by Hugging Face (gated or private; a token with access is "
-                              "required)", exc.code) from None
+            # Hugging Face names the reason in its own headers. Keep it: 401 and
+            # 403 need opposite actions (supply a token vs. be granted access).
+            hf_code = exc.headers.get("X-Error-Code") or ""
+            hf_msg = (exc.headers.get("X-Error-Message") or "").strip()[:300]
+            if exc.code == 401:
+                raise HFError(
+                    hf_msg or ("Hugging Face did not accept a token for this request"
+                               if tok else "this resource needs a Hugging Face token"),
+                    401, code="unauthenticated", http_status=401) from None
+            if exc.code == 403:
+                gated = hf_code == "GatedRepo" or "authorized list" in hf_msg or "restricted" in hf_msg
+                raise HFError(
+                    hf_msg or "Hugging Face refused this request for this account",
+                    403, code="gated_not_granted" if gated else "forbidden", http_status=403) from None
             if exc.code == 404:
-                raise HFError("not found on Hugging Face", 404) from None
-            raise HFError(f"Hugging Face returned HTTP {exc.code}") from None
+                raise HFError(hf_msg or "not found on Hugging Face", 404,
+                              code="not_found", http_status=404) from None
+            raise HFError(f"Hugging Face returned HTTP {exc.code}", code="upstream",
+                          http_status=exc.code) from None
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             raise HFError(f"Hugging Face unreachable: {getattr(exc, 'reason', exc)}") from None
         if len(data) > limit:
@@ -196,6 +249,49 @@ class HFClient:
             })
         return out
 
+    def _access(self, repo: str, sha: str, files: list[dict], gated: Any) -> dict:
+        """Can THIS deployment actually download this repository's files?
+
+        Repository metadata and repository *files* are gated separately: a
+        gated repo answers 200 for `/api/models/...` and 403 for
+        `resolve/...` until the account has been granted access. Reading the
+        metadata therefore proves nothing, which is why this probes a real
+        file and reports the exact reason and the exact action (B-030).
+        """
+        if not gated:
+            return {"ok": True, "reason": "public", "message": None, "action": None}
+        state = self.token_state()
+        probe = next((str(f["path"]) for f in files if str(f["path"]).endswith(".json")), None)
+        if probe is None:
+            return {"ok": True, "reason": "not_probed", "probed_file": None, "action": None,
+                    "message": "this gated repository has no small file to probe; access is unverified"}
+        try:
+            self._get(f"/{repo}/resolve/{sha}/{urllib.parse.quote(probe)}", limit=MAX_SMALL_FILE)
+        except HFError as exc:
+            out = {"ok": False, "reason": exc.code, "probed_file": probe,
+                   "http_status": exc.http_status, "message": str(exc),
+                   "token_user": state.get("user") if state.get("valid") else None}
+            if exc.code == "unauthenticated":
+                out["action"] = ("Save a Hugging Face access token in Model Manager. "
+                                 "A fine-grained token also needs the "
+                                 "'Read access to contents of all public gated repos you can access' permission."
+                                 if not state.get("configured") else
+                                 "The stored token was not accepted. Replace it in Model Manager.")
+            elif exc.code == "gated_not_granted":
+                who = state.get("user") or "your Hugging Face account"
+                out["action"] = (f"The token works and identifies {who}, but that account is not on this "
+                                 f"repository's authorized list. Open https://huggingface.co/{repo} in a "
+                                 f"browser signed in as {who} and accept the model's terms (or request "
+                                 f"access). A new token cannot fix this.")
+                if state.get("valid") and state.get("gated_repos") is False:
+                    out["action"] = str(out["action"]) + (" The stored token also lacks the gated-repo "
+                                                          "permission; grant it as well.")
+            else:
+                out["action"] = "Hugging Face refused the file. The message above is theirs, verbatim."
+            return out
+        return {"ok": True, "reason": "granted", "probed_file": probe, "action": None,
+                "message": None, "token_user": state.get("user") if state.get("valid") else None}
+
     def info(self, ref: str) -> dict:
         repo, revision = parse_ref(ref)
         path = f"/api/models/{repo}" + (f"/revision/{urllib.parse.quote(revision, safe='')}" if revision else "")
@@ -218,16 +314,9 @@ class HFClient:
         gguf = data.get("gguf") or {}
         classification = classify(repo, tags, files, config, card)
         gated = data.get("gated") or False
-        accessible = True
-        access_note = None
-        if gated:
-            try:
-                probe_file = next((str(f["path"]) for f in files if str(f["path"]).endswith(".json")), None)
-                if probe_file:
-                    self._get(f"/{repo}/resolve/{sha}/{urllib.parse.quote(probe_file)}", limit=8 << 20)
-            except HFError as exc:
-                accessible = False
-                access_note = str(exc)
+        access = self._access(repo, sha, files, gated)
+        accessible = access["ok"]
+        access_note = access.get("message")
         return {
             "repository": repo,
             "requested_revision": revision,
@@ -242,6 +331,7 @@ class HFClient:
             "gated": gated,
             "accessible": accessible,
             "access_note": access_note,
+            "access": access,
             "private": data.get("private", False),
             "last_modified": data.get("lastModified"),
             "downloads": data.get("downloads"),

@@ -139,7 +139,11 @@ interface ControlProps<V> extends FieldProps {
 
 function TextControl({ field, place, common, wrap, value, onChange, id }: ControlProps<string>) {
   const [local, setLocal] = useState(value);
-  useEffect(() => { setLocal(value); }, [value]);
+  const [synced, setSynced] = useState(value);
+  if (synced !== value) {          // the value changed elsewhere (undo, AI draft, template)
+    setSynced(value);
+    setLocal(value);
+  }
   const tooLong = field.max_length !== undefined && local.length > field.max_length;
   const badPattern = Boolean(field.pattern && local && !new RegExp(field.pattern).test(local));
   const error = tooLong ? `At most ${String(field.max_length)} characters.` : badPattern ? 'This value has an invalid format.' : undefined;
@@ -161,7 +165,11 @@ function TextControl({ field, place, common, wrap, value, onChange, id }: Contro
 
 function NumberControl({ field, place, common, wrap, value, onChange, id, disabled }: ControlProps<number | null>) {
   const [local, setLocal] = useState(value === null ? '' : String(value));
-  useEffect(() => { setLocal(value === null ? '' : String(value)); }, [value]);
+  const [synced, setSynced] = useState(value);
+  if (synced !== value) {
+    setSynced(value);
+    setLocal(value === null ? '' : String(value));
+  }
   const n = local.trim() === '' ? null : Number(local);
   let error: string | undefined;
   if (n !== null && (!Number.isFinite(n) || (field.min !== undefined && n < field.min) || (field.max !== undefined && n > field.max))) {
@@ -220,14 +228,17 @@ function SelectControl({ field, node, place, common, wrap, value, onChange, id }
 function AssetControl({ field, node, wrap, value, id, disabled }: ControlProps<string>) {
   const { api } = useApp();
   const { actions } = useEditor();
-  const [asset, setAsset] = useState<Asset | null>(null);
-  const [missing, setMissing] = useState(false);
+  // Keyed by the chosen id, so a new choice never shows the previous preview.
+  const [loaded, setLoaded] = useState<{ id: string; asset: Asset | null } | null>(null);
+  const current = loaded?.id === value ? loaded : null;
+  const asset = current?.asset ?? null;
+  const missing = current !== null && current.asset === null;
   const kind = field.asset_type ?? (typeof node.config.asset_type === 'string' ? node.config.asset_type : undefined);
   useEffect(() => {
+    if (!value) return undefined;
     let alive = true;
-    setMissing(false);
-    if (!value) { setAsset(null); return undefined; }
-    api.asset(value).then((a) => { if (alive) setAsset(a); }, () => { if (alive) { setAsset(null); setMissing(true); } });
+    api.asset(value).then((a) => { if (alive) setLoaded({ id: value, asset: a }); },
+      () => { if (alive) setLoaded({ id: value, asset: null }); });
     return () => { alive = false; };
   }, [api, value]);
   const accept = kind === 'video' ? 'video/mp4,video/webm,video/quicktime'
@@ -258,8 +269,13 @@ function AssetControl({ field, node, wrap, value, id, disabled }: ControlProps<s
 }
 
 function TagsControl({ field, place, common, wrap, value, onChange, id }: ControlProps<string[]>) {
-  const [local, setLocal] = useState(value.join(', '));
-  useEffect(() => { setLocal(value.join(', ')); }, [value]);
+  const joined = value.join(', ');
+  const [local, setLocal] = useState(joined);
+  const [synced, setSynced] = useState(joined);
+  if (synced !== joined) {
+    setSynced(joined);
+    setLocal(joined);
+  }
   const tags = local.split(',').map((t) => t.trim()).filter(Boolean);
   const error = tags.length > (field.max_length ?? 12) ? `At most ${String(field.max_length ?? 12)} tags.`
     : tags.some((t) => t.length > 40) ? 'Tags are at most 40 characters.' : undefined;
@@ -287,7 +303,11 @@ function PairsControl({ field, node, wrap, value, onChange, id, disabled }: Cont
   const aLabel = headers ? 'Header' : (field.id === 'speakers' ? 'Speaker' : 'Name');
   const bLabel = headers ? 'Secret name' : (field.id === 'schema' ? 'Type' : field.id === 'speakers' ? 'Voice' : 'Value');
   const [rows, setRows] = useState<Record<string, string>[]>(value);
-  useEffect(() => { setRows(value); }, [value]);
+  const [synced, setSynced] = useState(value);
+  if (synced !== value) {
+    setSynced(value);
+    setRows(value);
+  }
   const keyOk = (k: string | undefined) => (headers ? /^[A-Za-z0-9][A-Za-z0-9-]{0,63}$/ : /^[A-Za-z_][A-Za-z0-9_ -]{0,63}$/)
     .test(k ?? '');
   const valueOk = (v: string | undefined) => (headers ? /^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(v ?? '') : true);
@@ -302,7 +322,7 @@ function PairsControl({ field, node, wrap, value, onChange, id, disabled }: Cont
   const control = (
     <div className="gxf-pairs nodrag" id={id} role="group" aria-label={field.label}>
       {rows.map((row, i) => (
-        <div className="gxf-pair" key={`${String(i)}`}>
+        <div className="gxf-pair" key={String(i)}>
           <input className="input" aria-label={`${aLabel} ${String(i + 1)}`} value={row[a] ?? ''} disabled={disabled}
             onChange={(ev) => { set(i, a, ev.target.value); }} />
           {field.id === 'schema' ? (

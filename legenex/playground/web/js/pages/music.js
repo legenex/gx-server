@@ -4,11 +4,10 @@
 import { api, getAsset, getMusicModel, searchAssets, upload } from '../api.js';
 import { audioPlayer } from '../audio.js';
 import { OP_LABEL, deleteWithConfirm, detailsDrawer, downloadButtons, emitAsset, onAsset, pickAsset, recipeOf, renameAsset, sourceChip, toggleFavourite } from '../assets.js';
-import { clear, debounce, h, mmss, titleOf, toast, truncate, uid, replace } from '../dom.js';
+import { clear, h, mmss, titleOf, toast, truncate, uid, replace } from '../dom.js';
 import { icon } from '../icons.js';
 import { center, friendlyError, isMusic, jobCard, phaseOf, submitMusic } from '../jobs.js';
 import { navigate } from '../nav.js';
-import { pref } from '../prefs.js';
 import {
   badge, button, callout, chips, composer, disclosure, dropzone, emptyState, field, iconButton, kv, numberInput,
   pageHeader, readNumber, seedField, select, skeletonLines, slider, tabs, textInput, toggle,

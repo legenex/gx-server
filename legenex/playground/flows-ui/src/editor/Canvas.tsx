@@ -124,12 +124,20 @@ export function Canvas({ onReject, onAddAt, reducedMotion, theme }: {
     if (!result.ok) onReject(result.reason);
   }, [store, onReject]);
 
-  const onConnectEnd = useCallback<OnConnectEnd>((_ev, cs: FinalConnectionState) => {
+  const onConnectEnd = useCallback<OnConnectEnd>((_ev, state: FinalConnectionState) => {
+    // @xyflow types the refused branch as fully populated, but a drop on empty
+    // canvas (or on a node body) really does leave the node or handle unset.
+    const cs: {
+      isValid: boolean | null;
+      fromNode: { id: string } | null; toNode: { id: string } | null;
+      fromHandle: { id?: string | null; type: string } | null; toHandle: { id?: string | null } | null;
+    } = state;
     if (cs.isValid !== false || !cs.fromNode || !cs.toNode || !cs.fromHandle?.id || !cs.toHandle?.id) return;
-    const from = cs.fromHandle.type === 'source' ? cs.fromNode : cs.toNode;
-    const to = cs.fromHandle.type === 'source' ? cs.toNode : cs.fromNode;
-    const fromHandle = cs.fromHandle.type === 'source' ? cs.fromHandle.id : cs.toHandle.id;
-    const toHandle = cs.fromHandle.type === 'source' ? cs.toHandle.id : cs.fromHandle.id;
+    const outward = cs.fromHandle.type === 'source';
+    const from = outward ? cs.fromNode : cs.toNode;
+    const to = outward ? cs.toNode : cs.fromNode;
+    const fromHandle = outward ? cs.fromHandle.id : cs.toHandle.id;
+    const toHandle = outward ? cs.toHandle.id : cs.fromHandle.id;
     const result = checkConnection(store.doc, cat, from.id, fromHandle, to.id, toHandle);
     if (!result.ok) onReject(result.reason);
   }, [store, cat, onReject]);

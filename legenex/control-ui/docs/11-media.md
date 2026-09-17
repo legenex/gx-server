@@ -41,9 +41,18 @@ use Qwen Image Edit 2511, exactly as before.
 source through its reference latent and needs a *full* denoise. The Images
 page sent `strength` 0.6, and the router used it as the sampler denoise on
 a 4-step schedule that started from the source itself, so the result was
-almost the source (measured: see `coordination/build-v3/img.md`). Edits now
-always run the full denoise with the official 2511 reference method
-(`index_timestep_zero`) and CFGNorm.
+almost the source. Edits now always run the full denoise with the official
+2511 reference method (`index_timestep_zero`) and CFGNorm; `strength` reaches
+the sampler only for the modes that drop the reference latent. The live
+before/after measurements are in `coordination/build-v3/img.md`.
+
+**The edit adapter is off by default.** The NSFW adapter for edits
+(`ScottzillaSystems/qwen-image-edit-plus-nsfw-lora`) is a Qwen-Image LoRA, not
+a 2511 one: it loads by key but can weaken instruction following. Both the
+router (`EDIT_ADAPTER_DEFAULT`) and the Images page therefore leave it at 0
+for edits and variations, and at 0.6 for generation, where the adapter matches
+Qwen-Image-2512. Send `uncensored: true` (or `adapter_strength`) on an edit to
+turn it on.
 
 **Edit modes** (`edit_mode`) change what is sent to the model:
 
@@ -68,6 +77,30 @@ steps.
 = may change. The router samples only inside the (grown, feathered) mask and
 pastes the result over the source, so pixels outside it are the source's
 own. Full transformation does not take a mask.
+
+## Image history, provenance and lineage (Build V3)
+
+Every image job is recorded in the application database (migration
+`070_images.sql`): `img_generations` (the request, the model, the edit plan,
+the checkpoint repository and revision that actually ran, timings and the
+failure reason), `img_outputs` (one row per produced image, with its hash and,
+for an edit, the source it came from) and `img_checkpoints` (which checkpoint
+served which model, and how often). The Library still holds the pixels.
+
+For an edit or a variation the Control Center also compares the result with
+its source and stores a 64-bit difference hash and the bit distance between
+the two. A distance of 6 or less is flagged `near_duplicate`: that is the
+signature of "the edit gave me my picture back", and it makes the fault
+visible without opening the images.
+
+Read it back (browser routes; session authentication and same-origin apply):
+
+| Route | What |
+|---|---|
+| `GET /api/images/generations` | history, filtered by `kind`, `image_model` or `source` |
+| `GET /api/images/generations/{job id}` | one generation with its outputs |
+| `GET /api/images/assets/{asset id}/lineage` | the recorded edit chain, oldest first |
+| `GET /api/images/models` | the catalogue plus the checkpoints actually used |
 | text → video, image → video | Wan 2.2 A14B T2V / I2V fp8 + rzgar uncensored 4-step LoRAs; text → video also takes your own Wan 2.2 LoRAs (see **Video LoRAs**) |
 | video edit | keyframe propagation: the first frame is edited with Qwen-Image-Edit, then Wan 2.2 I2V re-renders the clip |
 
@@ -146,7 +179,8 @@ curl -s "$GX_BASE/videos/$VIDEO_ID/remix" -H "Authorization: Bearer $GX_API_KEY"
 | `edit_quality` | Qwen edits | `fast` (4 steps) or `quality` (20 steps, CFG 4) |
 | `mask` | image edits | PNG, white = may change, same aspect ratio as the image |
 | `quality_tags` | VisionmasterPro_V3 | `false` stops the router appending the checkpoint's quality tags |
-| `uncensored` | Qwen images | `false` disables the NSFW adapter |
+| `uncensored` | Qwen images | `true`/`false` selects the NSFW adapter. Generation: on by default (0.6). Edits and variations: **off** by default; `true` sets 0.8. `adapter_strength` (0-1.5) overrides both. |
+| `quality_tags` | VisionmasterPro_V3 | `false` leaves out the NoobAI quality tags. Generation only in the Playground; the API accepts it on edits too, where it defaults to `true`. |
 | `strength` | edits | image: 0–1 where the edit mode uses it (see above); variation: below 0.5 keeps the scene, higher re-imagines it; video: ≥ 0.75 instruction edit, 0.5–0.75 keeps more structure, lower = light restyle |
 | `seconds` | video | 0.5–10 (frames are snapped to Wan's 4k+1 rule) |
 

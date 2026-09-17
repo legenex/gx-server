@@ -27,20 +27,28 @@ export function Inspector({ nodeId, tab, onTab, onClose }: {
   const spec = node ? cat.get(node.type) : undefined;
   const baseId = useId();
   const headingRef = useRef<HTMLHeadingElement>(null);
-  const [detail, setDetail] = useState<NodeRunDetail | null>(null);
-  const [detailError, setDetailError] = useState('');
+  // The fetched detail is kept under the key it belongs to, so switching node,
+  // run or tab shows nothing stale without resetting state inside the effect.
+  const [detail, setDetail] = useState<{ key: string; value: NodeRunDetail | null; error: string } | null>(null);
   const nodeRun = run?.nodes?.[nodeId];
   const runId = run?.id;
   const status = nodeRun?.status;
+  const detailKey = `${runId ?? ''}:${nodeId}:${status ?? ''}:${nodeRun?.log_count ?? 0}`;
+  const shown = detail?.key === detailKey ? detail : null;
+  const detailError = shown?.error ?? '';
 
   useEffect(() => { headingRef.current?.focus(); }, [nodeId]);
   useEffect(() => {
-    if (!runId || !nodeRun || (tab !== 'logs' && tab !== 'payload')) { setDetail(null); return undefined; }
+    if (!runId || !nodeRun || (tab !== 'logs' && tab !== 'payload')) return undefined;
     let alive = true;
-    api.nodeDetail(runId, nodeId).then((d) => { if (alive) { setDetail(d); setDetailError(''); } },
-      (err: unknown) => { if (alive) setDetailError(err instanceof Error ? err.message : String(err)); });
+    api.nodeDetail(runId, nodeId).then((d) => { if (alive) setDetail({ key: detailKey, value: d, error: '' }); },
+      (err: unknown) => {
+        if (alive) {
+          setDetail({ key: detailKey, value: null, error: err instanceof Error ? err.message : String(err) });
+        }
+      });
     return () => { alive = false; };
-  }, [api, runId, nodeId, tab, status, nodeRun?.log_count, nodeRun]);
+  }, [api, runId, nodeId, tab, detailKey, nodeRun]);
 
   if (!node || !spec) return null;
   const name = nodeName(node, cat);
@@ -153,11 +161,11 @@ export function Inspector({ nodeId, tab, onTab, onClose }: {
               <dt>Started</dt><dd>{when(nodeRun.started_at)}</dd>
               <dt>Model used</dt><dd>{nodeRun.model ?? '—'}</dd>
               <dt>Resource state</dt>
-              <dd>{nodeRun.resource ? String(nodeRun.resource.reason ?? nodeRun.resource.code ?? '')
+              <dd>{nodeRun.resource ? nodeRun.resource.reason ?? nodeRun.resource.code ?? ''
                 : nodeActive ? 'Admitted' : '—'}</dd>
               <dt>Jobs</dt>
               <dd>{nodeRun.jobs.length ? nodeRun.jobs.map((j) => `${j.kind} ${j.id}`).join(', ') : '—'}</dd>
-              <dt>Run</dt><dd>{run ? `${run.mode} · ${run.id}` : '—'}</dd>
+              <dt>Run</dt><dd>{`${run.mode} · ${run.id}`}</dd>
             </dl>
           ) : <p className="gxf-muted">This node has not run in the selected run yet.</p>
         ) : null}
@@ -171,9 +179,9 @@ export function Inspector({ nodeId, tab, onTab, onClose }: {
         ) : null}
         {tab === 'logs' ? (
           detailError ? <p className="gxf-error-text" role="alert">{detailError}</p>
-            : detail?.logs.length ? (
+            : shown?.value?.logs.length ? (
               <ol className="gxf-logs" aria-live="polite">
-                {detail.logs.map((l, i) => (
+                {shown.value.logs.map((l, i) => (
                   <li key={`${String(l.ts)}-${String(i)}`}>
                     <time dateTime={new Date(l.ts * 1000).toISOString()}>{new Date(l.ts * 1000).toLocaleTimeString()}</time>
                     <span>{l.msg}</span>
@@ -183,7 +191,7 @@ export function Inspector({ nodeId, tab, onTab, onClose }: {
             ) : <p className="gxf-muted">{nodeRun ? 'No log lines yet.' : 'Run the node to see its log.'}</p>
         ) : null}
         {tab === 'payload' ? (
-          detail ? <pre className="gxf-json-preview">{JSON.stringify(detail.payload, null, 2)}</pre>
+          shown?.value ? <pre className="gxf-json-preview">{JSON.stringify(shown.value.payload, null, 2)}</pre>
             : <p className="gxf-muted">{nodeRun ? 'Loading…' : 'Run the node to see what was sent.'}</p>
         ) : null}
       </div>

@@ -9,6 +9,13 @@ import catalogJson from './fixtures/catalog.json';
 
 const cat = indexCatalog(catalogJson as unknown as Catalog);
 
+/** Indexing helper: `noUncheckedIndexedAccess` is on and non-null assertions are banned. */
+function at<T>(list: readonly T[], index: number): T {
+  const item = list[index];
+  if (item === undefined) throw new Error(`no element ${String(index)}`);
+  return item;
+}
+
 function doc(): FlowDoc {
   return {
     ...emptyDoc('Test'),
@@ -56,7 +63,7 @@ describe('graph rules', () => {
   it('enforces single inputs and lists keyboard connection options', () => {
     const d = doc();
     d.edges.push({ id: 'e1', source: 't', source_port: 'text', target: 'g', target_port: 'prompt' });
-    d.nodes.push({ ...d.nodes[0]!, id: 't2' });
+    d.nodes.push({ ...at(d.nodes, 0), id: 't2' });
     expect(checkConnection(d, cat, 't2', 'text', 'g', 'prompt').reason).toContain('single connection');
     const options = connectOptions(d, cat, 'g');
     expect(options.map((o) => `${o.target}:${o.targetPort}`)).toContain('v:image');
@@ -69,11 +76,11 @@ describe('graph rules', () => {
     expect(issues.find((i) => i.node_id === 'g')?.code).toBe('missing_input');
     expect(issues.find((i) => i.node_id === 'v')?.code).toBe('missing_input');
     expect(issues.find((i) => i.node_id === 'a')?.code).toBe('missing_field');
-    d.nodes[1]!.config.prompt = 'a lighthouse';
+    at(d.nodes, 1).config.prompt = 'a lighthouse';
     expect(readiness(d, cat).some((i) => i.node_id === 'g')).toBe(false);
     const live = new Map([['text.input', 'down']]);
     expect(readiness(d, cat, live).find((i) => i.node_id === 't')?.code).toBe('unavailable');
-    d.nodes[4]!.disabled = true;
+    at(d.nodes, 4).disabled = true;
     expect(readiness(d, cat).some((i) => i.node_id === 'a')).toBe(false);
   });
 });
@@ -155,10 +162,10 @@ describe('editor store', () => {
     const copies = s.duplicateNodes([a, b]);
     expect(copies).toHaveLength(2);
     expect(s.doc.edges).toHaveLength(2);
-    expect(s.node(copies[0]!)?.locked).toBe(false);
+    expect(s.node(at(copies, 0))?.locked).toBe(false);
     const out = s.serialize();
-    out.nodes[0]!.label = 'mutated';
-    expect(s.doc.nodes[0]!.label).toBe('');
+    at(out.nodes, 0).label = 'mutated';
+    expect(at(s.doc.nodes, 0).label).toBe('');
     expect(JSON.parse(JSON.stringify(out))).toEqual(out);
   });
 

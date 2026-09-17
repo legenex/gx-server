@@ -10,9 +10,11 @@ const assetCache = new Map<string, Promise<Asset>>();
 
 export function useAsset(id: string | undefined): Asset | null {
   const { api } = useApp();
-  const [asset, setAsset] = useState<Asset | null>(null);
+  // Keyed by the asset id: a different id shows nothing until it has loaded,
+  // instead of briefly showing the previous asset.
+  const [loaded, setLoaded] = useState<{ id: string; asset: Asset | null } | null>(null);
   useEffect(() => {
-    if (!id) { setAsset(null); return undefined; }
+    if (!id) return undefined;
     let alive = true;
     let p = assetCache.get(id);
     if (!p) {
@@ -20,10 +22,10 @@ export function useAsset(id: string | undefined): Asset | null {
       assetCache.set(id, p);
       p.catch(() => assetCache.delete(id));
     }
-    p.then((a) => { if (alive) setAsset(a); }, () => { if (alive) setAsset(null); });
+    p.then((a) => { if (alive) setLoaded({ id, asset: a }); }, () => { if (alive) setLoaded({ id, asset: null }); });
     return () => { alive = false; };
   }, [api, id]);
-  return asset;
+  return loaded && loaded.id === id ? loaded.asset : null;
 }
 
 export function Waveform({ peaks, progress }: { peaks: [number, number][]; progress: number }) {

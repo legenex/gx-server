@@ -56,22 +56,35 @@ async function waitJob(page, id, label) {
   }
 }
 
+// The stage viewer rebuilds its <video> element whenever the workspace
+// re-renders (workspace.js renderViewer() clears and re-appends), so a handle
+// taken right after the job completes can be detached by the next render: the
+// element then reports playOk with currentTime frozen at 0. Re-locate the live
+// element and measure again rather than treating that as a playback failure.
 async function playVideo(page) {
-  const video = page.locator('#viewer video');
-  await expect(video).toBeVisible({ timeout: 60_000 });
-  const played = await video.evaluate(async (v) => {
-    v.muted = true;
-    if (v.readyState < 2) await new Promise((r) => { v.addEventListener('loadeddata', r, { once: true }); setTimeout(r, 20000); });
-    await v.play();
-    const t0 = v.currentTime;
-    await new Promise((r) => setTimeout(r, 1500));
-    const out = { readyState: v.readyState, duration: v.duration, advanced: v.currentTime - t0, width: v.videoWidth, height: v.videoHeight };
-    v.pause();
-    return out;
-  });
-  expect(played.advanced).toBeGreaterThan(0.2);
-  expect(played.width).toBeGreaterThan(0);
-  return played;
+  let last = null;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    const video = page.locator('#viewer video');
+    await expect(video).toBeVisible({ timeout: 60_000 });
+    last = await video.evaluate(async (v) => {
+      v.muted = true;
+      if (v.readyState < 2) await new Promise((r) => { v.addEventListener('loadeddata', r, { once: true }); setTimeout(r, 20000); });
+      await v.play();
+      const t0 = v.currentTime;
+      await new Promise((r) => setTimeout(r, 1500));
+      const out = { readyState: v.readyState, duration: v.duration, advanced: v.currentTime - t0,
+        width: v.videoWidth, height: v.videoHeight, src: v.currentSrc, attached: v.isConnected, error: v.error ? v.error.code : null };
+      v.pause();
+      return out;
+    });
+    if (last.advanced > 0.2) break;
+    note('playback-retry', { attempt, ...last });
+    await page.waitForTimeout(2000);
+  }
+  expect(last.advanced, JSON.stringify(last)).toBeGreaterThan(0.2);
+  expect(last.width).toBeGreaterThan(0);
+  expect(last.error).toBeNull();
+  return last;
 }
 
 async function generate(page, label, withLora) {

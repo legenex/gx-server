@@ -56,7 +56,8 @@ export function TemplatesDialog({ onClose, onUse, canSave, onSaveCurrent }: {
   onClose: () => void;
   onUse: (templateId: string, name: string) => Promise<void>;
   canSave: boolean;
-  onSaveCurrent: (name: string, description: string) => Promise<void>;
+  /** Required when `canSave` is true (the editor); the flow browser has no current flow. */
+  onSaveCurrent?: (name: string, description: string) => Promise<void>;
 }) {
   const { api, host } = useApp();
   const [items, setItems] = useState<TemplateItem[] | null>(null);
@@ -111,7 +112,7 @@ export function TemplatesDialog({ onClose, onUse, canSave, onSaveCurrent }: {
           ))}
         </ul>
       )}
-      {canSave ? (
+      {canSave && onSaveCurrent ? (
         <form className="gxf-save-template" onSubmit={(ev) => {
           ev.preventDefault();
           void act('save', async () => { await onSaveCurrent(name.trim(), desc.trim()); setName(''); setDesc(''); load(); });
@@ -314,7 +315,7 @@ export function VariablesDialog({ onClose }: { onClose: () => void }) {
       {error ? <p className="form-error form-danger" role="alert">{error}</p> : null}
       <div className="gxf-pairs">
         {rows.map((r, i) => (
-          <div className="gxf-pair" key={`${String(i)}`}>
+          <div className="gxf-pair" key={String(i)}>
             <input className="input" aria-label={`Variable name ${String(i + 1)}`} value={r.key}
               onChange={(ev) => { setRows(rows.map((x, j) => (j === i ? { ...x, key: ev.target.value } : x))); }} />
             <input className="input" aria-label={`Variable value ${String(i + 1)}`} value={r.value}

@@ -448,7 +448,7 @@ class AgentStore:
     def __init__(self, connect: Callable, audit: Callable[..., None] | None = None,
                  clock: Callable[[], float] = time.time) -> None:
         self.connect = connect
-        self.audit = audit or (lambda **_: None)
+        self.audit = (lambda **_: None) if audit is None else audit
         self.clock = clock
 
     @staticmethod

@@ -337,6 +337,16 @@ class CallFlowTests(unittest.TestCase):
         self.assertEqual(tunnel.status, 101)
         return tunnel
 
+    def until(self, predicate, timeout=20, what="condition"):
+        """Wait for something a background thread does (the tool round trip, the post-call actions)."""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            value = predicate()
+            if value:
+                return value
+            time.sleep(0.02)
+        self.fail(f"{what} did not happen within {timeout}s")
+
     def wait_state(self, sid, state="ended", timeout=20):
         deadline = time.time() + timeout
         while time.time() < deadline:
@@ -363,6 +373,8 @@ class CallFlowTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(result["state"]["caller_name"], "Jane Doe")
         self.assertEqual(result["state"]["accident_state"], "TX")
+        # the engine gets the tool output back (it arrives on the engine socket, not the caller's)
+        self.until(lambda: self.node.stub.tool_results, what="tool result reaching the engine")
         self.assertIn("Still needed", self.node.stub.tool_results[0]["output"])
         tunnel.wait("state.updated")
         tunnel.wait("agent.speech.started")
@@ -380,7 +392,9 @@ class CallFlowTests(unittest.TestCase):
         self.assertEqual(view["result"]["intake_disposition"], "transferred")
         self.assertEqual(view["intake"]["data"]["transfer_status"], "connected")
         self.assertEqual(view["tools"][0]["name"], "update_intake_fields")
-        self.assertEqual(view["tools"][0]["ok"], 0)  # the model's call is saved, completion still missing fields
+        # ok mirrors the tool.result the model got: the save succeeded, and an intake that is not complete yet
+        # is not a tool failure (the missing fields come back in the spoken output instead)
+        self.assertEqual(view["tools"][0]["ok"], 1)
         self.assertIsNotNone(view["tools"][0]["latency_ms"])
         speakers = {t["speaker"] for t in view["transcript"]}
         self.assertEqual(speakers, {"caller", "agent"})
@@ -455,7 +469,11 @@ class CallFlowTests(unittest.TestCase):
         self.assertTrue(cfg_sent["system_prompt"].startswith("You are the intake specialist"))
         self.assertIn("This call is recorded.", cfg_sent["system_prompt"])
         tunnel.ws.send_binary(speech_like(0.8) + silence(1.0))
-        tunnel.wait("session.ended", timeout=30)  # the stub never calls end_call; end explicitly below
+        # end_call is this agent's only tool, so the stub calls it: the Control Center runs it, schedules the
+        # goodbye window and gx-call ends the call by itself.
+        self.until(lambda: self.node.stub.tool_results, what="end_call result reaching the engine")
+        self.assertEqual(self.node.stub.tool_results[0]["call_id"][:3], "tc_")
+        tunnel.wait("session.ended", timeout=30)
         self.wait_state(sid)
         deadline = time.time() + 20
         while time.time() < deadline and not self.manager.session_view(sid)["recording_asset_id"]:

@@ -169,7 +169,7 @@ export class EditorStore {
       const n = d.nodes.find((x) => x.id === id);
       if (!n) return;
       for (const [k, v] of Object.entries(patch)) {
-        if (v === undefined || v === null || v === '') delete n.config[k];
+        if (v === undefined || v === null || v === '') Reflect.deleteProperty(n.config, k);
         else n.config[k] = v;
       }
     }, `cfg:${id}:${keys}`);

@@ -11,7 +11,7 @@ export default tseslint.config(
   {
     languageOptions: {
       globals: { ...globals.browser, ...globals.node },
-      parserOptions: { projectService: { allowDefaultProject: ['eslint.config.js'] }, tsconfigRootDir: import.meta.dirname },
+      parserOptions: { projectService: { allowDefaultProject: ['eslint.config.js', 'scripts/check-fresh.mjs'] }, tsconfigRootDir: import.meta.dirname },
     },
     plugins: { 'react-hooks': reactHooks },
     rules: {
@@ -28,5 +28,6 @@ export default tseslint.config(
       '@typescript-eslint/no-confusing-void-expression': 'off',
     },
   },
-  { files: ['eslint.config.js'], ...tseslint.configs.disableTypeChecked },
+  // Build scripts are plain Node ES modules outside the TypeScript project.
+  { files: ['eslint.config.js', 'scripts/**/*.mjs'], ...tseslint.configs.disableTypeChecked },
 );
