@@ -37,6 +37,7 @@ class MusicService:
         self._stop = threading.Event()
         self._current: str | None = None
         self._mem_low: dict[str, float] = {}
+        self._requeues: dict[str, int] = {}
         self._disk_cache: dict | None = None
         for d in (cfg.jobs_dir, cfg.uploads_dir, cfg.data_root / "api_audio"):
             d.mkdir(parents=True, exist_ok=True)
@@ -241,6 +242,9 @@ class MusicService:
             self._current = job["id"]
             try:
                 self._run(job)
+            except EngineError as exc:
+                if not self._requeue_if_reclaimed(job["id"], exc):
+                    self._fail(job["id"], exc)
             except Exception as exc:  # noqa: BLE001 - never let the worker die
                 log.exception("job %s crashed", job["id"])
                 msg = exc.message if isinstance(exc, MusicError) else "the track could not be generated"
@@ -251,6 +255,38 @@ class MusicService:
                 self.store.event("job_failed", job_id=job["id"], code=code)
             finally:
                 self._current = None
+
+    #: how often one job may be put back in the queue after gx-max or
+    #: Maintenance reclaimed the node mid-render
+    MAX_REQUEUES = 3
+
+    def _requeue_if_reclaimed(self, job_id: str, exc: EngineError) -> bool:
+        """A render stopped because gx-max (or Maintenance) reclaimed node 2 is
+        not the user's failure: put the job back in the queue, honestly
+        labelled, and run it again once the node is free (D-036)."""
+        if exc.code != "engine_interrupted":
+            return False
+        block = self.engine.policy_block_reason()
+        if not block:
+            return False
+        count = self._requeues.get(job_id, 0) + 1
+        if count > self.MAX_REQUEUES:
+            return False
+        self._requeues[job_id] = count
+        self.store.update_job(job_id, engine_task_id=None, progress=None)
+        self.store.transition(job_id, st.WAITING, f"{block[1]} (the interrupted render restarts then)")
+        self.store.event("job_requeued", job_id=job_id, reason=block[0], attempt=count)
+        log.warning("job %s re-queued after the node was reclaimed (%s)", job_id, block[0])
+        return True
+
+    def _fail(self, job_id: str, exc: Exception) -> None:
+        log.error("job %s failed: %s", job_id, exc)
+        msg = exc.message if isinstance(exc, MusicError) else "the track could not be generated"
+        code = exc.code if isinstance(exc, MusicError) else "internal_error"
+        self.store.update_job(job_id, error_code=code, error_message=msg,
+                              retryable=int(getattr(exc, "retryable", True)))
+        self.store.transition(job_id, st.FAILED)
+        self.store.event("job_failed", job_id=job_id, code=code)
 
     def _cancelled(self, job_id: str) -> bool:
         job = self.store.get_job(job_id)
@@ -513,6 +549,8 @@ class MusicService:
         self._sample_memory()
         block = self.engine.gxmax_block_reason()
         if block:
+            if self.engine.state != READY and not self.engine.docker.exists(self.cfg.engine_container):
+                return "held"  # nothing loaded: nothing to tear down (no log noise every tick)
             log.warning("gx-max claims node 2; unloading gx-music now")
             self.engine.unload("gx-max drain")
             self.store.event("engine_unloaded", reason="gx-max drain")

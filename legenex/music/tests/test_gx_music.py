@@ -632,6 +632,34 @@ class ServiceIntegrationTests(unittest.TestCase):
         self.assertFalse(self.h.docker.exists("gx-music"))
         self.assertFalse(self.h.guard.registered)
 
+    def test_gxmax_reclaim_requeues_the_interrupted_job(self):
+        svc = self.h.service
+        _, j, _ = self.h.call("POST", "/v1/music/generations", {"prompt": "x"})
+        jid = j["id"]
+        self.h.wait(jid)  # let the first run finish normally, then simulate a reclaim on a new job
+        _, j2, _ = self.h.call("POST", "/v1/music/generations", {"prompt": "y"})
+        svc.stop()  # stop the worker so the test drives the job itself
+        self.h.cfg.gxmax_hold_file.write_text("x")
+        err = EngineError("the music engine stopped during generation (the node was reclaimed)",
+                          code="engine_interrupted", retryable=True)
+        self.assertTrue(svc._requeue_if_reclaimed(j2["id"], err))
+        job = self.h.store.get_job(j2["id"])
+        self.assertEqual(job["status"], "waiting_for_resource")
+        self.assertIn("gx-max", job["detail"])
+        # bounded
+        for _ in range(svc.MAX_REQUEUES - 1):
+            self.assertTrue(svc._requeue_if_reclaimed(j2["id"], err))
+        self.assertFalse(svc._requeue_if_reclaimed(j2["id"], err))
+        # other errors, or no reclaim, are real failures
+        self.h.cfg.gxmax_hold_file.unlink()
+        self.assertFalse(svc._requeue_if_reclaimed("mus-" + "0" * 32, err))
+        self.assertFalse(svc._requeue_if_reclaimed(j2["id"], EngineError("boom")))
+
+    def test_reaper_is_quiet_while_gxmax_holds_an_unloaded_node(self):
+        self.h.cfg.gxmax_hold_file.write_text("x")
+        self.assertEqual(self.h.service.reap_once(), "held")
+        self.assertFalse(any(c[0] == "stop" for c in self.h.docker.calls))
+
     def test_maintenance_blocks_new_loads_and_unloads_an_idle_engine(self):
         eng = self.h.engine
         eng.ensure_loaded()
