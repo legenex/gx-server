@@ -242,11 +242,12 @@ def main() -> int:
 
         def run_video() -> None:
             vid3.update(wait_video(video_job("S3 lighthouse while music waits"),
-                                   on_phase=lambda j: started.set() if j["phase"] == "generating" else None))
+                                   on_phase=lambda j: started.set() if j["phase"] in ("loading", "generating")
+                                   else None))
 
         th = threading.Thread(target=run_video)
         th.start()
-        started.wait(900)
+        check("S3 the second video started (warm or after its own weights were handled)", started.wait(900))
         time.sleep(3)
         waits: list[dict] = []
         m3 = wait_music(music_job("S3 track queued behind video", seconds=10),

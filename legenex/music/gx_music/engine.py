@@ -349,8 +349,9 @@ class EngineController:
         Goes through the router's own free path (the one gx-reason's start uses),
         so the router's generation slot is respected and its resident-model
         bookkeeping stays true. Calling ComfyUI /free directly would leave the
-        router judging the next cold image/video job as warm (8 GiB instead of
-        60-76 GiB) and admitting it into memory that is not there.
+        router judging the next cold image/video job as warm (its small warm growth
+        instead of 57-72 GiB plus the reserve) and admitting it into memory that is
+        not there.
         """
         name = self.cfg.media_router_container
         if not name:
