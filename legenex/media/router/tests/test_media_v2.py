@@ -437,10 +437,14 @@ class MediaApiTests(unittest.TestCase):
         meminfo = Path(self.tmp.name) / "meminfo"
 
         def set_avail(gib):
-            meminfo.write_text(f"MemTotal: 127535600 kB\nMemAvailable: {int(gib * 1024 * 1024)} kB\n")
+            tmp = meminfo.with_suffix(".tmp")
+            tmp.write_text(f"MemTotal: 127535600 kB\nMemAvailable: {int(gib * 1024 * 1024)} kB\n")
+            tmp.replace(meminfo)
 
         original_cfg = svc.cfg
         svc.cfg = dataclasses.replace(original_cfg, meminfo_path=str(meminfo))
+        svc._settle_poll = 0.02
+        svc._settle_flat_seconds = 0.6
         try:
             # gx-reason loaded, nothing of ours resident: an image needs 60 GiB -> refused, nothing freed
             svc.comfy.free(unload_models=True, free_memory=True)
@@ -468,12 +472,24 @@ class MediaApiTests(unittest.TestCase):
             job = self.wait_video(created["id"])
             self.assertEqual(job["status"], "failed")
             self.assertIn("needs about 76 GiB", json.dumps(job))
+            # right after a model switch the freed memory arrives late: wait for it
+            set_avail(70)
+            status, _ = self.call("POST", "/v1/images/generations", {"prompt": "image weights resident"})
+            self.assertEqual(status, 200)
+            set_avail(10)
+            timer = threading.Timer(0.3, set_avail, args=(80,))
+            timer.start()
+            status, created = self.call("POST", "/v1/videos", {"prompt": "memory comes back"})
+            timer.join()
+            self.assertEqual(self.wait_video(created["id"])["status"], "completed")
             # unreadable meminfo never blocks generation
             svc.cfg = dataclasses.replace(original_cfg, meminfo_path=str(Path(self.tmp.name) / "missing"))
             status, _ = self.call("POST", "/v1/images/generations", {"prompt": "no meminfo"})
             self.assertEqual(status, 200)
         finally:
             svc.cfg = original_cfg
+            svc._settle_poll = type(svc)._settle_poll
+            svc._settle_flat_seconds = type(svc)._settle_flat_seconds
 
     def test_listing_and_workflows(self):
         status, body = self.call("GET", "/v1/videos")

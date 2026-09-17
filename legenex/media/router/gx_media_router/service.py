@@ -91,6 +91,7 @@ class MediaService:
             log.info("idle for %ss: freeing ComfyUI models %s", idle, sorted(self._resident_models))
             self.comfy.free(unload_models=True, free_memory=True)
             self._resident_models = frozenset()
+            self._freed_at = time.monotonic()
             return True
         finally:
             self.slot.release()
@@ -111,6 +112,7 @@ class MediaService:
             log.info("free requested: freeing ComfyUI models %s", models)
             self.comfy.free(unload_models=True, free_memory=True)
             self._resident_models = frozenset()
+            self._freed_at = time.monotonic()
             return {"freed": True, "models": models}
         finally:
             self.slot.release()
@@ -181,6 +183,7 @@ class MediaService:
                      sorted(self._resident_models), sorted(models))
             self.comfy.free(unload_models=True, free_memory=True)
             self._resident_models = frozenset()
+            self._freed_at = time.monotonic()
         # A subset of what is already loaded reuses it; the loaded set is unchanged.
         self._resident_models = self._resident_models | models
         return cold
@@ -215,6 +218,17 @@ class MediaService:
         if avail is None:
             return
         need = self._memory_need_gib(job, job.cold_start)
+        # ComfyUI applies /free asynchronously: right after a model switch the memory
+        # is still on its way back, so wait for it to settle before deciding.
+        deadline = self._freed_at + self._settle_seconds
+        best, rose_at = avail, time.monotonic()
+        while (avail < need and time.monotonic() < deadline
+               and time.monotonic() - rose_at < self._settle_flat_seconds):
+            time.sleep(self._settle_poll)
+            sample = self._mem_available_gib()
+            avail = avail if sample is None else sample
+            if avail > best + 0.25:
+                best, rose_at = avail, time.monotonic()
         if avail >= need:
             return
         if job.cold_start:
@@ -225,6 +239,13 @@ class MediaService:
             f"gx10-02 has {avail:.0f} GiB free and this {job.kind} job needs about {need:.0f} GiB. "
             "gx-reason is probably loaded: unload it in the Control UI (Models > gx-reason > UNLOAD) "
             "or retry after it idles out (15 minutes).")
+
+    #: how long after a free the admission waits for memory to come back
+    _settle_seconds = 30.0
+    _settle_poll = 1.0
+    #: give up early once MemAvailable has stopped rising for this long
+    _settle_flat_seconds = 6.0
+    _freed_at = -1e9
 
     def _run(self, job: Job, graph: dict, timeout: float, thumbnail_node: str | None) -> None:
         self._last_activity = time.monotonic()
