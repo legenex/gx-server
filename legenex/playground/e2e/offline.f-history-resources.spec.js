@@ -33,7 +33,7 @@ test('History lists media and music jobs with phases, filters and actions', asyn
   }
   await expect.poll(async () => {
     const [m, s] = await jobsNow();
-    return m.length > 0 && s.length > 0 && s.every((j) => j.phase === 'complete' || j.phase === 'failed');
+    return m.length > 0 && s.length > 0 && s.every((j) => ['completed', 'failed', 'cancelled'].includes(j.phase));
   }, { timeout: 90_000 }).toBe(true);
   [media, music] = await jobsNow();
   expect(media.length + music.length).toBeGreaterThan(0);
