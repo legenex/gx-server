@@ -142,11 +142,14 @@ export function recipeOf(job) {
   }
   const p = { ...(job.params || {}) };
   if (job.prompt) p.prompt = job.prompt;
+  // A masked edit keeps only the mask's metadata; it cannot be re-sent without the mask itself.
+  if (p.mask && typeof p.mask === 'object') return { type: 'media', body: p, needsMask: true };
   return { type: 'media', body: p };
 }
 
 export async function retryJob(job) {
-  const { type, body } = recipeOf(job);
+  const { type, body, needsMask } = recipeOf(job);
+  if (needsMask) throw new Error('This edit used a mask. Open it in Images and paint the mask again.');
   const next = type === 'music' ? await submitMusic(body) : await submitMedia(body);
   toast('Submitted again with the same recipe.', 'ok');
   return next;

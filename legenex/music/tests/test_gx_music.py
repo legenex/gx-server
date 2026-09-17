@@ -64,7 +64,11 @@ class ValidationTests(unittest.TestCase):
     def test_generation_defaults_and_caption(self):
         r = v.generation({"prompt": "dreamy pop", "style_tags": ["Pop", "synth", "pop"], "seed": 7},
                          TURBO, max_duration=600)
-        self.assertEqual(r.engine["prompt"], "dreamy pop, synth")
+        # no lyrics and nothing asks for a voice: an instrumental, and the caption says so
+        self.assertEqual(r.engine["prompt"], "dreamy pop, synth, instrumental")
+        self.assertEqual(r.vocal_mode, "instrumental_no_lyrics")
+        self.assertEqual(r.engine["lyrics"], "[Instrumental]")
+        self.assertFalse(r.engine["use_cot_caption"])
         self.assertEqual(r.style_tags, ["Pop", "synth"])
         self.assertEqual(r.engine["seed"], 7)
         self.assertFalse(r.engine["use_random_seed"])
@@ -119,15 +123,174 @@ class ValidationTests(unittest.TestCase):
             with self.subTest(body=str(body)[:60]), self.assertRaises(ValidationError):
                 v.generation(body, TURBO, max_duration=600)
 
-    def test_description_mode(self):
+    def test_description_alone_lets_the_planner_write_the_song(self):
         r = v.generation({"description": "a soft bossa nova about rain"}, TURBO, max_duration=600)
-        self.assertTrue(r.engine["sample_mode"])
-        self.assertEqual(r.engine["sample_query"], "a soft bossa nova about rain")
+        self.assertNotIn("sample_mode", r.engine)  # upstream sample mode guesses "instrumental" from words
+        self.assertEqual(r.vocal_mode, "planner_lyrics")
+        self.assertEqual(r.plan["fill"], ["caption", "lyrics"])
+        self.assertFalse(r.plan["instrumental"])
+        self.assertEqual(r.plan["query"], "a soft bossa nova about rain")
+        self.assertEqual(r.engine["prompt"], "")
 
-    def test_description_mode_rejects_overridden_controls(self):
-        for extra in ({"duration": 40}, {"bpm": 90}, {"prompt": "x"}, {"style_tags": ["rock"]}):
-            with self.subTest(extra=extra), self.assertRaises(ValidationError):
-                v.generation({"description": "a song", **extra}, TURBO, max_duration=600)
+    def test_description_with_instrumental_passes_the_explicit_flag(self):
+        # the old sample-mode path ignored the toggle unless the words said "instrumental"
+        r = v.generation({"description": "a soft bossa nova about rain", "instrumental": True},
+                         TURBO, max_duration=600)
+        self.assertEqual(r.vocal_mode, "instrumental")
+        self.assertTrue(r.plan["instrumental"])
+        self.assertEqual(r.plan["fill"], ["caption"])
+        self.assertEqual(r.engine["lyrics"], "[Instrumental]")
+        # and a description that merely mentions the word does not switch vocals off
+        r = v.generation({"description": "female vocals over an instrumental break", "lyrics": "[Verse]\nhi"},
+                         TURBO, max_duration=600)
+        self.assertEqual(r.vocal_mode, "vocals")
+        self.assertEqual(r.plan["fill"], ["caption"])
+        self.assertFalse(r.plan["instrumental"])
+
+    def test_description_style_tags_and_prompt_combine(self):
+        body = {"description": "An emotional song about leaving Cape Town after the end of a relationship.",
+                "style_tags": ["female vocals", "cinematic", "piano", "melancholic", "slow build"],
+                "prompt": "Intimate close-mic female vocal, soft piano opening, gradually expanding strings, "
+                          "restrained percussion, powerful final chorus.",
+                "lyrics": "[Verse]\nTable Mountain in the mirror\n[Chorus]\nI am leaving", "duration": 40,
+                "bpm": 72, "key": "D minor", "vocal_language": "en"}
+        r = v.generation(body, TURBO, max_duration=600)
+        self.assertIsNone(r.plan)
+        self.assertEqual(r.vocal_mode, "vocals")
+        self.assertEqual(r.engine["prompt"],
+                         "Intimate close-mic female vocal, soft piano opening, gradually expanding strings, "
+                         "restrained percussion, powerful final chorus, female vocals, cinematic, melancholic, "
+                         "slow build. An emotional song about leaving Cape Town after the end of a relationship.")
+        # "piano" is already in the style prompt, so it is not repeated
+        self.assertEqual(r.engine["prompt"].count("piano"), 1)
+        self.assertEqual((r.engine["bpm"], r.engine["key_scale"], r.engine["audio_duration"]), (72, "D minor", 40.0))
+        self.assertFalse(r.engine["use_cot_language"])  # explicit language is not second-guessed
+        cond = r.conditioning()
+        self.assertEqual(cond["caption"], r.engine["prompt"])
+        self.assertFalse(cond["instrumental"])
+        self.assertFalse(cond["caption_rewrite"])
+        pub = r.public()
+        self.assertEqual(pub["description"], body["description"])
+        self.assertEqual(pub["conditioning"]["vocal_mode"], "vocals")
+
+    def test_long_description_is_shortened_with_a_note(self):
+        r = v.generation({"prompt": "p" * 400, "description": "word " * 80, "instrumental": True},
+                         TURBO, max_duration=600)
+        self.assertLessEqual(len(r.engine["prompt"]), v.CAPTION_MAX)
+        self.assertTrue(r.engine["prompt"].endswith("…"))
+        self.assertIn("shortened", r.notes[0])
+        with self.assertRaises(ValidationError) as cm:
+            v.generation({"prompt": "p" * 300, "style_tags": [c * 40 for c in "abcdef"]}, TURBO, max_duration=600)
+        self.assertEqual(cm.exception.code, "caption_too_long")
+
+    def test_vocal_rules(self):
+        cases = [
+            # (body, vocal_mode | error code, lyrics sent, caption contains)
+            ({"prompt": "house", "instrumental": True, "lyrics": "[Verse]\nhello"}, "instrumental",
+             "[Instrumental]", "instrumental"),
+            ({"prompt": "house", "lyrics": "[Verse]\nhello"}, "vocals", "[Verse]\nhello", "vocals"),
+            ({"prompt": "house", "lyrics": "[Verse]\nhello", "vocal_intent": "female"}, "vocals",
+             "[Verse]\nhello", "female vocals"),
+            ({"prompt": "house", "lyrics": "[Verse]\nhi", "vocal_intent": "duet"}, "vocals", None,
+             "male and female vocal duet"),
+            ({"prompt": "house", "lyrics": "[Verse]\nhi", "vocal_intent": "rap"}, "vocals", None, "rap vocals"),
+            ({"prompt": "house", "vocal_intent": "choir"}, "lyrics_required", None, None),
+            ({"style_tags": ["female vocals", "energetic", "house"]}, "lyrics_required", None, None),
+            ({"prompt": "a singer over strings"}, "lyrics_required", None, None),
+            ({"prompt": "deep house, no vocals"}, "instrumental_no_lyrics", "[Instrumental]", "instrumental"),
+            ({"prompt": "techno without singing"}, "instrumental_no_lyrics", "[Instrumental]", None),
+            ({"prompt": "x", "instrumental": True, "vocal_intent": "female"}, "vocal_conflict", None, None),
+            ({"prompt": "x", "lyrics": "[Instrumental]", "vocal_intent": "male"}, "vocal_conflict", None, None),
+            ({"prompt": "x", "lyrics": "[Instrumental]"}, "instrumental", "[Instrumental]", None),
+            ({"prompt": "x", "lyrics": "[Verse]\n[Chorus]\n"}, "lyrics_without_words", None, None),
+            ({"prompt": "x", "vocal_intent": "female", "lyrics_source": "planner"}, "planner_lyrics", "",
+             "female vocals"),
+            ({"prompt": "x", "vocal_intent": "female", "lyrics_source": "assistant"}, "lyrics_required", None, None),
+            ({"prompt": "x", "vocal_intent": "female", "lyrics_source": "planner", "thinking": False},
+             "invalid_request", None, None),
+        ]
+        for body, expect, lyrics, caption in cases:
+            with self.subTest(body=body):
+                if expect in v.VOCAL_MODES:
+                    r = v.generation(body, TURBO, max_duration=600)
+                    self.assertEqual(r.vocal_mode, expect)
+                    if lyrics is not None:
+                        self.assertEqual(r.engine["lyrics"], lyrics)
+                    if caption:
+                        self.assertIn(caption, r.engine["prompt"])
+                    if expect.startswith("instrumental"):
+                        self.assertEqual(r.engine["vocal_language"], "unknown")
+                        self.assertFalse(r.engine["use_cot_language"])
+                else:
+                    with self.assertRaises(ValidationError) as cm:
+                        v.generation(body, TURBO, max_duration=600)
+                    self.assertEqual(cm.exception.code, expect)
+        # the message tells the user what to do
+        with self.assertRaises(ValidationError) as cm:
+            v.generation({"style_tags": ["female vocals"]}, TURBO, max_duration=600)
+        self.assertIn("Add lyrics", cm.exception.message)
+
+    def test_mentions_vocals(self):
+        for text in ("female vocals", "a Singer", "rap verse", "choir", "vocal", "duet"):
+            self.assertTrue(v.mentions_vocals(text), text)
+        for text in ("", "no vocals", "without vocals, deep house", "non-vocal", "instrumental piano"):
+            self.assertFalse(v.mentions_vocals(text), text)
+        self.assertTrue(v.lyric_has_words("[Verse]\nhi"))
+        self.assertFalse(v.lyric_has_words("[Verse]\n\n[Chorus - big]"))
+        self.assertTrue(v.is_instrumental_lyrics(""))
+
+    def test_remix_keeps_inherited_lyrics_empty(self):
+        r = v.remix({"prompt": "jazz", "source": {"job_id": "mus-" + "a" * 32}, "vocal_intent": "female"},
+                    TURBO, max_duration=600)
+        self.assertEqual(r.engine["lyrics"], "")  # the service fills it from the parent
+        self.assertIn("female vocals", r.engine["prompt"])
+
+    def test_apply_plan(self):
+        r = v.generation({"description": "a folk song about the sea", "vocal_intent": "female", "bpm": 90},
+                         TURBO, max_duration=600)
+        v.apply_plan(r, {"caption": "An acoustic folk ballad, warm guitar.", "lyrics": "[Verse]\nSea at dawn",
+                         "bpm": 120, "keyscale": "D major", "timesignature": "3", "duration": 95,
+                         "vocal_language": "en"}, max_duration=600)
+        self.assertEqual(r.engine["prompt"], "An acoustic folk ballad, warm guitar, female vocals")
+        self.assertEqual(r.engine["lyrics"], "[Verse]\nSea at dawn")
+        self.assertEqual(r.engine["bpm"], 90)  # the user's value wins
+        self.assertEqual((r.engine["key_scale"], r.engine["time_signature"], r.engine["audio_duration"]),
+                         ("D major", "3", 95.0))
+        self.assertTrue(r.plan["done"])
+        before = dict(r.engine)
+        v.apply_plan(r, {"caption": "other", "lyrics": "[Verse]\nother"}, max_duration=600)  # idempotent
+        self.assertEqual(r.engine, before)
+        # a vocal plan without words fails instead of rendering an instrumental
+        r = v.generation({"description": "a folk song"}, TURBO, max_duration=600)
+        for lyr in ("", "[Instrumental]", "[Verse]\n"):
+            with self.subTest(lyr=lyr), self.assertRaises(EngineError) as cm:
+                v.apply_plan(r, {"caption": "folk", "lyrics": lyr}, max_duration=600)
+            self.assertEqual(cm.exception.code, "lyrics_missing")
+        with self.assertRaises(EngineError):
+            v.apply_plan(r, {"caption": "", "lyrics": "[Verse]\nok"}, max_duration=600)
+        # garbage metadata from the planner is ignored, not trusted
+        r = v.generation({"description": "a folk song", "instrumental": True}, TURBO, max_duration=600)
+        v.apply_plan(r, {"caption": "folk", "lyrics": "la", "bpm": "fast", "keyscale": "H dorian",
+                         "timesignature": "7", "duration": 9999}, max_duration=600)
+        self.assertEqual(r.engine["prompt"], "folk, instrumental")
+        self.assertEqual(r.engine["lyrics"], "[Instrumental]")
+        for k in ("bpm", "key_scale", "time_signature", "audio_duration"):
+            self.assertNotIn(k, r.engine)
+
+    def test_check_vocals_before_render(self):
+        r = v.generation({"prompt": "x", "lyrics": "[Verse]\nhi"}, TURBO, max_duration=600)
+        v.check_vocals_before_render(r)
+        r.engine["lyrics"] = ""
+        with self.assertRaises(EngineError):
+            v.check_vocals_before_render(r)
+
+    def test_analysis_request(self):
+        a = v.analysis({"source": {"upload_id": "upl-" + "c" * 32}, "understand": True}, TURBO, max_duration=600)
+        self.assertEqual((a.operation, a.engine), ("analyze", {"understand": True}))
+        for bad in ({}, {"source": {"upload_id": "x"}}, {"source": {"upload_id": "upl-" + "c" * 32}, "prompt": "x"},
+                    {"source": {"upload_id": "upl-" + "c" * 32}, "understand": "yes"}, []):
+            with self.subTest(bad=bad), self.assertRaises(ValidationError):
+                v.analysis(bad, TURBO, max_duration=600)
 
     def test_no_lm_gets_explicit_duration(self):
         r = v.generation({"prompt": "x", "thinking": False}, TURBO, max_duration=600)
@@ -234,6 +397,10 @@ class StubUpstream:
         self.fail_next = False
         self.silent_next = False
         self.polls_before_done = 2
+        self.samples: list[dict] = []
+        self.sample_reply = {"caption": "A warm acoustic folk ballad with gentle guitar.",
+                             "lyrics": "[Verse]\nMorning tide\n[Chorus]\nCarry me home", "bpm": 96,
+                             "keyscale": "G major", "timesignature": "4", "duration": 75, "vocal_language": "en"}
         stub = self
 
         class H(BaseHTTPRequestHandler):
@@ -257,6 +424,10 @@ class StubUpstream:
                     self.end_headers()
                     return
                 body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                if self.path == "/v1/create_sample":
+                    stub.samples.append(body)
+                    self._reply(stub.sample_reply)
+                    return
                 if self.path == "/release_task":
                     stub.requests.append(body)
                     tid = f"t{len(stub.requests)}"
@@ -274,6 +445,13 @@ class StubUpstream:
                     if t["fail"]:
                         item = {"status": 2, "error": "CUDA out of memory"}
                         self._reply([{"task_id": tid, "status": 2, "result": json.dumps([item])}])
+                        return
+                    if t["body"].get("full_analysis_only"):
+                        item = {"status_message": "Full Hardware Analysis Success", "bpm": 118,
+                                "keyscale": "A Minor", "timesignature": "4", "duration": 12,
+                                "genre": "synth-pop", "prompt": "An upbeat synth-pop song with female vocals.",
+                                "lyrics": "[Verse]\nCity lights", "language": "en", "audio_codes": "<|x|>" * 50}
+                        self._reply([{"task_id": tid, "status": 1, "result": json.dumps([item])}])
                         return
                     n = int(t["body"].get("batch_size") or 1)
                     items = []
@@ -308,6 +486,10 @@ class FakeDocker:
         self.probe_duration = 12.5
         self.free_requests = 0
         self.free_reply = {"freed": True, "models": ["qwen-image"]}
+        self.analysis_calls: list[list[str]] = []
+        self.analysis_reply = {"method": "gx-music DSP v1", "duration_s": 12.5,
+                               "tempo": {"bpm": 118.0, "confidence": 0.7}, "key": {"value": "A minor"},
+                               "time_signature": {"value": "4/4"}, "descriptors": ["mid tempo"]}
 
     def _cp(self, args, rc=0, out="", err=""):
         return subprocess.CompletedProcess(args, rc, out, err)
@@ -316,6 +498,12 @@ class FakeDocker:
         self.calls.append(args)
         if args[0] == "run" and "--entrypoint" in args:
             tool = args[args.index("--entrypoint") + 1]
+            if tool.endswith("python"):
+                self.analysis_calls.append(args)
+                path = self._host(args[-1])
+                if not path.exists():
+                    return self._cp(args, 1, json.dumps({"error": "the audio could not be decoded"}))
+                return self._cp(args, 0, json.dumps(self.analysis_reply))
             if tool == "ffprobe":
                 path = self._host(args[-1])
                 if not path.exists() or audio.sniff(path.read_bytes()[:16]) is None:
@@ -455,6 +643,138 @@ class Harness:
         raise AssertionError(f"job {job_id} stuck in {job['status']}")
 
 
+
+class ConditioningIntegrationTests(unittest.TestCase):
+    """Description + style + vocal rules through the real service and HTTP."""
+
+    def setUp(self):
+        self.h = Harness()
+
+    def tearDown(self):
+        self.h.close()
+
+    def test_preview_is_exactly_what_is_sent(self):
+        body = {"description": "A song about leaving Cape Town.", "style_tags": ["cinematic", "piano"],
+                "prompt": "intimate close-mic vocal", "vocal_intent": "female",
+                "lyrics": "[Verse]\nGoodbye mountain", "duration": 30, "seed": 3}
+        code, prev, _ = self.h.call("POST", "/v1/music/preview", body)
+        self.assertEqual(code, 200)
+        self.assertEqual(prev["vocal_mode"], "vocals")
+        caption = prev["conditioning"]["caption"]
+        self.assertEqual(caption, "intimate close-mic vocal, cinematic, piano, female vocals. "
+                                  "A song about leaving Cape Town.")
+        self.assertEqual(self.h.store.list_jobs(), [])  # a preview never queues
+        _, job, _ = self.h.call("POST", "/v1/music/generations", body)
+        job = self.h.wait(job["id"])
+        self.assertEqual(job["status"], "completed", job.get("error"))
+        sent = self.h.upstream.requests[-1]
+        self.assertEqual(sent["prompt"], caption)
+        self.assertEqual(sent["lyrics"], "[Verse]\nGoodbye mountain")
+        self.assertFalse(sent["use_cot_caption"])
+        self.assertNotIn("sample_mode", sent)
+        self.assertNotIn("sample_query", sent)
+        self.assertEqual(job["request"]["conditioning"]["caption"], caption)
+        self.assertEqual(job["request"]["description"], body["description"])
+        self.assertEqual(job["tracks"][0]["vocal_mode"], "vocals")
+        code, err, _ = self.h.call("POST", "/v1/music/preview", {"style_tags": ["female vocals"]})
+        self.assertEqual((code, err["error"]["code"]), (400, "lyrics_required"))
+
+    def test_regression_female_vocal_tags_without_lyrics_are_refused_not_rendered(self):
+        # the request of job mus-051483f1 (2026-09-17) that rendered an instrumental
+        code, err, _ = self.h.call("POST", "/v1/music/generations",
+                                   {"style_tags": ["female vocals", "energetic", "house", "driving beat", "modern"],
+                                    "title": "Waves", "instrumental": False})
+        self.assertEqual(code, 400)
+        self.assertEqual(err["error"]["code"], "lyrics_required")
+        self.assertEqual(self.h.upstream.requests, [])
+
+    def test_planner_writes_lyrics_with_an_explicit_instrumental_flag(self):
+        _, job, _ = self.h.call("POST", "/v1/music/generations",
+                                {"description": "a folk song about the sea", "style_tags": ["acoustic"],
+                                 "vocal_intent": "female", "lyrics_source": "planner", "seed": 4})
+        job = self.h.wait(job["id"])
+        self.assertEqual(job["status"], "completed", job.get("error"))
+        self.assertEqual(self.h.upstream.samples[-1], {
+            "query": "a folk song about the sea\nStyle: acoustic\nVocals: female vocals",
+            "instrumental": False, "vocal_language": "unknown", "temperature": 0.85})
+        sent = self.h.upstream.requests[-1]
+        self.assertEqual(sent["lyrics"], "[Verse]\nMorning tide\n[Chorus]\nCarry me home")
+        self.assertEqual(sent["prompt"], "acoustic, female vocals. a folk song about the sea.")
+        self.assertEqual((sent["bpm"], sent["key_scale"], sent["audio_duration"]), (96, "G major", 75.0))
+        self.assertTrue(job["request"]["plan"]["done"])
+        self.assertIn("plan_s", job["timings"])
+        self.assertEqual(job["request"]["lyrics"], sent["lyrics"])
+
+    def test_instrumental_description_never_gets_planner_lyrics(self):
+        _, job, _ = self.h.call("POST", "/v1/music/generations",
+                                {"description": "a calm song for studying", "instrumental": True})
+        job = self.h.wait(job["id"])
+        self.assertEqual(job["status"], "completed", job.get("error"))
+        self.assertTrue(self.h.upstream.samples[-1]["instrumental"])
+        sent = self.h.upstream.requests[-1]
+        self.assertEqual(sent["lyrics"], "[Instrumental]")
+        self.assertEqual(sent["prompt"], "A warm acoustic folk ballad with gentle guitar, instrumental")
+        self.assertEqual(sent["vocal_language"], "unknown")
+
+    def test_planner_without_words_fails_honestly(self):
+        self.h.upstream.sample_reply = {**self.h.upstream.sample_reply, "lyrics": "[Instrumental]"}
+        _, job, _ = self.h.call("POST", "/v1/music/generations", {"description": "a pop song"})
+        job = self.h.wait(job["id"])
+        self.assertEqual(job["status"], "failed")
+        self.assertEqual(job["error"]["code"], "lyrics_missing")
+        self.assertEqual(self.h.upstream.requests, [])  # nothing was rendered
+
+    def test_analysis_measured_then_understood(self):
+        src = self.h.root / "ref.wav"
+        make_wav(src, seconds=1.5)
+        _, up, _ = self.h.call("POST", "/v1/music/uploads", raw=src.read_bytes(), headers={"X-Filename": "ref.wav"})
+        code, job, _ = self.h.call("POST", "/v1/music/analyses",
+                                   {"source": {"upload_id": up["id"]}, "understand": False})
+        self.assertEqual(code, 202)
+        self.assertEqual(job["operation"], "analyze")
+        done = self.h.wait(job["id"])
+        self.assertEqual(done["status"], "completed", done.get("error"))
+        self.assertEqual(done["analysis"]["measured"]["tempo"]["bpm"], 118.0)
+        self.assertIsNone(done["analysis"]["understanding"])
+        self.assertEqual(self.h.engine.state, UNLOADED)  # measuring never loads the model
+        helper = self.h.docker.analysis_calls[-1]
+        for flag in ("--network", "none", "--read-only"):
+            self.assertIn(flag, helper)
+        self.assertNotIn("nvidia.com/gpu=all", helper)
+        self.assertTrue(any(a.endswith(":/work/tmp:ro") for a in helper))
+
+        _, job, _ = self.h.call("POST", "/v1/music/analyses", {"source": {"upload_id": up["id"]}, "understand": True})
+        done = self.h.wait(job["id"])
+        self.assertEqual(done["status"], "completed", done.get("error"))
+        u = done["analysis"]["understanding"]
+        self.assertTrue(u["vocals_detected"])
+        self.assertEqual((u["bpm"], u["key"], u["language"]), (118, "A minor", "en"))
+        self.assertIn("model inference", u["method"])
+        self.assertNotIn("audio_codes", json.dumps(done))
+        sent = self.h.upstream.requests[-1]
+        self.assertTrue(sent["full_analysis_only"])
+        self.assertTrue(sent["src_audio_path"].startswith("/work/tmp/uploads/"))
+        self.assertIn("understand_s", done["timings"])
+        # analyses stay out of the creative listing
+        _, lst, _ = self.h.call("GET", "/v1/music/jobs?operation=creative")
+        self.assertEqual(lst["data"], [])
+        _, lst, _ = self.h.call("GET", "/v1/music/jobs?operation=analyze")
+        self.assertEqual(len(lst["data"]), 2)
+
+    def test_analysis_failures(self):
+        code, err, _ = self.h.call("POST", "/v1/music/analyses", {"source": {"upload_id": "upl-" + "d" * 32}})
+        self.assertEqual(code, 404)
+        src = self.h.root / "ref.wav"
+        make_wav(src, seconds=1.5)
+        _, up, _ = self.h.call("POST", "/v1/music/uploads", raw=src.read_bytes(), headers={"X-Filename": "r.wav"})
+        self.h.docker.analysis_reply = {"error": "the audio is too short to analyse (under one second)"}
+        _, job, _ = self.h.call("POST", "/v1/music/analyses", {"source": {"upload_id": up["id"]}})
+        done = self.h.wait(job["id"])
+        self.assertEqual(done["status"], "failed")
+        self.assertEqual(done["error"]["code"], "analysis_failed")
+        self.assertIn("too short", done["error"]["message"])
+
+
 # ------------------------------------------------------------------- service --
 class ServiceIntegrationTests(unittest.TestCase):
     def setUp(self):
@@ -530,7 +850,7 @@ class ServiceIntegrationTests(unittest.TestCase):
         edit = self.h.wait(e["id"])
         self.assertEqual(edit["status"], "completed", edit.get("error"))
         sent = self.h.upstream.requests[-1]
-        self.assertEqual(sent["prompt"], "folk song")  # inherited
+        self.assertEqual(sent["prompt"], "folk song, vocals")  # inherited: the caption the parent really used
         self.assertEqual(sent["task_type"], "repaint")
 
         _, x, _ = self.h.call("POST", "/v1/music/extend", {"source": {"job_id": remix["id"]}, "seconds": 15})
@@ -823,6 +1143,8 @@ class ServiceIntegrationTests(unittest.TestCase):
         self.assertEqual(code, 400)
         code, body, _ = self.h.call("GET", "/v1/music/nope")
         self.assertEqual(code, 404)
+        code, _, _ = self.h.call("GET", "/v1/music/jobs?operation=drop")
+        self.assertEqual(code, 400)
 
     def test_model_info_and_tags(self):
         code, info, _ = self.h.call("GET", "/v1/music/model")

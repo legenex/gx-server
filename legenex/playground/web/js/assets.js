@@ -106,12 +106,18 @@ export function recipeOf(asset) {
   if (!req || !req.kind) return null;
   const body = { ...req };
   if (body.source_id && asset.parent_deleted) return null;
+  // Only the mask's metadata is stored: a masked edit is repeated from the Images page.
+  if (body.mask && typeof body.mask === 'object') return null;
   return { type: 'media', body };
 }
 
 export async function duplicateAsset(asset, { newSeed = false } = {}) {
   const r = recipeOf(asset);
-  if (!r) { toast('This item has no recipe to run again.', 'warn'); return null; }
+  if (!r) {
+    const masked = asset.settings && asset.settings.requested && asset.settings.requested.mask;
+    toast(masked ? 'This edit used a mask: open it in Images, paint the mask again and apply.' : 'This item has no recipe to run again.', 'warn');
+    return null;
+  }
   const body = { ...r.body };
   if (newSeed) delete body.seed;
   try {
@@ -242,6 +248,11 @@ export function recipeRows(a) {
     ['Strength', a.strength ?? req.strength ?? params.strength],
     ['Size', a.width && a.height ? `${a.width} × ${a.height}` : req.size],
     ['Quality', req.quality],
+    ['Image model', s.image_model_label || req.image_model],
+    ['Edit mode', s.edit ? `${s.edit.edit_mode}${s.edit.masked ? ' (masked)' : ''}` : req.edit_mode],
+    ['Edit quality', req.edit_quality],
+    ['Denoise', s.edit && typeof s.edit.denoise === 'number' ? s.edit.denoise.toFixed(2) : undefined],
+    ['Mask', s.mask ? `${Math.round(s.mask.coverage * 1000) / 10}% of the image (${s.mask.source})` : undefined],
     ['Duration', a.duration ? mmss(a.duration) : (req.seconds ? `${req.seconds} s` : undefined)],
     ['FPS', a.fps ?? req.fps],
     ['BPM', a.bpm ? Math.round(a.bpm) : undefined],

@@ -97,6 +97,8 @@ class Config:
     gxmax_deadman_pidfile: Path
     control_plane_container: str
     reserve_gib: float
+    #: python inside the engine image, used by the CPU-only analysis helper
+    analysis_python: str = "/app/.venv/bin/python"
 
     @property
     def db_path(self) -> Path:
@@ -196,4 +198,5 @@ def load() -> Config:
         control_plane_container=_env("GX_MUSIC_CONTROL_PLANE_CONTAINER", "gx-llama-swap-node02"),
         # The locked normal-operation reserve: it may be raised, never lowered below 30 GiB.
         reserve_gib=_float("GX_GUARD_RESERVE_GIB", 30.0, 30.0, 120.0),
+        analysis_python=_env("GX_MUSIC_ANALYSIS_PYTHON", "/app/.venv/bin/python"),
     )

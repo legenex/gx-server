@@ -215,7 +215,14 @@ class MediaApiTests(unittest.TestCase):
         self.assertEqual(graph["5"]["class_type"], "TextEncodeQwenImageEditPlus")
         self.assertEqual(graph["5"]["inputs"]["prompt"], "make the shirt black")
         self.assertRegex(graph["20"]["inputs"]["image"], r"^gx-in/[0-9a-f]{32}\.png$")
-        self.assertEqual(graph["8"]["inputs"]["denoise"], 0.8)
+        # Regression (Build V3): the caller's strength is NOT the KSampler denoise. Qwen-Image-Edit-2511
+        # conditions on the source through its reference latent and always samples a full denoise; a
+        # partial denoise of the encoded source reproduced the input (Playground default strength 0.6).
+        self.assertEqual(graph["8"]["inputs"]["denoise"], 1.0)
+        self.assertEqual(graph["40"]["inputs"]["reference_latents_method"], "index_timestep_zero")
+        self.assertEqual(graph["41"]["inputs"]["reference_latents_method"], "index_timestep_zero")
+        self.assertEqual(payload["gx"]["edit"]["denoise"], 1.0)
+        self.assertIsNone(payload["gx"]["strength"], "strength does not apply to this mode")
         w, h = graph["21"]["inputs"]["width"], graph["21"]["inputs"]["height"]
         self.assertEqual((w % 16, h % 16), (0, 0))
         self.assertAlmostEqual(w / h, 4 / 3, delta=0.05)
@@ -257,8 +264,12 @@ class MediaApiTests(unittest.TestCase):
         status, payload = self.call("POST", "/v1/images/variations", body, ctype=ctype)
         self.assertEqual(status, 200, payload)
         self.assertEqual(payload["gx"]["operation"], "variation")
-        self.assertEqual(self.comfy.submitted[-1]["8"]["inputs"]["denoise"], 0.75)
-        self.assertIn("variation", self.comfy.submitted[-1]["5"]["inputs"]["prompt"])
+        graph = self.comfy.submitted[-1]
+        # default strength 0.75: re-imagined from the vision reference, not a partial denoise of a copy
+        self.assertNotIn("40", graph, "a strong variation must not pin the source through the reference latent")
+        self.assertNotIn("vae", graph["5"]["inputs"])
+        self.assertGreaterEqual(graph["8"]["inputs"]["denoise"], 0.85)
+        self.assertIn("variation", graph["5"]["inputs"]["prompt"])
 
     def test_failed_edit_still_removes_the_source(self):
         from gx_media_router.errors import UpstreamError

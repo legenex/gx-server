@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+import queue
+import re
 import shutil
 import threading
 import time
@@ -39,6 +41,7 @@ class MusicService:
         self._mem_low: dict[str, float] = {}
         self._requeues: dict[str, int] = {}
         self._disk_cache: dict | None = None
+        self._analysis_q: "queue.Queue[str]" = queue.Queue()
         for d in (cfg.jobs_dir, cfg.uploads_dir, cfg.data_root / "api_audio"):
             d.mkdir(parents=True, exist_ok=True)
 
@@ -49,7 +52,8 @@ class MusicService:
             log.warning("marked %d interrupted job(s) as failed", n)
         self.engine.reconcile()
         self._threads = [threading.Thread(target=self._worker, name="gx-music-worker", daemon=True),
-                         threading.Thread(target=self._reaper, name="gx-music-reaper", daemon=True)]
+                         threading.Thread(target=self._reaper, name="gx-music-reaper", daemon=True),
+                         threading.Thread(target=self._analysis_worker, name="gx-music-analysis", daemon=True)]
         for t in self._threads:
             t.start()
 
@@ -60,11 +64,25 @@ class MusicService:
             t.join(timeout)
 
     # ------------------------------------------------------------ submit --
-    def submit(self, operation: str, body: Any) -> dict:
-        builders = {"generate": v.generation, "remix": v.remix, "edit": v.edit, "extend": v.extend}
+    BUILDERS = {"generate": v.generation, "remix": v.remix, "edit": v.edit, "extend": v.extend,
+                "analyze": v.analysis}
+
+    def preview(self, body: Any) -> dict:
+        """Validate a generation without queueing it: the exact conditioning
+        ACE-Step would receive (caption, lyrics, vocal mode, planner step)."""
         if not isinstance(body, dict):
             raise ValidationError("request body must be a JSON object")
-        req = builders[operation](body, self.caps, max_duration=self.cfg.max_duration_s)
+        req = v.generation(body, self.caps, max_duration=self.cfg.max_duration_s)
+        return {"object": "music.preview", "conditioning": req.conditioning(), "vocal_mode": req.vocal_mode,
+                "vocal_intent": req.vocal_intent, "lyrics_source": req.lyrics_source,
+                "caption_length": len(req.engine.get("prompt", "")), "caption_max": v.CAPTION_MAX}
+
+    def submit(self, operation: str, body: Any) -> dict:
+        if not isinstance(body, dict):
+            raise ValidationError("request body must be a JSON object")
+        req = self.BUILDERS[operation](body, self.caps, max_duration=self.cfg.max_duration_s)
+        if operation == "analyze":
+            return self._submit_analysis(req)
         # Resolve sources, inherited text and ranges now so bad input is a
         # 400/404 immediately and the stored request shows what really runs.
         # (Idempotent: the worker resolves again against the same files.)
@@ -77,6 +95,20 @@ class MusicService:
             source=req.source.as_dict() if req.source else None)
         self.store.event("job_submitted", job_id=job_id, operation=operation)
         self._wake.set()
+        return self.job_view(job_id)
+
+    def _submit_analysis(self, req: v.MusicRequest) -> dict:
+        assert req.source is not None
+        _, container, duration, _ = self._source_path(req.source)
+        if self.store.count_active() >= self.cfg.max_queue:
+            raise UnavailableError("the music queue is full; try again shortly", code="queue_full")
+        title = req.title or f"Analysis of {req.source.upload_id or req.source.job_id}"
+        job_id = self.store.create_job(
+            operation="analyze", title=title[:120], request=_serialize(req), model=self.model_identity(),
+            parent_job_id=None, parent_index=None, source=req.source.as_dict(),
+            status=st.PREPARING, detail="measuring tempo, key, energy and structure")
+        self.store.event("job_submitted", job_id=job_id, operation="analyze", seconds=duration)
+        self._analysis_q.put(job_id)
         return self.job_view(job_id)
 
     def cancel(self, job_id: str) -> dict:
@@ -148,8 +180,9 @@ class MusicService:
     def job_view(self, job_id: str) -> dict:
         return public_job(self._job(job_id))
 
-    def list_jobs(self, status: str | None, limit: int) -> list[dict]:
-        return [public_job(j) for j in self.store.list_jobs(status=status, limit=limit)]
+    def list_jobs(self, status: str | None, limit: int, operation: str | None = None) -> list[dict]:
+        """``operation=creative`` lists everything except analyses."""
+        return [public_job(j) for j in self.store.list_jobs(status=status, limit=limit, operation=operation)]
 
     def lineage(self, job_id: str) -> dict:
         job = self._job(job_id)
@@ -261,6 +294,67 @@ class MusicService:
             finally:
                 self._current = None
 
+    def _analysis_worker(self) -> None:
+        """Measured analysis runs here, next to (not behind) a long render."""
+        while not self._stop.is_set():
+            try:
+                job_id = self._analysis_q.get(timeout=2)
+            except queue.Empty:
+                continue
+            try:
+                self._measure(job_id)
+            except MusicError as exc:
+                self._fail(job_id, exc)
+            except Exception as exc:  # noqa: BLE001 - never let the worker die
+                log.exception("analysis %s crashed", job_id)
+                self._fail(job_id, exc)
+
+    def _measure(self, job_id: str) -> None:
+        job = self._job(job_id)
+        req = _deserialize(job["request"])
+        assert req.source is not None
+        _, container, duration, parent = self._source_path(req.source)
+        t0 = time.time()
+        measured = self.engine.analysis_tool(container)
+        timings = {"measure_s": round(time.time() - t0, 2), "source_seconds": round(duration, 2)}
+        result = {"analysis": {"measured": measured, "understanding": None,
+                               "source": {"duration_s": duration,
+                                          "kind": "upload" if req.source.upload_id else "track"}}}
+        if self._cancelled(job_id):
+            self.store.transition(job_id, st.CANCELLED, "cancelled")
+            return
+        self.store.update_job(job_id, result=result, timings=timings, started_at=t0)
+        if req.engine.get("understand"):
+            self.store.transition(job_id, st.QUEUED, "measured; waiting for the music model to listen")
+            self._wake.set()
+            return
+        self.store.transition(job_id, st.COMPLETED, "", 1.0)
+        self.store.event("job_completed", job_id=job_id, operation="analyze", measure_s=timings["measure_s"])
+
+    def _understand(self, job: dict, req: v.MusicRequest) -> None:
+        """Second half of an analysis: ACE-Step's own audio understanding."""
+        job_id = job["id"]
+        assert req.source is not None
+        _, container, _, _ = self._source_path(req.source)
+        self.store.transition(job_id, st.GENERATING, "listening (ACE-Step audio understanding)")
+        t0 = time.time()
+        task_id = self.engine.understand(container)
+        self.store.update_job(job_id, engine_task_id=task_id)
+        results = self._follow(job_id, task_id)
+        item = results[0] if results else {}
+        fresh = self._job(job_id)
+        result = dict(fresh.get("result") or {})
+        analysis = dict(result.get("analysis") or {})
+        analysis["understanding"] = understanding_view(item)
+        result["analysis"] = analysis
+        timings = dict(fresh.get("timings") or {})
+        timings["understand_s"] = round(time.time() - t0, 2)
+        timings["total_s"] = round(time.time() - job["created_at"], 2)
+        self.store.update_job(job_id, result=result, timings=timings)
+        self.store.transition(job_id, st.COMPLETED, "", 1.0)
+        self.store.event("job_completed", job_id=job_id, operation="analyze", understand_s=timings["understand_s"])
+        self.engine.touch()
+
     #: how often one job may be put back in the queue after gx-max or
     #: Maintenance reclaimed the node mid-render
     MAX_REQUEUES = 3
@@ -303,7 +397,7 @@ class MusicService:
         timings: dict[str, float] = {"queued_s": round(time.time() - job["created_at"], 2)}
 
         # 1. resolve sources and inherited text before touching the engine
-        src_container = self._prepare_request(req)
+        src_container = {} if req.operation == "analyze" else self._prepare_request(req)
 
         # 2. wait for the model (admission-guarded)
         waited_since = None
@@ -335,10 +429,28 @@ class MusicService:
         if waited_since:
             timings["resource_wait_s"] = round(time.time() - waited_since, 1)
 
-        # 3. submit and follow
-        self.store.transition(job_id, st.PREPARING, "sending the job to the model")
+        if req.operation == "analyze":
+            self._understand(job, req)
+            return
+
+        # 3. the 5Hz LM planner writes what the request asked it to write
         if not job.get("started_at"):
             self.store.update_job(job_id, started_at=time.time())
+        if req.plan and not req.plan.get("done"):
+            self.store.transition(job_id, st.PREPARING,
+                                  "planning the song: the language model writes the " + " and ".join(req.plan["fill"]))
+            t_plan = time.time()
+            sample = self.engine.create_sample(
+                query=req.plan["query"], instrumental=bool(req.plan.get("instrumental")),
+                vocal_language=req.plan.get("vocal_language", "unknown"),
+                temperature=req.engine.get("lm_temperature"))
+            v.apply_plan(req, sample, max_duration=self.cfg.max_duration_s)
+            timings["plan_s"] = round(time.time() - t_plan, 2)
+            self.store.update_job(job_id, request=_serialize(req))
+        v.check_vocals_before_render(req)
+
+        # 4. submit and follow
+        self.store.transition(job_id, st.PREPARING, "sending the job to the model")
         params = dict(req.engine)
         if src_container.get("source"):
             params["src_audio_path"] = src_container["source"]
@@ -355,7 +467,7 @@ class MusicService:
             self.store.transition(job_id, st.CANCELLED, "cancelled; the render was discarded")
             return
 
-        # 4. collect, verify, transcode
+        # 5. collect, verify, transcode
         self.store.transition(job_id, st.PROCESSING, "checking the audio")
         t_post = time.time()
         tracks = self._collect(job_id, req, results)
@@ -390,7 +502,7 @@ class MusicService:
                 if req.engine.get("vocal_language") in ("en", None) and preq.get("parameters", {}).get("vocal_language"):
                     req.engine["vocal_language"] = preq["parameters"]["vocal_language"]
             if not req.engine.get("prompt"):
-                raise ValidationError("describe the music (prompt or style tags) for this edit")
+                raise ValidationError("describe the music (style prompt or style tags) for this edit")
             if req.operation == "extend":
                 v.resolve_extend(req, duration, self.cfg.max_duration_s)
             elif req.operation == "edit":
@@ -518,6 +630,7 @@ class MusicService:
                 "files": files_meta,
                 "caption": item.get("prompt") or req.engine.get("prompt", ""),
                 "lyrics": item.get("lyrics") or req.engine.get("lyrics", ""),
+                "vocal_mode": req.vocal_mode,
                 "bpm": metas.get("bpm"), "key": metas.get("keyscale") or None,
                 "time_signature": metas.get("timesignature") or None,
                 "genres": metas.get("genres") or None,
@@ -627,14 +740,17 @@ def _deserialize(d: dict) -> v.MusicRequest:
         lyrics=d["lyrics"], instrumental=d["instrumental"], output_format=d["output_format"],
         batch_size=d["batch_size"], seeds=d["seeds"], source=ref(d.get("source")),
         reference=ref(d.get("reference")), parent_job_id=d.get("parent_job_id"),
-        parent_index=d.get("parent_index"), engine=dict(d["_engine"]), extend=d.get("extend"))
+        parent_index=d.get("parent_index"), engine=dict(d["_engine"]), extend=d.get("extend"),
+        description=d.get("description", ""), vocal_intent=d.get("vocal_intent", "auto"),
+        lyrics_source=d.get("lyrics_source", "user"), vocal_mode=d.get("vocal_mode", "vocals"),
+        plan=d.get("plan"), notes=list((d.get("conditioning") or {}).get("notes", [])))
 
 
 def _auto_title(req: v.MusicRequest) -> str:
-    base = req.prompt or ", ".join(req.style_tags[:3]) or req.engine.get("sample_query", "") or "Untitled"
+    base = req.prompt or req.description or ", ".join(req.style_tags[:3]) or "Untitled"
     base = base[:60].rstrip(" ,")
     return {"generate": base, "remix": f"Remix — {base}", "edit": f"Edit — {base}",
-            "extend": f"Extended — {base}"}.get(req.operation, base)
+            "extend": f"Extended — {base}", "analyze": f"Analysis — {base}"}.get(req.operation, base)
 
 
 def _stage_label(stage: str) -> str:
@@ -694,8 +810,53 @@ def public_job(job: dict) -> dict:
         "timings": job.get("timings") or {}, "model": job["model"],
         "parent_job_id": job.get("parent_job_id"), "parent_index": job.get("parent_index"),
         "source": job.get("source"), "cancel_requested": job["cancel_requested"],
+        "analysis": result.get("analysis"),
         "error": ({"code": job["error_code"], "message": job["error_message"], "retryable": job["retryable"]}
                   if job.get("error_code") else None),
         "links": {"self": f"/v1/music/{job['id']}", "lineage": f"/v1/music/{job['id']}/lineage"},
     }
     return view
+
+
+_KEY_WORDS = re.compile(r"^\s*([A-Ga-g][#b♯♭]?)\s*(major|minor|maj|min|m)?\s*$", re.I)
+
+
+def understanding_view(item: dict) -> dict:
+    """ACE-Step's audio understanding, bounded and labelled as model inference."""
+    def text(key: str, limit: int) -> str:
+        val = item.get(key)
+        return re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", str(val))[:limit].strip() \
+            if val not in (None, "N/A") else ""
+
+    lyrics = text("lyrics", v.LYRICS_MAX)
+    key_raw = text("keyscale", 32)
+    m = _KEY_WORDS.match(key_raw)
+    key = None
+    if m:
+        try:
+            key = v.normalize_key(m.group(1) + " " + ("minor" if (m.group(2) or "").lower() in ("minor", "min", "m")
+                                                         else "major"))
+        except ValidationError:
+            key = None
+    try:
+        bpm = int(float(item.get("bpm"))) if item.get("bpm") not in (None, "", "N/A") else None
+    except (TypeError, ValueError):
+        bpm = None
+    try:
+        duration = float(item.get("duration")) if item.get("duration") not in (None, "", "N/A") else None
+    except (TypeError, ValueError):
+        duration = None
+    language = text("language", 16) or "unknown"
+    vocals = v.lyric_has_words(lyrics) and not v.is_instrumental_lyrics(lyrics)
+    return {
+        "method": "ACE-Step 1.5 audio understanding (audio -> 5Hz codes -> 5Hz LM); model inference, not measurement",
+        "caption": text("prompt", v.CAPTION_MAX * 2),
+        "genres": text("genre", 200) or None,
+        "lyrics": lyrics,
+        "vocals_detected": vocals,
+        "language": language if vocals else "unknown",
+        "bpm": bpm, "key": key, "key_raw": key_raw or None,
+        "time_signature": v.normalize_time_signature(text("timesignature", 8))
+        if text("timesignature", 8) in v.VALID_TIME_SIGNATURES + ("2/4", "3/4", "4/4", "6/8") else None,
+        "duration_s": duration,
+    }

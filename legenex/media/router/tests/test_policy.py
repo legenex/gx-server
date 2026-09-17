@@ -157,11 +157,12 @@ class ServicePolicyTests(unittest.TestCase):
 
     def test_health_reports_policy_and_memory(self):
         h = self.svc.health()
-        self.assertEqual(h["version"], "2.4.1")
+        self.assertEqual(h["version"], "2.5.0")
         self.assertTrue(h["policy"]["guard_dir_mounted"])
         self.assertEqual(h["policy"]["profile"], "auto")
         self.assertEqual(h["memory"]["reserve_gib"], 30.0)
-        self.assertEqual(h["memory"]["footprint_gib"], {"image": 57.0, "video": 72.0, "keyframe_edit": 107.0})
+        self.assertEqual(h["memory"]["footprint_gib"], {"image": 57.0, "image_sdxl": 57.0, "video": 72.0,
+                                                  "keyframe_edit": 107.0})
         self.assertEqual(h["memory"]["need_gib"]["video"], 102.0)
         self.assertEqual(h["memory"]["need_gib"]["keyframe_edit"], 137.0)
         self.assertEqual(h["memory"]["pending_gib"], 0.0)

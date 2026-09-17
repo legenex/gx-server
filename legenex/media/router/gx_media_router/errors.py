@@ -40,6 +40,13 @@ class NotFoundError(RouterError):
     code = "not_found_error"
 
 
+class ConflictError(RouterError):
+    """The request conflicts with the job's state (e.g. cancelling a running job)."""
+
+    status = 409
+    code = "conflict"
+
+
 class BusyError(RouterError):
     """The single global generation slot could not be acquired in time."""
 

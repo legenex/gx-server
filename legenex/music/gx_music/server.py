@@ -8,9 +8,11 @@
     POST   /v1/music/remix                          cover of an earlier track or an upload
     POST   /v1/music/edits                          repaint a time range
     POST   /v1/music/extend                         outpaint before/after a track
+    POST   /v1/music/preview                        validate a generation: the exact conditioning
+    POST   /v1/music/analyses                       reference analysis (measured DSP [+ ACE-Step understanding])
     POST   /v1/music/uploads                        raw audio body -> upload id
     GET    /v1/music/uploads/{id}
-    GET    /v1/music/jobs?status=&limit=
+    GET    /v1/music/jobs?status=&operation=&limit=
     GET    /v1/music/events?limit=
     GET    /v1/music/{job_id}
     GET    /v1/music/{job_id}/lineage
@@ -223,6 +225,8 @@ class Handler(BaseHTTPRequestHandler):
             ("POST", "/v1/music/remix"): lambda: self._submit("remix"),
             ("POST", "/v1/music/edits"): lambda: self._submit("edit"),
             ("POST", "/v1/music/extend"): lambda: self._submit("extend"),
+            ("POST", "/v1/music/analyses"): lambda: self._submit("analyze"),
+            ("POST", "/v1/music/preview"): lambda: self._json(200, s.preview(self._body())),
             ("POST", "/v1/music/uploads"): self._upload,
             ("GET", "/v1/music/jobs"): self._jobs,
             ("GET", "/v1/music/events"): lambda: self._json(
@@ -261,7 +265,11 @@ class Handler(BaseHTTPRequestHandler):
         status = q.get("status")
         if status and not re.fullmatch(r"[a-z_]{3,32}", status):
             raise ValidationError("invalid status filter")
-        self._json(200, {"data": self.service.list_jobs(status, self._int(q, "limit", 50, 1, 500))})
+        operation = q.get("operation")
+        if operation and operation not in ("generate", "remix", "edit", "extend", "analyze", "creative"):
+            raise ValidationError("invalid operation filter")
+        self._json(200, {"data": self.service.list_jobs(status, self._int(q, "limit", 50, 1, 500),
+                                                        operation=operation)})
 
     def _tags(self) -> None:
         q = self._query()

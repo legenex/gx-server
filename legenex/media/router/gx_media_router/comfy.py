@@ -1,7 +1,8 @@
 """Minimal, dependency-free ComfyUI client.
 
-Only four upstream calls are ever made: ``/system_stats`` (health), ``/prompt``
-(submit), ``/history/<id>`` (poll) and ``/view`` (fetch a result). The ``/view``
+The upstream calls are ``/system_stats`` (health), ``/queue``, ``/prompt``
+(submit), ``/history/<id>`` (poll), ``/view`` (fetch a result), ``/free`` and
+``/object_info/<node class>`` (which LoRA names ComfyUI offers). The ``/view``
 arguments are taken from ComfyUI's own history output, never from a caller, so
 the file-read primitive is not reachable from the network.
 """
@@ -23,6 +24,35 @@ log = logging.getLogger("gx-media.comfy")
 
 # ComfyUI history entries name their artefacts under one of these output keys.
 _ARTEFACT_KEYS = ("images", "gifs", "videos", "audio")
+
+
+def upstream_error(message: str, code: str) -> UpstreamError:
+    """An UpstreamError carrying a specific machine-readable code."""
+    exc = UpstreamError(message)
+    exc.code = code
+    return exc
+
+
+def failure_code(text: str) -> str:
+    """Classify a ComfyUI execution failure for the caller (D-040)."""
+    lower = text.lower()
+    if "outofmemory" in lower or "out of memory" in lower or "cuda error: out of memory" in lower:
+        return "out_of_memory"
+    if "interrupt" in lower:
+        return "cancelled"
+    return "execution_error"
+
+
+def rejection_code(node_errors: object) -> str:
+    """Classify a /prompt rejection: missing model file, missing node, or other."""
+    text = json.dumps(node_errors).lower()
+    if "unet_name" in text or "ckpt_name" in text:
+        return "model_unavailable"
+    if "lora_name" in text:
+        return "lora_not_visible"
+    if "does not exist" in text or "invalid_prompt" in text and "class_type" in text:
+        return "node_unavailable"
+    return "workflow_rejected"
 
 
 @dataclass(frozen=True)
@@ -75,11 +105,19 @@ class ComfyClient:
                 return response.read()
         except urllib.error.HTTPError as exc:
             body = exc.read()[:2000].decode("utf-8", "replace")
-            raise UpstreamError(f"ComfyUI {path} returned HTTP {exc.code}: {body}") from exc
+            code = "workflow_rejected" if path == "/prompt" and exc.code == 400 else "comfy_error"
+            if code == "workflow_rejected":
+                try:
+                    code = rejection_code(json.loads(body))
+                except ValueError:
+                    pass
+            raise upstream_error(f"ComfyUI {path} returned HTTP {exc.code}: {body}", code) from exc
         except urllib.error.URLError as exc:
-            raise UpstreamError(f"ComfyUI {path} unreachable at {self.base_url}: {exc.reason}") from exc
+            raise upstream_error(f"ComfyUI {path} unreachable at {self.base_url}: {exc.reason}",
+                                 "comfy_unavailable") from exc
         except TimeoutError as exc:
-            raise UpstreamError(f"ComfyUI {path} timed out after {timeout or self.connect_timeout}s") from exc
+            raise upstream_error(f"ComfyUI {path} timed out after {timeout or self.connect_timeout}s",
+                                 "comfy_unavailable") from exc
 
     def _json(self, path: str, *, data: dict | None = None, timeout: float | None = None) -> dict:
         payload = json.dumps(data).encode("utf-8") if data is not None else None
@@ -93,6 +131,23 @@ class ComfyClient:
     def system_stats(self) -> dict:
         return self._json("/system_stats")
 
+    def node_input_options(self, node_class: str, input_name: str) -> list[str] | None:
+        """The choices ComfyUI offers for one input of one node class (e.g. the
+        ``lora_name`` list of ``LoraLoaderModelOnly``), or None when the node
+        class is not installed. ComfyUI refreshes its file lists itself when a
+        model directory's mtime changes, so this always reflects the disk."""
+        info = self._json(f"/object_info/{urllib.parse.quote(node_class)}", timeout=30.0)
+        node = info.get(node_class)
+        if not isinstance(node, dict):
+            return None
+        spec = ((node.get("input") or {}).get("required") or {}).get(input_name)
+        if isinstance(spec, list) and spec and isinstance(spec[0], list):
+            return [str(x) for x in spec[0]]
+        if isinstance(spec, list) and len(spec) > 1 and spec[0] == "COMBO" and isinstance(spec[1], dict) \
+                and isinstance(spec[1].get("options"), list):
+            return [str(x) for x in spec[1]["options"]]
+        raise UpstreamError(f"ComfyUI {node_class}.{input_name} has an unexpected shape")
+
     def queue_depth(self) -> int:
         queue = self._json("/queue")
         return len(queue.get("queue_running", [])) + len(queue.get("queue_pending", []))
@@ -101,10 +156,9 @@ class ComfyClient:
         response = self._json("/prompt", data={"prompt": graph, "client_id": client_id}, timeout=120.0)
         node_errors = response.get("node_errors") or {}
         if node_errors or "prompt_id" not in response:
-            raise UpstreamError(
-                "ComfyUI rejected the graph: "
-                + json.dumps(node_errors or response)[:1500]
-            )
+            raise upstream_error(
+                "ComfyUI rejected the graph: " + json.dumps(node_errors or response)[:1500],
+                rejection_code(node_errors or response))
         return str(response["prompt_id"])
 
     def wait(
@@ -121,7 +175,7 @@ class ComfyClient:
         deadline = started + timeout
         while True:
             if cancelled is not None and cancelled():
-                raise UpstreamError("generation cancelled")
+                raise upstream_error("generation cancelled", "cancelled")
             history = self._json(f"/history/{urllib.parse.quote(prompt_id)}", timeout=30.0)
             entry = history.get(prompt_id)
             if entry is not None:
@@ -129,15 +183,13 @@ class ComfyClient:
                 completed = bool(status.get("completed"))
                 status_str = str(status.get("status_str", ""))
                 if status_str == "error" or (status_str and status_str != "success" and not completed):
-                    raise UpstreamError(
-                        "ComfyUI execution failed: " + _summarise_failure(status)
-                    )
+                    summary = _summarise_failure(status)
+                    raise upstream_error("ComfyUI execution failed: " + summary, failure_code(summary))
                 if completed or status_str == "success":
                     artefacts = _collect_artefacts(entry.get("outputs") or {}, thumbnail_node)
                     if not artefacts:
-                        raise UpstreamError(
-                            f"ComfyUI prompt {prompt_id} completed but produced no output file"
-                        )
+                        raise upstream_error(
+                            f"ComfyUI prompt {prompt_id} completed but produced no output file", "output_missing")
                     return Result(prompt_id, tuple(artefacts), time.monotonic() - started)
             if time.monotonic() >= deadline:
                 raise TimeoutError_(

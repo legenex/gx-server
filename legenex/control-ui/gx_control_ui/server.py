@@ -37,7 +37,7 @@ from collections.abc import Callable
 from . import __version__
 from . import logs as logstreams
 from .actions import ActionRefused, ActionRunner
-from .auth import COOKIE_NAME, AuthError, LoginThrottle, PasswordStore, SessionManager, csrf_ok
+from .auth import COOKIE_NAME, SECURE_COOKIE_NAME, AuthError, LoginThrottle, PasswordStore, SessionManager, csrf_ok
 from .config import UIConfig
 from .docs import DocLibrary
 from .models import ResultLog, live_state
@@ -70,9 +70,15 @@ _SPA_ROUTE = re.compile(
 ACCESS_LOG = os.environ.get("GX_UI_ACCESS_LOG", "1") != "0"
 MAX_BODY_PLAYGROUND = 12 * 1024 * 1024
 MAX_UPLOAD = 150 * 1024 * 1024
+#: Build V3 FLO: flow documents (validated by gx_control_ui/flows/schema.py) may be up to 1 MiB.
+MAX_BODY_FLOWS = 1024 * 1024
+FLOW_PREFIXES = ("/api/flows", "/v1/flows", "/v1/flow-runs", "/v1/assets")
+#: Public APIs that accept PUT / DELETE besides GET and POST (Build V3 FLO).
+REST_PREFIXES = ("/v1/flows",)
 UPLOAD_PATH = "/api/media/upload"
 #: Raw-body uploads, streamed by their route after authentication.
-UPLOAD_PATHS = frozenset({UPLOAD_PATH, "/api/music/upload", "/v1/music/uploads"})
+UPLOAD_PATHS = frozenset({UPLOAD_PATH, "/api/music/upload", "/v1/music/uploads",
+                          "/api/voice/upload", "/v1/voice/uploads"})  # voice: Build V3 VOI
 _IP_RE = re.compile(r"^[0-9a-fA-F:.]{2,45}$")
 
 CSP = (
@@ -168,6 +174,33 @@ class App:
         self._zip_lock = threading.Lock()
         self._gen_seen: int | None = None
         self._gen_lock = threading.Lock()
+        # --- Build V3 WAN: Wan 2.2 LoRA library, presets, generation history (routes_wan.py)
+        from .wan_video import WanVideo
+        self.wan = WanVideo(self.library, self.media, self.media.router, audit=self.actions.audit)
+        # --- Build V3 IMG: gx-image model catalogue (router image_models.py) for validation and options
+        from .image_catalog import ImageCatalog
+        self.image_catalog = ImageCatalog(cfg.repo_root)
+        self.media.catalog = self.image_catalog
+        # --- Build V3 PLT: realtime tunnel registry and the Logs activity feed
+        from .activity import ActivityFeed, builtin_sources
+        from .obs import metric
+        from .realtime import RealtimeRegistry
+        self.realtime = RealtimeRegistry(cfg.realtime_targets(), on_event=metric)
+        self.activity = ActivityFeed()
+        for _kind, _source in builtin_sources(self).items():
+            self.activity.register(_kind, _source)
+        # --- Build V3 VOI: gx-voice Voice Studio (voice.py, routes_voi.py)
+        from .voice import VoiceClient, VoiceStudio
+        self.voice = VoiceStudio(VoiceClient(cfg.voice_base, cfg.voice_key_file), self.library,
+                                 cfg.media_dir / "voice", audit=self.actions.audit, results=self.results,
+                                 explain=lambda alias: self.resources.explain(alias),
+                                 start_worker=not cfg.offline)
+        # --- Build V3 FLO: Creative Flows engine, templates and AI creation (flows/, routes_flo.py)
+        from .flows.wiring import build_flows
+        self.flows = build_flows(self)
+        self.activity.register("flows", self.flows.activity)
+        #: name -> fn(app) -> small JSON dict shown in the Playground Models page (plt.md section 8)
+        self.catalog_extras: dict[str, Callable[[App], dict]] = {}
 
     def _proxy_token(self) -> str:
         path = self.cfg.proxy_token_file
@@ -197,6 +230,10 @@ class App:
         comps = spec.get("components") or []
         main = next((c for c in comps if c.get("kind") == "checkpoint" and (
             ("edit" in workflow) == ("edit" in c.get("role", "")))), comps[0] if comps else {})
+        image_model = self.image_catalog.model_for_workflow(workflow) if alias == "gx-image" else None
+        if image_model:  # Build V3 IMG: the checkpoint of the gx-image model that ran
+            main = next((c for c in comps if c.get("kind") == "checkpoint"
+                         and c.get("image_model") == image_model), main)
         if workflow.startswith("wan22-i2v") or workflow.startswith("wan22-v2v-keyframe"):
             main = next((c for c in comps if "image-to-video" in c.get("role", "")), main)
         return {"repository": main.get("repository"), "revision": main.get("revision"),
@@ -244,25 +281,38 @@ class Handler(BaseHTTPRequestHandler):
             token.encode(), self.app.proxy_token.encode())
 
     def _cookie_token(self) -> str | None:
+        """The session token. Over the Playground's HTTPS listener the Secure
+        ``__Host-`` cookie wins; the plain cookie (sent to https too) is the
+        fallback, so an HTTP sign-in carries over to HTTPS (plt.md section 2)."""
         raw = self.headers.get("Cookie") or ""
+        found: dict[str, str] = {}
         for part in raw.split(";"):
             k, _, v = part.strip().partition("=")
-            if k == COOKIE_NAME:
-                return v
-        return None
+            if k in (COOKIE_NAME, SECURE_COOKIE_NAME) and k not in found:
+                found[k] = v
+        if self._is_https() and found.get(SECURE_COOKIE_NAME):
+            return found[SECURE_COOKIE_NAME]
+        return found.get(COOKIE_NAME)
 
     def _is_https(self) -> bool:
+        if self.via_playground():
+            return (self.headers.get("X-GX-Forwarded-Proto") or "").lower() == "https"
         return self.headers.get("X-Forwarded-Proto", "").lower() == "https"
 
     def _cookie(self, token: str, max_age: int) -> str:
-        secure = self.app.cfg.cookie_secure == "always" or (
-            self.app.cfg.cookie_secure == "auto" and self._is_https())
+        https = self._is_https()
+        if https and self.via_playground():
+            # A Secure cookie under the plain name would shadow (and, in Chrome,
+            # block) the HTTP listener's cookie on the same host: use its own name.
+            return "; ".join([f"{SECURE_COOKIE_NAME}={token}", "HttpOnly", "SameSite=Strict", "Path=/",
+                              f"Max-Age={max_age}", "Secure"])
+        secure = self.app.cfg.cookie_secure == "always" or (self.app.cfg.cookie_secure == "auto" and https)
         parts = [f"{COOKIE_NAME}={token}", "HttpOnly", "SameSite=Strict", "Path=/", f"Max-Age={max_age}"]
         if secure:
             parts.append("Secure")
         return "; ".join(parts)
 
-    def _send(self, status: int, body: bytes, ctype: str, extra: dict[str, str] | None = None) -> None:
+    def _send(self, status: int, body: bytes, ctype: str, extra: dict[str, Any] | None = None) -> None:
         self._status = status
         self.send_response(status)
         for k, v in SECURITY_HEADERS.items():
@@ -270,16 +320,17 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
         for k, v in (extra or {}).items():
-            self.send_header(k, v)
+            for item in (v if isinstance(v, list) else [v]):
+                self.send_header(k, item)
         if self.close_connection:
             self.send_header("Connection", "close")
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(body)
 
-    def _json(self, status: int, payload: Any, extra: dict[str, str] | None = None) -> None:
+    def _json(self, status: int, payload: Any, extra: dict[str, Any] | None = None) -> None:
         body = json.dumps(payload, default=str, separators=(",", ":")).encode("utf-8")
-        headers = {"Cache-Control": "no-store"}
+        headers: dict[str, Any] = {"Cache-Control": "no-store"}
         headers.update(extra or {})
         if len(body) > 2048 and "gzip" in (self.headers.get("Accept-Encoding") or ""):
             body = gzip.compress(body, 5)
@@ -317,6 +368,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._body_error = OverflowError(f"upload must be 1 byte to {MAX_UPLOAD // 2**20} MiB")
             return
         limit = MAX_BODY_PLAYGROUND if path == "/api/playground/chat" else MAX_BODY
+        if path.startswith(FLOW_PREFIXES):  # Build V3 FLO
+            limit = MAX_BODY_FLOWS
         if length < 0 or length > limit:
             self.close_connection = True
             self._body_error = OverflowError(f"request body exceeds {limit} bytes")
@@ -361,12 +414,16 @@ class Handler(BaseHTTPRequestHandler):
         self._dispatch("POST")
 
     def do_PUT(self) -> None:  # noqa: N802
+        if urllib.parse.urlsplit(self.path).path.startswith(REST_PREFIXES):  # Build V3 FLO: PUT /v1/flows/<id>
+            self._dispatch("PUT")
+        else:
+            self._reject_method()
+
+    def do_PATCH(self) -> None:  # noqa: N802
         self._reject_method()
 
-    do_PATCH = do_PUT
-
     def do_DELETE(self) -> None:  # noqa: N802
-        if urllib.parse.urlsplit(self.path).path.startswith("/v1/music/"):
+        if urllib.parse.urlsplit(self.path).path.startswith(("/v1/music/",) + REST_PREFIXES):
             self._dispatch("DELETE")
         else:
             self._reject_method()
@@ -389,9 +446,14 @@ class Handler(BaseHTTPRequestHandler):
         path = parsed.path
         self.query = urllib.parse.parse_qs(parsed.query, max_num_fields=20)
         self._raw, self._body_error = b"", None
-        if method == "POST":
+        if method in ("POST", "PUT"):
             self._consume_body(path)
         try:
+            public = next((fn for prefix, fn in PUBLIC_APIS.items()
+                           if path == prefix or path.startswith(prefix + "/")), None)
+            if public is not None:  # key-authenticated feature APIs (Build V3), never a session
+                public(self, method, path)
+                return
             if path.startswith("/v1/music"):
                 from .routes_v2 import public_music
                 public_music(self, method, path)
@@ -516,6 +578,18 @@ class Handler(BaseHTTPRequestHandler):
 
 
 # =============================================================== routes
+#: Public, gateway-key APIs of Build V3 features: prefix -> handler(h, method, path).
+PUBLIC_APIS: dict[str, Callable[..., None]] = {}
+
+
+def public_api(prefix: str):
+    """Register a `/v1/<feature>` API. The handler authenticates the gateway key itself."""
+    def deco(fn):
+        PUBLIC_APIS[prefix] = fn
+        return fn
+    return deco
+
+
 def route(method: str, pattern: str, access: str = "session"):
     def deco(fn):
         Handler.routes.append((method, re.compile(pattern), fn, access))
@@ -594,7 +668,11 @@ def api_logout(h: Handler) -> None:
     assert h.session is not None  # noqa: S101 - guaranteed by _dispatch for session routes
     h.app.sessions.destroy(h._cookie_token())
     h.app.actions.audit(user=h.session.username, ip=h._client_ip(), action="logout", outcome="ok")
-    h._json(200, {"authenticated": False}, {"Set-Cookie": h._cookie("", 0)})
+    cookies = [h._cookie("", 0)]
+    if h._is_https():
+        # Over HTTPS both cookies may exist: clear the plain one too.
+        cookies.append(f"{COOKIE_NAME}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0")
+    h._json(200, {"authenticated": False}, {"Set-Cookie": cookies})
 
 
 @route("GET", r"/api/overview")
@@ -939,7 +1017,10 @@ def api_media_upload(h: Handler) -> None:
 
 @route("GET", r"/api/media/options")
 def api_media_options(h: Handler) -> None:
+    catalog = h.app.image_catalog.options()
     h._json(200, {"kinds": KIND_LABEL, "image_sizes": IMAGE_SIZES, "video_sizes": VIDEO_SIZES,
+                  "image_models": catalog["models"], "edit_modes": catalog["edit_modes"],
+                  "default_image_model": {"generate": catalog["default_generate"], "edit": catalog["default_edit"]},
                   "stats": h.app.library.stats()})
 
 
@@ -1136,6 +1217,10 @@ class Server(ThreadingHTTPServer):
 
 
 from . import routes_v2  # noqa: E402,F401  (registers the D-037 routes)
+from . import routes_wan  # noqa: E402,F401  (Build V3 WAN: Wan LoRAs, presets, video history)
+from . import routes_plt  # noqa: E402,F401  (Build V3 platform: realtime, activity, catalogue)
+from . import routes_voi  # noqa: E402,F401  (Build V3 VOI: Voice Studio and /v1/voice)
+from . import routes_flo  # noqa: E402,F401  (Build V3 FLO: Creative Flows, /v1/flows, /v1/assets)
 
 
 def build(cfg: UIConfig) -> tuple[App, list[Server]]:

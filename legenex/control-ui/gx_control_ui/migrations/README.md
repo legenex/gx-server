@@ -23,3 +23,4 @@ Rules:
 | 050 | gx-call / Call Agents |
 | 060 | gx-live |
 | 070 | image models / edits |
+| 080 | platform: Playground preferences (PLT) |

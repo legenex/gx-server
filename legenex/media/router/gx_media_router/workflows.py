@@ -8,12 +8,13 @@ not declared in ``bindings`` is unreachable from the network.
 
 from __future__ import annotations
 
-import copy
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from .errors import ValidationError
+from .lora_chain import Chains, parse_chain_spec
+from .lora_chain import insert as insert_loras
 
 
 @dataclass(frozen=True)
@@ -24,7 +25,8 @@ class Workflow:
     kind: str
     title: str
     output_node: str
-    bindings: dict[str, tuple[str, str]]
+    #: logical name -> one or more (node id, input) targets
+    bindings: dict[str, tuple[tuple[str, str], ...]]
     defaults: dict[str, object]
     graph: dict[str, dict]
     #: generate | edit | i2v | v2v (D-031)
@@ -34,32 +36,37 @@ class Workflow:
     thumbnail_node: str | None = None
     models: tuple[str, ...] = ()
     note: str = ""
+    #: model family for memory admission: qwen-image | sdxl | wan (Build V3)
+    family: str = ""
+    #: the gx-image model id this template serves (image_models.py), if any
+    image_model: str = ""
+    #: expert branches that accept user LoRAs (lora_chain.py); empty = none
+    lora_chains: dict = field(default_factory=dict)
 
     def public(self) -> dict:
         return {"name": self.name, "kind": self.kind, "operation": self.operation, "title": self.title,
                 "inputs": dict(self.inputs), "models": list(self.models), "note": self.note,
+                "family": self.family, "image_model": self.image_model or None,
                 "parameters": sorted(k for k in self.bindings if k not in {"filename_prefix", "thumb_prefix"}),
-                "defaults": self.defaults}
+                "defaults": self.defaults, "loras": bool(self.lora_chains)}
 
-    def build(self, params: dict[str, object]) -> dict[str, dict]:
-        """Return a concrete ComfyUI graph with ``params`` applied.
+    def build(self, params: dict[str, object], loras: Chains | None = None) -> dict[str, dict]:
+        """Return a concrete ComfyUI graph with ``params`` applied and, when the
+        template declares expert branches, the validated user LoRA chains.
 
         Unknown parameter names are a programming error in this service, not a
         caller error: the HTTP layer has already normalised the request.
         """
-        graph = copy.deepcopy(self.graph)
+        graph = insert_loras(self.graph, self.lora_chains, loras or Chains())
         merged: dict[str, object] = dict(self.defaults)
         merged.update({k: v for k, v in params.items() if v is not None})
 
         for logical, value in merged.items():
-            target = self.bindings.get(logical)
-            if target is None:
-                continue
-            node_id, field = target
-            node = graph.get(node_id)
-            if node is None:  # pragma: no cover - guarded by load-time check
-                raise KeyError(f"workflow {self.name}: binding {logical} -> missing node {node_id}")
-            node["inputs"][field] = value
+            for node_id, field in self.bindings.get(logical, ()):
+                node = graph.get(node_id)
+                if node is None:  # pragma: no cover - guarded by load-time check
+                    raise KeyError(f"workflow {self.name}: binding {logical} -> missing node {node_id}")
+                node["inputs"][field] = value
         return graph
 
 
@@ -91,20 +98,28 @@ def load_workflow(path: Path) -> Workflow:
     if thumbnail_node is not None and str(thumbnail_node) not in raw:
         raise ValueError(f"{path}: _gx.thumbnail_node {thumbnail_node!r} is not a node in the graph")
     inputs = meta.get("inputs") or {}
-    if not isinstance(inputs, dict) or any(k not in {"image", "video"} for k in inputs):
-        raise ValueError(f"{path}: _gx.inputs may only declare 'image' and/or 'video'")
+    if not isinstance(inputs, dict) or any(k not in {"image", "video", "mask"} for k in inputs):
+        raise ValueError(f"{path}: _gx.inputs may only declare 'image', 'video' and/or 'mask'")
+    if "mask" in inputs and operation != "edit":
+        raise ValueError(f"{path}: only an edit template may declare a 'mask' input")
     needs = {"edit": {"image"}, "i2v": {"image"}, "v2v": {"video"}, "generate": set()}[operation]
-    if set(inputs) != needs:
+    if set(inputs) - {"mask"} != needs:
         raise ValueError(f"{path}: operation {operation!r} requires inputs {sorted(needs)}, got {sorted(inputs)}")
 
-    bindings: dict[str, tuple[str, str]] = {}
+    bindings: dict[str, tuple[tuple[str, str], ...]] = {}
     for logical, spec in (meta.get("bindings") or {}).items():
-        node_id, field = _parse_binding(logical, str(spec))
-        if node_id not in raw:
-            raise ValueError(f"{path}: binding {logical} -> unknown node {node_id}")
-        if field not in raw[node_id].get("inputs", {}):
-            raise ValueError(f"{path}: binding {logical} -> node {node_id} has no input {field!r}")
-        bindings[logical] = (node_id, field)
+        specs = spec if isinstance(spec, list) else [spec]
+        if not specs:
+            raise ValueError(f"{path}: binding {logical} has no target")
+        targets = []
+        for one in specs:
+            node_id, field = _parse_binding(logical, str(one))
+            if node_id not in raw:
+                raise ValueError(f"{path}: binding {logical} -> unknown node {node_id}")
+            if field not in raw[node_id].get("inputs", {}):
+                raise ValueError(f"{path}: binding {logical} -> node {node_id} has no input {field!r}")
+            targets.append((node_id, field))
+        bindings[logical] = tuple(targets)
     for source, logical in inputs.items():
         if logical not in bindings:
             raise ValueError(f"{path}: input {source!r} binds {logical!r}, which is not a declared binding")
@@ -112,6 +127,10 @@ def load_workflow(path: Path) -> Workflow:
     for node_id, node in raw.items():
         if "class_type" not in node or "inputs" not in node:
             raise ValueError(f"{path}: node {node_id} is not a valid API-format node")
+    try:
+        lora_chains = parse_chain_spec(meta.get("lora_chains"), raw)
+    except ValueError as exc:
+        raise ValueError(f"{path}: {exc}") from None
 
     return Workflow(
         name=path.name.removesuffix(".api.json"),
@@ -126,6 +145,9 @@ def load_workflow(path: Path) -> Workflow:
         thumbnail_node=str(thumbnail_node) if thumbnail_node is not None else None,
         models=tuple(str(m) for m in meta.get("models") or ()),
         note=str(meta.get("note", "")),
+        family=str(meta.get("family", "")),
+        image_model=str(meta.get("image_model", "")),
+        lora_chains=lora_chains,
     )
 
 

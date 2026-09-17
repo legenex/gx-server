@@ -14,7 +14,7 @@ test('generate an image and use every result action', async ({ page }) => {
     page.click('#generate-btn'),
   ]);
   const body = req.postDataJSON();
-  expect(body).toMatchObject({ kind: 't2i', prompt: 'e2e playwright red fox in snow', size: '512x512', n: 2, quality: 'standard', uncensored: true });
+  expect(body).toMatchObject({ kind: 't2i', prompt: 'e2e playwright red fox in snow', size: '512x512', n: 2, quality: 'standard', uncensored: true, image_model: 'qwen-image-2512' });
   expect(typeof body.seed).toBe('number');
   expect((await req.response()).status()).toBe(202);
 
@@ -86,7 +86,10 @@ test('generate an image and use every result action', async ({ page }) => {
   ]);
   const ebody = ereq.postDataJSON();
   expect(ebody).toMatchObject({ kind: 'edit', source_id: assetId, prompt: 'make the fox blue' });
-  expect(ebody.strength).toBeGreaterThan(0);
+  // Build V3 regression: an instruction edit never sends a partial-denoise strength.
+  expect(ebody).toMatchObject({ image_model: 'qwen-image-edit-2511', edit_mode: 'change', edit_quality: 'fast' });
+  expect(ebody.strength).toBeUndefined();
+  expect(ebody.mask).toBeUndefined();
   expect((await ereq.response()).status()).toBe(202);
   // The job reaches a terminal phase; a failure is shown in friendly words, never raw exception text.
   const editCard = page.locator(`#ws-jobs .job-card[data-job="${(await (await ereq.response()).json()).id}"]`);

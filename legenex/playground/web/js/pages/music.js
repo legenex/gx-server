@@ -8,6 +8,7 @@ import { clear, debounce, h, mmss, titleOf, toast, truncate, uid, replace } from
 import { icon } from '../icons.js';
 import { center, friendlyError, isMusic, jobCard, phaseOf, submitMusic } from '../jobs.js';
 import { navigate } from '../nav.js';
+import { pref } from '../prefs.js';
 import {
   badge, button, callout, chips, composer, disclosure, dropzone, emptyState, field, iconButton, kv, numberInput,
   pageHeader, readNumber, seedField, select, skeletonLines, slider, tabs, textInput, toggle,
@@ -384,7 +385,8 @@ export default {
       cf.instrumental = C.instrumental ? toggle('Instrumental (no vocals)', false) : null;
       cf.lyrics = C.lyrics ? lyricsEditor({ maxLength: C.lyrics.max_length || 4096 }) : null;
       cf.language = C.vocal_language ? select([['', 'Auto'], ...(C.vocal_language.values || []).map((v) => [v, LANG_LABEL[v] || v])], '') : null;
-      cf.duration = C.duration ? numberField('Duration', C.duration, { unit: 's', hint: 'Seconds' }) : null;
+      // the default length comes from Settings (empty = the model decides)
+      cf.duration = C.duration ? numberField('Duration', { ...C.duration, value: pref('default_music_duration') ?? C.duration.value }, { unit: 's', hint: 'Seconds' }) : null;
       cf.bpm = C.bpm ? numberField('BPM', C.bpm) : null;
       const keyList = uid('keys');
       cf.key = C.key ? textInput({ placeholder: C.key.example || 'e.g. F# minor', maxLength: 16, attrs: { list: keyList } }) : null;

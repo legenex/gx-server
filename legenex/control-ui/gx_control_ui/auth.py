@@ -36,6 +36,8 @@ MAX_PASSWORD_LENGTH = 1024
 USERNAME_RE_CHARS = set("abcdefghijklmnopqrstuvwxyz0123456789._-")
 
 COOKIE_NAME = "gxui_session"
+#: Used only over the Playground's HTTPS listener (Secure; the __Host- prefix pins Path=/ and no Domain).
+SECURE_COOKIE_NAME = "__Host-gxui_session"
 
 
 class AuthError(Exception):

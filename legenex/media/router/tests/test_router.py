@@ -92,7 +92,10 @@ class WorkflowTests(unittest.TestCase):
         for name in ("qwen-image-2512-uncensored", "qwen-image-edit-2511", "wan22-t2v-a14b-uncensored",
                      "wan22-i2v-a14b-uncensored", "wan22-v2v-a14b-uncensored", "wan22-v2v-a14b-light"):
             self.assertIn(name, registry.names())
-        self.assertEqual(len(registry.of_kind("image")), 4)
+        for name in ("qwen-image-edit-2511-masked", "qwen-image-edit-2511-transform", "sdxl-visionmaster-pro-v3",
+                     "sdxl-visionmaster-pro-v3-img2img", "sdxl-visionmaster-pro-v3-inpaint"):
+            self.assertIn(name, registry.names())
+        self.assertEqual(len(registry.of_kind("image")), 9)
         self.assertEqual(len(registry.of_kind("video")), 6)
 
     def test_bindings_reach_the_intended_nodes(self):

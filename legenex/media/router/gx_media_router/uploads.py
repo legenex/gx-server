@@ -194,7 +194,8 @@ def coerce_form(fields: dict[str, str]) -> dict[str, object]:
         value: object = raw
         text = raw.strip()
         if key in {"prompt", "negative_prompt", "model", "size", "response_format", "quality",
-                   "workflow", "input_fidelity", "background", "output_format", "user"}:
+                   "workflow", "input_fidelity", "background", "output_format", "user",
+                   "image_model", "edit_mode", "edit_quality"}:
             out[key] = raw
             continue
         if text.lower() in {"true", "false"}:

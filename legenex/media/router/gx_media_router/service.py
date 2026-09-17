@@ -16,9 +16,11 @@ import uuid
 from . import __version__
 from .comfy import Artefact, ComfyClient
 from .config import Config
-from .errors import (ExceedsNodeError, InsufficientMemoryError, NotFoundError, PolicyBlockedError, RouterError,
+from .errors import (ConflictError, ExceedsNodeError, InsufficientMemoryError, NotFoundError, PolicyBlockedError, RouterError,
                      UpstreamError, ValidationError)
 from .jobs import GenerationSlot, Job, JobStore
+from . import lora_chain
+from .lora_catalog import LoraCatalog, parse_roots
 from .policy import Policy
 from .tenants import MUSIC_LOADED_FLOOR_GIB, MusicState, MusicTenant
 from .uploads import InputStore, MediaInfo
@@ -29,7 +31,8 @@ log = logging.getLogger("gx-media.service")
 
 class MediaService:
     def __init__(self, cfg: Config, comfy: ComfyClient, workflows: WorkflowRegistry,
-                 inputs: InputStore | None = None, music: MusicTenant | None = None) -> None:
+                 inputs: InputStore | None = None, music: MusicTenant | None = None,
+                 loras: LoraCatalog | None = None) -> None:
         self.cfg = cfg
         self.comfy = comfy
         self.workflows = workflows
@@ -56,6 +59,11 @@ class MediaService:
         #: after a (re)start the router does not know what ComfyUI still holds
         #: (a recreate keeps ComfyUI and its cache); the janitor frees it once
         self._residency_unknown = True
+        #: Wan LoRA catalogue (D-040); rescanned at start, on request and every 5 min
+        self.loras = loras if loras is not None else LoraCatalog(parse_roots(cfg.lora_roots))
+        self._rescan_lock = threading.Lock()
+        self._cancel_lock = threading.Lock()
+        self._last_lora_scan = -1e9
         self._video_queue: "queue.Queue[str]" = queue.Queue()
         self._worker = threading.Thread(target=self._video_worker, name="video-worker", daemon=True)
         self._worker.start()
@@ -108,6 +116,8 @@ class MediaService:
                         log.info("purged %d stale staged input(s)", removed)
                 self.reconcile_residency()
                 self.free_if_idle()
+                if self.loras.enabled and time.monotonic() - self._last_lora_scan > self._lora_scan_interval:
+                    self.rescan_loras()
             except Exception:  # pragma: no cover - janitor must never die
                 log.exception("janitor failed")
             time.sleep(30)
@@ -205,6 +215,71 @@ class MediaService:
             self._cleanup(job)
         return job
 
+    # -- Wan LoRAs (D-040) ---------------------------------------------------
+    _lora_scan_interval = 300.0
+
+    def rescan_loras(self) -> dict:
+        """Walk the LoRA roots again and ask ComfyUI which names it offers."""
+        with self._rescan_lock:
+            names: list[str] | None = None
+            error: str | None = None
+            try:
+                names = self.comfy.node_input_options(lora_chain.LOADER_CLASS, "lora_name")
+                self.loras.loader_available = names is not None
+                if names is None:
+                    error = f"ComfyUI has no {lora_chain.LOADER_CLASS} node"
+                    names = []
+            except RouterError as exc:
+                error = exc.message[:300]
+            result = self.loras.rescan(names, error)
+            self._last_lora_scan = time.monotonic()
+            return result
+
+    def _chains(self, workflow_name: str, chains: "lora_chain.Chains | None") -> "lora_chain.Chains":
+        chains = chains or lora_chain.Chains()
+        if chains.empty:
+            return chains
+        workflow = self.workflows.get(workflow_name)
+        if not workflow.lora_chains:
+            raise lora_chain.LoraRequestError(f"workflow {workflow_name} does not accept LoRAs",
+                                              "lora_unsupported_workflow")
+        if not self.loras.enabled:
+            raise lora_chain.LoraRequestError("no LoRA roots are configured on this router", "lora_unavailable")
+        if self.loras.scanned_at is None:
+            self.rescan_loras()
+        lora_chain.validate(chains, self.loras)
+        return chains
+
+    def build_video_graph(self, job_id: str, workflow_name: str, params: dict) -> tuple[dict, str, dict]:
+        """(graph, workflow version, applied chains) for a video job or a preview."""
+        workflow = self.workflows.get(workflow_name)
+        chains = self._chains(workflow_name, params.get("loras"))
+        graph = workflow.build({**params, "filename_prefix": f"gx-video/{job_id}",
+                                "thumb_prefix": f"gx-video/{job_id}-thumb"}, chains)
+        applied = lora_chain.summary(graph, workflow.lora_chains) if workflow.lora_chains else {}
+        return graph, lora_chain.version(workflow.name, workflow.graph), applied
+
+    def preview_video(self, workflow_name: str, params: dict) -> dict:
+        """The exact graph a submission would run, without running it."""
+        graph, version, applied = self.build_video_graph("preview", workflow_name, params)
+        chains = params.get("loras") or lora_chain.Chains()
+        return {"object": "video.workflow", "workflow": workflow_name, "workflow_version": version,
+                "loras": chains.public(), "chains": applied, "seed": params.get("seed"), "graph": graph}
+
+    def cancel_video(self, job_id: str) -> Job:
+        """Cancel a video that has not reached ComfyUI yet (queued or waiting)."""
+        job = self.jobs.get(job_id)
+        if job.kind != "video":
+            raise ValidationError(f"job {job.id} is not a video job", param="id")
+        with self._cancel_lock:
+            if job.status != "queued":
+                raise ConflictError(f"job {job.id} is {job.status}; only a queued video can be cancelled")
+            job.cancel_requested = True
+            job.status, job.error, job.error_code = "failed", "cancelled before it started", "cancelled"
+            job.finished_at = time.time()
+            job.waiting = None
+        return job
+
     # -- videos (asynchronous) --------------------------------------------
     def submit_video(self, workflow_name: str, params: dict, *, staged: tuple[str, ...] = (),
                      source_job: str | None = None) -> Job:
@@ -212,12 +287,16 @@ class MediaService:
         try:
             self.check_policy()
             self._check_ever_fits(workflow_name)
+            chains = self._chains(workflow_name, params.get("loras"))
         except RouterError:
             for name in staged:
                 self.inputs.remove(name)
             raise
         job = self.jobs.create("video", workflow.name, str(params.get("prompt", "")), params,
                                operation=workflow.operation, staged=staged, source_job=source_job)
+        if workflow.lora_chains:
+            job.loras = chains.public()
+            job.workflow_version = lora_chain.version(workflow.name, workflow.graph)
         self._video_queue.put(job.id)
         return job
 
@@ -227,9 +306,12 @@ class MediaService:
             job = None
             try:
                 job = self.jobs.get(job_id)
+                if job.cancel_requested:
+                    log.info("video job %s was cancelled before it started", job_id)
+                    continue
                 workflow = self.workflows.get(job.workflow)
-                graph = workflow.build({**job.params, "filename_prefix": f"gx-video/{job.id}",
-                                        "thumb_prefix": f"gx-video/{job.id}-thumb"})
+                graph, version, _ = self.build_video_graph(job.id, job.workflow, job.params)
+                job.graph, job.workflow_version = graph, version
                 self._run_when_admitted(job, graph, workflow.thumbnail_node)
             except RouterError as exc:
                 if job is not None and job.status != "failed":
@@ -255,6 +337,8 @@ class MediaService:
         cfg = self.cfg
         deadline = time.monotonic() + cfg.resource_wait_seconds
         while True:
+            if job.cancel_requested:
+                return
             block = self.policy.block()
             if block is not None:
                 reason = {"code": block.code, "reason": block.message, "blocker": "gx-max" if
@@ -276,7 +360,10 @@ class MediaService:
                 raise InsufficientMemoryError(
                     f"Gave up after {cfg.resource_wait_seconds // 60} minutes of waiting: {reason['reason']}",
                     details={k: v for k, v in reason.items() if k not in ("reason",)}, retryable=False)
-            time.sleep(cfg.resource_retry_seconds)
+            slept = 0.0
+            while slept < cfg.resource_retry_seconds and not job.cancel_requested:
+                time.sleep(min(1.0, cfg.resource_retry_seconds - slept))
+                slept += 1.0
 
     # -- shared execution --------------------------------------------------
     def _switch_models(self, workflow_name: str) -> bool:
@@ -334,8 +421,21 @@ class MediaService:
         cfg = self.cfg
         if "keyframe" in workflow_name:
             return cfg.footprint_keyframe_gib
-        return cfg.footprint_video_gib if self.workflows.get(workflow_name).kind == "video" \
-            else cfg.footprint_image_gib
+        workflow = self.workflows.get(workflow_name)
+        if workflow.kind == "video":
+            return cfg.footprint_video_gib
+        # Build V3 IMG: the SDXL family (VisionmasterPro_V3) has its own measured footprint
+        return cfg.footprint_sdxl_gib if workflow.family == "sdxl" else cfg.footprint_image_gib
+
+    def _resident_footprint(self) -> float:
+        """The cold footprint of the weights ComfyUI holds now (for the warm estimate)."""
+        cfg = self.cfg
+        if self._resident_kind == "gx-video":
+            return cfg.footprint_video_gib
+        sdxl = {m for w in self.workflows.all() if w.family == "sdxl" for m in w.models}
+        if self._resident_models and self._resident_models <= sdxl:
+            return cfg.footprint_sdxl_gib
+        return cfg.footprint_image_gib
 
     def _growth_gib(self, job: Job) -> tuple[float, str]:
         """How much MemAvailable this job takes away, and on what basis."""
@@ -613,6 +713,8 @@ class MediaService:
 
     def _run(self, job: Job, graph: dict, timeout: float, thumbnail_node: str | None, *,
              wait_on_memory: bool = False) -> None:
+        if job.cancel_requested:
+            return
         self._last_activity = time.monotonic()
         if self._residency_unknown:
             # first job after a start: ComfyUI may still hold another model set
@@ -620,8 +722,11 @@ class MediaService:
             self._freed_at = time.monotonic()
             self._residency_unknown = False
         held_before = self._resident_models
+        with self._cancel_lock:
+            if job.cancel_requested:
+                return
+            job.status = "running"
         job.cold_start = self._switch_models(job.workflow)
-        job.status = "running"
         job.started_at = time.time()
         completed = False
         try:
@@ -634,12 +739,16 @@ class MediaService:
                 job.error_code = exc.code
                 raise
             job.waiting = None
+            if job.cancel_requested:
+                return
             job.prompt_id = self.comfy.submit(graph, self._client_id)
             log.info("job %s -> comfy prompt %s (%s)", job.id, job.prompt_id, job.workflow)
             result = self.comfy.wait(job.prompt_id, timeout=timeout, thumbnail_node=thumbnail_node)
             job.artefacts = result.artefacts
             if job.primary() is None:
-                raise UpstreamError(f"ComfyUI prompt {job.prompt_id} produced no {job.kind} output")
+                missing = UpstreamError(f"ComfyUI prompt {job.prompt_id} produced no {job.kind} output")
+                missing.code = "output_missing"
+                raise missing
             job.status = "completed"
             job.finished_at = time.time()
             completed = True
@@ -685,11 +794,11 @@ class MediaService:
 
     def _memory_view(self) -> dict:
         cfg = self.cfg
-        foot = {"image": cfg.footprint_image_gib, "video": cfg.footprint_video_gib,
-                "keyframe_edit": cfg.footprint_keyframe_gib}
+        foot = {"image": cfg.footprint_image_gib, "image_sdxl": cfg.footprint_sdxl_gib,
+                "video": cfg.footprint_video_gib, "keyframe_edit": cfg.footprint_keyframe_gib}
         warm = None
         if self._resident_models and self._held_gib is not None:
-            kind_foot = cfg.footprint_video_gib if self._resident_kind == "gx-video" else cfg.footprint_image_gib
+            kind_foot = self._resident_footprint()
             warm = round(max(cfg.warm_growth_floor_gib, kind_foot - self._held_gib), 1)
         return {"available_gib": _round(self._mem_available_gib()),
                 "reserve_gib": cfg.reserve_gib,
@@ -729,6 +838,9 @@ class MediaService:
             "policy": {**self.policy.state(), "pin_honoured": self.pin_honoured()},
             "last_refusal": self.last_refusal,
             "last_eviction": self.last_eviction,
+            "loras": {"enabled": self.loras.enabled, "files": len(self.loras.files()),
+                      "scanned_at": self.loras.scanned_at, "comfy_error": self.loras.comfy_error,
+                      "lora_loader_available": self.loras.loader_available},
         }
         try:
             stats = self.comfy.system_stats()

@@ -8,12 +8,17 @@ import { navigate, parseHash } from './nav.js';
 import { getSummary, statusInfo, worstStatus } from './resources.js';
 import { callout, loading } from './ui.js';
 import { hasPage, loadPage } from './routes.js';
+import { setPrefsCache } from './prefs.js';
 
 const $ = byId;
 
 const state = { user: null, cleanup: null, route: '', firstRoute: true, resTimer: null };
 
 // ------------------------------------------------------------------ theme
+function systemTheme() {
+  return window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+}
+
 function applyTheme(theme) {
   document.documentElement.dataset.theme = theme;
   const btn = $('theme-btn');
@@ -26,12 +31,84 @@ function applyTheme(theme) {
 
 function initTheme() {
   const saved = storeGet('theme', null);
-  applyTheme(saved === 'light' || saved === 'dark' ? saved : 'dark');
+  applyTheme(saved === 'light' || saved === 'dark' ? saved : saved === 'system' ? systemTheme() : 'dark');
   $('theme-btn').addEventListener('click', () => {
     const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
     storeSet('theme', next);
     applyTheme(next);
+    // keep the signed-in user's saved preference in step (Settings)
+    if (state.user) api.post('/api/preferences', { preferences: { theme: next } }).catch(() => {});
   });
+  window.addEventListener('gx-preferences', (ev) => applyPreferences(ev.detail || {}));
+}
+
+// Server-side preferences (Settings) win over this device's last choice.
+function applyPreferences(prefs) {
+  if (prefs.theme) {
+    storeSet('theme', prefs.theme);
+    applyTheme(prefs.theme === 'system' ? systemTheme() : prefs.theme);
+  }
+  const motion = prefs.reduced_motion || 'system';
+  if (motion === 'system') delete document.documentElement.dataset.motion;
+  else document.documentElement.dataset.motion = motion;
+  if (prefs.density) document.documentElement.dataset.density = prefs.density;
+  else delete document.documentElement.dataset.density;
+  setPrefsCache(prefs);
+}
+
+async function loadPreferences() {
+  try {
+    const res = await api.get('/api/preferences');
+    applyPreferences(res.preferences || {});
+  } catch { /* keep the device defaults */ }
+}
+
+// ------------------------------------------------------------------ navigation groups
+// Desktop: three labelled groups. Phones: a bottom bar with one button per
+// group; each opens that group's links as a menu (Escape or outside click closes).
+function closeNavMenus(except = null) {
+  for (const btn of document.querySelectorAll('.rail-group-btn[aria-expanded="true"]')) {
+    if (btn === except) continue;
+    btn.setAttribute('aria-expanded', 'false');
+    btn.closest('.rail-group').classList.remove('is-open');
+  }
+}
+
+function syncNavGroups() {
+  for (const group of document.querySelectorAll('.rail-group')) {
+    const list = group.querySelector('.rail-list');
+    group.hidden = !list || !list.querySelector('.rail-link');
+  }
+}
+
+function initNavGroups() {
+  syncNavGroups();
+  for (const btn of document.querySelectorAll('.rail-group-btn')) {
+    btn.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      const open = btn.getAttribute('aria-expanded') !== 'true';
+      closeNavMenus(btn);
+      btn.setAttribute('aria-expanded', String(open));
+      btn.closest('.rail-group').classList.toggle('is-open', open);
+      if (open) {
+        const first = btn.closest('.rail-group').querySelector('.rail-link[aria-current="page"]')
+          || btn.closest('.rail-group').querySelector('.rail-link');
+        if (first) first.focus();
+      }
+    });
+  }
+  document.addEventListener('click', (ev) => {
+    if (!ev.target.closest || !ev.target.closest('.rail-group.is-open')) closeNavMenus();
+  });
+  document.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'Escape') return;
+    const open = document.querySelector('.rail-group.is-open .rail-group-btn');
+    if (open) {
+      closeNavMenus();
+      open.focus();
+    }
+  });
+  for (const link of document.querySelectorAll('.rail-link')) link.addEventListener('click', () => closeNavMenus());
 }
 
 // ------------------------------------------------------------------ auth
@@ -68,12 +145,14 @@ function showApp() {
     }
     $('app-version').textContent = cfg && cfg.version ? `v${cfg.version}` : '';
   }).catch(() => {});
-  route();
+  // Pages read creation defaults from the preferences: load them first.
+  loadPreferences().finally(route);
 }
 
 function stopApp() {
   state.user = null;
   setCsrf(null);
+  setPrefsCache({});
   center.stop();
   clearTimeout(state.resTimer);
   if (state.cleanup) { try { state.cleanup(); } catch { /* ignore */ } }
@@ -162,10 +241,15 @@ function renderTray() {
   const n = center.active().length;
   const count = $('tray-count');
   const badge = $('rail-badge');
+  const groupBadge = $('rail-badge-m');
   count.hidden = !n;
   badge.hidden = !n;
   count.textContent = String(n);
   badge.textContent = String(n);
+  if (groupBadge) {
+    groupBadge.hidden = !n;
+    groupBadge.textContent = String(n);
+  }
   $('tray-btn').setAttribute('aria-label', n ? `Activity: ${n} active job${n === 1 ? '' : 's'}. Open History` : 'Activity: no active jobs. Open History');
   $('tray-btn').classList.toggle('is-busy', n > 0);
 }
@@ -186,6 +270,10 @@ function route() {
     if (a.dataset.page === name) a.setAttribute('aria-current', 'page');
     else a.removeAttribute('aria-current');
   }
+  for (const group of document.querySelectorAll('.rail-group')) {
+    group.classList.toggle('has-current', Boolean(group.querySelector('.rail-link[aria-current="page"]')));
+  }
+  closeNavMenus();
   const main = $('main');
   const root = h('div', { class: `page page-${name}`, id: `page-${name}` }, loading());
   replace(main, root);
@@ -238,6 +326,7 @@ function initShell() {
     if (!document.hidden && state.user) refreshResources();
   });
   hydrateIcons();
+  initNavGroups();
   if (/Mac|iPhone|iPad/.test(navigator.platform || '')) {
     for (const k of document.querySelectorAll('.cmd-kbd')) k.textContent = '⌘ K';
   }

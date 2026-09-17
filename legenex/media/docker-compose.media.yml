@@ -77,7 +77,7 @@ services:
       options: {max-size: "20m", max-file: "5"}
 
   router:
-    image: gx-media-router:2.4.1
+    image: gx-media-router:2.5.0
     build:
       context: ./router
       dockerfile: Dockerfile
@@ -105,6 +105,11 @@ services:
       # router can ask the supervisor to unload an IDLE engine to keep the
       # 30 GiB reserve. It is never logged or returned.
       - ${GX_MUSIC_KEY_FILE:-/srv/projects/gx-cluster/secrets/gx-music/api-key}:/run/gx/music-api-key:ro
+      # D-040: Wan LoRA roots, READ-ONLY, for the LoRA catalogue (bounded
+      # safetensors header reads; the router never writes, renames or moves
+      # a model file). Same order as ComfyUI's search path for `loras`.
+      - ${GX_MODELS_ROOT:-/srv/models}/shared/loras:/srv/loras/shared:ro
+      - ${GX_MODELS_ROOT:-/srv/models}/video/loras:/srv/loras/video:ro
     environment:
       GX_MEDIA_BIND: "0.0.0.0"          # inside the container only
       GX_MEDIA_PORT: "18800"
@@ -126,6 +131,9 @@ services:
       GX_MEDIA_QUEUE_WAIT: "${GX_MEDIA_QUEUE_WAIT:-900}"
       GX_MEDIA_IMAGE_TIMEOUT: "${GX_MEDIA_IMAGE_TIMEOUT:-1800}"
       GX_MEDIA_VIDEO_TIMEOUT: "${GX_MEDIA_VIDEO_TIMEOUT:-3600}"
+      # label=container path=host path, in ComfyUI's search order (shared first:
+      # extra_model_paths.yaml marks gx_shared is_default).
+      GX_MEDIA_LORA_ROOTS: "shared=/srv/loras/shared=${GX_MODELS_ROOT:-/srv/models}/shared/loras;video=/srv/loras/video=${GX_MODELS_ROOT:-/srv/models}/video/loras"
     read_only: true
     tmpfs:
       - /tmp:size=16m,mode=1777

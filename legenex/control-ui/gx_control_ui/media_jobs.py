@@ -34,6 +34,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .image_catalog import CatalogError, ImageCatalog, parse_mask
 from .media_library import LibraryError, MediaLibrary, NewAsset
 from .redact import redact
 from .util import HTTPError, bearer, http
@@ -48,6 +49,7 @@ WAIT_LIMIT_S = 3600
 WAIT_POLL_S = 10
 KIND_LABEL = {"t2i": "Generate image", "edit": "Edit image", "variation": "Image variation",
               "t2v": "Generate video", "i2v": "Image to video", "v2v": "Edit video"}
+#: Qwen Image 2512 sizes (the default generator); each gx-image model lists its own (image_catalog)
 IMAGE_SIZES = ("1328x1328", "1024x1024", "1328x800", "800x1328", "1664x928", "928x1664", "768x768", "512x512")
 VIDEO_SIZES = ("640x640", "832x480", "480x832", "704x704", "512x512")
 MAX_PROMPT = 4000
@@ -55,9 +57,11 @@ MAX_SEED = 2**63 - 1
 
 
 class JobError(Exception):
-    def __init__(self, message: str, status: int = 400) -> None:
+    def __init__(self, message: str, status: int = 400, code: str | None = None) -> None:
         super().__init__(message)
         self.status = status
+        #: machine-readable reason (router error code, e.g. lora_not_found, out_of_memory)
+        self.code = code
 
 
 @dataclass
@@ -77,7 +81,15 @@ class MediaJob:
     elapsed_generation: float | None = None
     waiting: dict | None = None
     cancel_requested: bool = False
+    #: the router phase last reported to observers (D-040)
+    router_phase: str | None = None
+    #: machine-readable failure reason (JobError.code), shown with the message
+    error_code: str | None = None
     cold: bool | None = None
+    #: edit mask PNG (white = may change); never part of public()/params
+    mask: bytes | None = field(default=None, repr=False)
+    #: gx-image model family (qwen-image | sdxl), for Resource Control
+    family: str = ""
 
     @property
     def alias(self) -> str:
@@ -87,6 +99,8 @@ class MediaJob:
     def variant(self) -> str | None:
         if self.kind == "v2v" and float(self.params.get("strength") or 0.85) >= 0.5:
             return "keyframe_edit"
+        if self.family == "sdxl":
+            return "sdxl"
         return None
 
     def public(self) -> dict:
@@ -96,6 +110,7 @@ class MediaJob:
                 "detail": self.detail, "created": self.created, "started": self.started, "ended": self.ended,
                 "elapsed_seconds": round((self.ended or time.time()) - (self.started or self.created), 1),
                 "router_job": self.router_job, "assets": list(self.assets), "error": self.error,
+                "error_code": self.error_code,
                 "prompt": (self.params.get("prompt") or "")[:300], "source_id": self.params.get("source_id"),
                 "params": {k: v for k, v in self.params.items() if k != "prompt"}}
 
@@ -140,10 +155,12 @@ def _choice(body: dict, key: str, allowed: tuple[str, ...], default: str) -> str
     return str(value)
 
 
-def validate(kind: str, body: dict) -> dict:
+def validate(kind: str, body: dict, catalog: ImageCatalog | None = None) -> dict:
     """Server-side validation of a Create request. Returns clean params."""
     if kind not in KINDS:
         raise JobError(f"unknown job kind {kind!r}")
+    if kind in ("t2i", "edit", "variation") and catalog is None:
+        catalog = ImageCatalog(Path(__file__).resolve().parents[3])
     p: dict[str, Any] = {"kind": kind}
     needs_prompt = kind not in ("variation",)
     p["prompt"] = _text(body, "prompt", required=needs_prompt)
@@ -155,15 +172,54 @@ def validate(kind: str, body: dict) -> dict:
         raise JobError("uncensored must be true or false")
     p["uncensored"] = uncensored
     p["adapter_strength"] = _num(body, "adapter_strength", 0.0, 1.5)
+    if kind in ("t2i", "edit", "variation"):
+        assert catalog is not None  # noqa: S101 - checked above
+        try:
+            model = catalog.model(kind, body.get("image_model"))
+        except CatalogError as exc:
+            raise JobError(str(exc)) from None
+        p["image_model"] = model["id"]
     if kind == "t2i":
-        p["size"] = _choice(body, "size", IMAGE_SIZES, "1328x1328")
+        sizes = tuple(model["sizes"]) or IMAGE_SIZES
+        p["size"] = _choice(body, "size", sizes, model["default_size"] or sizes[0])
         p["n"] = _num(body, "n", 1, 4, integer=True) or 1
-        p["quality"] = _choice(body, "quality", ("standard", "fast", "hd"), "standard")
+        if model["qualities"]:
+            p["quality"] = _choice(body, "quality", tuple(model["qualities"]), "standard")
+        elif body.get("quality") not in (None, ""):
+            raise JobError(f"{model['label']} has no quality presets; use steps and guidance")
         p["steps"] = _num(body, "steps", 1, 100, integer=True)
         p["guidance"] = _num(body, "guidance", 0.0, 20.0)
+        if body.get("quality_tags") is not None:
+            if not isinstance(body["quality_tags"], bool):
+                raise JobError("quality_tags must be true or false")
+            if model["family"] == "sdxl":
+                p["quality_tags"] = body["quality_tags"]
     if kind in ("edit", "variation"):
-        p["strength"] = _num(body, "strength", 0.05, 1.0)
+        p["strength"] = _num(body, "strength", 0.0, 1.0)
         p["steps"] = _num(body, "steps", 1, 50, integer=True)
+    if kind == "edit":
+        try:
+            mode = catalog.mode(model, body.get("edit_mode"))  # type: ignore[union-attr]
+        except CatalogError as exc:
+            raise JobError(str(exc)) from None
+        p["edit_mode"] = mode["id"]
+        if not mode["strength_applies"]:
+            p.pop("strength", None)
+        quality = body.get("edit_quality")
+        if quality not in (None, ""):
+            if quality not in (model["qualities"] or ()):
+                raise JobError(f"edit_quality for {model['label']} must be one of "
+                               f"{', '.join(model['qualities']) or 'nothing (not supported)'}")
+            p["edit_quality"] = quality
+        p["negative_prompt"] = _text(body, "negative_prompt")
+        has_mask = body.get("mask") not in (None, "")
+        if has_mask and not model["masks"]:
+            raise JobError(f"{model['label']} does not support masks")
+        if mode["requires_mask"] and not has_mask:
+            raise JobError(f"{model['label']} needs a mask for '{mode['label']}': paint or draw the area to "
+                           "change, or choose Restyle or Full transformation")
+        if has_mask and mode["id"] == "transform" and model["family"] == "qwen-image":
+            raise JobError("Full transformation changes the whole image; clear the mask or pick another mode")
     if kind in ("t2v", "i2v", "v2v"):
         p["size"] = _choice(body, "size", VIDEO_SIZES, "640x640")
         p["seconds"] = _num(body, "seconds", 0.5, 10.0) or 3.0
@@ -179,7 +235,7 @@ def validate(kind: str, body: dict) -> dict:
     return {k: v for k, v in p.items() if v is not None}
 
 
-def _multipart(fields: dict[str, Any], files: list[tuple[str, str, str, Path]]) -> tuple[str, bytes]:
+def _multipart(fields: dict[str, Any], files: list[tuple[str, str, str, Path | bytes]]) -> tuple[str, bytes]:
     boundary = uuid.uuid4().hex
     chunks: list[bytes] = []
     for k, v in fields.items():
@@ -190,7 +246,7 @@ def _multipart(fields: dict[str, Any], files: list[tuple[str, str, str, Path]]) 
     for field_name, filename, ctype, path in files:
         chunks.append(f"--{boundary}\r\nContent-Disposition: form-data; name=\"{field_name}\"; "
                       f"filename=\"{filename}\"\r\nContent-Type: {ctype}\r\n\r\n".encode()
-                      + path.read_bytes() + b"\r\n")
+                      + (path if isinstance(path, bytes) else path.read_bytes()) + b"\r\n")
     chunks.append(f"--{boundary}--\r\n".encode())
     return f"multipart/form-data; boundary={boundary}", b"".join(chunks)
 
@@ -230,7 +286,9 @@ class RouterClient:
         if not 200 <= res.status < 300:
             err = data.get("error") if isinstance(data, dict) else None
             msg = err.get("message") if isinstance(err, dict) else (err if isinstance(err, str) else None)
-            raise JobError(f"media router HTTP {res.status}: {msg or res.text(300)}", 502)
+            code = err.get("code") if isinstance(err, dict) and isinstance(err.get("code"), str) else None
+            status = res.status if res.status in (400, 404, 409, 422) else 502
+            raise JobError(f"media router HTTP {res.status}: {msg or res.text(300)}", status, code)
         if not isinstance(data, dict):
             raise JobError("media router returned an unexpected response", 502)
         return data
@@ -239,9 +297,13 @@ class RouterClient:
 class MediaJobs:
     def __init__(self, library: MediaLibrary, router: RouterClient, *, results=None,
                  model_identity=None, audit=None, poll_interval: float = 3.0, gate=None,
-                 wait_poll: float = WAIT_POLL_S, wait_limit: float = WAIT_LIMIT_S) -> None:
+                 wait_poll: float = WAIT_POLL_S, wait_limit: float = WAIT_LIMIT_S,
+                 catalog: ImageCatalog | None = None) -> None:
         self.library = library
         self.router = router
+        #: gx-image models and edit modes (single source: the router's image_models.py)
+        self.catalog = catalog if catalog is not None else ImageCatalog(Path(__file__).resolve().parents[3])
+        self.observers = []
         self.results = results
         self.model_identity: Any = model_identity or (lambda workflow: {})
         self.audit = audit or (lambda **kw: None)
@@ -257,17 +319,46 @@ class MediaJobs:
         self._worker.start()
 
     # ------------------------------------------------------------- public
-    def submit(self, body: dict, *, user: str, ip: str = "") -> dict:
+    #: callbacks(job, event) for feature records (D-040 Wan history); events:
+    #: submitted, router_job, phase, ready, failed, cancelled
+    observers: list
+
+    def _notify(self, job: MediaJob, event: str) -> None:
+        for fn in list(self.observers):
+            try:
+                fn(job, event)
+            except Exception:  # noqa: BLE001 - an observer never breaks a job
+                log.exception("media job observer failed on %s for %s", event, job.id)
+
+    def submit(self, body: dict, *, user: str, ip: str = "", wan: dict | None = None) -> dict:
+        """``wan``: server-validated Wan text-to-video extras (LoRA chains and
+        sampler settings) from wan_video.py; never taken from ``body``."""
         kind = body.get("kind")
-        params = validate(str(kind), body)
+        params = validate(str(kind), body, self.catalog)
+        if wan is not None:
+            if params["kind"] != "t2v":
+                raise JobError("LoRAs and Wan sampler settings apply to text-to-video only")
+            params["wan"] = wan
         source_id = params.get("source_id")
+        source = None
         if source_id:
             source = self.library.get(source_id)
             want = "video" if params["kind"] == "v2v" else "image"
             if source["type"] != want:
                 raise JobError(f"{KIND_LABEL[params['kind']]} needs an {want} source; "
                                f"{source_id} is a {source['type']}")
-        job = MediaJob(id=secrets.token_hex(8), kind=params["kind"], params=params, user=user)
+        mask = None
+        if params["kind"] == "edit":
+            try:
+                parsed = parse_mask(body, source)
+            except CatalogError as exc:
+                raise JobError(str(exc)) from None
+            if parsed is not None:
+                mask, params["mask"] = parsed
+        elif body.get("mask") not in (None, ""):
+            raise JobError("a mask only applies to image edits")
+        job = MediaJob(id=secrets.token_hex(8), kind=params["kind"], params=params, user=user, mask=mask,
+                       family=self.catalog.family(params.get("image_model")) if self.catalog else "")
         with self._cv:
             if sum(1 for j in self._jobs.values() if j.phase not in TERMINAL) >= 20:
                 raise JobError("20 media jobs are already queued; wait for some to finish", 429)
@@ -280,6 +371,7 @@ class MediaJobs:
             self._queue.append(job.id)
             self._cv.notify()
         self.audit(user=user, ip=ip, action=f"media.{job.kind}", outcome="queued", job=job.id)
+        self._notify(job, "submitted")
         return job.public()
 
     def get(self, job_id: str) -> dict:
@@ -315,10 +407,13 @@ class MediaJobs:
             if job.phase not in ("queued", "waiting"):
                 raise JobError("the job is already running on gx10-02 and finishes on its own", 409)
             job.cancel_requested = True
-            if job_id in self._queue:
+            queued_here = job_id in self._queue
+            if queued_here:
                 self._queue.remove(job_id)
                 job.phase, job.detail, job.ended = "cancelled", "cancelled before it started", time.time()
         self.audit(user=user, ip="", action=f"media.{job.kind}", outcome="cancel", job=job_id)
+        if queued_here:
+            self._notify(job, "cancelled")
         return self.get(job_id)
 
     def snapshot(self) -> dict:
@@ -373,6 +468,7 @@ class MediaJobs:
             if not self._wait_for_resources(job):
                 job.ended = time.time()
                 self.audit(user=job.user, ip="", action=f"media.{job.kind}", outcome=job.phase, job=job.id)
+                self._notify(job, "cancelled" if job.phase == "cancelled" else "failed")
                 continue
             job.started = time.time()
             try:
@@ -402,8 +498,10 @@ class MediaJobs:
                 job.phase = "failed"
                 if isinstance(exc, (JobError, LibraryError)):
                     job.error = redact(str(exc))[:1000]
+                    job.error_code = getattr(exc, "code", None)
                 elif isinstance(exc, HTTPError):
                     job.error = "gx10-02 could not be reached; try again shortly"
+                    job.error_code = "router_unavailable"
                 else:
                     # never show internal exception text to the user; the log has it
                     job.error = "the job failed unexpectedly; an administrator can see the details in the logs"
@@ -416,6 +514,8 @@ class MediaJobs:
                 job.ended = time.time()
                 self.audit(user=job.user, ip="", action=f"media.{job.kind}", outcome=job.phase, job=job.id,
                            assets=job.assets, elapsed=round(job.ended - job.started, 1))
+                self._notify(job, "ready" if job.phase == "ready" else
+                             "cancelled" if job.phase == "cancelled" else "failed")
 
     def _source(self, job: MediaJob) -> tuple[dict, Path]:
         source = self.library.get(job.params["source_id"])
@@ -443,9 +543,11 @@ class MediaJobs:
         except JobError:
             job.cold = None
         if kind == "t2i":
-            body = {**self._common_fields(p), "size": p["size"], "n": p.get("n", 1), "quality": p["quality"],
+            body = {**self._common_fields(p), "size": p["size"], "n": p.get("n", 1), "quality": p.get("quality"),
                     "steps": p.get("steps"), "cfg": p.get("guidance"), "response_format": "b64_json",
-                    "model": "gx-image"}
+                    "model": "gx-image", "image_model": p.get("image_model"), "quality_tags": p.get("quality_tags")}
+            if job.family == "sdxl":
+                body.pop("uncensored", None)
             body = {k: v for k, v in body.items() if v is not None}
             t0 = time.time()
             result = self.router.post_json("/v1/images/generations", body, timeout=2400)
@@ -455,10 +557,17 @@ class MediaJobs:
         if kind in ("edit", "variation"):
             source, path = self._source(job)
             fields = {**self._common_fields(p), "strength": p.get("strength"), "steps": p.get("steps"),
-                      "response_format": "b64_json", "model": "gx-image"}
+                      "response_format": "b64_json", "model": "gx-image", "image_model": p.get("image_model"),
+                      "edit_mode": p.get("edit_mode"), "edit_quality": p.get("edit_quality")}
+            if job.family == "sdxl":
+                fields.pop("uncensored", None)
             if kind == "variation" and not p.get("prompt"):
                 fields.pop("prompt")
-            ctype, data = _multipart(fields, [("image", f"source.{source['ext']}", source["media_type"], path)])
+            files: list[tuple[str, str, str, Path | bytes]] = [
+                ("image", f"source.{source['ext']}", source["media_type"], path)]
+            if job.mask is not None:
+                files.append(("mask", "mask.png", "image/png", job.mask))
+            ctype, data = _multipart(fields, files)
             t0 = time.time()
             route = "/v1/images/edits" if kind == "edit" else "/v1/images/variations"
             result = self.router.post_multipart(route, ctype, data, timeout=2400)
@@ -467,7 +576,7 @@ class MediaJobs:
             return
         # ------------------------------------------------------------- video
         fields = {**self._common_fields(p), "size": p["size"], "seconds": p["seconds"], "model": "gx-video"}
-        files: list[tuple[str, str, str, Path]] = []
+        files = []
         parent = None
         route = "/v1/videos"
         if kind == "t2v":
@@ -483,9 +592,16 @@ class MediaJobs:
             fields["strength"] = p["strength"]
             files.append(("video", f"source.{source['ext']}", source["media_type"], path))
             route = "/v1/videos/edits"
-        ctype, data = _multipart({k: v for k, v in fields.items() if v is not None}, files)
-        created = self.router.post_multipart(route, ctype, data, timeout=600)
+        wan = p.get("wan")
+        if kind == "t2v" and wan:
+            # D-040: LoRA chains are nested JSON; the router's JSON form carries them as-is.
+            body = {**{k: v for k, v in fields.items() if v is not None}, **wan.get("router", {})}
+            created = self.router.post_json(route, body, timeout=600)
+        else:
+            ctype, data = _multipart({k: v for k, v in fields.items() if v is not None}, files)
+            created = self.router.post_multipart(route, ctype, data, timeout=600)
         job.router_job = created.get("id")
+        self._notify(job, "router_job")
         t0 = time.time()
         deadline = t0 + 3 * 3600
         status = created
@@ -503,13 +619,29 @@ class MediaJobs:
                 job.waiting = None
             if status.get("status") in ("completed", "failed"):
                 break
+            if job.cancel_requested and phase in ("queued", "waiting"):
+                try:
+                    status = self.router.post_json(f"/v1/videos/{job.router_job}/cancel", {}, timeout=30)
+                except JobError as exc:
+                    if exc.status != 409:
+                        raise
+                    job.detail = "the router already started this video; it finishes on its own"
+                    job.cancel_requested = False
+                else:
+                    job.phase, job.detail, job.waiting = "cancelled", "cancelled before it started", None
+                    raise JobError("cancelled before it started", 409, "cancelled")
             if time.time() > deadline:
-                raise JobError("video generation did not finish within 3 hours", 504)
+                raise JobError("video generation did not finish within 3 hours", 504, "timeout")
+            if phase != job.router_phase:
+                job.router_phase = phase
+                self._notify(job, "phase")
             time.sleep(self.poll_interval)
             status = self.router.get_json(f"/v1/videos/{job.router_job}")
         if status.get("status") != "completed":
             err = status.get("error") or {}
-            raise JobError(f"generation failed: {err.get('message') if isinstance(err, dict) else err}", 502)
+            code = err.get("code") if isinstance(err, dict) else None
+            raise JobError(f"generation failed: {err.get('message') if isinstance(err, dict) else err}", 502,
+                           code if isinstance(code, str) else None)
         job.elapsed_generation = status.get("elapsed_seconds") or round(time.time() - t0, 1)
         job.phase = "saving"
         job.detail = "downloading the video from gx10-02"
@@ -546,6 +678,9 @@ class MediaJobs:
         identity = self.model_identity(gx.get("workflow") or "")
         width, _, height = str(gx.get("size") or "x").partition("x")
         data = result.get("data") or []
+        model_id = gx.get("image_model") or job.params.get("image_model")
+        model = (self.catalog.models.get(model_id) if self.catalog and model_id else None) or {}
+        strength = gx["strength"] if "strength" in gx else job.params.get("strength")
         if not data:
             raise JobError("the router returned no images", 502)
         for item in data:
@@ -558,11 +693,14 @@ class MediaJobs:
                 model_revision=identity.get("revision"), workflow=gx.get("workflow"),
                 prompt=job.params.get("prompt"), negative_prompt=job.params.get("negative_prompt"),
                 seed=gx.get("seed"), steps=job.params.get("steps"), guidance=job.params.get("guidance"),
-                strength=gx.get("strength") if gx.get("strength") is not None else job.params.get("strength"),
+                strength=strength,
                 width=int(width) if width.isdigit() else None,
                 height=int(height) if height.isdigit() else None,
                 parent_id=parent, job_id=job.id, router_job_id=gx.get("id"),
-                settings={"requested": job.params, "router": gx, "components": identity.get("components")},
+                settings={"requested": job.params, "router": gx, "components": identity.get("components"),
+                          "image_model": model_id, "image_model_label": model.get("label") or model_id,
+                          "image_model_family": model.get("family"),
+                          "edit": gx.get("edit"), "mask": job.params.get("mask")},
             ))
             job.assets.append(asset["id"])
 

@@ -505,7 +505,55 @@ class EngineController:
         return {"status": item.get("status"), "results": results if isinstance(results, list) else [],
                 "progress_text": item.get("progress_text") or ""}
 
+    def create_sample(self, *, query: str, instrumental: bool, vocal_language: str,
+                      temperature: float | None) -> dict:
+        """The 5Hz LM's "Simple Mode" (upstream /v1/create_sample): caption,
+        lyrics and metadata from a description, with an EXPLICIT instrumental
+        flag (release_task's sample mode guesses it from the words instead)."""
+        body = {"query": query, "instrumental": bool(instrumental), "vocal_language": vocal_language or "unknown"}
+        if temperature is not None:
+            body["temperature"] = temperature
+        data = self._call("POST", "/v1/create_sample", body, timeout=900)
+        if not isinstance(data, dict):
+            raise EngineError("the music planner returned nothing", code="plan_failed", retryable=True)
+        self.touch()
+        return data
+
+    def understand(self, container_path: str) -> str:
+        """Queue ACE-Step's own audio understanding (audio -> 5Hz codes -> LM):
+        caption, lyrics, BPM, key, time signature, language. Returns a task id."""
+        return self.submit({
+            "task_type": "text2music", "full_analysis_only": True, "src_audio_path": container_path,
+            "prompt": "", "lyrics": "", "thinking": False, "use_cot_caption": False,
+            "use_cot_language": False, "use_random_seed": False, "seed": 0,
+            "model": self.cfg.model.dit_name, "audio_format": "wav32",
+        })
+
     # ------------------------------------------------------------ media --
+    def analysis_tool(self, container_path: str, timeout: float = 420) -> dict:
+        """Measured acoustic analysis (analysis_dsp.py) in a throw-away,
+        network-less, GPU-less container from the engine image."""
+        c = self.cfg
+        script = Path(__file__).resolve().with_name("analysis_dsp.py")
+        r = self.docker.run([
+            "run", "--rm", "--network", "none", "--user", f"{os.getuid()}:{os.getgid()}",
+            "--memory", "4g", "--cpus", "4", "--read-only", "--tmpfs", "/tmp:rw,size=64m",
+            "--label", "gx.workload=gx-music-analysis", "--entrypoint", c.analysis_python,
+            "-v", f"{script}:/gxm/analysis_dsp.py:ro", "-v", f"{c.data_root}:{ENGINE_TMP}:ro",
+            c.model.image, "/gxm/analysis_dsp.py", container_path,
+        ], timeout=timeout)
+        lines = (r.stdout or "").strip().splitlines()
+        try:
+            data = json.loads(lines[-1]) if lines else {}
+        except ValueError:
+            data = {}
+        if r.returncode != 0 or not isinstance(data, dict) or "error" in data or "tempo" not in data:
+            log.error("analysis helper failed rc=%s: %s %s", r.returncode, (r.stdout or "")[-800:],
+                      (r.stderr or "")[-1500:])
+            reason = data.get("error") if isinstance(data, dict) and isinstance(data.get("error"), str) else None
+            raise EngineError(reason or "the audio could not be analysed", code="analysis_failed")
+        return data
+
     def media_tool(self, tool: str, args: list[str], timeout: float = 300) -> subprocess.CompletedProcess:
         """Run ffmpeg/ffprobe in a throwaway, network-less, GPU-less container
         from the engine image, so transcoding never needs the model loaded."""

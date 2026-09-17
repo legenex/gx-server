@@ -48,6 +48,12 @@ set -euo pipefail
 src="$1/legenex/media"
 with_comfy="$2"
 cd ~/gx-media
+# D-040: the Wan LoRA folder layout (idempotent; existing files are never moved).
+models_root="$(sed -n 's/^GX_MODELS_ROOT=//p' ~/gx-media/.env 2>/dev/null | tail -1)"
+models_root="${models_root:-/srv/models}"
+mkdir -p "${models_root}/shared/loras" \
+  "${models_root}/video/loras/wan22/paired" "${models_root}/video/loras/wan22/high_noise" \
+  "${models_root}/video/loras/wan22/low_noise" "${models_root}/video/loras/wan22/general"
 rsync -a --exclude .env --exclude __pycache__ --exclude tests/ "${src}/" ~/gx-media/
 docker compose -f docker-compose.media.yml build router >/dev/null
 docker compose -f docker-compose.media.yml up -d --no-deps router 2>&1 | tail -1

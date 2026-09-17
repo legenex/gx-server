@@ -3,11 +3,13 @@ import { getAsset, getMediaOptions, upload } from '../api.js';
 import { duplicateAsset, emitAsset, pickAsset, sourceChip } from '../assets.js';
 import { h, toast, replace } from '../dom.js';
 import { friendlyError, submitMedia } from '../jobs.js';
+import { pref } from '../prefs.js';
 import { button, chips, composer, dropzone, field, pageHeader, seedField, slider, tabs, textInput, callout } from '../ui.js';
 import { createStage } from '../workspace.js';
 
 const session = { results: [], jobs: [], done: new Set(), selectedId: null, compareId: null };
-const draft = { mode: 't2v', sources: { i2v: null, v2v: null }, prompt: '', size: '640x640', seconds: 3, fps: 16, strength: 0.85, title: '' };
+// size starts from Settings (the page falls back to the first offered size)
+const draft = { mode: 't2v', sources: { i2v: null, v2v: null }, prompt: '', size: pref('default_video_size', '640x640'), seconds: 3, fps: 16, strength: 0.85, title: '' };
 
 const MODES = [['t2v', 'Text to Video', 'sparkles'], ['i2v', 'Image to Video', 'image'], ['v2v', 'Video Edit', 'wand']];
 const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp'];

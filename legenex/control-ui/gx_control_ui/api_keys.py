@@ -20,7 +20,8 @@ from typing import Any
 from .util import HTTPError, bearer, http_json
 from datetime import UTC
 
-PUBLIC_ALIASES = ("gx-mini", "gx-fast", "gx-reason", "gx-max", "gx-auto", "gx-image", "gx-video", "gx-music")
+PUBLIC_ALIASES = ("gx-mini", "gx-fast", "gx-reason", "gx-max", "gx-auto", "gx-image", "gx-video", "gx-music",
+                  "gx-voice")
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ._-]{0,62}$")
 TOKEN_RE = re.compile(r"^[0-9a-f]{32,128}$")
 EXPIRY = {"never": None, "1d": "1d", "7d": "7d", "30d": "30d", "90d": "90d", "365d": "365d"}

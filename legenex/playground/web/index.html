@@ -53,14 +53,33 @@
       <span class="brand-mark" aria-hidden="true"></span>
       <span class="brand-name">GX-Playground</span>
     </a>
-    <ul class="rail-list">
-      <li><a class="rail-link" href="#/dashboard" data-page="dashboard"><span class="rail-ic" data-icon="home"></span><span class="rail-label">Dashboard</span></a></li>
-      <li><a class="rail-link" href="#/images" data-page="images"><span class="rail-ic" data-icon="image"></span><span class="rail-label">Images</span></a></li>
-      <li><a class="rail-link" href="#/video" data-page="video"><span class="rail-ic" data-icon="video"></span><span class="rail-label">Video</span></a></li>
-      <li><a class="rail-link" href="#/music" data-page="music"><span class="rail-ic" data-icon="music"></span><span class="rail-label">Music</span></a></li>
-      <li><a class="rail-link" href="#/library" data-page="library"><span class="rail-ic" data-icon="library"></span><span class="rail-label">Library</span></a></li>
-      <li><a class="rail-link" href="#/history" data-page="history"><span class="rail-ic" data-icon="history"></span><span class="rail-label">History</span><span id="rail-badge" class="rail-badge" hidden></span></a></li>
-    </ul>
+    <div class="rail-groups">
+      <!-- Navigation groups (BUILD_V3 rule 8). Add a page as ONE <li> in its group. -->
+      <section class="rail-group" data-group="create" aria-labelledby="nav-create-h">
+        <h2 class="rail-group-title" id="nav-create-h"><span class="rail-group-label">Create</span><button class="rail-group-btn" type="button" aria-expanded="false" aria-controls="nav-create"><span data-icon="sparkles" data-size="20"></span><span class="rail-group-name">Create</span></button></h2>
+        <ul class="rail-list" id="nav-create">
+          <li><a class="rail-link" href="#/dashboard" data-page="dashboard"><span class="rail-ic" data-icon="home"></span><span class="rail-label">Dashboard</span></a></li>
+          <li><a class="rail-link" href="#/images" data-page="images"><span class="rail-ic" data-icon="image"></span><span class="rail-label">Images</span></a></li>
+          <li><a class="rail-link" href="#/video" data-page="video"><span class="rail-ic" data-icon="video"></span><span class="rail-label">Video</span></a></li>
+          <li><a class="rail-link" href="#/music" data-page="music"><span class="rail-ic" data-icon="music"></span><span class="rail-label">Music</span></a></li>
+        </ul>
+      </section>
+      <section class="rail-group" data-group="realtime" aria-labelledby="nav-realtime-h">
+        <h2 class="rail-group-title" id="nav-realtime-h"><span class="rail-group-label">Realtime</span><button class="rail-group-btn" type="button" aria-expanded="false" aria-controls="nav-realtime"><span data-icon="wave" data-size="20"></span><span class="rail-group-name">Realtime</span></button></h2>
+        <ul class="rail-list" id="nav-realtime">
+        </ul>
+      </section>
+      <section class="rail-group" data-group="manage" aria-labelledby="nav-manage-h">
+        <h2 class="rail-group-title" id="nav-manage-h"><span class="rail-group-label">Manage</span><button class="rail-group-btn" type="button" aria-expanded="false" aria-controls="nav-manage"><span data-icon="folder" data-size="20"></span><span class="rail-group-name">Manage</span><span id="rail-badge-m" class="rail-badge rail-badge-group" hidden></span></button></h2>
+        <ul class="rail-list" id="nav-manage">
+          <li><a class="rail-link" href="#/library" data-page="library"><span class="rail-ic" data-icon="library"></span><span class="rail-label">Library</span></a></li>
+          <li><a class="rail-link" href="#/history" data-page="history"><span class="rail-ic" data-icon="history"></span><span class="rail-label">History</span><span id="rail-badge" class="rail-badge" hidden></span></a></li>
+          <li><a class="rail-link" href="#/models" data-page="models"><span class="rail-ic" data-icon="cpu"></span><span class="rail-label">Models</span></a></li>
+          <li><a class="rail-link" href="#/logs" data-page="logs"><span class="rail-ic" data-icon="logs"></span><span class="rail-label">Logs</span></a></li>
+          <li><a class="rail-link" href="#/settings" data-page="settings"><span class="rail-ic" data-icon="settings"></span><span class="rail-label">Settings</span></a></li>
+        </ul>
+      </section>
+    </div>
     <div class="rail-foot">
       <p class="rail-version" id="app-version"></p>
     </div>

@@ -81,7 +81,7 @@ healthCheckTimeout: 2400
 
 logLevel: debug
 logTimeFormat: rfc3339
-logToStdout: proxy
+logToStdout: both   # D-039: keep vLLM start-up output (a failed start must leave evidence)
 metricsMaxInMemory: 1000
 captureBuffer: 0
 
@@ -227,6 +227,13 @@ models:
   # gx-fast for tool calls; qwen3 reasoning parser extracts <think> content
   # into reasoning_content instead of burning the output budget on it.
   #
+  # --speculative-config mtp x2 (D-039): the checkpoint ships one MTP layer
+  # (mtp_num_hidden_layers 1). Measured 2026-09-17: decode 12.2 -> 25-28
+  # tok/s, mean acceptance ~2.8, same answers on the code/reasoning checks.
+  # A dense 27B is memory-bandwidth bound on GB10, so this is the main lever.
+  # --safetensors-load-strategy prefetch: vLLM only auto-prefetches on network
+  # filesystems; on this ext4 NVMe the lazy mmap load took 115-136 s.
+  #
   # ttl: 1200 -> 20 min idle then unload (D-039). A cold start costs ~6 min
   # and a reasoning answer several more, so 15 min made follow-up questions
   # pay the load again. The TTL stays well inside the media router's 30-min
@@ -282,5 +289,6 @@ models:
       --tool-call-parser qwen3_xml
       --reasoning-parser qwen3
       --speculative-config "{\"method\":\"mtp\",\"num_speculative_tokens\":2}"
+      --safetensors-load-strategy prefetch
       --trust-remote-code'
     cmdStop: "docker stop -t 150 gx-reason"

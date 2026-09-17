@@ -5,6 +5,7 @@ Contract (OpenAI-shaped where an OpenAI shape exists; D-031):
     GET  /health                          liveness + upstream state (unauthenticated)
     GET  /v1/models                       the two aliases this router serves
     GET  /v1/workflows                    vetted templates and their parameters
+    GET  /v1/image-models                 gx-image models, their operations, sizes and edit modes
     POST /v1/images/generations           text-to-image, synchronous (JSON)
     POST /v1/images/edits                 instruction edit of a source image, synchronous
                                           (multipart `image`, or JSON `image` as base64/data URL)
@@ -19,6 +20,15 @@ Contract (OpenAI-shaped where an OpenAI shape exists; D-031):
     GET  /v1/videos                       recent video jobs
     GET  /v1/videos/{id}                  job status (OpenAI video object)
     GET  /v1/videos/{id}/content          the finished mp4 (`?variant=thumbnail` -> first frame)
+    GET  /v1/videos/{id}/workflow         the exact ComfyUI graph the job ran (D-040)
+    POST /v1/videos/{id}/cancel           cancel a video that has not reached ComfyUI yet
+    POST /v1/videos/workflow              build (not run) the text-to-video graph for a request
+    GET  /v1/loras                        the Wan LoRA catalogue (names exactly as ComfyUI sees them)
+    POST /v1/loras/rescan                 walk the LoRA roots again and re-ask ComfyUI
+
+Text-to-video accepts ``loras: {"high": [{"name", "strength"}], "low": [...]}``
+(lora_chain.py) plus ``shift``, ``cfg``, ``steps``, ``boundary``,
+``sampler_name`` and ``scheduler``.
 
 Source media is validated by magic bytes and size in uploads.py and staged
 under a server-generated name; nothing from a caller becomes a path.
@@ -36,10 +46,12 @@ import urllib.parse
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import __version__, uploads, validation as v
+from . import __version__, image_models, uploads, validation as v
 from .config import Config
 from .errors import AuthError, NotFoundError, RouterError, ValidationError
 from .jobs import plain_job_id
+from .lora_chain import Chains
+from .lora_chain import parse_request as parse_loras
 from .service import MediaService
 
 log = logging.getLogger("gx-media.http")
@@ -50,6 +62,10 @@ _IMAGE_CONTENT = re.compile(rf"^/v1/images/(?P<id>{_ID})/content(?:/(?P<index>\d
 _VIDEO_STATUS = re.compile(rf"^/v1/videos/(?P<id>{_ID})$")
 _VIDEO_CONTENT = re.compile(rf"^/v1/videos/(?P<id>{_ID})/content$")
 _VIDEO_REMIX = re.compile(rf"^/v1/videos/(?P<id>{_ID})/remix$")
+_VIDEO_WORKFLOW = re.compile(rf"^/v1/videos/(?P<id>{_ID})/workflow$")
+_VIDEO_CANCEL = re.compile(rf"^/v1/videos/(?P<id>{_ID})/cancel$")
+#: POST routes that never start a generation (allowed during holds)
+_POLICY_EXEMPT = frozenset({"/v1/admin/free", "/v1/loras/rescan", "/v1/videos/workflow"})
 
 #: quality -> text-to-image template. "standard" is the uncensored default.
 IMAGE_WORKFLOWS = {
@@ -213,8 +229,20 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/v1/models":
                 self._models()
                 return
+            if path == "/v1/image-models":
+                self._json(200, {"object": "list", **image_models.options()})
+                return
             if path == "/v1/workflows":
                 self._json(200, {"object": "list", "data": [w.public() for w in self.service.workflows.all()]})
+                return
+            if path == "/v1/loras":
+                if self.service.loras.enabled and self.service.loras.scanned_at is None:
+                    self.service.rescan_loras()
+                self._json(200, self.service.loras.public())
+                return
+            match = _VIDEO_WORKFLOW.match(path)
+            if match:
+                self._workflow(match.group("id"))
                 return
             if path == "/v1/videos":
                 jobs = [j.public() for j in reversed(self.service.jobs.snapshot()) if j.kind == "video"]
@@ -244,7 +272,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             path = urllib.parse.unquote(self.path.split("?", 1)[0])
             self._authenticate()
-            if path != "/v1/admin/free":
+            if path not in _POLICY_EXEMPT and not _VIDEO_CANCEL.match(path):
                 # Refuse before any upload is staged (D-036: gx-max hold / Maintenance).
                 self.service.check_policy()
             if path == "/v1/images/generations":
@@ -261,6 +289,21 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if path == "/v1/videos/edits":
                 self._video_edit(None)
+                return
+            if path == "/v1/loras/rescan":
+                self._length_optional()
+                if not self.service.loras.enabled:
+                    raise NotFoundError("no LoRA roots are configured on this router")
+                self._json(200, self.service.rescan_loras())
+                return
+            if path == "/v1/videos/workflow":
+                self._video_preview()
+                return
+            match = _VIDEO_CANCEL.match(path)
+            if match:
+                self._length_optional()
+                job = self.service.cancel_video(plain_job_id(match.group("id")))
+                self._json(200, job.public())
                 return
             if path == "/v1/admin/free":
                 result = self.service.free_now()
@@ -340,19 +383,56 @@ class Handler(BaseHTTPRequestHandler):
                    "node": "gx10-02", **extra},
         })
 
+    def _image_model(self, body: dict, operation: str) -> image_models.ImageModel:
+        """The caller's gx-image model: `image_model` (or `gx.image_model`), else the
+        model of a named workflow, else the default for the operation."""
+        value = body.get("image_model")
+        nested = body.get("gx")
+        if value is None and isinstance(nested, dict):
+            value = nested.get("image_model")
+        if isinstance(body.get("workflow"), str):
+            name = self._named_workflow(body["workflow"], "image",
+                                        {"generate"} if operation == "generate" else {"edit"})
+            if value is None:
+                value = image_models.model_for_workflow(name)
+        return image_models.resolve(value, operation)
+
     def _images(self) -> None:
         body = self._body()
         cfg = self.cfg
-        quality = v.enum(body, "quality", {"standard", "hd", "auto", "fast", "low", "medium", "high"}, "standard")
-        quality = {"auto": "standard", "low": "fast", "medium": "standard", "high": "hd"}.get(quality, quality)
-        workflow = IMAGE_WORKFLOWS[quality]
-        if isinstance(body.get("workflow"), str):
-            workflow = self._named_workflow(body["workflow"], "image", {"generate"})
-
-        width, height = v.dimensions(body, cfg, cfg.default_image_size)
+        model = self._image_model(body, "generate")
+        quality_tags = body.get("quality_tags", True)
+        if not isinstance(quality_tags, bool):
+            raise ValidationError("quality_tags must be true or false", param="quality_tags")
+        prompt = v.prompt(body, cfg)
+        negative = v.optional_text(body, "negative_prompt", cfg)
+        suffix = None
+        if model.id == image_models.VISIONMASTER:
+            workflow = image_models.SDXL_GENERATE_WORKFLOW
+            if isinstance(body.get("workflow"), str):
+                workflow = self._named_workflow(body["workflow"], "image", {"generate"})
+            width, height = v.dimensions(body, cfg, model.default_size)
+            if width * height > image_models.SDXL_MAX_PIXELS:
+                raise ValidationError(f"{model.label} works at about one megapixel; {width}x{height} is too large "
+                                      f"(use one of {', '.join(model.sizes)})", param="size")
+            if quality_tags:
+                suffix = image_models.SDXL_QUALITY_SUFFIX
+                prompt = f"{prompt}, {suffix}"
+            if negative is None:
+                negative = image_models.SDXL_NEGATIVE_DEFAULT
+            adapter = None
+        else:
+            quality = v.enum(body, "quality", {"standard", "hd", "auto", "fast", "low", "medium", "high"},
+                             "standard")
+            quality = {"auto": "standard", "low": "fast", "medium": "standard", "high": "hd"}.get(quality, quality)
+            workflow = IMAGE_WORKFLOWS[quality]
+            if isinstance(body.get("workflow"), str):
+                workflow = self._named_workflow(body["workflow"], "image", {"generate"})
+            width, height = v.dimensions(body, cfg, cfg.default_image_size)
+            adapter = self._adapter(body, T2I_ADAPTER_DEFAULT)
         params = {
-            "prompt": v.prompt(body, cfg),
-            "negative_prompt": v.optional_text(body, "negative_prompt", cfg),
+            "prompt": prompt,
+            "negative_prompt": negative,
             "width": width,
             "height": height,
             "batch_size": v.count(body, cfg),
@@ -361,17 +441,34 @@ class Handler(BaseHTTPRequestHandler):
             "cfg": v.bounded_float(body, "cfg", 0.0, 20.0),
             "sampler_name": v.sampler(body),
             "scheduler": v.scheduler(body),
-            "adapter_strength": self._adapter(body, T2I_ADAPTER_DEFAULT),
+            "adapter_strength": adapter,
         }
         fmt = v.response_format(body)
         started = time.monotonic()
         job = self.service.generate_image(workflow, params)
         self._image_response(job, fmt, {
             "size": f"{width}x{height}", "seed": params["seed"],
+            "image_model": model.id, "image_model_label": model.label,
             "adapter_strength": params["adapter_strength"] if "adapter_strength" in
             self.service.workflows.get(workflow).bindings else None,
+            "prompt_suffix": suffix,
             "elapsed_seconds": round(time.monotonic() - started, 2),
         })
+
+    def _mask(self, body: dict, files: dict, source: uploads.MediaInfo) -> tuple[bytes, uploads.MediaInfo] | None:
+        """An optional edit mask (white = may change), same aspect ratio as the source."""
+        data = self._source_bytes(body, files, ("mask",), "image")
+        if data is None:
+            return None
+        info = self._validated(data, "image")
+        if info.ext != "png":
+            raise ValidationError("the mask must be a PNG (white = area to change, black = keep)", param="mask")
+        src_ratio = (source.width or 1) / (source.height or 1)
+        if abs((info.width or 1) / (info.height or 1) - src_ratio) > 0.02 * src_ratio:
+            raise ValidationError(f"the mask is {info.width}x{info.height} but the source is "
+                                  f"{source.width}x{source.height}; they must have the same aspect ratio",
+                                  param="mask")
+        return data, info
 
     def _image_edit(self, *, variation: bool) -> None:
         body, files = self._request()
@@ -380,42 +477,65 @@ class Handler(BaseHTTPRequestHandler):
         if data is None:
             raise ValidationError("an `image` (file or base64) is required", param="image")
         info = self._validated(data, "image")
-        workflow = EDIT_WORKFLOW
-        if isinstance(body.get("workflow"), str):
-            workflow = self._named_workflow(body["workflow"], "image", {"edit"})
+        model = self._image_model(body, "variation" if variation else "edit")
+        mask = None if variation else self._mask(body, files, info)
+        strength = v.bounded_float(body, "strength", 0.0, 1.0)
+        negative = v.optional_text(body, "negative_prompt", cfg)
         if variation:
             prompt = v.optional_text(body, "prompt", cfg) or VARIATION_PROMPT
-            strength = v.bounded_float(body, "strength", 0.05, 1.0, 0.75)
+            plan = image_models.plan_variation(strength, prompt)
         else:
-            prompt = v.prompt(body, cfg)
-            strength = v.bounded_float(body, "strength", 0.05, 1.0, 1.0)
+            plan = image_models.plan_edit(
+                model, v.enum(body, "edit_mode", set(image_models.EDIT_MODES)), v.prompt(body, cfg), strength,
+                has_mask=mask is not None, quality=v.enum(body, "edit_quality", {"fast", "quality", "standard"}))
+        suffix = None
+        prompt = plan.prompt
+        if model.id == image_models.VISIONMASTER:
+            if body.get("quality_tags", True) is not False:
+                suffix = image_models.SDXL_QUALITY_SUFFIX
+                prompt = f"{prompt}, {suffix}"
+            if negative is None:
+                negative = image_models.SDXL_NEGATIVE_DEFAULT
         if body.get("size") not in (None, "", "auto"):
             width, height = v.dimensions(body, cfg, "1024x1024")
         else:
             width, height = uploads.fit_to_pixels(info.width or 1024, info.height or 1024,
                                                   cfg.edit_target_pixels, cfg.dimension_multiple,
                                                   cfg.max_dimension)
-        staged = self.service.stage(data, info)
+        staged = [self.service.stage(data, info)]
+        try:
+            if mask is not None:
+                staged.append(self.service.stage(*mask))
+        except RouterError:
+            self.service.inputs.remove(staged[0])
+            raise
         params = {
+            **plan.params,
             "prompt": prompt,
-            "negative_prompt": v.optional_text(body, "negative_prompt", cfg),
-            "input_image": staged,
+            "negative_prompt": negative,
+            "input_image": staged[0],
+            "mask_image": staged[1] if mask is not None else None,
             "width": width,
             "height": height,
             "seed": v.seed(body),
-            "steps": v.bounded_int(body, "steps", 1, 50),
-            "cfg": v.bounded_float(body, "cfg", 0.0, 20.0),
-            "strength": strength,
-            "adapter_strength": self._adapter(body, EDIT_ADAPTER_DEFAULT),
+            "adapter_strength": self._adapter(body, EDIT_ADAPTER_DEFAULT)
+            if model.id == image_models.QWEN_EDIT else None,
         }
+        for key, value in (("steps", v.bounded_int(body, "steps", 1, 50)),
+                           ("cfg", v.bounded_float(body, "cfg", 0.0, 20.0))):
+            if value is not None:
+                params[key] = value
         fmt = v.response_format(body)
         started = time.monotonic()
-        job = self.service.generate_image(workflow, params, staged=(staged,),
+        job = self.service.generate_image(plan.workflow, params, staged=tuple(staged),
                                           operation="variation" if variation else "edit")
         self._image_response(job, fmt, {
-            "size": f"{width}x{height}", "seed": params["seed"], "strength": strength,
+            "size": f"{width}x{height}", "seed": params["seed"], "strength": plan.strength,
+            "image_model": model.id, "image_model_label": model.label,
+            "edit": plan.public(), "prompt_sent": plan.prompt, "prompt_suffix": suffix,
             "adapter_strength": params["adapter_strength"],
             "source": {"width": info.width, "height": info.height, "format": info.ext, "bytes": len(data)},
+            "mask": {"width": mask[1].width, "height": mask[1].height, "bytes": len(mask[0])} if mask else None,
             "elapsed_seconds": round(time.monotonic() - started, 2),
         })
 
@@ -441,10 +561,67 @@ class Handler(BaseHTTPRequestHandler):
             "seed_low": seed,
         }
 
+    def _length_optional(self) -> None:
+        """Drain (and bound) an optional body on action routes."""
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            raise ValidationError("invalid Content-Length") from None
+        if length > self.cfg.max_body_bytes:
+            self.close_connection = True
+            raise ValidationError(f"request body exceeds {self.cfg.max_body_bytes} bytes")
+        if length:
+            self.rfile.read(length)
+
+    def _t2v_extras(self, body: dict) -> dict:
+        """LoRA chains and the Wan sampler settings a text-to-video request may set."""
+        raw = body.get("loras")
+        if isinstance(raw, str):
+            try:
+                raw = json.loads(raw) if raw.strip() else None
+            except json.JSONDecodeError:
+                raise ValidationError("loras is not valid JSON", param="loras") from None
+        steps = v.bounded_int(body, "steps", 2, 40)
+        boundary = v.bounded_int(body, "boundary", 1, 39)
+        if steps is not None and boundary is None:
+            boundary = steps // 2
+        if boundary is not None and boundary >= (steps if steps is not None else 4):
+            raise ValidationError("boundary must be lower than steps", param="boundary")
+        return {
+            "loras": parse_loras(raw),
+            "shift": v.bounded_float(body, "shift", 0.5, 20.0),
+            "cfg": v.bounded_float(body, "cfg", 1.0, 10.0),
+            "steps": steps,
+            "boundary": boundary,
+            "sampler_name": v.sampler(body),
+            "scheduler": v.scheduler(body),
+        }
+
+    def _video_preview(self) -> None:
+        body = self._body()
+        params = self._video_common(body, "640x640")
+        params.update(self._t2v_extras(body))
+        workflow = T2V_WORKFLOW
+        if isinstance(body.get("workflow"), str):
+            workflow = self._named_workflow(body["workflow"], "video", {"generate"})
+        self._json(200, self.service.preview_video(workflow, params))
+
+    def _workflow(self, job_id: str) -> None:
+        job = self.service.jobs.get(job_id)
+        if job.graph is None:
+            raise NotFoundError(f"job {job.id} has no workflow yet (it has not been built)")
+        self._json(200, {"object": "video.workflow", "id": job.public()["id"], "gx_id": job.id,
+                         "workflow": job.workflow, "workflow_version": job.workflow_version,
+                         "comfy_prompt_id": job.prompt_id, "loras": job.loras, "graph": job.graph})
+
     def _videos(self) -> None:
         body, files = self._request()
         data = self._source_bytes(body, files, ("input_reference", "image", "input_image"), "image")
         params = self._video_common(body, "640x640")
+        if data is None:
+            params.update(self._t2v_extras(body))
+        elif body.get("loras"):
+            raise ValidationError("LoRAs are only supported for text-to-video", param="loras")
         staged: tuple[str, ...] = ()
         if data is not None:
             info = self._validated(data, "image")

@@ -69,6 +69,7 @@ export function debounce(fn, ms = 300) {
 }
 
 export function reducedMotion() {
+  if (document.documentElement.dataset.motion === 'reduce') return true;
   return window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 }
 

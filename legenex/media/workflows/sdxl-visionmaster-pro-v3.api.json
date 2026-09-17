@@ -1,0 +1,140 @@
+{
+ "_gx": {
+  "kind": "image",
+  "operation": "generate",
+  "family": "sdxl",
+  "image_model": "visionmaster-pro-v3",
+  "title": "VisionmasterPro_V3 (SDXL) text-to-image",
+  "note": "VisionmasterPro_V3 = votepurchase/pornmasterPro_noobV3VAE @ 75f59d136b165d48f3e678bb057af99f7cf1a71e (diffusers-format SDXL / NoobAI, prediction_type epsilon per scheduler_config.json; licence creativeml-openrail-m). The diffusers UNet, the two CLIP text encoders and the VAE load unconverted through UNETLoader, DualCLIPLoader(sdxl) and VAELoader. Euler ancestral, 28 steps, CFG 5 at about one megapixel.",
+  "output_node": "10",
+  "models": [
+   "pornmasterPro_noobV3VAE/unet.safetensors",
+   "pornmasterPro_noobV3VAE/clip_l.safetensors",
+   "pornmasterPro_noobV3VAE/clip_g.safetensors",
+   "pornmasterPro_noobV3VAE/vae.safetensors"
+  ],
+  "bindings": {
+   "prompt": "5.text",
+   "negative_prompt": "6.text",
+   "seed": "8.seed",
+   "steps": "8.steps",
+   "cfg": "8.cfg",
+   "sampler_name": "8.sampler_name",
+   "scheduler": "8.scheduler",
+   "filename_prefix": "10.filename_prefix",
+   "width": "7.width",
+   "height": "7.height",
+   "batch_size": "7.batch_size"
+  },
+  "defaults": {
+   "steps": 28,
+   "cfg": 5.0,
+   "sampler_name": "euler_ancestral",
+   "scheduler": "normal",
+   "negative_prompt": "",
+   "width": 832,
+   "height": 1216,
+   "batch_size": 1
+  }
+ },
+ "1": {
+  "class_type": "UNETLoader",
+  "inputs": {
+   "unet_name": "pornmasterPro_noobV3VAE/unet.safetensors",
+   "weight_dtype": "default"
+  }
+ },
+ "2": {
+  "class_type": "DualCLIPLoader",
+  "inputs": {
+   "clip_name1": "pornmasterPro_noobV3VAE/clip_l.safetensors",
+   "clip_name2": "pornmasterPro_noobV3VAE/clip_g.safetensors",
+   "type": "sdxl",
+   "device": "default"
+  }
+ },
+ "3": {
+  "class_type": "VAELoader",
+  "inputs": {
+   "vae_name": "pornmasterPro_noobV3VAE/vae.safetensors"
+  }
+ },
+ "5": {
+  "class_type": "CLIPTextEncode",
+  "inputs": {
+   "clip": [
+    "2",
+    0
+   ],
+   "text": "a photograph"
+  }
+ },
+ "6": {
+  "class_type": "CLIPTextEncode",
+  "inputs": {
+   "clip": [
+    "2",
+    0
+   ],
+   "text": ""
+  }
+ },
+ "8": {
+  "class_type": "KSampler",
+  "inputs": {
+   "model": [
+    "1",
+    0
+   ],
+   "positive": [
+    "5",
+    0
+   ],
+   "negative": [
+    "6",
+    0
+   ],
+   "latent_image": [
+    "7",
+    0
+   ],
+   "seed": 0,
+   "steps": 28,
+   "cfg": 5.0,
+   "sampler_name": "euler_ancestral",
+   "scheduler": "normal",
+   "denoise": 1.0
+  }
+ },
+ "9": {
+  "class_type": "VAEDecode",
+  "inputs": {
+   "samples": [
+    "8",
+    0
+   ],
+   "vae": [
+    "3",
+    0
+   ]
+  }
+ },
+ "10": {
+  "class_type": "SaveImage",
+  "inputs": {
+   "images": [
+    "9",
+    0
+   ],
+   "filename_prefix": "gx-image/visionmaster-pro-v3"
+  }
+ },
+ "7": {
+  "class_type": "EmptyLatentImage",
+  "inputs": {
+   "width": 832,
+   "height": 1216,
+   "batch_size": 1
+  }
+ }
+}

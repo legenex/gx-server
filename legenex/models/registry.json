@@ -227,7 +227,8 @@
           "kind": "checkpoint",
           "repository": "Comfy-Org/Qwen-Image_ComfyUI (Qwen-Image-2512; revision not recorded at download, MODELS.md)",
           "file": "image/diffusion_models/qwen_image_2512_fp8_e4m3fn.safetensors",
-          "licence": "apache-2.0"
+          "licence": "apache-2.0",
+          "image_model": "qwen-image-2512"
         },
         {
           "role": "generation speed LoRA",
@@ -251,7 +252,8 @@
           "repository": "Comfy-Org/Qwen-Image-Edit_ComfyUI (Qwen-Image-Edit-2511)",
           "revision": "7d41107b653d3039be20972fb82398b01b3213eb",
           "file": "image/diffusion_models/qwen_image_edit_2511_fp8mixed.safetensors",
-          "licence": "apache-2.0"
+          "licence": "apache-2.0",
+          "image_model": "qwen-image-edit-2511"
         },
         {
           "role": "edit speed LoRA",
@@ -422,6 +424,11 @@
     "qwen-image-2512-lightning": "gx-image",
     "qwen-image-2512-quality": "gx-image",
     "qwen-image-edit-2511": "gx-image",
+    "qwen-image-edit-2511-masked": "gx-image",
+    "qwen-image-edit-2511-transform": "gx-image",
+    "sdxl-visionmaster-pro-v3": "gx-image",
+    "sdxl-visionmaster-pro-v3-img2img": "gx-image",
+    "sdxl-visionmaster-pro-v3-inpaint": "gx-image",
     "wan22-t2v-a14b-uncensored": "gx-video",
     "wan22-t2v-a14b-lightning": "gx-video",
     "wan22-i2v-a14b-uncensored": "gx-video",

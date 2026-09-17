@@ -122,6 +122,11 @@ class UIConfig:
     node2_swap_base: str = field(default_factory=lambda: _env("GX_NODE2_SWAP_BASE", "http://192.168.100.11:28080"))
     media_base: str = field(default_factory=lambda: _env("GX_UI_MEDIA_BASE", "http://192.168.100.11:18800"))
     gxmax_base: str = field(default_factory=lambda: _env("GX_UI_GXMAX_BASE", "http://127.0.0.1:30000"))
+    #: gx-voice supervisor on gx10-02 (fabric only, L-3) and its bearer key file (0600). Build V3 VOI.
+    voice_base: str = field(default_factory=lambda: _env("GX_UI_VOICE_BASE", "http://192.168.100.11:18830"))
+    voice_key_file: Path = field(
+        default_factory=lambda: Path(_env("GX_VOICE_KEY_FILE", "/srv/projects/gx-cluster/secrets/gx-voice/api-key"))
+    )
     #: gx-music supervisor on gx10-02 (fabric only, L-3) and its bearer key file (0600).
     music_base: str = field(default_factory=lambda: _env("GX_UI_MUSIC_BASE", "http://192.168.100.11:18820"))
     music_key_file: Path = field(
@@ -193,6 +198,25 @@ class UIConfig:
     @property
     def acceptance_password_file(self) -> Path:
         return self.secret_dir / "acceptance-password"
+
+    # --- realtime tunnel (Build V3, plt.md section 1) --------------------
+    #: node-2 WebSocket services the Playground may tunnel to. Fixed here,
+    #: never chosen by a client. Fabric addresses only (L-3).
+    rt_call_target: str = field(default_factory=lambda: _env("GX_RT_CALL_TARGET", "192.168.100.11:18840"))
+    rt_live_target: str = field(default_factory=lambda: _env("GX_RT_LIVE_TARGET", "192.168.100.11:18850"))
+    secrets_root: Path = field(
+        default_factory=lambda: Path(_env("GX_SECRETS_ROOT", "/srv/projects/gx-cluster/secrets"))
+    )
+    #: Structured metric lines (gxcommon.metrics) written on gx10-01.
+    metrics_dir: Path = field(default_factory=lambda: Path(_env("GX_METRICS_DIR", "/srv/logs/gx-metrics")))
+
+    def realtime_targets(self) -> dict:
+        from .realtime import Target
+        out = {}
+        for svc, raw in (("call", self.rt_call_target), ("live", self.rt_live_target)):
+            if raw:
+                out[svc] = Target.parse(raw, self.secrets_root / f"gx-{svc}" / "api-key")
+        return out
 
     def secret(self, name: str) -> str | None:
         value = os.environ.get(name)

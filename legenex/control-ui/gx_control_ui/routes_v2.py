@@ -350,7 +350,8 @@ def _key_identity(h: Handler) -> dict | None:
                     expired = False
             if not info.get("blocked") and not expired:
                 ident = {"key": digest[:16], "name": info.get("key_alias") or "key",
-                         "music": not models or "gx-music" in models or "all-proxy-models" in models}
+                         "music": not models or "gx-music" in models or "all-proxy-models" in models,
+                         "models": [str(m) for m in models]}
     except HTTPError:
         ident = None
     if len(h.app.api_keys_cache) > 500:

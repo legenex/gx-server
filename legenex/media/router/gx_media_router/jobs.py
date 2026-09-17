@@ -131,6 +131,13 @@ class Job:
     waiting: dict | None = None
     #: machine-readable failure code (insufficient_memory, exceeds_node_reserve, ...)
     error_code: str | None = None
+    #: user LoRA chains (lora_chain.Chains.public()), the generator version and
+    #: the exact graph sent to ComfyUI (D-040; GET /v1/videos/{id}/workflow)
+    loras: dict | None = None
+    workflow_version: str | None = None
+    graph: dict | None = None
+    #: a queued video the caller cancelled before it reached ComfyUI
+    cancel_requested: bool = False
 
     #: OpenAI video-object status vocabulary (LiteLLM validates it).
     _OPENAI_STATUS = {"queued": "queued", "running": "in_progress", "completed": "completed", "failed": "failed"}
@@ -163,12 +170,20 @@ class Job:
             "progress": {"queued": 0, "running": 50, "completed": 100, "failed": 0}[self.status],
             "workflow": self.workflow,
             "operation": self.operation,
-            "gx_status": "waiting" if self.status == "queued" and self.waiting else self.status,
+            "gx_status": "cancelled" if self.error_code == "cancelled" else
+            ("waiting" if self.status == "queued" and self.waiting else self.status),
             "phase": ("waiting" if self.status == "queued" and self.waiting else
                       {"queued": "queued", "completed": "ready", "failed": "failed"}.get(
                           self.status, "loading" if self.cold_start else "generating")),
             "cold_start": self.cold_start,
+            "comfy_prompt_id": self.prompt_id,
         }
+        if self.loras is not None:
+            body["loras"] = self.loras
+        if self.workflow_version:
+            body["workflow_version"] = self.workflow_version
+        if self.graph is not None:
+            body["workflow_url"] = f"/v1/{self.kind}s/{self.id}/workflow"
         if self.status == "queued" and self.waiting:
             body["waiting"] = dict(self.waiting)
         if width and height:

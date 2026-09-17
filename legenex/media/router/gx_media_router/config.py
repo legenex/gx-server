@@ -102,6 +102,9 @@ class Config:
     meminfo_path: str = ""
     reserve_gib: float = 30.0
     footprint_image_gib: float = 57.0
+    #: SDXL family (VisionmasterPro_V3, Build V3 IMG), measured separately; see
+    #: coordination/build-v3/img.md. Like the others it can only be raised.
+    footprint_sdxl_gib: float = 57.0
     footprint_video_gib: float = 72.0
     footprint_keyframe_gib: float = 107.0
     warm_growth_floor_gib: float = 8.0
@@ -124,6 +127,10 @@ class Config:
     resource_retry_seconds: float = 15.0
     #: How long an eviction may take to show up as released memory.
     eviction_settle_seconds: float = 60.0
+    #: Wan LoRA roots (D-040), READ-ONLY mounts, in ComfyUI's search order:
+    #: ``label=mount_path=host_path;...`` (lora_catalog.parse_roots). Empty
+    #: disables the LoRA catalogue and LoRA requests.
+    lora_roots: str = ""
 
     @property
     def pin_reserve_gib(self) -> float:
@@ -160,6 +167,7 @@ class Config:
             # The reserve can be raised, never lowered below the locked 30 GiB.
             reserve_gib=_float("GX_MEDIA_RESERVE_GIB", 30.0, 30.0, 100.0),
             footprint_image_gib=_float("GX_MEDIA_FOOTPRINT_IMAGE_GIB", 57.0, 57.0, 121.0),
+            footprint_sdxl_gib=_float("GX_MEDIA_FOOTPRINT_SDXL_GIB", 57.0, 57.0, 121.0),
             footprint_video_gib=_float("GX_MEDIA_FOOTPRINT_VIDEO_GIB", 72.0, 72.0, 121.0),
             footprint_keyframe_gib=_float("GX_MEDIA_FOOTPRINT_KEYFRAME_GIB", 107.0, 107.0, 121.0),
             warm_growth_floor_gib=_float("GX_MEDIA_WARM_GROWTH_FLOOR_GIB", 8.0, 8.0, 121.0),
@@ -170,4 +178,5 @@ class Config:
             evict_idle_music=os.environ.get("GX_MEDIA_EVICT_IDLE_MUSIC", "1") != "0",
             resource_wait_seconds=_int("GX_MEDIA_RESOURCE_WAIT", 1800, 30, 86400),
             resource_retry_seconds=float(_int("GX_MEDIA_RESOURCE_RETRY", 15, 2, 600)),
+            lora_roots=os.environ.get("GX_MEDIA_LORA_ROOTS", ""),
         )

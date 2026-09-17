@@ -49,6 +49,7 @@ class TempEnv:
             node1_swap_base="http://127.0.0.1:9", node2_swap_base="http://127.0.0.1:9",
             media_base="http://127.0.0.1:9", gxmax_base="http://127.0.0.1:9",
             music_base="http://127.0.0.1:9", music_key_file=root / "secrets" / "music-key",
+            voice_base="http://127.0.0.1:9", voice_key_file=root / "secrets" / "voice-key",
             public_playground_url="http://127.0.0.1:8090/", public_control_url="http://127.0.0.1:8088/",
         )
         params.update(overrides)

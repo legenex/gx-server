@@ -114,14 +114,15 @@ class Store:
 
     # ------------------------------------------------------------ jobs --
     def create_job(self, *, operation: str, title: str, request: dict, model: dict,
-                   parent_job_id: str | None, parent_index: int | None, source: dict | None) -> str:
+                   parent_job_id: str | None, parent_index: int | None, source: dict | None,
+                   status: str = QUEUED, detail: str = "") -> str:
         job_id = new_id("mus")
         now = time.time()
         with self._write_lock, self._conn() as db:
             db.execute(
-                "INSERT INTO jobs(id, operation, status, created_at, updated_at, title, request_json, "
-                "model_json, parent_job_id, parent_index, source_json) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-                (job_id, operation, QUEUED, now, now, title, json.dumps(request), json.dumps(model),
+                "INSERT INTO jobs(id, operation, status, detail, created_at, updated_at, title, request_json, "
+                "model_json, parent_job_id, parent_index, source_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                (job_id, operation, status, detail, now, now, title, json.dumps(request), json.dumps(model),
                  parent_job_id, parent_index, json.dumps(source) if source else None),
             )
         return job_id
@@ -131,7 +132,7 @@ class Store:
             return
         cols, vals = [], []
         for k, v in fields.items():
-            if k in {"result", "timings"}:
+            if k in {"result", "timings", "request"}:
                 k, v = f"{k}_json", json.dumps(v)
             cols.append(f"{k}=?")
             vals.append(v)
@@ -152,9 +153,15 @@ class Store:
             row = db.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
         return _job_row(row) if row else None
 
-    def list_jobs(self, *, status: str | None = None, limit: int = 50, before: float | None = None) -> list[dict]:
+    def list_jobs(self, *, status: str | None = None, limit: int = 50, before: float | None = None,
+                  operation: str | None = None) -> list[dict]:
         q, args = "SELECT * FROM jobs", []
         where = []
+        if operation == "creative":
+            where.append("operation<>'analyze'")
+        elif operation:
+            where.append("operation=?")
+            args.append(operation)
         if status == "active":
             where.append(f"status IN ({','.join('?' * len(ACTIVE))})")
             args += list(ACTIVE)

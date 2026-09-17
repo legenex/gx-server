@@ -1,0 +1,32 @@
+# gx-voice supervisor -- node 2 (gx10-02) ONLY. systemd --user unit.
+#
+# Lightweight (stdlib Python, <100 MB). Safe to start at boot: it does NOT load
+# a model. The Qwen3-TTS engine container is started on the first job through
+# the node-2 admission guard, and stopped after GX_VOICE_IDLE_UNLOAD_S of
+# inactivity or as soon as gx-max or Maintenance claims the node.
+#
+# Install (gx10-02, from the pull-only mirror):
+#   ln -sf ~/Documents/Projects/Server/gx-cluster/legenex/voice/systemd/gx-voice.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now gx-voice
+[Unit]
+Description=gx-voice supervisor (Qwen3-TTS 1.7B speech, node 2)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+# GX_VOICE_HOME is the directory that contains gx_voice/ (legenex/voice).
+Environment=GX_VOICE_HOME=%h/Documents/Projects/Server/gx-cluster/legenex/voice
+EnvironmentFile=-%h/.config/gx-voice/gx-voice.env
+WorkingDirectory=/tmp
+ExecStart=/usr/bin/env python3 -P -c "import os,sys,runpy; sys.path.insert(0, os.environ['GX_VOICE_HOME']); runpy.run_module('gx_voice', run_name='__main__')"
+Restart=on-failure
+RestartSec=10
+# Unloading the engine on stop takes up to ~30 s.
+TimeoutStopSec=90
+KillMode=mixed
+MemoryMax=1G
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target
