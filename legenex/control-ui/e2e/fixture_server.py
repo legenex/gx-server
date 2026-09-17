@@ -285,6 +285,10 @@ def main() -> int:
     app, servers = srv.build(env.cfg)
     app.media.router._key = lambda: media_key
     app.media.poll_interval = 0.5
+    # Build V3 LIV: App uses start_threads=not cfg.offline, and this fixture is
+    # offline, so the gx-live tool executor would never run and a tool call would
+    # sit at `running` for ever. Production is unaffected; this is test wiring.
+    app.live.start_threads = True
     cl = app.cluster
     history = [{"kind": "acquire", "started": time.time() - 4000, "ended": time.time() - 3450,
                 "elapsed_seconds": 550, "startup_seconds": 512, "outcome": "ready",

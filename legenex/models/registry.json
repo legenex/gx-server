@@ -697,10 +697,10 @@
       "measured_footprint": {
         "node": "gx10-02",
         "cold_gib": 34.0,
-        "resident_gib": 31.0,
-        "startup_s": 102.0,
+        "resident_gib": 30.0,
+        "startup_s": 128.0,
         "measured": "2026-09-17",
-        "evidence": "/srv/logs/acceptance/build-v3/liv/probe1-feasibility"
+        "evidence": "/srv/logs/acceptance/build-v3/liv/acceptance"
       },
       "quantization": "none (bf16)",
       "languages": [
