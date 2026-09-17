@@ -302,7 +302,7 @@ class CallFlowTests(unittest.TestCase):
         self.node = Node2()
         self.env = TempEnv()
         key_file = self.env.root / "secrets" / "gx-call" / "api-key"
-        key_file.parent.mkdir(parents=True)
+        key_file.parent.mkdir(parents=True, exist_ok=True)
         key_file.write_text(self.node.key)
         self.library = MediaLibrary(self.env.cfg.media_dir, MediaTools(enabled=False))
         self.audit = Audit()
@@ -558,7 +558,7 @@ class RouteTests(unittest.TestCase):
                            secrets_root=None)
         self.env.cfg = dataclasses.replace(self.env.cfg, secrets_root=self.env.root / "secrets")
         key_file = self.env.root / "secrets" / "gx-call" / "api-key"
-        key_file.parent.mkdir(parents=True)
+        key_file.parent.mkdir(parents=True, exist_ok=True)
         key_file.write_text(self.node.key)
         auth.PasswordStore(self.env.cfg.password_file).set_password("admin", PASSWORD, n=2**10)
         self.app, servers = srv.build(self.env.cfg)

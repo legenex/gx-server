@@ -1378,6 +1378,29 @@ not on the authorized list.
 4. Assign to `gx-reason` and prove a real request **through** the alias.
 5. Only then delete the interim `/srv/models/vllm/Qwen3.6-27B-NVFP4`.
 
+### What was built so this cannot mislead anyone again
+
+The Model Manager used to answer every refusal with one sentence — *"access
+denied by Hugging Face (gated or private; a token with access is required)"* —
+which is what made "make another token" look like the fix. Since D-041:
+
+* `HFError` carries a machine code: `unauthenticated` (401), `gated_not_granted`
+  (403 with `X-Error-Code: GatedRepo`), `forbidden`, `not_found`, `upstream`,
+  and Hugging Face's own `X-Error-Message` is passed through verbatim.
+* `HFClient.info()` returns a structured `access` verdict — `ok`, `reason`,
+  `probed_file`, `http_status`, `message`, `token_user` and the exact human
+  action. For this repository the action ends with **"A new token cannot fix
+  this."**
+* The token panel shows configured / valid / user / account type / token type /
+  token name / created / **can read gated repos**, all from live state, and a
+  token file that is not 0600 is reported as invalid with the reason. The token
+  itself is never sent to the browser.
+
+Verified on the DEPLOYED Control Center by
+`legenex/control-ui/e2e/live.hf-access.spec.js` (2/2 passing) and by
+`tests/test_hf_access.py` (12 hermetic tests against a stub Hub that serves
+metadata 200 and files 401/403).
+
 ### Meanwhile
 
 `gx-reason` keeps serving on the interim `nvidia/Qwen3.6-27B-NVFP4` (D-033).

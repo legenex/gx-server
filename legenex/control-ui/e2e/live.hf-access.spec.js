@@ -60,7 +60,7 @@ test('a gated repository reports the FILE gate, not a token problem', async ({ p
   const origin = new URL(page.url()).origin;
   const res = await page.request.post('/api/manager/lookup', {
     headers: { 'X-CSRF-Token': csrf, Origin: origin, Referer: `${origin}/` },
-    data: { reference: `${REPO}@${REV}` },
+    data: { ref: `${REPO}@${REV}` },
   });
   expect(res.status(), await res.text()).toBe(200);
   const info = await res.json();

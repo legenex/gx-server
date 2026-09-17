@@ -334,7 +334,10 @@ export default {
       session.turns.push(record);
       session.pendingTurns.push(record);
       renderMetrics();
-      if (session.pendingTurns.length >= 5) flushTurns();
+      // Post every turn as it finishes: a short session that ends with a
+      // navigation used to lose its timings entirely (found by the 2026-09-17
+      // GPU acceptance, where live_turns stayed empty after a one-turn call).
+      flushTurns();
     }
 
     async function flushTurns() {
@@ -727,6 +730,7 @@ export default {
       window.removeEventListener('pagehide', onUnload);
       for (const t of timers) clearInterval(t);
       timers.clear();
+      flushTurns();
       onUnload();
       const id = session.id;
       teardownMedia();

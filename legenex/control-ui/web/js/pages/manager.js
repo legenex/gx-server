@@ -358,7 +358,7 @@ export default {
     searchEl = h('div', { class: 'search-results' });
     invEl = h('div', {});
     jobsEl = h('div', { class: 'mm-jobs' });
-    tokenEl = h('div', {});
+    tokenEl = h('div', { id: 'mm-token' });
     const lookup = async (value) => {
       clear(lookupEl).append(h('p', { class: 'loading' }, 'Looking up…'));
       try { renderLookup(await api.post('/api/manager/lookup', { ref: value })); } catch (e) { clear(lookupEl).append(errorBox(e)); }
