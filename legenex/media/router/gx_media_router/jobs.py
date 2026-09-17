@@ -127,6 +127,10 @@ class Job:
     source_job: str | None = None
     #: True when this job had to load its model weights (first job or a switch)
     cold_start: bool = False
+    #: why a queued video has not started yet (D-038): code, reason, numbers, next
+    waiting: dict | None = None
+    #: machine-readable failure code (insufficient_memory, exceeds_node_reserve, ...)
+    error_code: str | None = None
 
     #: OpenAI video-object status vocabulary (LiteLLM validates it).
     _OPENAI_STATUS = {"queued": "queued", "running": "in_progress", "completed": "completed", "failed": "failed"}
@@ -159,11 +163,14 @@ class Job:
             "progress": {"queued": 0, "running": 50, "completed": 100, "failed": 0}[self.status],
             "workflow": self.workflow,
             "operation": self.operation,
-            "gx_status": self.status,
-            "phase": {"queued": "queued", "completed": "ready", "failed": "failed"}.get(
-                self.status, "loading" if self.cold_start else "generating"),
+            "gx_status": "waiting" if self.status == "queued" and self.waiting else self.status,
+            "phase": ("waiting" if self.status == "queued" and self.waiting else
+                      {"queued": "queued", "completed": "ready", "failed": "failed"}.get(
+                          self.status, "loading" if self.cold_start else "generating")),
             "cold_start": self.cold_start,
         }
+        if self.status == "queued" and self.waiting:
+            body["waiting"] = dict(self.waiting)
         if width and height:
             body["size"] = f"{width}x{height}"
         if self.kind == "video" and isinstance(length, int) and isinstance(fps, (int, float)) and fps:
@@ -185,7 +192,8 @@ class Job:
             body["content_url"] = f"/v1/{self.kind}s/{self.id}/content"
             if self.thumbnail() is not None:
                 body["thumbnail_url"] = f"/v1/{self.kind}s/{self.id}/content?variant=thumbnail"
-        body["error"] = {"code": "generation_failed", "message": self.error} if self.error else None
+        body["error"] = {"code": self.error_code or "generation_failed", "message": self.error} \
+            if self.error else None
         return body
 
 

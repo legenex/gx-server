@@ -77,7 +77,7 @@ services:
       options: {max-size: "20m", max-file: "5"}
 
   router:
-    image: gx-media-router:2.3.0
+    image: gx-media-router:2.4.0
     build:
       context: ./router
       dockerfile: Dockerfile
@@ -101,6 +101,10 @@ services:
       - ${GX_MODELS_ROOT:-/srv/models}/comfy-input:/srv/comfy-input
       # D-036: cluster holds (gx-max, Maintenance) and pins, read-only.
       - ${GX_GUARD_ROOT:-/srv/projects/gx-cluster/state/guard}:/srv/guard:ro
+      # D-038: the gx-music supervisor key (0600, same uid), read-only, so the
+      # router can ask the supervisor to unload an IDLE engine to keep the
+      # 30 GiB reserve. It is never logged or returned.
+      - ${GX_MUSIC_KEY_FILE:-/srv/projects/gx-cluster/secrets/gx-music/api-key}:/run/gx/music-api-key:ro
     environment:
       GX_MEDIA_BIND: "0.0.0.0"          # inside the container only
       GX_MEDIA_PORT: "18800"
@@ -111,6 +115,14 @@ services:
       # Free ComfyUI's models after this many idle seconds (0 = never).
       GX_MEDIA_IDLE_FREE: "${GX_MEDIA_IDLE_FREE:-600}"
       GX_MEDIA_GUARD_DIR: /srv/guard
+      # D-038: projected MemAvailable after a job must stay >= this (never below 30).
+      GX_MEDIA_RESERVE_GIB: "${GX_MEDIA_RESERVE_GIB:-30}"
+      # gx-music supervisor on this node (fabric address; its /health is open).
+      GX_MEDIA_MUSIC_URL: "${GX_MEDIA_MUSIC_URL:-http://192.168.100.11:18820}"
+      GX_MEDIA_MUSIC_KEY_FILE: /run/gx/music-api-key
+      GX_MEDIA_EVICT_IDLE_MUSIC: "${GX_MEDIA_EVICT_IDLE_MUSIC:-1}"
+      # A video that does not fit waits this long (seconds) before failing.
+      GX_MEDIA_RESOURCE_WAIT: "${GX_MEDIA_RESOURCE_WAIT:-1800}"
       GX_MEDIA_QUEUE_WAIT: "${GX_MEDIA_QUEUE_WAIT:-900}"
       GX_MEDIA_IMAGE_TIMEOUT: "${GX_MEDIA_IMAGE_TIMEOUT:-1800}"
       GX_MEDIA_VIDEO_TIMEOUT: "${GX_MEDIA_VIDEO_TIMEOUT:-3600}"

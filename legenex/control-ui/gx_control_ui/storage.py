@@ -165,7 +165,8 @@ class StorageManager:
             why[f"/srv/projects/gx-cluster/media/{sub}"] = "Library assets: manage them in GX-Playground > Library"
         images = {
             "ghcr.io/berriai/litellm:main-stable", "gx-llama-swap:latest", "postgres:16-alpine",
-            "gx-comfyui:sm121", "gx-media-router:2.3.0", "legenex/llama-cpp-spark:latest",
+            "gx-comfyui:sm121", "gx-media-router:2.4.0", "gx-media-router:2.3.0",
+            "legenex/llama-cpp-spark:latest",
             "jstarkg/vllm-gb10-flashnext:0.28-sm121-r6", "lmsysorg/sglang:dev-v4f-2dgx-v2",
             "linuxserver/ffmpeg:latest", "gx-music-engine:acestep15-ca1e85f-t214",
             "gx-music-engine:acestep15-ca1e85f-base", "ghcr.io/open-webui/open-webui:main",

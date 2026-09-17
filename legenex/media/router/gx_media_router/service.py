@@ -137,7 +137,7 @@ class MediaService:
         if not kind or kind not in self.policy.pinned() or self.policy.block() is not None:
             return False
         avail = self._mem_available_gib()
-        return avail is None or avail >= self.cfg.pin_reserve_gib
+        return avail is None or avail >= self.cfg.reserve_gib
 
     def free_now(self, wait_seconds: float = 2.0) -> dict:
         """Hand node 2 to another tenant now (gx-reason's start calls this).
@@ -164,7 +164,13 @@ class MediaService:
     def generate_image(self, workflow_name: str, params: dict, *, staged: tuple[str, ...] = (),
                        operation: str | None = None) -> Job:
         workflow = self.workflows.get(workflow_name)
-        self.check_policy()
+        try:
+            self.check_policy()
+            self._check_ever_fits(workflow_name)
+        except RouterError:
+            for name in staged:
+                self.inputs.remove(name)
+            raise
         job = self.jobs.create("image", workflow.name, str(params.get("prompt", "")), params,
                                operation=operation or workflow.operation, staged=staged)
         try:
@@ -179,7 +185,13 @@ class MediaService:
     def submit_video(self, workflow_name: str, params: dict, *, staged: tuple[str, ...] = (),
                      source_job: str | None = None) -> Job:
         workflow = self.workflows.get(workflow_name)
-        self.check_policy()
+        try:
+            self.check_policy()
+            self._check_ever_fits(workflow_name)
+        except RouterError:
+            for name in staged:
+                self.inputs.remove(name)
+            raise
         job = self.jobs.create("video", workflow.name, str(params.get("prompt", "")), params,
                                operation=workflow.operation, staged=staged, source_job=source_job)
         self._video_queue.put(job.id)
@@ -194,20 +206,53 @@ class MediaService:
                 workflow = self.workflows.get(job.workflow)
                 graph = workflow.build({**job.params, "filename_prefix": f"gx-video/{job.id}",
                                         "thumb_prefix": f"gx-video/{job.id}-thumb"})
-                with self.slot.hold(job.id, self.cfg.queue_wait_seconds):
-                    self._run(job, graph, self.cfg.video_timeout_seconds, workflow.thumbnail_node)
+                self._run_when_admitted(job, graph, workflow.thumbnail_node)
             except RouterError as exc:
                 if job is not None and job.status != "failed":
                     job.status, job.error, job.finished_at = "failed", exc.message, time.time()
+                if job is not None:
+                    job.error_code = exc.code
+                    job.waiting = None
                 log.warning("video job %s failed: %s", job_id, exc.message)
             except Exception as exc:  # pragma: no cover - worker must never die
                 if job is not None:
                     job.status, job.error, job.finished_at = "failed", f"{type(exc).__name__}: {exc}", time.time()
+                    job.waiting = None
                 log.exception("video job %s crashed", job_id)
             finally:
                 if job is not None:
                     self._cleanup(job)
                 self._video_queue.task_done()
+
+    def _run_when_admitted(self, job: Job, graph: dict, thumbnail_node: str | None) -> None:
+        """Run a video once gx10-02 can hold it above the reserve; until then it
+        WAITS (status queued, phase "waiting") with the reason, and never starts
+        into a gx-max hold or Maintenance."""
+        cfg = self.cfg
+        deadline = time.monotonic() + cfg.resource_wait_seconds
+        while True:
+            block = self.policy.block()
+            if block is not None:
+                reason = {"code": block.code, "reason": block.message, "blocker": "gx-max" if
+                          block.code == "gx_max_active" else "maintenance",
+                          "next": "starts automatically when it is lifted"}
+            else:
+                try:
+                    with self.slot.hold(job.id, cfg.queue_wait_seconds):
+                        self._run(job, graph, cfg.video_timeout_seconds, thumbnail_node, wait_on_memory=True)
+                    job.waiting = None
+                    return
+                except InsufficientMemoryError as exc:
+                    if not exc.retryable:
+                        raise
+                    reason = {"code": exc.code, "reason": exc.message, **exc.details}
+            since = (job.waiting or {}).get("since") or time.time()
+            job.waiting = {**reason, "since": since}
+            if time.monotonic() >= deadline:
+                raise InsufficientMemoryError(
+                    f"Gave up after {cfg.resource_wait_seconds // 60} minutes of waiting: {reason['reason']}",
+                    details={k: v for k, v in reason.items() if k not in ("reason",)}, retryable=False)
+            time.sleep(cfg.resource_retry_seconds)
 
     # -- shared execution --------------------------------------------------
     def _switch_models(self, workflow_name: str) -> bool:
@@ -252,50 +297,278 @@ class MediaService:
                     if line.startswith("MemAvailable:"):
                         return int(line.split()[1]) / (1024 * 1024)
         except (OSError, ValueError, IndexError):
-            log.warning("cannot read %s; memory admission skipped", path)
+            log.warning("cannot read %s", path)
         return None
 
-    def _memory_need_gib(self, job: Job, cold: bool) -> float:
-        if not cold:
-            return self.cfg.need_warm_gib
-        if "keyframe" in job.workflow:
-            return self.cfg.need_keyframe_gib
-        return self.cfg.need_video_gib if job.kind == "video" else self.cfg.need_image_gib
+    # -- memory admission (D-038) ------------------------------------------
+    def _footprint_gib(self, workflow_name: str) -> float:
+        cfg = self.cfg
+        if "keyframe" in workflow_name:
+            return cfg.footprint_keyframe_gib
+        return cfg.footprint_video_gib if self.workflows.get(workflow_name).kind == "video" \
+            else cfg.footprint_image_gib
 
-    def _admit(self, job: Job, held_before: frozenset) -> None:
-        """Refuse a job gx10-02 cannot hold instead of pushing the node into swap (B-012).
+    def _growth_gib(self, job: Job) -> tuple[float, str]:
+        """How much MemAvailable this job takes away, and on what basis."""
+        footprint = self._footprint_gib(job.workflow)
+        if job.cold_start:
+            return footprint, "cold load (measured footprint)"
+        held = self._held_gib
+        if held is None:
+            return footprint, "warm, resident size unknown (full footprint assumed)"
+        return max(self.cfg.warm_growth_floor_gib, footprint - held), \
+            f"warm (footprint {footprint:.0f} GiB minus {held:.0f} GiB already held)"
 
-        Runs after _switch_models, which already dropped any other cached weights, so
-        whatever is still short is held by another tenant (normally gx-reason).
-        """
-        avail = self._mem_available_gib()
-        if avail is None:
+    def _check_ever_fits(self, workflow_name: str) -> None:
+        """Refuse at submit time what gx10-02 can never hold above the reserve."""
+        cfg = self.cfg
+        if not cfg.meminfo_path:
             return
-        need = self._memory_need_gib(job, job.cold_start)
-        # ComfyUI applies /free asynchronously: right after a model switch the memory
-        # is still on its way back, so wait for it to settle before deciding.
-        deadline = self._freed_at + self._settle_seconds
+        footprint = self._footprint_gib(workflow_name)
+        if footprint + cfg.reserve_gib <= cfg.node_capacity_gib:
+            return
+        what = "keyframe video edit" if "keyframe" in workflow_name else "job"
+        hint = (" Use a strength below 0.5 (the restyle edit) until B-028 is decided."
+                if "keyframe" in workflow_name else "")
+        raise ExceedsNodeError(
+            f"This {what} needs about {footprint:.0f} GiB on gx10-02, and the node must keep its "
+            f"{cfg.reserve_gib:.0f} GiB reserve ({footprint + cfg.reserve_gib:.0f} GiB in total). gx10-02 never has "
+            f"more than about {cfg.node_capacity_gib:.0f} GiB available, so it cannot run.{hint}",
+            details={"required_gib": round(footprint + cfg.reserve_gib, 1), "growth_gib": footprint,
+                     "reserve_gib": cfg.reserve_gib, "node_capacity_gib": cfg.node_capacity_gib,
+                     "blocker": "node capacity", "next": "not retried"})
+
+    def _decision(self, job: Job, avail: float, growth: float, basis: str, music: MusicState | None) -> dict:
+        """Pure arithmetic plus a human explanation. ok == projected >= reserve."""
+        cfg = self.cfg
+        reserve = cfg.reserve_gib
+        music_known = music is not None and music.reachable
+        pending = music.pending_gib if music_known else 0.0
+        projected = avail - pending - growth
+        ok = projected >= reserve
+        required = growth + pending + reserve
+        what = f"this {job.kind} job ({job.workflow})"
+        numbers = (f"{what} needs {growth:.0f} GiB plus the {reserve:.0f} GiB reserve"
+                   + (f" plus {pending:.0f} GiB that gx-music has not taken yet" if pending >= 0.5 else "")
+                   + f", so {required:.0f} GiB must be available; {avail:.0f} GiB is")
+        music_holds = music_known and music.holds_memory
+        freed_by_music = (music.loaded_gib or MUSIC_LOADED_FLOOR_GIB) if music_holds else 0.0
+        music_is_enough = music_holds and avail + freed_by_music - growth >= reserve
+        if ok:
+            blocker, reason, nxt = None, f"admitted: {numbers}", "starting"
+        elif music_holds and music_is_enough:
+            blocker = "gx-music"
+            reason = f"Waiting for gx-music to release enough gx10-02 memory: {numbers}"
+            if music.engine == "loading":
+                nxt = "gx-music is loading; the check repeats when it is ready"
+            elif music.busy or music.active_jobs:
+                nxt = "gx-music is working; this starts after it finishes and unloads"
+            elif music.pinned or self.policy.music_pinned():
+                nxt = "gx-music is pinned; unpin or unload it in Resource Control"
+            else:
+                nxt = "idle gx-music is unloaded first (or unloads after its idle timer)"
+        else:
+            blocker = "another gx10-02 tenant (gx-reason)" + (" and gx-music" if music_holds else "")
+            reason = f"Waiting for enough gx10-02 memory (held by {blocker}): {numbers}"
+            nxt = ("retries automatically; gx-reason unloads after 15 minutes idle, or unload it in Resource "
+                   "Control")
+        return {"ok": ok, "reason": reason, "details": {
+            "required_gib": round(required, 1), "available_gib": round(avail, 1), "reserve_gib": reserve,
+            "growth_gib": round(growth, 1), "growth_basis": basis, "pending_gib": round(pending, 1),
+            "projected_gib": round(projected, 1), "blocker": blocker, "next": nxt,
+            "music": music.public() if music is not None else None}}
+
+    def _settled_available(self, avail: float, want: float, since: float) -> float:
+        """Right after a free, memory is still on its way back: wait (bounded)
+        while it rises and is still short of ``want``."""
+        deadline = since + self._settle_seconds
         best, rose_at = avail, time.monotonic()
-        while (avail < need and time.monotonic() < deadline
+        while (avail < want and time.monotonic() < deadline
                and time.monotonic() - rose_at < self._settle_flat_seconds):
             time.sleep(self._settle_poll)
             sample = self._mem_available_gib()
             avail = avail if sample is None else sample
             if avail > best + 0.25:
                 best, rose_at = avail, time.monotonic()
-        if avail >= need:
+        return avail
+
+    def _music_evictable(self, music: MusicState | None) -> str | None:
+        """None when the idle gx-music engine may be unloaded for this job, else why not."""
+        if music is None or not music.reachable:
+            return "gx-music supervisor not reachable"
+        if not self.cfg.evict_idle_music:
+            return "eviction of idle gx-music is switched off"
+        if not self.music.can_unload:
+            return "the router has no gx-music key"
+        if music.engine != "ready":
+            return f"gx-music is {music.engine}"
+        if music.busy or music.active_jobs:
+            return "gx-music is working"
+        if music.pinned or self.policy.music_pinned():
+            return "gx-music is pinned"
+        if self.policy.profile() in ("music", "maintenance", "max"):
+            return f"the {self.policy.profile()} profile keeps gx-music"
+        if self.policy.block() is not None:
+            return "cluster policy hold"
+        return None
+
+    def _evict_music(self, job: Job, music: MusicState) -> bool:
+        """Unload the idle engine through its supervisor and VERIFY the release:
+        engine unloaded, container gone, ledger clean, memory back."""
+        before = self._mem_available_gib()
+        t0 = time.monotonic()
+        ok, body = self.music.unload_if_idle()
+        record: dict = {"at": time.time(), "job": job.id, "requested": ok, "mem_available_before_gib":
+                        None if before is None else round(before, 1)}
+        if not ok:
+            record["refused"] = str(body.get("reason", ""))[:200]
+            self.last_eviction = record
+            log.info("gx-music did not unload for job %s: %s", job.id, record["refused"])
+            return False
+        deadline = t0 + self.cfg.eviction_settle_seconds
+        state = None
+        while time.monotonic() < deadline:
+            state = self.music.state()
+            if state is not None and state.reachable and state.engine == "unloaded" \
+                    and not self.policy.ledger_has("gx-music"):
+                break
+            time.sleep(self._settle_poll)
+        engine_gone = bool(state and state.reachable and state.engine == "unloaded")
+        ledger_clean = not self.policy.ledger_has("gx-music")
+        container_gone = bool(body.get("container_gone"))
+        expect = music.loaded_gib or MUSIC_LOADED_FLOOR_GIB
+        after = self._mem_available_gib()
+        if before is not None and after is not None:
+            after = self._settled_available(after, before + 0.8 * expect, time.monotonic())
+        record.update(engine_unloaded=engine_gone, container_gone=container_gone, ledger_clean=ledger_clean,
+                      mem_available_after_gib=None if after is None else round(after, 1),
+                      released_gib=None if after is None or before is None else round(after - before, 1),
+                      seconds=round(time.monotonic() - t0, 1))
+        self.last_eviction = record
+        verified = engine_gone and container_gone and ledger_clean
+        log.info("gx-music eviction for job %s: %s", job.id, record)
+        return verified
+
+    def _admit(self, job: Job, held_before: frozenset) -> None:
+        """Start a job only if gx10-02 keeps the 30 GiB reserve afterwards (D-038).
+
+        Runs after _switch_models, which already dropped any other cached
+        weights. Order: settle after a free -> decide -> (warm job of unknown
+        size: free our own weights, judge cold) -> (idle gx-music: unload it
+        through its supervisor, verify, decide again) -> refuse with the reason.
+        """
+        cfg = self.cfg
+        if not cfg.meminfo_path:
             return
+        avail = self._mem_available_gib()
+        if avail is None:
+            self._forget_unloaded(job, held_before)
+            raise InsufficientMemoryError(
+                "gx10-02's memory state cannot be read, so the job waits instead of guessing.",
+                details={"blocker": "memory state unreadable", "reserve_gib": cfg.reserve_gib,
+                         "next": "retries automatically"})
+        music = self.music.state()
+        growth, basis = self._growth_gib(job)
+        pending = music.pending_gib if music is not None and music.reachable else 0.0
+        avail = self._settled_available(avail, growth + pending + cfg.reserve_gib, self._freed_at)
+        decision = self._decision(job, avail, growth, basis, music)
+        if not decision["ok"] and not job.cold_start and self._held_gib is None and self._resident_models:
+            # A warm job whose resident size is unknown is judged by its full footprint;
+            # freeing our own weights and loading them again costs seconds, not safety.
+            log.info("job %s: warm admission short with unknown resident size; freeing ComfyUI and "
+                     "judging it cold", job.id)
+            models = self._resident_models
+            kind = self._resident_kind
+            self.comfy.free(unload_models=True, free_memory=True)
+            self._freed_at = time.monotonic()
+            self._set_resident(frozenset(), None)
+            self._set_resident(models, kind)
+            held_before = frozenset()
+            job.cold_start = True
+            growth, basis = self._growth_gib(job)
+            avail = self._settled_available(self._mem_available_gib() or avail,
+                                            growth + pending + cfg.reserve_gib, self._freed_at)
+            decision = self._decision(job, avail, growth, basis, music)
+        if not decision["ok"] and decision["details"]["blocker"] == "gx-music":
+            why_not = self._music_evictable(music)
+            if why_not is None and music is not None:
+                log.info("job %s: %s -> unloading idle gx-music first", job.id, decision["reason"])
+                verified = self._evict_music(job, music)
+                music = self.music.state()
+                pending = music.pending_gib if music is not None and music.reachable else 0.0
+                avail = self._mem_available_gib() or avail
+                decision = self._decision(job, avail, growth, basis, music)
+                if not verified and decision["ok"]:
+                    decision["ok"] = False
+                    decision["reason"] = ("gx-music reported an unload that could not be verified (engine, "
+                                          "container, ledger); waiting instead of guessing")
+                    decision["details"]["next"] = "retries automatically"
+            else:
+                decision["details"]["eviction"] = why_not
+        if decision["ok"]:
+            with self._mem_lock:
+                self._admissions += 1
+                self._inflight = {"job": job.id, "growth": growth, "baseline": avail, "cold": job.cold_start,
+                                  "music": music.signature if music is not None else None,
+                                  "epoch": self._admissions}
+            log.info("job %s %s", job.id, decision["reason"])
+            return
+        self._forget_unloaded(job, held_before)
+        log.warning("job %s refused: %s", job.id, decision["reason"])
+        details = decision["details"]
+        self.last_refusal = {"at": time.time(), "job": job.id, "kind": job.kind, "workflow": job.workflow,
+                             "cold": job.cold_start, "need_gib": details["required_gib"],
+                             "available_gib": details["available_gib"], "blocker": details["blocker"],
+                             "reason": decision["reason"]}
+        raise InsufficientMemoryError(decision["reason"], details=details)
+
+    def _forget_unloaded(self, job: Job, held_before: frozenset) -> None:
         if job.cold_start:
             # The job's weights were never loaded; do not remember them as resident.
             kind_before = self._resident_kind
             self._set_resident(held_before if not self.cfg.free_on_model_switch else frozenset(), kind_before)
-        log.warning("job %s refused: %.1f GiB available on gx10-02, about %.0f GiB needed", job.id, avail, need)
-        self.last_refusal = {"at": time.time(), "job": job.id, "kind": job.kind, "workflow": job.workflow,
-                             "cold": job.cold_start, "need_gib": round(need, 1), "available_gib": round(avail, 1)}
-        raise InsufficientMemoryError(
-            f"gx10-02 has {avail:.0f} GiB free and this {job.kind} job needs about {need:.0f} GiB. "
-            "Another tenant on gx10-02 (gx-reason or gx-music) holds the rest: unload it in the "
-            "Control Center (Resource Control) or retry after it idles out.")
+
+    def pending_gib(self) -> float:
+        """Growth of the running job that MemAvailable does not show yet (for gx-music)."""
+        inflight = self._inflight
+        if not inflight:
+            return 0.0
+        avail = self._mem_available_gib()
+        if avail is None:
+            return round(inflight["growth"], 1)
+        consumed = max(0.0, inflight["baseline"] - avail)
+        return round(max(0.0, inflight["growth"] - consumed), 1)
+
+    def _finish_inflight(self, job: Job, completed: bool) -> None:
+        with self._mem_lock:
+            inflight, self._inflight = self._inflight, None
+        if not (completed and inflight and inflight.get("job") == job.id and inflight.get("cold")
+                and self._held_measure_seconds > 0 and self.cfg.meminfo_path):
+            return
+        models = self._resident_models
+        threading.Thread(target=self._measure_held, args=(inflight, models), name="held-measure",
+                         daemon=True).start()
+
+    def _measure_held(self, inflight: dict, models: frozenset) -> None:
+        """After a cold job: once activations are released, how much do the
+        resident weights still hold? Discarded if anything else changed."""
+        time.sleep(self._held_settle_delay)
+        deadline = time.monotonic() + self._held_measure_seconds
+        best = self._mem_available_gib()
+        rose_at = time.monotonic()
+        while best is not None and time.monotonic() < deadline and time.monotonic() - rose_at < 4.0:
+            time.sleep(self._settle_poll)
+            sample = self._mem_available_gib()
+            if sample is not None and sample > best + 0.25:
+                best, rose_at = sample, time.monotonic()
+        music = self.music.state()
+        with self._mem_lock:
+            if (best is None or self._resident_models != models or self._inflight is not None
+                    or self._admissions != inflight["epoch"]
+                    or (music.signature if music is not None else None) != inflight["music"]):
+                return
+            self._held_gib = round(max(0.0, min(inflight["growth"], inflight["baseline"] - best)), 1)
+        log.info("resident weights %s hold about %.1f GiB between jobs", sorted(models), self._held_gib)
 
     #: how long after a free the admission waits for memory to come back
     _settle_seconds = 30.0
@@ -303,15 +576,28 @@ class MediaService:
     #: give up early once MemAvailable has stopped rising for this long
     _settle_flat_seconds = 6.0
     _freed_at = -1e9
+    #: held-memory measurement after a cold job (0 disables)
+    _held_settle_delay = 3.0
+    _held_measure_seconds = 20.0
 
-    def _run(self, job: Job, graph: dict, timeout: float, thumbnail_node: str | None) -> None:
+    def _run(self, job: Job, graph: dict, timeout: float, thumbnail_node: str | None, *,
+             wait_on_memory: bool = False) -> None:
         self._last_activity = time.monotonic()
         held_before = self._resident_models
         job.cold_start = self._switch_models(job.workflow)
         job.status = "running"
         job.started_at = time.time()
+        completed = False
         try:
-            self._admit(job, held_before)
+            try:
+                self._admit(job, held_before)
+            except InsufficientMemoryError as exc:
+                if wait_on_memory and exc.retryable:
+                    job.status, job.started_at = "queued", None
+                    raise
+                job.error_code = exc.code
+                raise
+            job.waiting = None
             job.prompt_id = self.comfy.submit(graph, self._client_id)
             log.info("job %s -> comfy prompt %s (%s)", job.id, job.prompt_id, job.workflow)
             result = self.comfy.wait(job.prompt_id, timeout=timeout, thumbnail_node=thumbnail_node)
@@ -320,12 +606,14 @@ class MediaService:
                 raise UpstreamError(f"ComfyUI prompt {job.prompt_id} produced no {job.kind} output")
             job.status = "completed"
             job.finished_at = time.time()
+            completed = True
             log.info("job %s completed in %.1fs -> %s", job.id, result.elapsed_seconds,
                      [a.filename for a in result.artefacts])
         except RouterError as exc:
-            job.status = "failed"
-            job.error = exc.message
-            job.finished_at = time.time()
+            if job.status != "queued":
+                job.status = "failed"
+                job.error = exc.message
+                job.finished_at = time.time()
             raise
         except Exception as exc:  # pragma: no cover - defensive
             job.status = "failed"
@@ -333,6 +621,7 @@ class MediaService:
             job.finished_at = time.time()
             raise UpstreamError(job.error) from exc
         finally:
+            self._finish_inflight(job, completed)
             self._last_activity = time.monotonic()
 
     # -- retrieval ---------------------------------------------------------
@@ -358,8 +647,30 @@ class MediaService:
                 ) from None
         return self.comfy.fetch(artefact), artefact.media_type, artefact.filename
 
+    def _memory_view(self) -> dict:
+        cfg = self.cfg
+        foot = {"image": cfg.footprint_image_gib, "video": cfg.footprint_video_gib,
+                "keyframe_edit": cfg.footprint_keyframe_gib}
+        warm = None
+        if self._resident_models and self._held_gib is not None:
+            kind_foot = cfg.footprint_video_gib if self._resident_kind == "gx-video" else cfg.footprint_image_gib
+            warm = round(max(cfg.warm_growth_floor_gib, kind_foot - self._held_gib), 1)
+        return {"available_gib": _round(self._mem_available_gib()),
+                "reserve_gib": cfg.reserve_gib,
+                "footprint_gib": foot,
+                # MemAvailable a job needs before it starts on an otherwise idle router
+                "need_gib": {**{k: round(v + cfg.reserve_gib, 1) for k, v in foot.items()},
+                             "warm": round((warm if warm is not None else cfg.warm_growth_floor_gib)
+                                           + cfg.reserve_gib, 1)},
+                "warm_growth_gib": warm,
+                "resident_held_gib": self._held_gib,
+                "pending_gib": self.pending_gib(),
+                "node_capacity_gib": cfg.node_capacity_gib,
+                "admission": "projected MemAvailable after the job must stay >= reserve (D-038)"}
+
     def health(self) -> dict:
         holder, since = self.slot.held_by()
+        music = self.music.state(fresh=False)
         status: dict = {
             "status": "ok",
             "service": "gx-media-router",
@@ -374,11 +685,14 @@ class MediaService:
             "resident_alias": self._resident_kind,
             "idle_seconds": round(time.monotonic() - self._last_activity, 1),
             "idle_free_seconds": self.cfg.idle_free_seconds,
-            "memory": {"available_gib": _round(self._mem_available_gib()),
-                       "need_gib": {"image": self.cfg.need_image_gib, "video": self.cfg.need_video_gib,
-                                    "keyframe_edit": self.cfg.need_keyframe_gib, "warm": self.cfg.need_warm_gib}},
+            "memory": self._memory_view(),
+            "tenants": {"gx-music": music.public() if music is not None else None},
+            "waiting": [{"id": j.public()["id"], "gx_id": j.id, "since": (j.waiting or {}).get("since"),
+                         "reason": (j.waiting or {}).get("reason"), "blocker": (j.waiting or {}).get("blocker")}
+                        for j in self.jobs.snapshot() if j.waiting and j.status == "queued"],
             "policy": {**self.policy.state(), "pin_honoured": self.pin_honoured()},
             "last_refusal": self.last_refusal,
+            "last_eviction": self.last_eviction,
         }
         try:
             stats = self.comfy.system_stats()

@@ -8,4 +8,4 @@ vetted template. A caller never supplies graph structure, node classes, model
 filenames or output paths.
 """
 
-__version__ = "2.3.0"
+__version__ = "2.4.0"
