@@ -218,11 +218,14 @@ model_list:
       drop_params: true
       timeout: 3600
     model_info:
-      # gx-mini's window: the smallest tier gx-auto may pick for a short task.
-      # Larger requests are routed to a tier that holds them (D-030), and the
-      # orchestrator clamps max_tokens to the chosen tier's output limit.
-      max_input_tokens: 57344
-      max_output_tokens: 8192
+      # D-039: gx-fast is gx-auto's default workhorse, so gx-auto advertises
+      # gx-fast's limits (clients such as Kilo condense context from these).
+      # The orchestrator routes each request to a tier that HOLDS it and
+      # clamps max_tokens so input + output + margin fits that tier's window;
+      # an input nothing running can hold is refused at once (400
+      # context_length_exceeded, never retried).
+      max_input_tokens: 98304
+      max_output_tokens: 32768
       supports_function_calling: true
       supports_vision: true
 

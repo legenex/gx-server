@@ -202,10 +202,10 @@
     },
     "gx-auto": {
       "repository": null,
-      "runtime": "gx-orchestrator deterministic classifier (D-030) -> LiteLLM",
+      "runtime": "gx-orchestrator deterministic classifier (D-030, D-039 context budgeting) -> LiteLLM",
       "node": "gx10-01",
-      "context": 57344,
-      "max_output": 8192,
+      "context": 98304,
+      "max_output": 32768,
       "vision": true,
       "tools": true,
       "reasoning": "depends on the tier chosen",

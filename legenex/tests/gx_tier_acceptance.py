@@ -424,6 +424,94 @@ def run_auto_kilo() -> list[dict]:
     return results
 
 
+def _auto_case(label: str, payload: dict, expected: str | None, *, expect_status: int = 200,
+               max_seconds: float | None = None) -> dict:
+    """Send one gx-auto request and match the router's journal record to it."""
+    from gx_orchestrator.classifier import request_fingerprint
+
+    rid = f"acc-{int(time.time() * 1000)}"
+    fp = request_fingerprint({"messages": payload["messages"]})
+    extra = {k: v for k, v in payload.items() if k not in ("model", "messages", "stream")}
+    t0 = time.monotonic()
+    err, status, s = None, 200, {}
+    try:
+        s = stream_chat("gx-auto", payload["messages"], headers={"X-GX-Request-Id": rid}, **extra)
+    except urllib.error.HTTPError as exc:
+        status = exc.code
+        err = exc.read().decode("utf-8", "replace")[:400]
+    secs = round(time.monotonic() - t0, 2)
+    with urllib.request.urlopen(f"{ORCH}/routing/decisions?fingerprint={fp}&limit=10", timeout=10) as r:
+        recs = json.load(r)["data"]
+    decision = next((x for x in recs if x.get("event") == "decision"), {})
+    done = next((x for x in recs if x.get("event") == "completed"
+                 and x.get("request_id") == decision.get("request_id")), {})
+    ok = status == expect_status
+    if expected:
+        ok = ok and decision.get("tier") == expected
+    if expect_status == 200:
+        ok = ok and bool((s.get("text") or "").strip() or s.get("tool_calls") or s.get("reasoning_chars"))
+    if max_seconds is not None:
+        ok = ok and secs <= max_seconds
+    budget = decision.get("budget") or {}
+    row = {
+        "check": f"auto:{label}", "pass": ok, "expected": expected, "router_tier": decision.get("tier"),
+        "reason": decision.get("summary"), "intent": decision.get("intent"),
+        "reasoning_score": decision.get("reasoning_score"), "reasoning_raw": decision.get("reasoning_raw"),
+        "estimated_input_tokens": budget.get("estimated_input_tokens"),
+        "tool_schema_tokens": budget.get("tool_schema_tokens"), "tool_count": decision.get("tool_count"),
+        "requested_output": budget.get("requested_output_tokens"), "output_sent": budget.get("output_tokens"),
+        "clamped": budget.get("clamped"), "http": status, "seconds": secs,
+        "ttft_s": s.get("ttft_s"), "tokens_per_s": s.get("tokens_per_s"), "prompt_tokens": s.get("prompt_tokens"),
+        "router_attempts": done.get("attempts"), "router_outcome": done.get("outcome"),
+        "error": err, "answer": (s.get("text") or "")[:160],
+    }
+    print(f"[{'PASS' if ok else 'FAIL'}] {row['check']}: router={row['router_tier']} expected={expected} "
+          f"http={status} {secs}s ttft={row['ttft_s']} est_in={row['estimated_input_tokens']} "
+          f"out={row['output_sent']} clamped={row['clamped']}", flush=True)
+    return row
+
+
+def run_auto_d039() -> list[dict]:
+    """D-039 live routing + budget acceptance through the real gateway."""
+    from kilo_fixtures import CLAUDE_CODE_TOOLS, claude_code_continuation, kilo_request
+
+    def chat_payload(text: str, **kw) -> dict:
+        return {"messages": [{"role": "user", "content": text}], **kw}
+
+    rows = [
+        _auto_case("hello->mini", chat_payload("hello", max_tokens=256), "gx-mini"),
+        _auto_case("coding->fast", chat_payload(
+            "Write a Python function slugify(s) in utils.py that lowercases and replaces spaces with dashes.",
+            max_tokens=2048), "gx-fast"),
+        _auto_case("architecture-impl->fast", chat_payload(
+            "Design and implement the architecture for a plugin system: create the module layout, define the "
+            "interfaces and wire it into the CLI. Keep the answer short.", max_tokens=1024), "gx-fast"),
+        _auto_case("kilo-tools->fast", {k: v for k, v in kilo_request(
+            "add a dark mode toggle to the Checkout component", max_tokens=32_768).items()
+            if k not in ("model", "stream")}, "gx-fast"),
+        _auto_case("schema-trap-words->not-reason", chat_payload(
+            "list the files in src", tools=CLAUDE_CODE_TOOLS, max_tokens=2048), "gx-mini"),
+        _auto_case("claude-code-observed-shape->fast", {k: v for k, v in claude_code_continuation().items()
+                                                         if k not in ("model", "stream")}, "gx-fast",
+                   max_seconds=120),
+        _auto_case("hard-reasoning->reason", chat_payload(
+            "Prove that the sum of the first n odd numbers is n^2. Keep the proof short.", max_tokens=6000),
+            "gx-reason"),
+        _auto_case("extreme->never-max-when-down", chat_payload(
+            "Do a comprehensive audit of the entire codebase and formal verification. Reply in one sentence.",
+            max_tokens=512), None),
+        _auto_case("impossible->fast-400", chat_payload("x " * 1_400_000, max_tokens=32_000), None,
+                   expect_status=400, max_seconds=30),
+    ]
+    extreme = rows[7]
+    extreme["pass"] = extreme["pass"] and extreme["router_tier"] != "gx-max"
+    big = claude_code_continuation(tool_turns=60)
+    rows.append(_auto_case("large-claude-continuation->fast", {k: v for k, v in big.items()
+                                                               if k not in ("model", "stream")},
+                           "gx-fast", max_seconds=300))
+    return rows
+
+
 def main() -> int:
     global KEY
     ap = argparse.ArgumentParser()
@@ -436,6 +524,8 @@ def main() -> int:
     started = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     if args.alias == "gx-auto-kilo":
         results = run_auto_kilo()
+    elif args.alias == "gx-auto-d039":
+        results = run_auto_d039()
     else:
         thinking = None if args.thinking is None else args.thinking == "on"
         results = run_checks(args.alias, [c.strip() for c in args.checks.split(",") if c.strip()], thinking)
