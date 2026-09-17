@@ -441,6 +441,39 @@ class ReserveTests(unittest.TestCase):
         time.sleep(1.0)
         self.assertIsNone(svc.health()["memory"]["resident_held_gib"])
 
+    def test_a_restarted_router_frees_what_comfyui_still_holds(self):
+        # ComfyUI kept the video weights across a router recreate: 46 GiB left,
+        # but the new router's record says nothing is resident
+        self.node.set(46)
+        svc = self.service()
+        frees = self.comfy.frees
+
+        def comfy_free(**kw):
+            FakeComfy.free(self.comfy, **kw)
+            self.node.set(114)
+
+        self.comfy.free = comfy_free
+        svc.slot.acquire("busy", 1.0)
+        self.assertFalse(svc.reconcile_residency(), "never while a job holds the slot")
+        svc.slot.release()
+        self.assertTrue(svc.reconcile_residency())
+        self.assertEqual(self.comfy.frees, frees + 1)
+        self.assertFalse(svc.reconcile_residency(), "only once")
+        self.assertEqual(self.done(self.video(svc)).status, "completed")
+
+    def test_the_first_job_after_a_start_frees_first(self):
+        self.node.set(46)
+        svc = self.service()
+
+        def comfy_free(**kw):
+            FakeComfy.free(self.comfy, **kw)
+            self.node.set(114)
+
+        self.comfy.free = comfy_free
+        self.assertEqual(self.done(self.video(svc)).status, "completed")
+        self.assertFalse(svc._residency_unknown)
+        self.assertEqual(svc.reconcile_residency(), False)
+
 
 class ConfigAndParsingTests(unittest.TestCase):
     def test_reserve_cannot_be_lowered_below_30(self):

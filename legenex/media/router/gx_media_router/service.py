@@ -53,6 +53,9 @@ class MediaService:
         self._inflight: dict | None = None
         self._admissions = 0
         self._mem_lock = threading.Lock()
+        #: after a (re)start the router does not know what ComfyUI still holds
+        #: (a recreate keeps ComfyUI and its cache); the janitor frees it once
+        self._residency_unknown = True
         self._video_queue: "queue.Queue[str]" = queue.Queue()
         self._worker = threading.Thread(target=self._video_worker, name="video-worker", daemon=True)
         self._worker.start()
@@ -103,6 +106,7 @@ class MediaService:
                     last_purge = time.monotonic()
                     if removed:
                         log.info("purged %d stale staged input(s)", removed)
+                self.reconcile_residency()
                 self.free_if_idle()
             except Exception:  # pragma: no cover - janitor must never die
                 log.exception("janitor failed")
@@ -127,6 +131,26 @@ class MediaService:
             self.comfy.free(unload_models=True, free_memory=True)
             self._set_resident(frozenset(), None)
             self._freed_at = time.monotonic()
+            return True
+        finally:
+            self.slot.release()
+
+    def reconcile_residency(self) -> bool:
+        """Make the resident-model record true after a start: free whatever ComfyUI
+        kept from before (D-038). Runs once, only while nothing is running."""
+        if not self._residency_unknown:
+            return False
+        if not self._video_queue.empty() or not self.slot.acquire("reconcile", 0.0):
+            return False
+        try:
+            if self._resident_models:  # a job already ran and set the record
+                self._residency_unknown = False
+                return False
+            self.comfy.free(unload_models=True, free_memory=True)
+            self._set_resident(frozenset(), None)
+            self._freed_at = time.monotonic()
+            self._residency_unknown = False
+            log.info("started: freed whatever ComfyUI still held, so the resident-model record is true")
             return True
         finally:
             self.slot.release()
@@ -590,6 +614,11 @@ class MediaService:
     def _run(self, job: Job, graph: dict, timeout: float, thumbnail_node: str | None, *,
              wait_on_memory: bool = False) -> None:
         self._last_activity = time.monotonic()
+        if self._residency_unknown:
+            # first job after a start: ComfyUI may still hold another model set
+            self.comfy.free(unload_models=True, free_memory=True)
+            self._freed_at = time.monotonic()
+            self._residency_unknown = False
         held_before = self._resident_models
         job.cold_start = self._switch_models(job.workflow)
         job.status = "running"
