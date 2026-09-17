@@ -42,7 +42,7 @@ def _png(width: int = 64, height: int = 64) -> str:
     return base64.b64encode(png).decode()
 
 
-PNG = _png(256, 256)
+PNG = _png()
 
 
 def node_facts(role: str, avail: float) -> dict:
