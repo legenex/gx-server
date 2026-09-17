@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import signal
 import sys
+import threading
 from types import FrameType
 
 from .comfy import ComfyClient
@@ -34,7 +35,11 @@ def main() -> int:
 
     def shutdown(signum: int, _frame: FrameType | None) -> None:
         log.info("signal %s received, shutting down", signum)
-        server.shutdown()
+        # The handler runs on the main thread, which is inside
+        # serve_forever(); calling server.shutdown() here waits for that very
+        # loop and deadlocks until Docker's SIGKILL (60 s on every gx-max
+        # drain, D-039). Ask from another thread instead.
+        threading.Thread(target=server.shutdown, name="shutdown", daemon=True).start()
 
     signal.signal(signal.SIGTERM, shutdown)
     signal.signal(signal.SIGINT, shutdown)
