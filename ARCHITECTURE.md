@@ -17,7 +17,7 @@ explicit human decision. If a task seems to require changing one, stop and ask.
 | L-3 | **Tailscale is management only.** Model and distributed traffic run ONLY on the ConnectX/RoCE fabric. | Tailscale is a userspace WireGuard mesh; routing NCCL over it would collapse throughput. |
 | L-4 | **Kernel pinned to `6.17.0-1032-nvidia` on both nodes.** Never upgrade to 7.0. | Kernel 7.0 caused `ibv_reg_mr_iova2 failed: Cannot allocate memory` during FlashInfer autotune on gx10-02. See D-001. |
 | L-5 | **Do not attempt GPUDirect RDMA**, `nvidia-peermem`, GDRCopy, or `NCCL_NET_GDR_LEVEL` hacks. | DGX Spark does not support GPUDirect RDMA in this topology. NET/IB with staged pinned memory is the expected and working path. |
-| L-6 | **gx-max = SGLang, TP=2, 2 nodes, `nvidia/DeepSeek-V4-Flash-0731-NVFP4`.** Never vLLM. Never a different model. Never a silent downgrade. | This is the flagship tier and the only reason the second node exists in the inference path. |
+| L-6 | **gx-max = SGLang, TP=2, 2 nodes, DeepSeek-V4-Flash-0731 NVFP4.** Since D-032 (2026-09-17), the served checkpoint is the abliterated `dealignai/DeepSeek-V4-Flash-0731-CRACK-NVFP4` (cookbook cell `fp4`). `nvidia/DeepSeek-V4-Flash-0731-NVFP4` (cell `nvfp4`) is the rollback. Never vLLM. Never a different model family. Never a silent downgrade. | This is the flagship tier and the only reason the second node exists in the inference path. |
 | L-7 | **Do not modify** MTU, Netplan, RDMA setup, ConnectX firmware, or routing without concrete evidence of a fault. | The fabric is measured-good (~21.3 GB/s bus bandwidth, zero errors). |
 | L-8 | **`/swapfile-sglang` (48 G) stays on both nodes.** | Load-time OOM mitigation for gx-max weight loading. |
 | L-9 | **The stack is LiteLLM + llama-swap + llama.cpp + vLLM + SGLang + ComfyUI.** Do not replace it with Ollama. | Each engine is chosen per tier for a concrete reason; see MODELS.md. |
@@ -199,6 +199,20 @@ context changes.
 Every decision is logged as JSON with the features and the reasons that produced
 it, under logger `gx.routing`.
 
+**Agent clients (D-030, 2026-09-17).** The signals above are computed on the
+*task text*, not the raw request. Kilo Code envelopes (`<environment_details>`
+and similar) are stripped, and the task is taken from `<task>`,
+`<user_message>`, `<feedback>` or `<answer>`. Tool schemas count toward the
+context estimate only. The tool-capable floor (gx-fast) applies to
+*action* and *continuation* requests, not to a conversational or simple
+question that happens to carry tools. A continuation (a `tool` role, a
+`[x] Result:` turn, or assistant `tool_calls`) is routed by its original task.
+Output planning is capped at 16 384 tokens and at each tier's `max_output`.
+gx-auto never starts gx-max. When only gx-max can hold the context and it is
+not READY, the reply is 503 `gx_max_not_running`. Decisions and completions
+are also written to `/srv/logs/gx-auto-routing.jsonl` with a request id and
+message fingerprint (`GET /routing/decisions`).
+
 ## 7. Security boundaries
 
 * LiteLLM `:4000` is the only intended client-facing surface.
@@ -372,3 +386,23 @@ The orchestrator publishes read-only lifecycle data for the Jobs page
 under `/srv/projects/gx-cluster/state/orchestrator/`). The phase is derived
 from the start and stop scripts' own section markers and never drives a
 state transition (D-029).
+
+**V2 additions (D-034, D-035).** Pages: Create (media jobs through the router),
+Media Library (SQLite + files in `/srv/projects/gx-cluster/media`), Model
+Manager (registry `legenex/models/registry.json`, HF lookup, staged pinned
+downloads with sha256 manifests, test-serve on 127.0.0.1:19098 behind the
+admission guard, assign with automatic rollback, delete only if
+unreferenced) and API Keys (LiteLLM virtual keys; the master key stays
+server-side). The browser can now also cause:
+
+```
+   writes: media jobs → media router (fabric) · library files under /srv/projects/gx-cluster/media
+           hf download into /srv/models/staging (node 1 local, node 2 over the fixed SSH script)
+           one binding macro in llama-swap node01.yaml / node02.yaml + llama-swap restart
+           LiteLLM /key/generate, /key/delete · secrets/hf/token (0600)
+```
+
+HF content is treated as data: no model-card command is run and
+`trust_remote_code` is never enabled. The unit limit is `MemoryMax=1G` (uploads
+are streamed to disk, capped at 150 MB). A loopback-only `acceptance`
+account exists for automated live tests.

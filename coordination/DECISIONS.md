@@ -841,3 +841,125 @@ unchanged. The job record is finalised before the READY/DOWN transition
 wakes waiters, so a status read never sees a half-written job. Covered by
 `legenex/orchestrator/tests/test_lifecycle_events.py`, and all 138 existing
 orchestrator tests still pass.
+
+## D-030 — gx-auto understands Kilo Code; gx-mini and gx-fast become uncensored
+
+**Date:** 2026-09-17. **Status:** ACCEPTED.
+
+**Routing.** Kilo Code sends every request with a large system prompt, about
+20 tool schemas and an `<environment_details>` block. The old classifier
+counted all of that and sent even "is the server up?" to gx-reason. The
+classifier (`legenex/orchestrator/gx_orchestrator/classifier.py`) now:
+
+* extracts the real task from `<task>`, `<user_message>`, `<feedback>` and
+  `<answer>`, and ignores envelopes such as `<environment_details>`;
+* recognises continuations (a `tool` role, a `[x] Result:` turn, or
+  assistant `tool_calls`) and routes them by the original task;
+* sorts intents into conversational, simple, action and continuation. Tool
+  schemas count toward the context size only. The tool-capable floor
+  applies only to action and continuation requests;
+* clamps output planning to 16 384 tokens and per-tier `max_output`;
+* never starts gx-max. If only gx-max can hold the context and it is not
+  READY, it returns 503 `gx_max_not_running` rather than silently
+  downgrading;
+* writes each decision and its completion to
+  `/srv/logs/gx-auto-routing.jsonl` with a request id and a message
+  fingerprint (`GET /routing/decisions`), so tests match their own
+  decision.
+
+**Models.** gx-mini is now
+`HauhauCS/Qwen3.5-4B-Uncensored-HauhauCS-Aggressive` @c09cdbcd (Q4_K_M plus
+mmproj, 131k context, parallel 2). gx-fast is now
+`kyaky/Qwen3.6-35B-A3B-Uncensored-NVFP4` @33d5cf83 (vLLM 0.28, 131k,
+`gpu_memory_utilization 0.34`, `HF_HUB_OFFLINE=1`). Both are preloaded by
+llama-swap and verified with pinned sha256 manifests. The
+previous checkpoints stay on disk as the rollback until a human deletes them
+(B-026).
+
+## D-031 — Media v2: edit, variation, image-to-video and video edit
+
+**Date:** 2026-09-17. **Status:** ACCEPTED.
+
+gx-media-router 2.0.0 adds OpenAI-shaped `/v1/images/edits`,
+`/v1/images/variations`, `/v1/videos` (JSON, or multipart with
+`input_reference` → i2v), `/v1/videos/{id}/remix` and `/v1/videos/edits`.
+Uploads are MIME-sniffed, size-capped and written to
+`/srv/comfy-input/gx-in/<uuid>` (purged after use). The router hands out
+LiteLLM-encoded video ids, because LiteLLM drops `model_id` on edit
+requests and status polling would otherwise fail.
+
+The video edit is **keyframe propagation**. Qwen-Image-Edit-2511 edits the first frame,
+then Wan 2.2 I2V re-renders the clip from the source latent. The
+`strength` value maps to the start step: ≥0.75 keyframe start 0; 0.5–0.75
+keyframe start 1; 0.25–0.5 light start 2; otherwise light start 3. Partial
+denoise alone could not change global attributes such as day to night; that
+was measured, not assumed.
+
+Uncensored adapters (pinned): `perpetual3x/Tumblr-NudeShot-NSFW-LoRA-v1` at 0.6
+for generation, and `rzgar/Wan2.2_LightX2V_4Step_Uncensored` for video. ComfyUI
+runs with `--reserve-vram 40`, and the router frees it after 600 s idle or on a
+model-set change, so node 2 keeps headroom for gx-reason.
+
+## D-032 — gx-max serves the CRACK abliterated DeepSeek-V4-Flash (amends L-6)
+
+**Date:** 2026-09-17. **Status:** ACCEPTED (the migration request asked for
+an uncensored gx-max).
+
+gx-max stays SGLang, TP=2, two nodes. Only the checkpoint changes, to
+`dealignai/DeepSeek-V4-Flash-0731-CRACK-NVFP4` @c66fe384 (155.44 GiB,
+sha256-verified on both nodes and copied over the fabric). That checkpoint
+matches the cookbook cell `dgx-spark/flash-official/fp4` (`--moe-runner-backend
+b12x`), selected by `GXMAX_QUANT_CELL=fp4` in `legenex/lifecycle/gx-max.conf`.
+Rollback is `GXMAX_MODEL_DIR=/srv/models/deepseek/DeepSeek-V4-Flash-0731-NVFP4
+GXMAX_QUANT_CELL=nvfp4`. Acceptance: a full UI load → inference → release
+cycle, 8/8 direct and 8/8 gateway checks, 46.95 tok/s through the gateway, 0
+refusals (TEST_RESULTS §18). CLAUDE.md L-6 still names the NVIDIA checkpoint
+as the architecture lock. The engine, topology and "no silent downgrade" rule
+are unchanged.
+
+## D-033 — gx-reason stays on the interim 27B until the gated iSkye model can be downloaded
+
+**Date:** 2026-09-17. **Status:** ACCEPTED as interim.
+
+The required model is `iSkye/Qwen3.8-Flash-Next-NVFP4-ablit-a070` (gated=auto,
+105 935 758 025 bytes). The HF API returns 401 without a token, and neither node has
+one. No substitute was chosen: the registry records the target and marks
+`nvidia/Qwen3.6-27B-NVFP4` as `interim`, and the UI shows that. Once a token is
+saved (Model Manager → Hugging Face token), the Model Manager stages,
+verifies, tests and assigns the target on gx10-02, with automatic rollback. See B-025.
+
+## D-034 — Control UI: Create, Media Library and Model Manager
+
+**Date:** 2026-09-17. **Status:** ACCEPTED.
+
+* **Media Library:** SQLite (`PRAGMA user_version` migrations) plus files
+  under `/srv/projects/gx-cluster/media`. Items are never overwritten; edits
+  are children with lineage. The library supports search, filters, favourites,
+  rename, range streaming, single-use ZIP links and confirmed deletes. ffprobe
+  and thumbnail extraction run in a throwaway container with no network.
+* **Create:** a job worker runs generate, edit, variation, t2v, i2v and v2v
+  through the media router and saves the results into the library.
+* **Model Manager:** a registry-driven inventory for both nodes (node 2 via a
+  fixed SSH script). It supports HF search and URL lookup, adapter
+  classification and a staging download with pinned revision and sha256
+  manifest. Test-serve runs in a temporary container on 127.0.0.1:19098 behind
+  the admission guard. Assign edits only the binding macro, restarts
+  llama-swap, runs a real gateway completion and rolls back automatically on
+  failure. It also supports accept, and delete only when nothing references
+  the files.
+* **Supply chain:** repository files are data. No model-card command is run,
+  `trust_remote_code` is never enabled, and small files are capped at 8 MB.
+  The HF token lives in `secrets/hf/token` (0600) and is passed by
+  environment or stdin, never on a command line.
+
+## D-035 — API keys in the UI and a local acceptance account
+
+**Date:** 2026-09-17. **Status:** ACCEPTED.
+
+Settings → API Keys manages LiteLLM virtual keys (create, list, test, replace,
+revoke) using the master key on the server side only. The browser sees the new
+secret once and after that only a masked form. Automated tests showed the
+master key is absent from 8 API responses. A second account, `acceptance`,
+exists for live automated tests. Its password is in
+`secrets/control-ui/acceptance-password` (0600). It can log in only from
+127.0.0.1, and `gx-ui-passwd --remove-acceptance` deletes it.

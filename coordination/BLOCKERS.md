@@ -1082,9 +1082,15 @@ MemAvailable stays under 512 MiB **and** swap free stays under 2 GiB for
 AgentOS as part of its drain.
 
 
-## B-024 (S3) — the media router's bearer key is the public placeholder `not-required`
+## B-024 (S3) — RESOLVED 2026-09-17 — the media router's bearer key was the public placeholder `not-required`
 
-**Status:** OPEN, needs a human. **Found:** 2026-09-16 (control-UI run).
+**Resolution:** rotated automatically during the V2 migration. A new random
+key was written to `legenex/gateway/.env` (gx10-01) and `~/gx-media/.env`
+(gx10-02) without being printed, and LiteLLM and the router were recreated. The
+SHA-256 hashes match on both nodes, and the media acceptance suite passed through the
+gateway with the new key.
+
+**Status (historical):** OPEN, needs a human. **Found:** 2026-09-16 (control-UI run).
 
 `GX_MEDIA_API_KEY` in `legenex/gateway/.env` on gx10-01 and in
 `~/gx-media/.env` on gx10-02 is the literal string `not-required`. That
@@ -1115,3 +1121,66 @@ systemctl --user restart gx-orchestrator.service gx-control-ui.service   # only 
 
 Then verify: control UI → Playground → gx-image and gx-video, and Settings →
 credential hygiene shows `GX_MEDIA_API_KEY: set`.
+
+## B-025 (S2) — gx-reason's required model is gated and no Hugging Face token exists
+
+**Status:** OPEN, needs a human. **Found:** 2026-09-17 (V2 migration).
+
+`iSkye/Qwen3.8-Flash-Next-NVFP4-ablit-a070` is `gated: auto`. The HF API
+returns 401 for its files from both nodes, and neither node has a token
+(`~/.cache/huggingface/token` and `/srv/projects/gx-cluster/secrets/hf/token`
+are absent). gx-reason therefore stays on the interim `nvidia/Qwen3.6-27B-NVFP4`
+(D-033). No substitute was chosen.
+
+**What was checked:** the repository id, gating and size via the HF API
+(105 935 758 025 bytes). Anonymous file access returns 401.
+
+**Smallest action:**
+1. While logged in to huggingface.co, open the model page and accept the terms.
+2. Create a read token.
+3. Control UI → Model Manager → *Hugging Face token* → save it (stored 0600,
+   never shown again).
+4. In Model Manager, look up the repository, then *Stage on gx10-02* →
+   *Test-serve* → *Assign to gx-reason*. The assignment restarts llama-swap on
+   node 2, runs a real completion and rolls back automatically on failure.
+
+**Disk:** node 2 needs about 99 GiB free for this download. It currently has
+about 20 GB (see B-026).
+
+## B-026 (S2) — obsolete checkpoints were not deleted; gx10-02 disk is at 98 %
+
+**Status:** OPEN, needs a human. **Found:** 2026-09-17.
+
+The migration request asked for superseded weights to be removed after
+acceptance. The agent's permission layer refused the delete (irreversible
+deletion under `/srv`, which CLAUDE.md also lists as needing sign-off). No
+workaround was attempted.
+
+Superseded after acceptance. Each replacement has produced real output:
+
+| Node | Path | Size | Superseded by |
+|---|---|---|---|
+| gx10-01 | `/srv/models/deepseek/DeepSeek-V4-Flash-0731-NVFP4` | 164 G | CRACK (D-032). This is also the gx-max rollback. |
+| gx10-02 | `/srv/models/deepseek/DeepSeek-V4-Flash-0731-NVFP4` | 164 G | same |
+| gx10-01 | `/srv/models/vllm/Qwen3.6-35B-A3B-NVFP4` | 22 G | kyaky uncensored (D-030) |
+| gx10-01 | `/srv/models/gguf/Qwen3.5-4B` | 3.2 G | HauhauCS (D-030) |
+| gx10-02 | `/srv/models/gguf/Qwen3.5-122B-A10B` | 73 G | retired in B-011 |
+| gx10-02 | `/srv/models/vllm/Qwen3.5-122B-A10B-NVFP4-FP8Dense-GB10` | 74 G | retired (root-owned: needs `docker run --rm -v /srv/models/vllm:/m alpine rm -rf /m/Qwen3.5-122B-A10B-NVFP4-FP8Dense-GB10`) |
+| gx10-02 | `/srv/models/image/diffusion_models/hidream_i1_full_fp8.safetensors` | 16 G | no workflow references it |
+
+**Keep:** `/srv/models/vllm/Qwen3.6-27B-NVFP4` on gx10-02. It is the live
+interim gx-reason model until B-025 is closed.
+
+**How:**
+* **Model Manager route:** Model Manager → *Accept* on the alias, then
+  *Delete* on the row. The UI refuses to delete anything still referenced.
+* **Shell route:** `rm -rf` on each path above, on the named node.
+
+Deleting both old DeepSeek directories removes the gx-max rollback. If a
+rollback is still wanted, keep the gx10-01 copy and re-sync it from there.
+
+Node 2 was at 850 G of 916 G (20 G free) at 03:20 on 2026-09-17. Part of the
+recent growth is a separate `gx-music` workstream on gx10-02
+(`/srv/models/music` 28 G, two `gx-music-engine` images of about 23 G) and
+20 G of Docker build cache. That work is outside this repo; ask its owner
+before pruning it.

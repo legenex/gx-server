@@ -9,6 +9,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-09-17
+
+V2 migration: uncensored models, media v2, and new Control UI pages. See
+`TEST_RESULTS.md` §19.
+
+### Added
+- `legenex/models/registry.json`: alias → model bindings with pinned
+  revisions, previous and rollback models, the gx-reason interim target and
+  media components. `legenex/scripts/hf-verify.py` writes sha256 manifests.
+- Control UI pages **Create**, **Media Library**, **Model Manager** and
+  **API Keys** (D-034, D-035), and docs pages Kilo Code, Open WebUI, Clients,
+  Media and Model Manager.
+- A loopback-only `acceptance` account (`gx-ui-passwd --acceptance`).
+- Media router 2.0.0: image edit and variation, multipart uploads,
+  image-to-video, video edit (keyframe propagation), video remix, a
+  `/v1/workflows` list, thumbnails, and idle ComfyUI free (D-031). Also new
+  Wan 2.2 A14B uncensored and Qwen-Image-2512 uncensored workflows, and
+  `legenex/media/deploy-node2.sh`.
+- gx-auto routing journal `/srv/logs/gx-auto-routing.jsonl` and
+  `GET /routing/decisions`.
+- Acceptance tools: `gx_tier_acceptance.py`, `gx_media_acceptance.py`,
+  `gx_refusal_probe.py` and `gx_ui_live_check.py`.
+
+### Changed
+- gx-mini → `HauhauCS/Qwen3.5-4B-Uncensored-HauhauCS-Aggressive` (131k,
+  parallel 2). gx-fast → `kyaky/Qwen3.6-35B-A3B-Uncensored-NVFP4` (131k,
+  preloaded, ttl 0). gx-max → `dealignai/DeepSeek-V4-Flash-0731-CRACK-NVFP4`
+  with cookbook cell `fp4` (D-032; `GXMAX_QUANT_CELL`).
+- The gx-auto classifier understands Kilo Code envelopes and continuations.
+  Tools no longer force gx-fast for trivial requests. It returns 503
+  `gx_max_not_running` instead of downgrading when only gx-max can serve
+  (D-030).
+- LiteLLM per-alias context and output limits; gx-video `mode:
+  video_generation`; request and response size limit 160 MB.
+- ComfyUI runs with `--reserve-vram 40`. The Control UI unit has
+  `MemoryMax=1G`.
+
+### Security
+- B-024: the media router key was rotated on both nodes.
+- Hugging Face content is never executed. The HF token is stored 0600 and
+  passed via environment or stdin. API-key secrets are shown once; the
+  master key is never sent to the browser.
+
+### Known issues
+- B-025: gx-reason is interim (the required model is gated; no HF token).
+- B-026: obsolete checkpoints await a human-approved delete. gx10-02 disk is
+  at 98 %.
+
 ### Fixed
 - **gx10-02 no longer depends on the retired `~/gx-worker` tree.** The
   live containers (`gx-llama-swap-node02`, `gx-media-router`, `gx-comfyui`)
