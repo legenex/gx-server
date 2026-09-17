@@ -18,8 +18,8 @@ cluster. Evidence is in `TEST_RESULTS.md` §19 and `/srv/logs/acceptance/`.
 | gx-reason | **interim** `nvidia/Qwen3.6-27B-NVFP4` @0893e160 | gx10-02 vLLM 0.28 | the required `iSkye/Qwen3.8-Flash-Next-NVFP4-ablit-a070` is gated and neither node has an HF token (**B-025**) |
 | gx-max | `dealignai/DeepSeek-V4-Flash-0731-CRACK-NVFP4` @c66fe384 | both nodes, SGLang TP=2, cookbook cell `fp4` (b12x MoE runner) | accepted (D-032); rollback is `GXMAX_MODEL_DIR=…/DeepSeek-V4-Flash-0731-NVFP4 GXMAX_QUANT_CELL=nvfp4` |
 | gx-auto | deterministic classifier (D-030) | gx10-01 orchestrator | Kilo-aware; never starts gx-max |
-| gx-image | Qwen-Image-2512 + tumblr LoRA; Qwen-Image-Edit-2511 | gx10-02 ComfyUI via media router 2.1 | generate / edit / variation |
-| gx-video | Wan 2.2 A14B T2V / I2V + uncensored LightX2V LoRAs; keyframe video edit | gx10-02 ComfyUI via media router 2.1 | t2v / i2v / video edit |
+| gx-image | Qwen-Image-2512 + tumblr LoRA; Qwen-Image-Edit-2511 | gx10-02 ComfyUI via media router 2.2 | generate / edit / variation |
+| gx-video | Wan 2.2 A14B T2V / I2V + uncensored LightX2V LoRAs; keyframe video edit | gx10-02 ComfyUI via media router 2.2 | t2v / i2v / video edit |
 
 ### Control UI additions (D-034, D-035)
 

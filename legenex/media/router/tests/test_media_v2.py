@@ -442,7 +442,7 @@ class MediaApiTests(unittest.TestCase):
         original_cfg = svc.cfg
         svc.cfg = dataclasses.replace(original_cfg, meminfo_path=str(meminfo))
         try:
-            # gx-reason loaded, nothing of ours resident: an image needs 40 GiB -> refused, nothing freed
+            # gx-reason loaded, nothing of ours resident: an image needs 60 GiB -> refused, nothing freed
             svc.comfy.free(unload_models=True, free_memory=True)
             svc._resident_models = frozenset()
             before = self.comfy.frees
@@ -458,16 +458,16 @@ class MediaApiTests(unittest.TestCase):
             status, _ = self.call("POST", "/v1/images/generations", {"prompt": "room"})
             self.assertEqual(status, 200)
             # same weights already loaded: only the warm need applies
-            set_avail(15)
+            set_avail(10)
             status, _ = self.call("POST", "/v1/images/generations", {"prompt": "warm"})
             self.assertEqual(status, 200)
             # a video job while memory is short fails its job, with the reason
-            set_avail(20)
+            set_avail(70)  # what is left with gx-reason loaded
             status, created = self.call("POST", "/v1/videos", {"prompt": "no room for video"})
             self.assertEqual(status, 202)
             job = self.wait_video(created["id"])
             self.assertEqual(job["status"], "failed")
-            self.assertIn("needs about 48 GiB", json.dumps(job))
+            self.assertIn("needs about 76 GiB", json.dumps(job))
             # unreadable meminfo never blocks generation
             svc.cfg = dataclasses.replace(original_cfg, meminfo_path=str(Path(self.tmp.name) / "missing"))
             status, _ = self.call("POST", "/v1/images/generations", {"prompt": "no meminfo"})

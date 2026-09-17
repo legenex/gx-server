@@ -74,11 +74,15 @@ class Config:
     #: Memory admission (node 2 is shared with gx-reason, ~44 GiB when loaded).
     #: Empty path disables the check. MemAvailable in GiB needed before a job
     #: whose weights are not loaded yet; ``need_warm_gib`` when they are.
+    #: MEASURED 2026-09-17 on an idle node 2 (114 GiB available, cold start):
+    #: image generate/edit took MemAvailable down to 57.5 GiB (~57 used), t2v/i2v
+    #: to 42.3 GiB (~72 used), the keyframe video edit to 7.2 GiB (~107 used).
+    #: So with gx-reason loaded (~70 GiB left) images fit and video does not.
     meminfo_path: str = ""
-    need_image_gib: float = 40.0
-    need_video_gib: float = 48.0
-    need_keyframe_gib: float = 64.0
-    need_warm_gib: float = 12.0
+    need_image_gib: float = 60.0
+    need_video_gib: float = 76.0
+    need_keyframe_gib: float = 110.0
+    need_warm_gib: float = 8.0
 
     @classmethod
     def from_env(cls) -> "Config":
