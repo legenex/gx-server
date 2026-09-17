@@ -1,169 +1,106 @@
 # Handoff
 
-Filled-in handoff for whoever (human or agent) picks this up next. The blank
-format for future recurring updates lives in
-`docs/chatgpt/STATUS_UPDATE_TEMPLATE.md` — use that one going forward; this
-file always holds the *latest* handoff, not a history (see `CHANGELOG.md`,
-`coordination/LEADER_STATUS.md` and `TEST_RESULTS.md` for history).
+The *latest* handoff for whoever (human or agent) picks this up next. This file
+is never a history — see `CHANGELOG.md`, `TEST_RESULTS.md` and
+`coordination/DECISIONS.md` for that.
 
-Last updated: 2026-09-16 ~11:15 CEST, by the lead agent on gx10-01, after a
-gx-max memory investigation (eight instrumented two-node runs), the gx-max
-failure-unwind rebuild, and real gx-image/gx-video generations.
+Last updated: 2026-09-17 ~22:10 SAST, by the lead agent on gx10-01, after the
+Build V3 integration pass (D-040, D-041).
 
 ## READ THIS FIRST — the one thing that needs a human
 
-**`coordination/BLOCKERS.md` B-022.** gx-max cannot run on this hardware and
-no amount of tuning changes that. Measured across eight real two-node runs:
-loading one TP=2 rank takes a 121.63 GiB node from ~110 GiB MemAvailable to
-between 437 MiB and 0 MiB — on both nodes — and ends in a kernel global OOM
-kill. `--mem-fraction-static` was measured at 0.50 and 0.70 with an identical
-trough; it moves only the steady state, never the peak. The peak is the model
-weights: a 163.48 GiB checkpoint at `--tp 2` puts ~82 GiB on each rank before
-any KV cache.
+**`coordination/BLOCKERS.md` B-030.** gx-reason's approved checkpoint
+`iSkye/Qwen3.8-Flash-Next-NVFP4-ablit-a070` @ `91c3e3d4…` is **gated per user**,
+and the account is not on its authorized list.
 
-The decision is yours, and it is about a LOCKED constraint, not a config
-value:
+This is not a token problem, and it is worth being precise because an earlier
+pass lost hours to the opposite conclusion:
 
-1. Accept a gx-max-specific steady-state reserve of ~20 GiB and a documented
-   load-phase excursion to near zero — what the hardware actually permits, and
-   what the 2026-09-14 verified-working run already did.
-2. Keep the 30 GiB floor absolute and retire gx-max as un-runnable here.
-3. Reopen L-6: smaller model, heavier quantisation, or more nodes.
+* a fine-grained token **is** configured at
+  `/srv/projects/gx-cluster/secrets/hf/token` (0600);
+* it authenticates as **`legenex`** and already carries
+  `canReadGatedRepos: true`;
+* repository **metadata** returns **200** with it (92.68 B parameters,
+  98.66 GiB — both confirmed);
+* repository **files** return **403** with
+  `X-Error-Code: GatedRepo`, *"you are not in the authorized list"*.
 
-Until then the admission guard refuses gx-max, deliberately, and says why.
-**Do not resolve this by editing `GXMAX_GUARD_RESERVE_GIB`** — that was
-tested; even a 5 GiB reserve does not make gx-max fit.
+> **Action:** open
+> <https://huggingface.co/iSkye/Qwen3.8-Flash-Next-NVFP4-ablit-a070> in a
+> browser signed in to Hugging Face as **`legenex`** and click **"Agree and
+> access repository"**. The repo is `gated: auto`, so access is granted
+> immediately. **Creating another token cannot change this.**
 
-The second thing needing a human is unchanged and unrelated: the kernel
-`apt-mark hold` (one sudo command, shown at the end of this file).
+Afterwards nothing else is needed from you: Model Manager stages, verifies,
+test-serves and assigns the checkpoint on gx10-02, and the interim
+`nvidia/Qwen3.6-27B-NVFP4` is deleted **only** after that acceptance passes.
+Until then the interim model keeps serving and is not deleted.
 
-## Current objective
+## What is running
 
-Just completed: node 2 resource-ownership deployment, gx-reason diagnosis
-(rebuild attempt), real gx-image/gx-video E2E validation (first time ever
-run), a first real gx-max acquisition attempt through the orchestrator, a
-full acceptance-suite run, and an independent multi-agent review pass with
-findings fed back and fixed. See `CHANGELOG.md`'s `[Unreleased]` section for
-the complete, detailed list — this file is the short version.
+Eleven aliases (L-10 as amended by D-040). gx-max is **working** — the old
+B-022 "gx-max cannot run on this hardware" conclusion was wrong and was
+superseded by D-025 on 2026-09-16. gx-max is never auto-started; it takes over
+both nodes when you ask for it through the Control Center MAX profile.
 
-## Current node ownership
+| Where | Service | Port |
+|---|---|---|
+| gx10-01 | Control Center | 8088 |
+| gx10-01 | GX-Playground | 8090, and **8443 over HTTPS** |
+| gx10-01 | LiteLLM gateway | 4000 |
+| gx10-01 | orchestrator | 18900 |
+| gx10-02 | media router 2.5.0 | 18800 |
+| gx10-02 | gx-music / gx-voice / gx-live supervisors | 18820 / 18830 / 18850 |
+| gx10-02 | gx-call supervisor | 18840 — **not yet running**, its engine image is unfinished |
 
-- gx10-01 GPU owner: none (idle; gx-mini/gx-fast on demand only)
-- gx10-02 GPU owner: none (idle; gx-reason on demand; gx-comfyui +
-  gx-media-router running but idle — ~0.7 GiB total at idle, on-demand
-  generation only, verified 2026-09-16)
-- Active model runtimes: none on either node at rest
-- gx-max: **never runs** — refused by the admission guard (B-022)
+The Playground shows the complete product: **Create** (Dashboard, Creative
+Flows, Images, Video, Music, Voice) · **Realtime** (Live, Call Agents) ·
+**Manage** (Library, History, Models, Logs, Settings).
 
-## Tier status, 2026-09-16
+## Three things that will save you time
 
-| Tier | State |
-|---|---|
-| gx-mini, gx-fast, gx-reason | serving, verified through the gateway |
-| gx-image, gx-video | serving, real files produced and inspected |
-| gx-auto | serving; routes correctly and **never acquires gx-max** |
-| gx-max | refused by its own admission guard — B-022 |
+1. **Editing the source is not deploying it.** Both web apps cache `web/` in
+   memory. They now re-read a changed file, but the Python package still loads
+   once and Creative Flows ships a built bundle. Run
+   `legenex/playground/scripts/deploy.sh` (or the Control Center's) — it fails
+   unless the ETag of every served file matches sha256 of the file in the
+   checkout. This is not paranoia: the deployed Playground once served a
+   seven-hour-old copy of itself with eleven files 404ing (B-031).
+2. **Use HTTPS for the microphone and camera.** `http://100.105.214.61:8090` is
+   not a secure context, so Live and Call Agents cannot capture audio there.
+   Use `https://100.105.214.61:8443/` with the CA from `/pg/ca.crt` trusted, or
+   `http://127.0.0.1:8090/` on gx10-01 itself. Manual §7.0 has the steps.
+3. **Run the suites with `discover`.** `python -m unittest tests.test_x` fails
+   with `ModuleNotFoundError: support`; use
+   `python3 -m unittest discover -s tests [-p 'test_x.py']`. And if another
+   workstream is running Playwright, give your run its own
+   `GX_E2E_OUTPUT_DIR`, `GX_E2E_BACKEND_PORT` and `GX_E2E_PORT`.
 
-## Last verified good state (this session, live-checked, real inference)
+## What is proven, and what is not
 
-- Kernel: `6.17.0-1032-nvidia` on both nodes.
-- Memory: node 1 ~108 GiB available, node 2 ~113 GiB available, of 121 GiB
-  each — both nodes confirmed clean at end of session.
-- gx-mini, gx-fast: real text inference verified, both PASS.
-- gx-reason: real inference confirmed still BROKEN (B-011, garbage GPU
-  output) — rebuilding from current llama.cpp master did NOT fix it.
-- gx-auto: real routing verified for all 3 test cases, including correct
-  escalation to gx-reason — this required first finding and fixing a real
-  production bug (D-019, orchestrator boot-race left it unreachable from
-  the gateway container for 2.5+ hours).
-- gx-image, gx-video: real generation verified for the first time ever —
-  genuine 1024x1024 image (28s) and playable MP4 (58s), both visually
-  inspected. Ingress security boundary (ComfyUI unreachable from node 1)
-  now has a real regression test, not just a manual check.
-- gx-max: first real acquisition attempt through the orchestrator.
-  Correctly, safely refused by the admission guard (B-017) — not a memory
-  incident, a genuine unresolved collision between two locked designs that
-  needs a human decision. Cleanup verified correct on both nodes.
-- `legenex/tests/acceptance.sh` (non-slow suite): 12 PASS, 1 FAIL (gx-reason,
-  expected), 1 SKIP (no vision fixture).
-- Independent multi-agent review (4 reviewers: memory/lifecycle,
-  networking/gx-max, routing/media security, recovery/docs) found several
-  real issues, all fixed except one newly-documented gap — see
-  `coordination/BLOCKERS.md` B-019 (node2 admission-check TOCTOU race).
+**Proven with real generations:** Wan 2.2 LoRA video (branch placement traced
+on the real graph, 49 decoded frames, measurably different output at the same
+seed), gx-voice text-to-speech / voice design / authorised cloning (verified
+independently with ffprobe and offline ASR, and end to end through the
+gateway), image generation and editing, and the I2V memory footprint.
 
-Full detail: `CURRENT_STATE.md`.
+**Not proven:** the gx-call runtime. Its checkpoint is downloaded and verified
+on gx10-02, but the engine image build was interrupted and the model has never
+been loaded, so no footprint can be published and Resource Control correctly
+shows "not measured yet" for `gx-call`.
 
-## Files changed this session
+## The rules that matter most
 
-Application code AND documentation both changed — see
-`git log --oneline 3920192..HEAD` on `legenex-dual-gx10` for the exact
-commit list. Highlights:
+* 30 GiB `MemAvailable` reserve on each node, always. Start a GPU container
+  only through `gx_guard_run` or a supervisor that does.
+* Never `docker stop` a tenant's engine container; never call ComfyUI `/free`
+  directly. Use the sanctioned unload paths (D-036).
+* Never start gx-max without meaning to; never change kernel, firmware,
+  netplan, MTU or RDMA. No sudo anywhere.
+* gx10-01 is the only Git writer. gx10-02 is a pull-only mirror.
 
-- `legenex/lifecycle/gx-max-start.sh`, `legenex/tests/gx-max-validate.sh` —
-  fixed a dead container-name list in the conflict-drain step, and replaced
-  a `ping`-based fabric check (fails under the orchestrator's
-  `NoNewPrivileges=true` hardening) with a capability-free TCP probe.
-- `legenex/orchestrator/systemd/` — new: the orchestrator's systemd unit
-  checked into git for the first time, plus a boot-race fix
-  (`wait-for-docker0.sh`).
-- `legenex/tests/acceptance.sh` — `t_media` no longer skips (real E2E
-  tests), memory-interlock hardening added to `t_reason`/`t_media`, plus a
-  bug in that same cleanup code found and fixed live.
-- `legenex/scripts/recover-node2.sh`, `legenex/scripts/gx-reason-diagnose.sh`
-  — real bugs fixed (SSH argument quoting; a missing-library failure
-  misdiagnosed as a CPU-vs-GPU result).
-- `coordination/BLOCKERS.md` — B-017 (gx-max vs admission guard, needs a
-  human decision), B-018 (ComfyUI's compose start bypasses the admission
-  guard), B-019 (node2 admission-check race, found by independent review)
-  added; B-011 updated (rebuild attempted, ruled out, still open).
-- `coordination/DECISIONS.md` — D-019 (orchestrator boot-race) added.
-- `CURRENT_STATE.md`, `ARCHITECTURE.md` — brought current.
+## Where to look next
 
-## Tests completed
-
-`legenex/orchestrator` 116, `legenex/lifecycle/tests` 9, `legenex/media/router`
-43 — all still passing (no regressions from this session's code changes).
-Plus the live acceptance suite above, plus real inference/generation against
-every tier that can currently serve one.
-
-## Current blocker
-
-**B-017 (S1) needs a human decision, not further automated attempts.**
-gx-max cannot acquire through the real orchestrator: its locked ~90 GiB/rank
-footprint doesn't leave the admission guard's 30 GiB reserve floor. Three
-options are documented in `coordination/BLOCKERS.md` B-017 — none applied,
-on purpose, since either direction (loosen the guard, or leave gx-max
-permanently unable to acquire through production) is a real architecture
-call that shouldn't be made unilaterally.
-
-Other open items, unchanged in kind: B-011 (gx-reason, needs a human decision
-on which next step to fund), B-013 (no writable git remote), B-001/B-003
-/B-014 (all need root).
-
-## Next action
-
-1. Get a human decision on B-017 (gx-max admission floor) and B-011
-   (gx-reason next step) — these are the two things blocking full
-   production readiness that this session could not resolve itself.
-2. B-019 (S2, found by independent review): node2's admission check in
-   `gx-max-start.sh` is not atomic with the actual rank1 launch — a real
-   TOCTOU window, distinct from B-018. Fix suggested in the blocker entry.
-3. B-018: wire ComfyUI's compose-based start through the resource-ownership
-   admission guard properly (currently mitigated in the test suite only,
-   not fixed at the source).
-4. `gx-max-start.sh`'s rank1 launch still doesn't call through the
-   node-2-deployed resource-guard module directly (uses a real remote
-   `flock` convention instead) — small consistency cleanup, not urgent.
-
-## Locked decisions reminder
-
-- Kernel 6.17 pin, never 7.0.
-- ConnectX/RoCE for model traffic, Tailscale management-only.
-- `gx-max` = SGLang TP=2, `nvidia/DeepSeek-V4-Flash-0731-NVFP4`, never vLLM.
-- LiteLLM gateway, llama-swap lifecycle.
-- Qwen3.8 retired permanently, do not resurrect.
-- 30 GiB `MemAvailable` reserve floor (see B-017 for the one place this
-  collides with another locked decision, unresolved).
-- No large model auto-starts at boot.
-
-Full list with rationale: `ARCHITECTURE.md` §1, `CLAUDE.md`.
+`CURRENT_STATE.md` (what is running), `ARCHITECTURE.md` (what is locked),
+`coordination/BLOCKERS.md` (B-030 first), `PROJECT_MAP.md` → *Next logical
+step*, and `coordination/build-v3/*.md` for each workstream's own evidence.
