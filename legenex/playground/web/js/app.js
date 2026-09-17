@@ -7,15 +7,9 @@ import { center } from './jobs.js';
 import { navigate, parseHash } from './nav.js';
 import { getSummary, statusInfo, worstStatus } from './resources.js';
 import { callout, loading } from './ui.js';
-import dashboard from './pages/dashboard.js';
-import images from './pages/images.js';
-import video from './pages/video.js';
-import music from './pages/music.js';
-import library from './pages/library.js';
-import historyPage from './pages/history.js';
+import { hasPage, loadPage } from './routes.js';
 
 const $ = byId;
-const PAGES = { dashboard, images, video, music, library, history: historyPage };
 
 const state = { user: null, cleanup: null, route: '', firstRoute: true, resTimer: null };
 
@@ -180,8 +174,8 @@ function renderTray() {
 function route() {
   if (!state.user) return;
   const { page, rest, query } = parseHash();
-  const name = PAGES[page] ? page : 'dashboard';
-  if (!PAGES[page]) {
+  const name = hasPage(page) ? page : 'dashboard';
+  if (!hasPage(page)) {
     history.replaceState(null, '', '#/dashboard');
   }
   const key = `${location.hash}#${Date.now()}`;
@@ -192,16 +186,18 @@ function route() {
     if (a.dataset.page === name) a.setAttribute('aria-current', 'page');
     else a.removeAttribute('aria-current');
   }
-  const mod = PAGES[name];
-  document.title = `${mod.title} · GX-Playground`;
   const main = $('main');
   const root = h('div', { class: `page page-${name}`, id: `page-${name}` }, loading());
   replace(main, root);
   document.body.dataset.page = name;
   const wasFirst = state.firstRoute;
   state.firstRoute = false;
-  Promise.resolve()
-    .then(() => mod.mount(root, { rest, query, user: state.user }))
+  loadPage(name)
+    .then((mod) => {
+      if (state.route !== key) return null;
+      document.title = `${mod.title} · GX-Playground`;
+      return mod.mount(root, { rest, query, user: state.user });
+    })
     .then((cleanup) => {
       if (typeof cleanup === 'function') {
         if (state.route === key) state.cleanup = cleanup; else cleanup();

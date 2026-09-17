@@ -1222,3 +1222,41 @@ Maintenance.
 excluded `legenex/models/registry.json`, the file the Control Center, the
 tests and the documentation all treat as the source of truth. It is now
 re-included; model weights stay ignored.
+
+## D-039 — Text inference: authoritative context budgeting, task-content routing, fail-fast relay
+**Date:** 2026-09-17
+**Trigger:** a Claude-Code continuation (22 tools, ~18 k schema tokens,
+`max_tokens` 32 000; 33 537 real input tokens) was routed by gx-auto to
+gx-reason (complexity 15 from "prove / derive / architecture / orchestrate"
+in the work order), did not fit the 65 536 window, and the client resent it
+every ~303 s for 20-30 minutes.
+**Root causes (evidence: `/srv/logs/gx-auto-routing.jsonl`,
+`/srv/logs/gx-orchestrator.log`):**
+1. The classifier scored generic vocabulary of a long work order as reasoning
+   evidence.
+2. `max_tokens` was clamped only to the tier's output ceiling, never to what
+   fits the window.
+3. For a STREAMED request the orchestrator sent `200` + chunked headers before
+   contacting the gateway, then wrote the gateway's 400 into the open stream
+   (`BrokenPipeError`). The client saw a stalled stream, timed out and resent
+   the identical payload.
+**Decision:**
+* `gx_orchestrator/budget.py` is the one budget formula (orchestrator and a
+  LiteLLM pre-call hook for gx-mini / gx-fast / gx-reason). It counts system,
+  history, tool calls, tool results, replayed reasoning, tool schemas, images
+  and template overhead; keeps a pessimistic estimate (sizes the output) and
+  an optimistic bound (proves an overflow); margin max(512, 2 %); clamps
+  `max_tokens` / `max_completion_tokens`; refuses a certain overflow at once
+  with `400 context_length_exceeded`, structured `gx_budget` fields and
+  `x-should-retry: false`.
+* The relay opens the upstream before answering; upstream 4xx are relayed as
+  real 4xx (non-retryable); an engine context refusal with an exact count is
+  corrected ONCE, immediately; nothing is ever resent unchanged.
+* gx-auto routes on TASK CONTENT (latest human instruction, envelopes
+  stripped) with specific reasoning indicators diluted by instruction length;
+  context and tool burden only decide which tier can HOLD the request.
+  gx-fast is the default workhorse. A request only gx-max could hold while
+  gx-max is down is a 400 with a hint (was a retryable 503).
+* gx-max: in-flight requests hold the engine; the idle TTL (1800 s) counts
+  from the end of the last request and its remaining time is exposed.
+**Status:** implemented and tested; live evidence in TEST_RESULTS.md §21.
