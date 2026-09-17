@@ -37,6 +37,11 @@ class TempEnv:
         self.root = root
         for d in ("secrets", "state", "logs", "guard", "srvlogs", "media", "hf"):
             (root / d).mkdir()
+        # Per-alias key directories, laid out exactly as production
+        # (<secrets_root>/gx-<alias>/api-key), so the node-2 service clients and
+        # the feature clients read the SAME file in tests as they do live.
+        for alias in ("gx-voice", "gx-call", "gx-live"):
+            (root / "secrets" / alias).mkdir(exist_ok=True)
         (root / "guard" / "node1-residency.json").write_text("{}")
         (root / "guard" / "node2-residency.json").write_text("{}")
         params = dict(
@@ -50,7 +55,11 @@ class TempEnv:
             node1_swap_base="http://127.0.0.1:9", node2_swap_base="http://127.0.0.1:9",
             media_base="http://127.0.0.1:9", gxmax_base="http://127.0.0.1:9",
             music_base="http://127.0.0.1:9", music_key_file=root / "secrets" / "music-key",
-            voice_base="http://127.0.0.1:9", voice_key_file=root / "secrets" / "voice-key",
+            voice_base="http://127.0.0.1:9",
+            # The same file the node-2 service clients read
+            # (<secrets_root>/gx-voice/api-key), as in production — two different
+            # paths here made the Voice capability row vanish from the fixture.
+            voice_key_file=root / "secrets" / "gx-voice" / "api-key",
             public_playground_url="http://127.0.0.1:8090/", public_control_url="http://127.0.0.1:8088/",
         )
         params.update(overrides)

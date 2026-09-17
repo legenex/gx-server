@@ -130,7 +130,8 @@ class UIConfig:
     #: gx-music supervisor on gx10-02 (fabric only, L-3) and its bearer key file (0600).
     music_base: str = field(default_factory=lambda: _env("GX_UI_MUSIC_BASE", "http://192.168.100.11:18820"))
     #: Build V3 supervisors on gx10-02 (fabric only). Keys: <secrets_root>/<alias>/api-key.
-    voice_base: str = field(default_factory=lambda: _env("GX_UI_VOICE_BASE", "http://192.168.100.11:18830"))
+    #: `voice_base` is declared once, above, with `voice_key_file` beside it — it used to
+    #: be declared twice in this class, and the second definition silently won.
     call_base: str = field(default_factory=lambda: _env("GX_UI_CALL_BASE", "http://192.168.100.11:18840"))
     live_base: str = field(default_factory=lambda: _env("GX_UI_LIVE_BASE", "http://192.168.100.11:18850"))
     music_key_file: Path = field(

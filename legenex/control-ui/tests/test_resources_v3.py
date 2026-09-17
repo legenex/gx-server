@@ -147,7 +147,7 @@ class ControllerTests(unittest.TestCase):
         self.clients = {}
         for alias, sup in self.sup.items():
             kf = self.env.root / "secrets" / alias / "api-key"
-            kf.parent.mkdir(parents=True)
+            kf.parent.mkdir(parents=True, exist_ok=True)
             kf.write_text(self.key + "\n")
             self.clients[alias] = Node2Service(SPECS[alias], sup.stub.url, kf)
         self.cluster = FakeCluster(n2=facts(80))
