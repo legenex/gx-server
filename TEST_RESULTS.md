@@ -1339,7 +1339,21 @@ ComfyUI runs with `--reserve-vram 40` after `deploy-node2.sh --with-comfyui`.
 
 orchestrator 167 OK · lifecycle 22 OK · media router 74 OK · control UI 155 OK + 15 e2e · `sync-regression.sh` PASS=19 FAIL=0.
 
-### 19.7 Honest notes
+### 19.7 Final state (2026-09-17 ≈04:58 SAST)
+
+| Check | Result |
+|---|---|
+| Final regression | UI QA passed (155 tests + 15 e2e) · router QA 76 OK · orchestrator 167 OK · lifecycle 22 OK · sync-regression 19/0 |
+| UI live suites (final) | keys **9/9**, manager **17/17**, library **34/34** |
+| gx-auto Kilo (after the LiteLLM recreate) | **10/10**: mini about 3 s, fast about 1 s, reason 19–35 s warm |
+| Media Library | 15 assets (image: 6 generate, 3 edit, 1 variation; video: 2 generate, 1 i2v, 2 v2v); 7 with a parent |
+| Kernel | `6.17.0-1032-nvidia` on both; verifier 13/0/0 on both |
+| Integrity audit | gx10-01 PASS=17 WARN=0 FAIL=0 (includes the new media-key check); gx10-02 PASS=29 WARN=0 FAIL=0 |
+| Git | gx10-01 = GitHub `main` = gx10-02 (`d37f1292` before this doc update); gx10-02 clean; push URL `DISABLED-gx10-02-is-pull-only`; gitleaks on history since 2026-09-16: no leaks |
+| Disk | gx10-01 720 G / 916 G used (149 G free, 83 %); gx10-02 851 G / 916 G used (**19 G free, 98 %**) |
+| Memory | gx10-01 55 GiB available (mini + fast resident), swap 3.6 / 64 G used; gx10-02 14 GiB available right after a video edit (ComfyUI cache, freed after 600 s idle or on a gx-reason start), swap 5.0 / 64 G used |
+
+### 19.8 Honest notes
 
 * The gx-reason live UI test returned an empty answer twice:
   temperature 0 with 4 000 tokens (478 s), then temperature 0.6 with 6 000
