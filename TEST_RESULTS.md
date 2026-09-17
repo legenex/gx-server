@@ -1524,6 +1524,15 @@ signed in as the acceptance account (`e2e/live.creative.spec.js`).
 * The t2v cold load happened while gx-music was loaded. The router admitted
   it by its measured cold threshold (76 GiB available). Minimum MemAvailable
   was 18.6 GiB, and swap stayed flat at about 5.5 GiB.
+  * **Correction (final cleanup pass, 2026-09-17): this did NOT conform to
+    the locked 30 GiB normal-operation reserve.**
+    * Surviving with flat swap is not acceptance. The 76 GiB threshold was
+      the footprint plus about 4 GiB, with no reserve.
+    * The final review found it, and it was fixed by D-038 (router 2.4.0,
+      gx-music 1.1.0).
+    * Re-tested live in §21.2.
+  * The "unloaded gx-image and waited for gx-music" lines in that log belong
+    to the image job before it, not to this t2v.
 
 **Library.**
 * Search by run tag, the audio type filter, sort, axe, and a bulk ZIP of all

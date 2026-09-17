@@ -22,14 +22,14 @@ repository is **public**.
 | `legenex/gateway/` | LiteLLM + llama-swap configs and compose files (node 1 gateway, node 2 worker) |
 | `legenex/orchestrator/` | gx-auto routing and gx-max lifecycle service (stdlib Python), with tests |
 | `legenex/lifecycle/` | gx-max start/stop/unwind/status, the safety rules, both watchdogs, the resource guard |
-| `legenex/media/` | gx-image / gx-video router (2.3.0: holds, pins, truthful residency) and ComfyUI compose (node 2) |
+| `legenex/media/` | gx-image / gx-video router (2.4.0: 30 GiB reserve admission, waiting video jobs, idle-music eviction, holds, pins, truthful residency) and ComfyUI compose (node 2) |
 | `legenex/music/` | gx-music: node-2 supervisor, ACE-Step engine Dockerfiles, unit, tests (D-036) |
 | `legenex/playground/` | GX-Playground: static SPA + allow-listed proxy, unit, E2E, API contract (D-037) |
 | `legenex/host/` | Host watchdog and the kernel-lock tooling |
-| `legenex/models/registry.json` | Alias → model bindings (repository, revision, path, previous, interim target, media components) |
+| `legenex/models/registry.json` | Alias → model bindings (repository, revision, path, previous, interim target, media components, verified `identity` facts). Tracked in Git since D-038 |
 | `legenex/scripts/hf-verify.py` | Pinned-revision sha256 verifier; writes `.gx-manifest.json` |
 | `legenex/control-ui/` | Control Center: stdlib backend (also the Playground's backend: Library, queues, music, Resource Control, Storage), ES-module frontend, in-UI docs, unit/API/E2E tests (D-028, D-037) |
-| `legenex/tests/` | Acceptance, unwind regression, gx-max validation and inference suites |
+| `legenex/tests/` | Acceptance, unwind regression, gx-max validation and inference suites; production Open WebUI identity (`owui_identity_acceptance.py`, `owui_identity_browser.py`) and the live reserve acceptance (`reserve_live_acceptance.py`) |
 | `ops/git-sync/` | Writer, mirror and audit tooling for source control (D-026) |
 | `.githooks/` | Versioned Git hooks (writer only) |
 
@@ -44,7 +44,12 @@ repository is **public**.
   * a deadman on node 2 and a watcher on node 1;
   * a verified unwind.
 * **Resource guard:** flock plus residency ledger, with a 30 GiB reserve for
-  single-node tiers.
+  single-node tiers. Since D-038 the media router and the music supervisor
+  enforce the same reserve on projected MemAvailable and account for each
+  other's loads in progress.
+* **Open WebUI identity (D-038):** registry-generated model entries in the
+  production Open WebUI (`gx_control_ui/owui_identity.py`), kept in sync by
+  Model Manager, Setup and the integrity audit.
 * **Git sync:**
   * the only writer auto-commits and pushes;
   * the mirror reconciles to `origin/main`;
@@ -128,6 +133,9 @@ repository is **public**.
 * **gx-music limits:** extract, lego and complete need ACE-Step XL base
   (not installed). Cancelling a running render lets it finish, then discards
   it.
+* **B-028:** the keyframe video edit cannot keep the 30 GiB reserve and is
+  refused (two-stage redesign pending a decision).
+* **B-029:** production Open WebUI shares the Kilo Code gateway key.
 * **Server-side status:** GitHub branch protection and secret scanning are
   not configured from here.
 
@@ -136,7 +144,7 @@ repository is **public**.
 ```bash
 (cd legenex/orchestrator && python3 -m unittest discover -s tests)
 (cd legenex && python3 -m unittest discover -s lifecycle/tests -t .)
-(cd legenex/media/router && bash qa.sh)             # router: templates, compose, 74 tests, secret scan
+(cd legenex/media/router && bash qa.sh)             # router: templates, compose, 111 tests, secret scan
 legenex/tests/gx_tier_acceptance.py gx-mini          # per-tier real checks
 legenex/tests/gx_media_acceptance.py                 # t2i/edit/variation/t2v/i2v/v2v through the gateway
 legenex/tests/gx_ui_live_check.py keys library manager
@@ -150,6 +158,10 @@ ops/git-sync/tests/sync-regression.sh                # hermetic Git-sync failure
 (cd legenex/music && ./qa.sh)                        # gx-music supervisor (hermetic)
 (cd legenex && python3 -m unittest discover -s lifecycle/tests -t .)   # includes the gx-max music drain
 (cd legenex/control-ui && npm run test:live)         # UI against the real cluster (real model calls)
+legenex/tests/owui_identity_acceptance.py            # production Open WebUI via chat.legenex.co (disposable account)
+legenex/tests/owui_identity_browser.py               # the same in system Chrome
+legenex/tests/reserve_live_acceptance.py             # gx10-02 video + music with 1 Hz memory sampling
+(cd legenex/control-ui && python3 -m gx_control_ui.owui_identity check)
 ```
 
 ## Next logical step

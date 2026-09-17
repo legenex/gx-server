@@ -96,10 +96,10 @@ docker compose -f docker-compose.media.yml logs -f
 # Stop. This releases all GPU memory.
 docker compose -f docker-compose.media.yml down
 
-# Free model memory without stopping the service (e.g. to hand the node back):
-curl -sS -X POST http://127.0.0.1:8188/free \
-     -H 'Content-Type: application/json' \
-     -d '{"unload_models": true, "free_memory": true}'
+# Free model memory without stopping the service (e.g. to hand the node back).
+# Always through the router, never ComfyUI's /free directly (D-036): the router
+# must know its weights are gone, or it would judge the next job warm.
+docker exec gx-media-router python -m gx_media_router.free_node
 ```
 
 Health, from node 1 — unauthenticated, safe to poll:
@@ -159,15 +159,54 @@ curl -sS "http://192.168.100.11:18800/v1/videos/$ID/content" \
 `seconds` (0.5–20) or `length` in frames. Wan's latent packing requires
 `(length - 1) % 4 == 0`; the router snaps to the nearest valid count.
 
+### Memory admission (router 2.4.0, D-038)
+
+gx10-02 keeps at least **30 GiB MemAvailable** in normal operation. A job
+starts only if
+
+    MemAvailable − gx-music's pending memory − the job's growth ≥ 30 GiB
+
+| | Growth (measured 2026-09-17) | MemAvailable needed on an idle router |
+|---|---|---|
+| cold image / edit / variation | 57 GiB | 87 GiB |
+| cold t2v / i2v / restyle edit | 72 GiB | 102 GiB |
+| keyframe video edit (strength ≥ 0.5) | 107 GiB | 137 GiB → **refused**: 422 `exceeds_node_reserve` (B-028) |
+| warm job | footprint − measured resident size (≥ 8 GiB) | growth + 30 GiB |
+
+* **Waiting and refusal:**
+  * a video that does not fit stays `status: queued` with
+    `phase: "waiting"` and a `waiting` object (`code`, `reason`,
+    `required_gib`, `available_gib`, `reserve_gib`, `pending_gib`,
+    `blocker`, `next`, `since`), and retries every 15 s for
+    `GX_MEDIA_RESOURCE_WAIT` (1800 s);
+  * a synchronous image is refused with 503 and the same `error.details`.
+* **gx-music:** its open `/health` (`GX_MEDIA_MUSIC_URL`) provides the
+  engine state and its pending memory. When unloading an IDLE engine would
+  make room, the router asks the supervisor (`POST /v1/music/unload`
+  `{"if_idle": true}`, key mounted read-only at `/run/gx/music-api-key`). It
+  never does this while the engine is working, has queued jobs or is pinned,
+  or under the Music / Maintenance / Max profile. It then verifies: engine
+  unloaded, container gone, ledger clean, memory re-read.
+* **Published on `/health`:** `memory.pending_gib` (the running job's growth
+  not yet in MemAvailable, which the supervisor subtracts),
+  `memory.need_gib`, `tenants`, `waiting`, `last_refusal` and
+  `last_eviction`.
+* **After a start:** the router frees whatever ComfyUI still holds once, so
+  its record of what is loaded is true.
+* **Configuration:** `GX_MEDIA_RESERVE_GIB` can raise the reserve (never
+  below 30); the `GX_MEDIA_FOOTPRINT_*_GIB` values can only be raised.
+
 ### Other routes
 
 `GET /health` (no auth) · `GET /v1/models` · `GET /v1/images/{id}/content/{i}` ·
 `GET /v1/videos/{id}` · `GET /v1/videos/{id}/content`
 
 Errors are OpenAI-shaped: `400` validation, `401` auth, `404` unknown job/route,
+`422` the job can never keep the 30 GiB reserve (`exceeds_node_reserve`),
 `502` ComfyUI rejected or failed the graph (the failing node and exception are
-included), `503` the generation slot was busy past the wait (`Retry-After: 30`),
-`504` generation exceeded its timeout.
+included), `503` the generation slot was busy past the wait or gx10-02 cannot
+hold the job right now (`insufficient_memory`, with `error.details`;
+`Retry-After: 30`), `504` generation exceeded its timeout.
 
 ---
 

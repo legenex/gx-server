@@ -74,18 +74,42 @@ curl -s "$GX_BASE/videos/$VIDEO_ID/remix" -H "Authorization: Bearer $GX_API_KEY"
 | `seconds` | video | 0.5–10 (frames are snapped to Wan's 4k+1 rule) |
 
 Status objects follow OpenAI's video API: `status` is `queued`,
-`in_progress`, `completed` or `failed`. Generations run one at a time.
+`in_progress`, `completed` or `failed`. Generations run one at a time. A
+queued video that waits for memory also has `phase: "waiting"` and a
+`waiting` object that says why.
 
 ## Limits
 
 * Uploads: images up to 25 MB and 4096 px per side; videos up to 150 MB, of
   which the first 10 seconds are used.
 * Media generation is refused while gx-max holds the cluster.
-* **Video needs gx10-02 to itself.** A video job needs about 76 GiB free (a
-  video edit about 110 GiB), and gx-reason uses about 44 GiB. While gx-reason
-  is loaded, video jobs fail with "gx10-02 has N GiB free…". Unload
-  gx-reason under Models, or wait for it to idle out after 15 minutes, then
-  retry. Images (about 60 GiB) still work next to gx-reason.
+* **gx10-02 always keeps 30 GiB free (D-038).** A job starts only if the
+  node still has at least 30 GiB available once the job's own memory is
+  counted:
+
+  | Job | Memory it takes | So this must be available |
+  |---|---|---|
+  | image (generate, edit, variation) | about 57 GiB | about 87 GiB |
+  | video (t2v, i2v, restyle edit) | about 72 GiB | about 102 GiB |
+  | keyframe video edit (strength 0.5 or more) | about 107 GiB | **cannot run** (B-028) |
+
+  With the weights already loaded, a job needs only its extra memory plus the
+  reserve.
+* **When a job does not fit:**
+  * **A video waits.** Its status stays `queued`, with `phase: "waiting"` and
+    a `waiting` object: reason, required / available / reserve GiB, what
+    blocks it, what happens next. It re-checks every 15 seconds for up to
+    30 minutes.
+  * **An image request is refused** with HTTP 503 and the same details. The
+    Control Center and GX-Playground queue it instead.
+* **gx-music:** an idle music engine is unloaded automatically to make room,
+  unless it is pinned or the Music profile is active.
+* **gx-reason:** it uses about 44 GiB, so while it is loaded neither video
+  nor images fit. They wait until it idles out (15 minutes) or you unload it
+  in Resource Control.
+* **Keyframe video edits are refused** (HTTP 422 `exceeds_node_reserve`,
+  137 GiB would be needed). Use a strength below 0.5 (the restyle edit)
+  instead.
 * Idle media models are unloaded after 10 minutes. A gx-reason request that
   has to start the model also unloads them straight away, unless an image or
   video is being generated at that moment. In that case gx-reason may fail to

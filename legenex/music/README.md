@@ -72,7 +72,8 @@ GET    /health
 GET    /v1/music/model                      identity, revisions, capabilities, disk, engine state, memory, policy, stats
 GET    /v1/music/tags?q=&limit=
 POST   /v1/music/load                       503 gx_max_active while gx-max holds node 2
-POST   /v1/music/unload                     409 while a track is generating
+POST   /v1/music/unload                     409 while a track is generating; body {"if_idle": true} (the
+                                            media router, D-038) also refuses while jobs are queued or a pin is honoured
 POST   /v1/music/generations                202 + job
 POST   /v1/music/remix                      202 + job   {source:{job_id,index}|{upload_id}, prompt, strength}
 POST   /v1/music/edits                      202 + job   {source, start, end, prompt?, lyrics?}
@@ -128,7 +129,22 @@ The API never returns filesystem paths. Clients get ids and `/content` URLs.
 
 * **Class `medium`, estimate `GX_MUSIC_ENGINE_ESTIMATE_GIB`** (measured peak in
   `TEST_RESULTS`). Every load goes through `gx_orchestrator.resource_guard`
-  (the same formula and ledger as `gx-safe-run.sh`). The reserve is 30 GiB.
+  (the same formula and ledger as `gx-safe-run.sh`). The reserve is 30 GiB
+  and cannot be configured lower (`GX_GUARD_RESERVE_GIB` ≥ 30).
+* **Media loads in progress count (D-038).** Before admission the supervisor
+  reads the media router's open `/health` (`GX_MUSIC_MEDIA_ROUTER_URL`) and
+  adds the router's `memory.pending_gib` (the part of a running image or
+  video job not yet in MemAvailable) to its own estimate. A refusal names what
+  it waits for, for example "Waiting for gx-video to finish on gx10-02:
+  gx-music needs about 32 GiB plus the 30 GiB reserve plus 40 GiB that the
+  running media job has not taken yet, so 102 GiB must be available; 88 GiB
+  is".
+* **Published on the open `/health`:** `busy`, `pinned`, `idle_seconds` and
+  `memory` (`estimate_gib`, `loaded_gib`, which is measured when the engine
+  becomes ready, and `pending_gib`, which is the estimate minus what has
+  already left MemAvailable while loading, or minus the resident size once
+  ready). The media router subtracts `pending_gib` and uses `if_idle` unloads
+  to keep the reserve for video.
 * **Refused → `waiting_for_resource`**, retried every 20 s for up to 30 min,
   then `failed / insufficient_memory` (retryable).
 * **Idle ComfyUI weights** may be freed before a refused load is retried
@@ -137,7 +153,7 @@ The API never returns filesystem paths. Clients get ids and `/content` URLs.
   gx_media_router.free_node`), the same path gx-reason's start uses. The
   router refuses while a generation runs or a video is queued, and it clears
   its resident-model record, so its next image or video job is admitted as
-  **cold** (60/76 GiB), never as warm (8 GiB). Music never calls ComfyUI
+  **cold** (57/72 GiB growth plus the reserve), never as warm. Music never calls ComfyUI
   directly. gx-reason is **never** evicted by music
   (`GX_MUSIC_EVICT_REASON=0`).
 * **Maintenance mode** (`state/guard/node2.maintenance-hold`, written by the
@@ -145,8 +161,10 @@ The API never returns filesystem paths. Clients get ids and `/content` URLs.
   "Maintenance mode"; a running track finishes, then the engine is unloaded.
 * **Pin** (`state/guard/pins.json` has a `gx-music` entry): the idle unload
   is skipped while MemAvailable stays at or above the 30 GiB reserve and no
-  gx-max hold or Maintenance is active. A pin never blocks gx-max or another
-  tenant's admission.
+  gx-max hold or Maintenance is active. A pin never blocks gx-max. It does
+  stop the media router from unloading the engine for a video, so that video
+  waits (with the reason) until the pin is removed or the engine idles out
+  under the reserve.
 * **Idle unload**: `docker stop` after `GX_MUSIC_IDLE_UNLOAD_S` (600 s) with
   no queued work. Unload = container removed + ledger released. There is no
   soft unload.

@@ -606,7 +606,8 @@ class MusicService:
             if self.engine.state != READY:
                 return {"reason": f"engine is {self.engine.state}", "container_gone":
                         not self.engine.docker.exists(self.cfg.engine_container), "noop": True}
-        info = self.engine.unload("requested by the media router to keep the reserve" if if_idle else "requested")
+        info = self.engine.unload("unloaded while idle to make room on gx10-02 (30 GiB reserve)" if if_idle
+                                  else "requested")
         self.store.event("engine_unloaded", **info)
         return info
 

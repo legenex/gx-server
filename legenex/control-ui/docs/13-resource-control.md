@@ -52,8 +52,9 @@ it leaves out the GPU pool.
 lifecycle exists:
 
 * **Load** checks admission first. If a load does not fit, the page explains
-  why, for example: "gx-video needs about 76 GiB available on gx10-02; 67 GiB is
-  available now. Holding memory: gx-reason". If idle tenants can make room, it
+  why, for example: "gx-video needs 72 GiB plus the 30 GiB reserve on gx10-02,
+  so 102 GiB must be available; 67 GiB is now. Holding memory: gx-reason". If
+  idle tenants can make room, it
   offers **Unload gx-reason and continue**. Work that is running is never
   interrupted to make room.
 * **Unload** stops the model. For a model that is generating, the page asks
@@ -71,23 +72,47 @@ two models can be loaded together:
   gx-music).
 * **Scheduler**: one order fits, so the scheduler waits or hands memory over.
 * **Serialized**: one engine runs one job at a time (gx-image with gx-video).
-* **Exclusive**: never together (gx-reason with a cold gx-video job, and
-  anything with gx-max).
+* **Exclusive**: never together (gx-reason or gx-music with a cold gx-video
+  job, gx-reason with a cold image, and anything with gx-max).
 
 Click a cell for the numbers behind the verdict.
+
+## The 30 GiB reserve (D-038)
+
+Every single-node load keeps at least **30 GiB MemAvailable** on its node.
+For gx10-02 the check is:
+
+    available now − memory another load has not taken yet − this job's memory ≥ 30 GiB
+
+* **Measured memory per job:** image 57 GiB, video 72 GiB, gx-music 32 GiB,
+  gx-reason 45 GiB.
+* **Loads in progress count.** The media router and the music supervisor
+  each publish the memory their running job has not taken yet, so two loads
+  that start together never both pass on the same free memory.
+* **gx-video and gx-music** normally do not fit together (a cold video would
+  leave about 16 GiB). A video therefore unloads an idle music engine first,
+  and that unload is verified. Otherwise it waits: while music is working,
+  while music is pinned, or while the Music profile is active. A music job
+  submitted during a video waits for it.
+* **An image next to loaded music fits** when the numbers allow. Admission
+  is computed each time, not taken from a fixed table.
+* **The keyframe video edit** (about 107 GiB) can never keep the reserve and
+  is refused (B-028).
 
 ## Why am I waiting?
 
 Every queued creative job carries a plain-language reason:
 
 * Waiting for gx-reason to unload
+* Waiting for gx-music to release enough gx10-02 memory
+* Waiting for gx-video to finish on gx10-02 (a music job)
 * Waiting for gx-max to release the cluster
 * Waiting for enough gx10-02 memory
 * Waiting for the current media job to finish
 * Waiting for Maintenance mode to finish
 
-Where it helps, the reason includes the memory needed and available and what
-happens next. No ETA is ever shown.
+The reason includes the memory needed and available, the 30 GiB reserve,
+what blocks the job and what happens next. No ETA is ever shown.
 
 ## Maintenance mode
 

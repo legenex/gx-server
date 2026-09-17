@@ -364,8 +364,24 @@ only its own jobs. Load and unload are not part of the API.
 
 **Errors.**
 * "gx-max owns the cluster": the job runs after the release.
+* "Waiting for gx-video to finish on gx10-02: … must be available; … is": a
+  video is being made. Music and a cold video do not fit together while
+  gx10-02 keeps its 30 GiB reserve, so the track starts when the video is
+  done.
 * A failed job shows plain words and a **Retry** button, never an internal
   error.
+
+**Memory safety (videos and music, D-038).** gx10-02 always keeps 30 GiB
+free:
+* **Video while music is idle:** the music engine is unloaded first (this
+  takes a few seconds, and the next track reloads it in about 100 s).
+* **Video while music is working or pinned** (or the Music profile is
+  active): the video waits, and its card says "Waiting for gx-music to
+  release enough gx10-02 memory", with the numbers.
+* **Video edit strength:** 0.5 or more (the keyframe edit) needs more memory
+  than gx10-02 can give while keeping the reserve, so it is refused at once
+  with an explanation. Use a strength below 0.5 (restyle) instead. B-028
+  tracks a two-stage version.
 * The turbo model has no extract, lego, complete or music guidance, so those
   controls are not shown.
 
@@ -405,6 +421,11 @@ and children of an item. Nothing is ever deleted automatically.
   says why and what would make room.
 * **Compatibility table.** Computed from live numbers; it shows which
   runtimes can share a node.
+* **The 30 GiB reserve** applies to images, video and music as well. A job
+  starts only if the node still has 30 GiB available after the job's own
+  memory, counting what another load in progress has not taken yet. Waiting
+  jobs show the needed and available memory, the blocker and what happens
+  next.
 
 **Maintenance.**
 
@@ -449,5 +470,16 @@ or ≥ 97 %).
   * Fields: Connection Type External, URL `http://100.105.214.61:4000/v1`,
     Auth Bearer with your key in **API Key**, API Type Chat Completions.
   * Press **Verify Connection**, then **Save**.
+  * **Model identity:** the same tab shows whether the Open WebUI model entries
+    of the aliases match the model registry. **Sync identity from the
+    registry** fixes any that do not.
+    * **Purpose:** asked "what model are you?", gx-mini answers with its
+      alias and its real model
+      (`HauhauCS/Qwen3.5-4B-Uncensored-HauhauCS-Aggressive`, from
+      Qwen/Qwen3.5-4B) instead of inventing one.
+    * **What it touches:** only the gx-* model entries; chats, users and
+      connections are never changed. Model Manager re-syncs automatically
+      after an assignment.
+    * **Privacy:** the prompts contain only public model facts.
 * **Other OpenAI clients.** The page shows curl, Python and JavaScript
   examples with `YOUR_GX_API_KEY`.

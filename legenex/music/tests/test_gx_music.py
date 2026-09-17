@@ -1001,7 +1001,7 @@ class ReserveCoordinationTests(unittest.TestCase):
         code, body, _ = self.h.call("POST", "/v1/music/unload", {"if_idle": True})
         self.assertEqual(code, 200)
         self.assertTrue(body["container_gone"])
-        self.assertIn("media router", body["reason"])
+        self.assertIn("make room", body["reason"])
         self.assertFalse(eng.is_loaded())
         # already unloaded: a no-op, still reports the container state
         code, body, _ = self.h.call("POST", "/v1/music/unload", {"if_idle": True})

@@ -45,3 +45,48 @@ receives 401 until you paste a new one.
 
 Images, video and music are made in **GX-Playground**
 (`http://100.105.214.61:8090/`). This setup connects Open WebUI for chat.
+
+## Model identity
+
+Open WebUI lists the aliases straight from the gateway. Without a model entry
+it sends no system prompt, and a small model then answers "which model are
+you?" from its training data: gx-mini once called itself the official
+Qwen3.5, and another time Grok-3. The gateway routing was correct both times.
+
+The Control Center therefore keeps one Open WebUI model entry per text alias
+in the Open WebUI on gx10-01 (chat.legenex.co):
+
+* **Name:** the alias.
+* **Description:** names the underlying model.
+* **System prompt:** a short, factual one built from the model registry
+  (`legenex/models/registry.json`). It covers the alias, the underlying
+  repository and revision, the base model, the size and precision, the
+  runtime and the context limit, and an instruction not to claim to be any
+  other model.
+
+For gx-mini the model answers: *"I am gx-mini. My underlying model is
+HauhauCS/Qwen3.5-4B-Uncensored-HauhauCS-Aggressive, derived from
+Qwen/Qwen3.5-4B."* gx-auto says it is the router and names no model.
+
+**How the entries stay current:**
+* **Setup → Open WebUI → Model identity** shows whether each entry matches the
+  registry. **Sync identity from the registry** writes the missing or
+  outdated ones.
+* **Model Manager** re-syncs after an assignment or a rollback. Until the new
+  model's facts are verified in the registry, its prompt names only the
+  repository, revision and runtime.
+* The daily integrity audit reports any drift.
+* From a shell: `cd legenex/control-ui && python3 -m gx_control_ui.owui_identity check`
+  (or `apply`).
+
+**What the sync never changes:**
+* Chats, users, connections or other models.
+* An entry that someone created by hand. It is reported as "Edited outside
+  the sync" and left alone.
+* Visibility. The entries have no access grants, so, as before, the aliases
+  are visible to administrators; share them in Open WebUI if other users
+  should see them.
+
+**Routing is proven separately:** by the gateway log, llama-swap and the
+llama.cpp slot log (see `TEST_RESULTS.md` §21). A system prompt makes the
+answer truthful; it does not decide which model answers.

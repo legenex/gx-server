@@ -9,6 +9,76 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-09-17
+
+Final cleanup pass: production Open WebUI identity, the 30 GiB reserve for
+video and music, and a tracked model registry. See `TEST_RESULTS.md` §21 and
+D-038.
+
+### Fixed
+- **gx-video + gx-music could take gx10-02 below the locked 30 GiB reserve.**
+  The Playground run in §20.4 reached 18.6 GiB and was wrongly recorded as
+  acceptable.
+  - **Cause:** media router 2.3's 60/76/110 GiB thresholds were measured
+    footprints with no reserve. The Control Center used the same numbers, and
+    the router and the music supervisor could load at the same time.
+  - **Router 2.4.0 now admits a job only if projected MemAvailable stays
+    ≥ 30 GiB:**
+    - growth is 57/72 GiB cold, measured when warm;
+    - gx-music's pending memory is subtracted;
+    - an idle, unpinned music engine is unloaded through the supervisor and
+      the release verified;
+    - otherwise a video waits (`phase: waiting` with the reason and numbers),
+      and a synchronous image gets 503 with details.
+  - **gx-music 1.1.0** adds the router's pending memory to its admission and
+    publishes its own. **The Control Center** uses the same numbers and no
+    longer submits behind a busy router.
+- **Production Open WebUI gx-mini identity.** chat.legenex.co had no model
+  entries, so no system prompt: gx-mini described itself as "official
+  Qwen3.5" and once as "Grok-3". Routing was already correct and is now
+  proven end to end. Entries generated from the registry fix the answers.
+- **A recreated media router forgot what ComfyUI still held.** A cold job
+  could wait on memory that nothing would free. The router now frees once
+  after a start.
+- **`.gitignore` excluded `legenex/models/registry.json`.** The Control
+  Center's source of truth had never been committed; it is now tracked.
+- **Media README** told operators to call ComfyUI `/free` directly; it now
+  uses the router's free path.
+
+### Added
+- **Open WebUI identity sync** (`gx_control_ui/owui_identity.py`, D-038),
+  with a *Model identity* card on Setup → Open WebUI (status and *Sync*),
+  `GET /api/setup/openwebui/identity`,
+  `POST /api/setup/openwebui/identity/sync`, a Model Manager hook
+  (assign / rollback) and an integrity-audit drift check.
+- **Verified `identity` blocks in the registry** for gx-mini, gx-fast,
+  gx-reason and gx-max (base model, derivation, sizes, weights; gx-mini with
+  both sha256 values).
+- **Supervisor `/health`** now reports `busy`, `pinned`, `idle_seconds` and
+  `memory` (`estimate_gib`, `loaded_gib`, `pending_gib`), and
+  `POST /v1/music/unload` accepts `{"if_idle": true}`.
+- **Router `/health`** now reports `memory.reserve_gib`, `footprint_gib`,
+  `pending_gib` and `resident_held_gib`, plus `tenants`, `waiting` and
+  `last_eviction`.
+- **Integrity audit:** checks that the node-2 router source copy and the
+  running version match the checkout.
+- **Live suites:** `legenex/tests/owui_identity_acceptance.py`,
+  `owui_identity_browser.py` and `reserve_live_acceptance.py`.
+
+### Changed
+- **The keyframe video edit** (strength ≥ 0.5) is refused with 422
+  `exceeds_node_reserve`: 107 GiB plus the reserve cannot fit (B-028).
+- **Reserve settings:** `GX_MEDIA_RESERVE_GIB` and `GX_GUARD_RESERVE_GIB`
+  cannot be set below 30.
+- **Memory state:** a configured but unreadable `/proc/meminfo` refuses
+  media work instead of skipping admission.
+
+### Known issues
+- **B-025:** gx-reason still runs the interim model; the HF token is still
+  missing.
+- **B-028:** keyframe video edit, pending a decision.
+- **B-029:** Open WebUI shares the Kilo Code key.
+
 ## [0.16.0] - 2026-09-17
 
 gx-music, GX-Playground, Resource Control, Storage & Cleanup and client

@@ -10,7 +10,7 @@ on gx10-02.
 | VAE and text encoder | `ACE-Step/Ace-Step1.5` @ `19671f406d603126926c1b7e2adc169acbcade22` |
 | Runtime | `ace-step/ACE-Step-1.5` @ `ca1e85fe9430179831e6bc6be790c332190a3866`, image `gx-music-engine:acestep15-ca1e85f-t214` (torch 2.14 / cu130, the set proven on GB10) |
 | Node | gx10-02. The light supervisor starts at boot; the engine loads with the first job (~85-100 s) and unloads after 10 idle minutes |
-| Memory | 24-28 GiB loaded; admission needs 32 GiB plus the 30 GiB reserve. It fits next to gx-reason |
+| Memory | 24-27 GiB loaded; admission needs 32 GiB plus the 30 GiB reserve, plus whatever a running media job has not taken yet. It fits next to gx-reason, never next to a cold video |
 
 ## What it can do
 
@@ -50,6 +50,15 @@ Playground shows only the controls the installed model supports.
   the same path gx-reason uses, never ComfyUI directly. The router's record of
   what is loaded therefore stays true, and its next job is admitted with the
   full cold-start requirement.
+* **Sharing gx10-02 with video (D-038).** A cold video and the music engine
+  do not fit together while keeping the 30 GiB reserve:
+  * a video that needs the room unloads an IDLE engine first, through this
+    supervisor, and waits until the unload is verified;
+  * a working, queued or pinned engine is never unloaded, and neither is one
+    under the Music profile. The video waits and says so;
+  * a track submitted while a video is being made waits with a reason like
+    "Waiting for gx-video to finish on gx10-02: … 102 GiB must be available;
+    41 GiB is".
 
 ## Music API
 
