@@ -86,28 +86,268 @@ Owner: video specialist. Status: see "Live acceptance" below.
 
 ## Integration notes for the lead
 
-* **Control Center restart applies every pending migration file** (live DB had
-  none applied at 17:10: 010, 020, 030, 040, 050, 080 are pending). A dry run
-  of all six on a copy of the live `library.db` succeeded (26 assets kept,
-  5 presets seeded).
+* **Control Center restart applies every pending migration file.** Done: the
+  20:10 restart applied 010, 020, 030, 040, 050 and 080; `schema_migrations`
+  now records `020_wan_loras.sql`. No further restart is needed for WAN.
 * Router QA (`legenex/media/router/qa.sh`) passes on the shared checkout with
-  everyone's router changes (152 tests at the time of writing).
+  everyone's router changes (**174 tests, 2026-09-17 20:44**; it was 152 when
+  this note was first written).
 * `test_policy.py` pinned the router version; it now expects 2.5.0.
 * Offline E2E fixture (`control-ui/e2e/fixture_server.py`) now routes
   `/v1/loras*`, `/v1/videos*`, `/v1/workflows` and `/health` to the real router
   code (`wan_router_stub.py`); image routes still go to the old stub.
-* QA blockers seen that are not WAN's: `playground/web/js/pages/music.js`
-  unused imports (build check), ruff findings in `flows/catalog.py`,
-  `footprints.py`, `music_ai.py`, `routes_flo.py`, `voice.py`, and a
-  reference-test lint error (MUS).
+* QA blockers seen that are not WAN's — superseded by the list under
+  "Integration requests for the lead"; the `music.js` finding is now fixed.
 
 ## Tests and results
 
-(filled in below as runs complete)
+All runs on gx10-01 on 2026-09-17 against checkout `c42ba2a`, evidence under
+`/srv/logs/acceptance/build-v3/wan/`. This project uses `unittest`, not pytest.
+
+| Suite | Command | Result | Log |
+|---|---|---|---|
+| Media router QA (all workstreams' router code) | `legenex/media/router/qa.sh` | **QA PASSED** — 15 workflow templates validated, `Ran 174 tests … OK`, no secrets | `01-router-qa.log` |
+| Router Wan LoRA unit tests | `cd legenex/media/router && python3 -m unittest tests.test_wan_loras -v` | **`Ran 40 tests in 1.362s … OK`** | `09-test_wan_loras.log` |
+| Control Center Wan video tests | `cd legenex/control-ui && python3 -m unittest discover -s tests -p test_wan_video.py -v` | **`Ran 35 tests in 22.795s … OK`** | `08-test_wan_video.log` |
+| Control Center full unit suite | `cd legenex/control-ui && python3 -m unittest discover -s tests` | **`Ran 708 tests in 140.9s … OK`** | — |
+| Playground proxy/unit tests (incl. `test_allow_list_video_loras`) | `cd legenex/playground && python3 -m unittest discover -s tests` | **`Ran 11 tests … OK`** | — |
+| Offline Playwright LoRA spec (+ axe) | `cd legenex/playground && npx playwright test --project=offline e2e/offline.c-video-loras.spec.js` | **5 passed (25.9 s)** | `10-offline-video-loras-e2e.log` |
+| Live Playwright LoRA acceptance | `npx playwright test --project=live e2e/live.wan-loras.spec.js` | run 1 **failed** on a viewer-handle race (see below), run 2 after the fix **1 passed (2.0 m)** | `11-…-log`, `12-…-run2.log` |
+
+**Invocation note.** `python -m unittest tests.test_wan_video` does *not* work
+(the test modules import their `support` helper by bare name); the suites must
+be run with `-m unittest discover -s tests …`, which is what
+`npm run test:unit` does.
+
+**Environment finding, not a WAN defect.** `legenex/control-ui/.venv` has no
+`Pillow`, so `.venv/bin/python -m unittest discover -s tests` reports
+`Ran 665 … FAILED (failures=1, errors=5)`; every one of them is
+`ModuleNotFoundError: No module named 'PIL'` inside `tests/test_media_manager_keys.py`.
+The canonical runner (`npm run test:unit` → system `python3`, which has
+Pillow 10.2.0) runs **708 tests, OK**. Smallest fix for the lead:
+`legenex/control-ui/.venv/bin/pip install Pillow` (or recreate the venv with
+`--system-site-packages`).
+
+**Blockers seen in QA that belong to other workstreams** (reported, not
+touched — BUILD_V3 rule 10): `legenex/playground` `npm run build` fails with 4
+findings, none in WAN files —
+`flows/assets/flows-CYmKOQRh.js: innerHTML/insertAdjacentHTML outside dom.setTrustedHTML`,
+`js/pages/live.js: unused import 'uid'`, `js/pages/live.js: unused import 'href'`,
+and `web/: asset size 1076358 B exceeds budget 614400 B` (the Flows bundle).
+The `music.js` finding recorded earlier is gone. `legenex/playground` QA cannot
+be green until FLO and LIV clear those.
+
+### Deployment (BUILD_V3 rule 9)
+
+* Deployed router version **before: 2.4.1** → **after: 2.5.0** (`03-health-after-deploy.json`,
+  `14-health-final.json`). `qa.sh` was run on the shared checkout first and passed (174 tests).
+* `legenex/media/deploy-node2.sh` output: `router ok uploads True workflows 15`,
+  `deployed media router at c42ba2a9d92f` (`02-deploy-node2.log`).
+* LoRA mounts on `gx-media-router` confirmed read-only:
+  `/srv/models/shared/loras → /srv/loras/shared (ro)`,
+  `/srv/models/video/loras → /srv/loras/video (ro)`.
+* `/srv/models/video/loras/wan22/{paired,high_noise,low_noise,general}` created
+  by the deploy (all four exist, empty, owned by `legenex-02`).
+* `/health` reports `"loras": {"enabled": true, "files": 4,
+  "lora_loader_available": true, "comfy_error": null}`.
+
+### Live router API checks (deployed 2.5.0, over the fabric)
+
+* `POST /v1/loras/rescan` → 4 files, both LightX2V pairs classified
+  `compatible` / `wan-14b` / hidden 5120 / 40 blocks, `noise` high|low from
+  `filename`, `comfy_visible: true`, `usable: true`, `problems: []`
+  (`04-lora-rescan.json`).
+* Refusals carry codes (`07-negative-cases.txt`): a high file on the low branch →
+  400 `lora_branch_mismatch`; an unknown name → 400 `lora_not_found`;
+  `strength: 99` → 400 `lora_invalid_strength`.
 
 ## Live acceptance
 
-(filled in below)
+Real generations on gx10-02 through the deployed GX-Playground Video page and
+the deployed 2.5.0 router. Evidence:
+`/srv/logs/acceptance/build-v3/wan/live-run-1/` (first attempt) and
+`/srv/logs/acceptance/build-v3/wan/live-run-2/` (the green run).
+**Four real videos were produced**; none of the evidence files is empty.
+
+| Run | Job | ComfyUI prompt id | User LoRAs | Elapsed | Asset | sha256 (first 12) | Bytes |
+|---|---|---|---|---|---|---|---|
+| 1 no-lora (cold) | `6db678c2e6c39a75` | `d85c916f-c818-452f-85c7-eab3ef04d51d` | none | 56.2 s | `a_db6bfb9ac6260e8809a7edfa` | `87f02eb52179` | 412 636 |
+| 1 LightX2V pair | `482ef3998236f07c` | `201d17a1-834b-481c-9023-8210a04695b9` | high+low @0.3 | 52.2 s | `a_23bd85493b6e0aa25aaa9e01` | `19c65af555eb` | 553 473 |
+| 2 no-lora (warm) | `343a85ea25c0eceb` | `32f3617f-ded7-4b72-9953-724d…` | none | 49.6 s | `a_664eac6bb981346a5825d76e` | `edcf9efe8dc7` | 412 636 |
+| 2 LightX2V pair | `2cda9e1afc89622f` | `fdff4960-5b21-4625-9851-cd806d52f191` | high+low @0.3 | 52.2 s | `a_7a1dfb0f1063c2dfef1d1b17` | `c4247031981c` | 553 473 |
+
+Every job: `wan22-t2v-a14b-uncensored`, 640×640, 49 frames, 16 fps, seed
+20260917, workflow version
+`gx-wan-lora/1+wan22-t2v-a14b-uncensored@2b10c3148e0d`, status `ready`,
+`error_code: null`.
+
+**1. Discovery.** The rescan walked both roots and found the four installed
+files; the two `wan2.2_t2v_lightx2v_4steps_lora_v1.1_{high,low}_noise.safetensors`
+are classified `noise: high` / `noise: low` with
+`noise_source: "filename"`, `compatibility: compatible`
+("Wan 14B layout: hidden size 5120, 40 of 40 blocks"), `key_format: kohya`,
+1200 tensors, rank 64, `comfy_visible: true`. The live UI catalogue
+(`GET /api/video/loras?refresh=1`) shows the same, plus the header SHA-256
+`d65be4de…` in the details panel (`live-run-*/wan-live.json`, key `library-entry`).
+
+**2. Pairing.** Both files carry `pair_key ::wan2-2-t2v-lightx2v-4steps-lora-v1-1`
+and the Control Center formed the auto pair
+`l_33db6a59347573e1` "wan2 2 t2v lightx2v 4steps lora v1 1",
+`pair_state: paired`, `pair_source` auto, `usable: true`, with the second
+installed pair (`Wan2.2_LightX2V_*_n54vv`) formed independently. The live
+library card shows the **Paired** and **Compatible** badges and lists both
+file names (asserted by the spec).
+
+**3. Strengths reach the graph independently.** A preview built directly on the
+router with deliberately different values (`05-workflow-preview.json`) returns
+`strength_model 0.75` on node `1000` and `0.45` on node `2000`. The accepted
+generations used 0.3/0.3 and the history row reports
+`chains.high[1] = {node: "1000", …_high_noise.safetensors, strength: 0.3, base: false}`
+and `chains.low[1] = {node: "2000", …_low_noise.safetensors, strength: 0.3, base: false}`,
+with the built-in LightX2V LoRAs still at 1.0 on nodes 5 and 6.
+
+**4. Branch placement — the two model paths share no node.** Traced on the
+real generated graph (`06-branch-trace.txt`):
+
+```
+KSampler 12 (add_noise enable, steps 0-2) <- 7 ModelSamplingSD3 <- 1000 LoRA(user high 0.75) <- 5 LoRA(base high 1.0) <- 3 UNET wan2.2_t2v_high_noise_14B_fp8_scaled
+KSampler 13 (add_noise disable, steps 2-4) <- 8 ModelSamplingSD3 <- 2000 LoRA(user low 0.45) <- 6 LoRA(base low 1.0) <- 4 UNET wan2.2_t2v_low_noise_14B_fp8_scaled
+shared nodes between the two model paths: NONE
+```
+
+The UI "Advanced view" table shown before the run says the same:
+High noise → built-in 1.00, then the high file 0.30 on node 1000; Low noise →
+built-in 1.00, then the low file 0.30 on node 2000.
+
+**5. Generated workflow JSON (scrubbed).** `live-run-*/workflow-*.json` and
+`05-workflow-preview.json`. The spec asserts the exported text contains no
+`/srv/`, no `192.168.`, no `gx10-0`, no `Bearer` and no `sk-…`; that assertion
+passed.
+
+**6. ComfyUI execution.** Four prompt ids (table above), all returned by
+ComfyUI, all jobs `ready`, `error_code: null`, `error_message: null`. Router
+`/health` never reported a refusal or eviction during the runs.
+
+**7. Playable output videos.** `ffprobe` (5.1.9) on the run-2 files
+(`live-run-2/ffprobe.txt`; run-1 has its own):
+
+```
+no-lora        h264 640x640 yuv420p r_frame_rate=16/1 nb_read_frames=49 duration=3.0625 size=412636 bit_rate=1077730
+lightx2v-pair  h264 640x640 yuv420p r_frame_rate=16/1 nb_read_frames=49 duration=3.0625 size=553473 bit_rate=1445571
+```
+
+49 frames actually decoded, 3.0625 s, non-trivial size. The library's own
+analysis agrees (`frame_count 49`, `distinct_frames 49` — no frozen frames).
+Playback was also proved in the browser: the stage viewer reached
+`readyState 4` and `currentTime` advanced 1.49 s in a 1.5 s window at
+640×640 with `video.error === null`. With the same seed the LoRA run differs
+from the plain run (`sha_differs: true`, and 553 473 vs 412 636 bytes), so the
+LoRA measurably changed the output.
+
+**8. History row and metadata.** `GET /api/video/generations/<job>` returns
+`workflow_version`, `comfy_prompt_id`, `high_model`
+(`wan2.2_t2v_high_noise_14B_fp8_scaled.safetensors`), `low_model`, the full
+`chains`, and `loras[0] = {kind: "pair", apply: "pair", strength_high: 0.3,
+strength_low: 0.3, compatibility: "compatible", high_file: …, low_file: …}`.
+The asset carries the same under `settings.wan`. In the UI the history row
+appears with its title, its details dialog plays the video and its Advanced
+view contains the ComfyUI prompt id (asserted).
+
+**9. Memory (1 Hz on gx10-02 throughout, 1 087 samples, 20:49:05 → 21:07:22).**
+`13-node2-memavailable-1hz.csv`, summary `13-node2-memory-summary.txt`:
+
+| | |
+|---|---|
+| baseline MemAvailable | **112.56 GiB** |
+| minimum MemAvailable | **39.26 GiB** (20:53:01, during the cold load) |
+| peak growth | **73.30 GiB** |
+| headroom over the 30 GiB reserve at the minimum | **9.26 GiB** |
+| final MemAvailable | **111.55 GiB** |
+| swap used start / max / end | 3.12 / 3.12 / 3.12 GiB of 64 GiB (no swap growth) |
+
+The cold Wan 2.2 640×640×49 t2v job therefore still costs ≈ 73 GiB with a
+LoRA pair applied — within the 72 GiB figure the lead measured, and the
+reserve was never approached. Warm runs added nothing measurable.
+
+**10. Cleanup.** Freed through the sanctioned path
+(`docker exec gx-media-router python -m gx_media_router.free_node` →
+`{"freed": true, "models": [4 Wan files]}`). Final `/health`: version 2.5.0,
+`busy: false`, `video_queue_depth: 0`, `resident_models: []`,
+`pending_gib: 0.0`, `available_gib: 111.5`, ComfyUI VRAM free 79.2 GiB,
+`gx-music` engine `unloaded` (`14-health-final.json`). **gx10-02 is idle.**
+
+### The one failure, and what it was
+
+Live run 1 failed at the very end of the second generation:
+`expect(played.advanced).toBeGreaterThan(0.2)` received `0`. Both generations
+had already completed successfully and both assets were saved — the failure
+was in the browser playback measurement, not in generation.
+
+Root cause, established by measurement rather than guessed: `workspace.js`
+`renderViewer()` does `clear(viewer)` and re-appends, so the stage rebuilds its
+`<video>` element on every re-render. The handle the spec grabbed right after
+the job completed was detached by the next render; a detached element resolves
+`play()` but its `currentTime` stays at 0. A direct probe against the deployed
+Playground, re-locating the element, played the very same LoRA asset with
+`readyState 4`, `advanced 2.49 s`, `error: null`. `playVideo()` in
+`e2e/live.wan-loras.spec.js` now re-locates the element and measures again (up
+to three attempts, recording each retry), and also asserts `video.error` is
+null. Run 2 passed on the first attempt with no retries recorded.
+
+This is a test-robustness fix, but it points at a small product wart in a file
+I do not own — see the integration requests.
+
+## Integration requests for the lead
+
+Copy-pasteable. None of these touch a file WAN owns.
+
+1. **`legenex/control-ui/.venv` is missing Pillow**, so
+   `.venv/bin/python -m unittest discover -s tests` reports 6 errors in
+   `tests/test_media_manager_keys.py` (`No module named 'PIL'`). The canonical
+   runner (system `python3`, what `npm run test:unit` uses) is green at
+   **708 tests OK**. Smallest fix:
+
+   ```bash
+   legenex/control-ui/.venv/bin/pip install Pillow
+   ```
+
+2. **`legenex/playground` `npm run build` is red for other workstreams** (WAN
+   files are clean). Please route to FLO and LIV:
+
+   ```
+   flows/assets/flows-CYmKOQRh.js: innerHTML/insertAdjacentHTML outside dom.setTrustedHTML
+   js/pages/live.js: unused import 'uid'
+   js/pages/live.js: unused import 'href'
+   web/: asset size 1076358 B exceeds budget 614400 B   (the Flows bundle)
+   ```
+
+3. **Shared file, small product wart (`legenex/playground/web/js/workspace.js`).**
+   `renderViewer()` clears and re-appends the viewer, which destroys and
+   recreates the `<video>` element, so any re-render while the user is
+   watching restarts playback from 0. Suggested minimal change, for whoever
+   owns `workspace.js` (Images and Video both use it):
+
+   ```js
+   // in update()/select(): skip renderViewer() when the selected asset id and
+   // its mutable fields are unchanged, or reuse the existing <video> element
+   // when only the surrounding chrome changed.
+   ```
+
+   WAN did not touch it. The live spec now re-locates the element instead.
+
+4. **No Playground or Control Center restart is needed for WAN.**
+   `legenex/playground/scripts/deploy.sh --verify` reports
+   "32 files served match the checkout; 0 stale" and
+   `/api/ready` is `{"ready": true, "problems": []}` with migration
+   `020_wan_loras.sql` applied. WAN changed no Playground or Control Center
+   Python in this session — the only edit was
+   `legenex/playground/e2e/live.wan-loras.spec.js` (test code).
+
+5. **For `CURRENT_STATE.md` / `TEST_RESULTS.md` / `CHANGELOG.md`:** the media
+   router on gx10-02 is now **2.5.0** (was 2.4.1), deployed from `c42ba2a`, and
+   the Wan 2.2 LoRA path has a real live acceptance (four generations,
+   evidence in `/srv/logs/acceptance/build-v3/wan/`). gx10-02 was returned to
+   idle afterwards.
 
 ## Limitations
 

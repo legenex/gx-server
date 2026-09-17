@@ -370,10 +370,26 @@ class MediaJobs:
                 if self._jobs[oldest].phase not in TERMINAL:
                     break
                 self._jobs.pop(oldest)
-            self._queue.append(job.id)
-            self._cv.notify()
         self.audit(user=user, ip=ip, action=f"media.{job.kind}", outcome="queued", job=job.id)
+        # `submitted` is delivered BEFORE the worker can see the job. Enqueueing
+        # first let a fast-failing job deliver `failed` from the worker thread
+        # ahead of `submitted`, so an observer that inserts its row on
+        # `submitted` lost the result and kept a `queued` row for ever
+        # (WanVideo.observe has exactly that shape). Observers are called
+        # outside the lock because they call back into this object.
         self._notify(job, "submitted")
+        cancelled = False
+        with self._cv:
+            # cancel() may have arrived while the observers ran; it could not
+            # remove an id that was not in the queue yet, so honour the flag here.
+            if job.cancel_requested and job.phase not in TERMINAL:
+                job.phase, job.detail, job.ended = "cancelled", "cancelled before it started", time.time()
+                cancelled = True
+            if not cancelled and job.phase not in TERMINAL:
+                self._queue.append(job.id)
+                self._cv.notify()
+        if cancelled:
+            self._notify(job, "cancelled")
         return job.public()
 
     def get(self, job_id: str) -> dict:

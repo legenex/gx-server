@@ -161,6 +161,26 @@ changing anything. `CLAUDE.md` (L-1..L-10) still wins wherever it is stricter.
     model; never claim acoustic/visual analysis or generation that did not
     happen.
 
+### Running Playwright in parallel (added 2026-09-17 by the lead)
+
+Workstreams running Playwright at the same time in this checkout share
+`test-results/` and the offline fixture ports, and delete each other's traces
+mid-run (`browserContext.close: ENOENT ... recording.trace`), which reads as
+flakiness. Give your run its own directory and ports:
+
+```
+GX_E2E_OUTPUT_DIR=test-results/<ws> GX_E2E_BACKEND_PORT=<n> GX_E2E_PORT=<n+1> \
+  npx playwright test --project=offline
+```
+
+### Deploying a frontend change (D-041, B-031)
+
+Editing the source is not deploying it. After any change under
+`legenex/playground/web/` or `legenex/control-ui/web/`, run that app's
+`scripts/deploy.sh`. It rebuilds what needs rebuilding, restarts only when the
+Python package changed, and then fails unless the ETag of every served file
+matches `sha256` of the file in the checkout.
+
 ## Aliases (L-10 amended by D-040 on the user's explicit instruction)
 
 Eleven public aliases: the existing eight plus `gx-voice`, `gx-call`, `gx-live`.

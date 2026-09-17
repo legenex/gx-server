@@ -12,13 +12,20 @@ process.env.GX_E2E_PASSWORD = e2ePassword;
 const offlinePort = Number(process.env.GX_E2E_PORT || 18089);
 const onlyLive = process.argv.includes('--project=live');
 
+// Parallel workstreams running Playwright in the same checkout share this
+// directory and delete each other's traces mid-run ("browserContext.close:
+// ENOENT ... recording.trace"), which reads as a flaky test. Each run can take
+// its own directory with GX_E2E_OUTPUT_DIR.
+const outputDir = process.env.GX_E2E_OUTPUT_DIR || 'test-results';
+
 export default defineConfig({
+  outputDir,
   testDir: './e2e',
   timeout: 120_000,
   expect: { timeout: 20_000 },
   fullyParallel: false,
   workers: 1,
-  reporter: [['list'], ['json', { outputFile: 'test-results/results.json' }]],
+  reporter: [['list'], ['json', { outputFile: `${outputDir}/results.json` }]],
   use: {
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',

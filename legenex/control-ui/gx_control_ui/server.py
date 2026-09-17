@@ -23,6 +23,7 @@ import json
 import logging
 import mimetypes
 import os
+import stat
 import re
 import socket
 import sys
@@ -104,31 +105,94 @@ mimetypes.add_type("application/manifest+json", ".webmanifest")
 
 
 class StaticFiles:
-    """Whitelisted, in-memory static assets (read once at startup)."""
+    """The `web/` tree, cached in memory but re-read whenever a file changes.
 
-    def __init__(self, root: Path) -> None:
-        self.root = Path(root)
-        self.files: dict[str, tuple[bytes, bytes | None, str, str]] = {}
+    The Control Center is deployed by editing this checkout in place, so a
+    snapshot taken once at start-up serves stale JavaScript to the browser while
+    the source on disk is current — the Playground lost most of a day to exactly
+    that (B-031, D-041). Every lookup therefore stats the file and rebuilds the
+    entry when its mtime, size or inode changed; a path that did not exist at
+    start-up is picked up the first time it is requested, and a deleted file
+    becomes a 404. An unchanged file costs one `stat()`.
+
+    Set `GX_UI_STATIC_FREEZE=1` to keep the start-up snapshot.
+    """
+
+    #: (data, gzipped or None, content type, ETag)
+    Entry = tuple[bytes, bytes | None, str, str]
+
+    def __init__(self, root: Path, *, freeze: bool | None = None) -> None:
+        self.root = Path(root).resolve()
+        self.freeze = (os.environ.get("GX_UI_STATIC_FREEZE") == "1") if freeze is None else freeze
+        self._lock = threading.Lock()
+        #: path -> (stat signature or None when known absent, entry or None)
+        self._cache: dict[str, tuple[tuple[int, int, int] | None, StaticFiles.Entry | None]] = {}
         self.reload()
 
     def reload(self) -> None:
-        files = {}
+        """Warm the cache from the tree (also the old explicit-reload entry point)."""
+        with self._lock:
+            self._cache.clear()
         for path in sorted(self.root.rglob("*")):
-            if not path.is_file() or path.name.startswith("."):
-                continue
-            rel = "/" + path.relative_to(self.root).as_posix()
-            data = path.read_bytes()
-            ctype = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
-            if ctype.startswith("text/") or ctype in ("application/json", "image/svg+xml",
-                                                      "application/manifest+json"):
-                ctype += "; charset=utf-8"
-            gz = gzip.compress(data, 6) if len(data) > 1024 and not ctype.startswith("image/png") else None
-            etag = '"' + hashlib.sha256(data).hexdigest()[:20] + '"'
-            files[rel] = (data, gz, ctype, etag)
-        self.files = files
+            if path.is_file() and not path.name.startswith("."):
+                self.get("/" + path.relative_to(self.root).as_posix())
 
-    def get(self, path: str):
-        return self.files.get(path)
+    @property
+    def files(self) -> dict[str, StaticFiles.Entry]:
+        """The currently cached entries, for callers that enumerate the tree."""
+        with self._lock:
+            return {k: v for k, (_sig, v) in self._cache.items() if v is not None}
+
+    def _path_of(self, path: str) -> Path | None:
+        if not path.startswith("/") or "\x00" in path:
+            return None
+        parts = [seg for seg in path[1:].split("/") if seg]
+        if not parts or any(seg in (".", "..") or seg.startswith(".") for seg in parts):
+            return None
+        candidate = self.root.joinpath(*parts)
+        try:
+            candidate.resolve().relative_to(self.root)
+        except (OSError, ValueError):
+            return None
+        return candidate
+
+    @staticmethod
+    def _build(path: Path, data: bytes) -> StaticFiles.Entry:
+        ctype = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        if ctype.startswith("text/") or ctype in ("application/json", "image/svg+xml",
+                                                  "application/manifest+json"):
+            ctype += "; charset=utf-8"
+        gz = gzip.compress(data, 6) if len(data) > 1024 and not ctype.startswith("image/png") else None
+        return (data, gz, ctype, '"' + hashlib.sha256(data).hexdigest()[:20] + '"')
+
+    def get(self, path: str) -> StaticFiles.Entry | None:
+        with self._lock:
+            cached = self._cache.get(path)
+        if cached is not None and self.freeze:
+            return cached[1]
+        target = self._path_of(path)
+        if target is None:
+            return None
+        try:
+            st = target.stat()
+            if not stat.S_ISREG(st.st_mode):
+                raise OSError
+            sig = (st.st_mtime_ns, st.st_size, st.st_ino)
+        except OSError:
+            if cached is not None:
+                with self._lock:
+                    self._cache[path] = (None, None)
+            return None
+        if cached is not None and cached[0] == sig:
+            return cached[1]
+        try:
+            data = target.read_bytes()
+        except OSError:
+            return cached[1] if cached else None
+        entry = self._build(target, data)
+        with self._lock:
+            self._cache[path] = (sig, entry)
+        return entry
 
 
 class App:
@@ -180,10 +244,12 @@ class App:
         # --- Build V3 WAN: Wan 2.2 LoRA library, presets, generation history (routes_wan.py)
         from .wan_video import WanVideo
         self.wan = WanVideo(self.library, self.media, self.media.router, audit=self.actions.audit)
-        # --- Build V3 IMG: gx-image model catalogue (router image_models.py) for validation and options
-        from .image_catalog import ImageCatalog
+        # --- Build V3 IMG: gx-image model catalogue (router image_models.py) for validation and
+        # options, plus durable generation history, per-model provenance and edit lineage (070).
+        from .image_catalog import ImageCatalog, ImageHistory
         self.image_catalog = ImageCatalog(cfg.repo_root)
         self.media.catalog = self.image_catalog
+        self.image_history = ImageHistory(self.library, self.media, self.image_catalog)
         # --- Build V3 PLT: realtime tunnel registry and the Logs activity feed
         from .activity import ActivityFeed, builtin_sources
         from .obs import metric
@@ -221,6 +287,16 @@ class App:
                                  realtime=self.realtime, library=self.library, secrets_store=self.call_secrets,
                                  audit=self.actions.audit, metric=metric, start_threads=not cfg.offline)
         self.activity.register("call", self.calls.activity)
+        # --- Build V3 LIV: gx-live realtime sessions and their tools (live.py, routes_liv.py)
+        from .live import LiveClient, LiveManager
+        self.live = LiveManager(connect=self.library.connect,
+                                client=LiveClient(cfg.live_base, cfg.secrets_root / "gx-live" / "api-key"),
+                                realtime=self.realtime, library=self.library,
+                                gateway_base=cfg.litellm_base,
+                                gateway_headers=self.cluster.litellm_headers, audit=self.actions.audit,
+                                metric=metric, explain=lambda alias: self.resources.explain(alias),
+                                start_threads=not cfg.offline)
+        self.activity.register("live", self.live.activity)
         #: name -> fn(app) -> small JSON dict shown in the Playground Models page (plt.md section 8)
         self.catalog_extras: dict[str, Callable[[App], dict]] = {}
 
@@ -1247,6 +1323,8 @@ from . import routes_mus  # noqa: E402,F401  (Build V3 MUS: music AI builder, re
 from . import routes_voi  # noqa: E402,F401  (Build V3 VOI: Voice Studio and /v1/voice)
 from . import routes_flo  # noqa: E402,F401  (Build V3 FLO: Creative Flows, /v1/flows, /v1/assets)
 from . import routes_cal  # noqa: E402,F401  (Build V3 CAL: Call Agents, /v1/call)
+from . import routes_img  # noqa: E402,F401  (Build V3 IMG: image history, provenance, lineage)
+from . import routes_liv  # noqa: E402,F401  (Build V3 LIV: Live sessions, /v1/live)
 
 
 def build(cfg: UIConfig) -> tuple[App, list[Server]]:

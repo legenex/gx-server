@@ -472,7 +472,7 @@ def hours_status(hours: dict, now: dt.datetime | None = None) -> dict:
     if not hours:
         return {"configured": False, "open": True, "detail": "no business hours configured (always open)"}
     tz = ZoneInfo(hours["timezone"])
-    now = (now or dt.datetime.now(dt.timezone.utc)).astimezone(tz)
+    now = (now or dt.datetime.now(dt.UTC)).astimezone(tz)
 
     def open_at(moment: dt.datetime) -> bool:
         if moment.date().isoformat() in hours.get("closed_dates", []):

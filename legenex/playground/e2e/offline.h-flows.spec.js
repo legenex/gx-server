@@ -88,8 +88,12 @@ test('refuses an incompatible connection dragged on the canvas', async ({ page }
   await addNode(page, 'image.generate', 'Generate Image');
   // The inspector opens on the node that was just added; it would cover the canvas.
   await page.getByRole('button', { name: 'Close the inspector' }).click();
-  await page.getByRole('button', { name: 'Nodes' }).click();          // collapse the library too
+  await page.getByRole('button', { name: 'Nodes', exact: true }).click();   // collapse the library too
   await page.getByRole('button', { name: 'Fit the flow in view' }).click();
+  // The fit animates: read the handle positions only once the canvas is still.
+  await page.waitForFunction(() => document.getAnimations().every((x) => x.playState !== 'running'))
+    .catch(() => {});
+  await page.waitForTimeout(600);
 
   const from = page.locator(`${nodeOf('sound.upload')} .gxf-port-out[data-port="audio"] .gxf-handle`).first();
   const to = page.locator(`${nodeOf('image.generate')} .gxf-port-in[data-port="prompt"] .gxf-handle`).first();
@@ -99,7 +103,8 @@ test('refuses an incompatible connection dragged on the canvas', async ({ page }
   await page.mouse.move(a.x + a.width / 2, a.y + a.height / 2);
   await page.mouse.down();
   await page.mouse.move((a.x + b.x) / 2, (a.y + b.y) / 2, { steps: 8 });
-  await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 8 });
+  await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 10 });
+  await expect(to).toHaveClass(/connectingto/);
   await page.mouse.up();
 
   await expect(page.locator('.toast-msg').last()).toContainText(/accepts text|conversion node/i);
@@ -120,7 +125,9 @@ test('configures a node, autosaves and survives a reload', async ({ page }) => {
   // Adding a node opens the Inspector on its settings.
   const inspector = page.locator('.gxf-inspector');
   await expect(inspector).toBeVisible();
-  await inspector.getByLabel('Text', { exact: true }).fill('a lighthouse at dawn, long exposure');
+  const textField = inspector.locator('[data-field="text"] textarea');
+  await expect(textField).toBeVisible();
+  await textField.fill('a lighthouse at dawn, long exposure');
   await expect(page.locator('[data-save-state]')).toHaveAttribute('data-save-state', 'saved', { timeout: 15_000 });
 
   await page.reload();
@@ -129,12 +136,49 @@ test('configures a node, autosaves and survives a reload', async ({ page }) => {
   await expect(page.getByLabel('Flow name')).toHaveValue('E2E lighthouse flow');
   await expect(page.locator(nodeOf('text.input'))).toContainText('Text');
   await page.locator(`${nodeOf('text.input')} button[aria-label^="Inspect"]`).click();
-  await expect(page.locator('.gxf-inspector').getByLabel('Text', { exact: true }))
+  await expect(page.locator('.gxf-inspector [data-field="text"] textarea'))
     .toHaveValue('a lighthouse at dawn, long exposure');
 
   // Back to the browser: the flow is listed with its new name.
   await page.getByRole('button', { name: 'Back to all flows' }).click();
   await expect(page.locator('.gxf-flow-card', { hasText: 'E2E lighthouse flow' })).toBeVisible();
+
+  expect(problems, problems.join('\n')).toEqual([]);
+});
+
+test('runs a flow and shows the result on the node', async ({ page }) => {
+  const problems = watchPage(page);
+  await login(page);
+  await openFlows(page);
+  await page.getByRole('button', { name: 'New flow' }).click();
+  await expect(page.locator(editor)).toBeVisible();
+
+  await addNode(page, 'text.input', 'Text');
+  await page.locator('.gxf-inspector [data-field="text"] textarea').fill('a red lighthouse on a cliff');
+  await addNode(page, 'image.generate', 'Generate Image');
+  await page.getByRole('button', { name: 'Close the inspector' }).click();
+
+  await page.getByRole('button', { name: 'Outline' }).click();
+  const textItem = page.locator('.gxf-outline-item', { hasText: 'Text' }).first();
+  await textItem.getByRole('button', { name: /^Connect/ }).click();
+  const dialog = page.getByRole('dialog');
+  await dialog.getByRole('radio', { name: /Prompt/ }).first().check();
+  await dialog.getByRole('button', { name: 'Connect', exact: true }).click();
+  await page.getByRole('button', { name: 'Canvas' }).click();
+  await expect(page.locator('.gxf-statusbar')).toContainText('Ready to run');
+
+  const run = page.getByRole('button', { name: 'Run flow' });
+  await expect(run).toBeEnabled();
+  await run.click();
+
+  const imageNode = page.locator(nodeOf('image.generate'));
+  await expect(imageNode).toHaveAttribute('data-status', 'succeeded', { timeout: 90_000 });
+  await expect(imageNode.locator('img')).toBeVisible();
+  await expect(page.locator('.gxf-run-state')).toContainText('Done');
+
+  // The run is in the history with the model it used.
+  await page.getByRole('button', { name: 'Runs' }).click();
+  await expect(page.getByRole('dialog')).toContainText('gx-image');
 
   expect(problems, problems.join('\n')).toEqual([]);
 });
@@ -177,6 +221,12 @@ test('outline view lists nodes in execution order with their ports', async ({ pa
   }
   await noHorizontalOverflow(page);
   await axeCheck(page, 'flows outline');
+  await page.getByRole('button', { name: 'Canvas' }).click();
+  await expect(page.locator('.gxf-canvas')).toBeVisible();
+  await axeCheck(page, 'flows canvas');
+  await page.getByRole('button', { name: 'Back to all flows' }).click();
+  await expect(page.locator('.gxf-browse')).toBeVisible();
+  await axeCheck(page, 'flows browser');
 });
 
 test('reports backend failures instead of showing an empty page', async ({ page }) => {
@@ -207,7 +257,12 @@ test('works at phone width', async ({ page }) => {
   await openFlows(page);
   await page.getByRole('button', { name: 'New flow' }).click();
   await expect(page.locator(editor)).toBeVisible();
-  await page.getByRole('button', { name: 'Nodes' }).click();   // the library is an overlay here
-  await expect(page.locator('.gxf-palette')).toBeVisible();
+  // On a phone the library is a bottom sheet; it can be closed to free the canvas.
+  const palette = page.locator('.gxf-palette');
+  await expect(palette).toBeVisible();
+  await palette.getByRole('button', { name: 'Close the node library' }).click();
+  await expect(palette).toHaveCount(0);
+  await page.getByRole('button', { name: 'Nodes', exact: true }).click();
+  await expect(palette).toBeVisible();
   await noHorizontalOverflow(page);
 });

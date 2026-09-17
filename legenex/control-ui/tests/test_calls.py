@@ -18,9 +18,7 @@ import hmac
 import http.client
 import json
 import os
-import secrets
 import socket
-import subprocess
 import sys
 import threading
 import time
@@ -36,7 +34,7 @@ from gx_control_ui import call_intake as ci
 from gx_control_ui import server as srv
 from gx_control_ui.calls import CallClient, CallError, CallManager, IntegrationSecrets
 from gx_control_ui.media_library import MediaLibrary, MediaTools
-from gx_control_ui.realtime import RealtimeRegistry, Target
+from gx_control_ui.realtime import RealtimeError, RealtimeRegistry, Target
 
 CALL_DIR = REPO / "legenex" / "call"
 sys.path.insert(0, str(CALL_DIR))
@@ -117,9 +115,9 @@ class IntakeTests(unittest.TestCase):
     def test_business_hours(self):
         hours = ci.check_hours({"timezone": "America/New_York", "days": {"thu": [["09:00", "17:00"]]},
                                 "closed_dates": ["2026-12-25"]})
-        open_now = ci.hours_status(hours, dt.datetime(2026, 9, 17, 15, 0, tzinfo=dt.timezone.utc))  # 11:00 EDT
+        open_now = ci.hours_status(hours, dt.datetime(2026, 9, 17, 15, 0, tzinfo=dt.UTC))  # 11:00 EDT
         self.assertTrue(open_now["open"])
-        closed = ci.hours_status(hours, dt.datetime(2026, 9, 17, 23, 0, tzinfo=dt.timezone.utc))
+        closed = ci.hours_status(hours, dt.datetime(2026, 9, 17, 23, 0, tzinfo=dt.UTC))
         self.assertFalse(closed["open"])
         self.assertTrue(closed["next_open"].startswith("2026-09-24T09:00"))
         for bad in ({"timezone": "Mars/Base"}, {"days": {"fun": []}}, {"days": {"mon": [["17:00", "09:00"]]}}):
@@ -682,7 +680,7 @@ class RouteTests(unittest.TestCase):
         ticket = sess["ws_path"].split("ticket=")[1]
         owner = self.app.realtime.redeem_ticket(ticket, sid)
         self.assertTrue(owner.startswith("key:"))
-        with self.assertRaises(Exception):
+        with self.assertRaises(RealtimeError):
             self.app.realtime.redeem_ticket(ticket, sid)  # single use
         status, t2 = self.req("POST", f"/v1/call/sessions/{sid}/ticket", {}, headers=auth_call, cookie=False)
         self.assertEqual(status, 200)

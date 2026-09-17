@@ -106,7 +106,7 @@ export default {
       id: null, ws: null, mic: null, camera: null, speaker: null, state: 'unloaded', ready: false,
       startedAt: 0, turns: [], transcript: [], pendingTurns: [], responses: new Map(),
       interrupted: new Set(), micSeq: 0, camSeq: 0, cameraOn: false, muted: false, saving: false,
-      lastPlayback: 0, latest: {}, closing: false,
+      lastPlayback: 0, latest: {}, closing: false, audioSamples: 0, spoke: false,
     };
     const timers = new Set();
     const every = (fn, ms) => { const t = setInterval(fn, ms); timers.add(t); return t; };
@@ -129,7 +129,7 @@ export default {
       video, h('p', { class: 'live-video-note xsmall muted' }, 'The camera sends up to two stills a second.'));
 
     const log = h('ol', {
-      class: 'live-log', id: 'live-transcript', role: 'log', 'aria-label': 'Conversation', 'aria-live': 'polite',
+      class: 'live-log', id: 'live-transcript', 'aria-label': 'Conversation', 'aria-live': 'polite',
       'aria-relevant': 'additions text',
     });
     const emptyLog = h('li', { class: 'live-empty muted' },
@@ -181,11 +181,9 @@ export default {
     const toolsToggle = toggle('Let the assistant use tools', prefs.tools, {
       hint: 'Time, the bigger GX text models, your Library and public web pages.',
     });
-    toolsToggle.input.id = 'live-tools-toggle';
     const speakToggle = toggle('Speak the answers', prefs.outputAudio, {
       hint: 'Off means captions only — useful on a busy network.',
     });
-    speakToggle.input.id = 'live-speak-toggle';
     const silence = slider({
       label: 'Pause before answering', min: 300, max: 2000, step: 50, value: prefs.silenceMs,
       format: (v) => `${(v / 1000).toFixed(2)} s`,
@@ -302,6 +300,9 @@ export default {
         ['Interruptions', String(session.turns.filter((t) => t.status === 'interrupted').length)],
       ];
       if (median('interrupt_ms') !== null) rows.push(['Interruption latency', `${median('interrupt_ms')} ms`]);
+      if (session.audioSamples) {
+        rows.push(['Assistant audio', `${(session.audioSamples / OUT_RATE).toFixed(1)} s`]);
+      }
       if (session.startedAt) rows.push(['Elapsed', mmss(Math.round((Date.now() - session.startedAt) / 1000))]);
       if (session.latest.load_ms) rows.push(['Model load', `${(session.latest.load_ms / 1000).toFixed(1)} s`]);
       clear(metricsBox);
@@ -465,12 +466,13 @@ export default {
       const frame = unpackFrame(buffer);
       if (!frame || frame.kind !== KIND_ASSISTANT_AUDIO || frame.version !== 1) return;
       if (session.interrupted.has(frame.response)) return; // dropped: the person took over
-      if (!session.speaker) return;
       const bytes = frame.payload;
       const samples = new Int16Array(bytes.byteLength / 2);
       const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
       for (let i = 0; i < samples.length; i += 1) samples[i] = view.getInt16(i * 2, true);
-      session.speaker.push(samples, frame.response);
+      session.audioSamples += samples.length;
+      if (!session.spoke) { session.spoke = true; renderMetrics(); }
+      if (session.speaker) session.speaker.push(samples, frame.response);
     }
 
     // ---------------------------------------------------------- lifecycle

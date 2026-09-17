@@ -13,14 +13,20 @@ const backendPort = Number(process.env.GX_E2E_BACKEND_PORT || 18189);
 const pgPort = Number(process.env.GX_E2E_PORT || 18190);
 const onlyLive = process.argv.includes('--project=live');
 const staticDir = process.env.GX_PG_STATIC_DIR || 'web';
+const outputDir = process.env.GX_E2E_OUTPUT_DIR || 'test-results';
 
+// Parallel workstreams running Playwright in the same checkout share the output
+// directory and delete each other's traces mid-run ("browserContext.close:
+// ENOENT ... recording.trace"), which reads as a flaky test. Each run can take
+// its own directory (and its own proxy-token file) with GX_E2E_OUTPUT_DIR.
 export default defineConfig({
+  outputDir,
   testDir: process.env.GX_PG_TEST_DIR || './e2e',
   timeout: 120_000,
   expect: { timeout: 20_000 },
   fullyParallel: false,
   workers: 1,
-  reporter: [['list'], ['json', { outputFile: 'test-results/results.json' }]],
+  reporter: [['list'], ['json', { outputFile: `${outputDir}/results.json` }]],
   use: { trace: 'retain-on-failure', screenshot: 'only-on-failure', colorScheme: 'dark' },
   projects: [
     {
@@ -41,7 +47,7 @@ export default defineConfig({
       url: `http://127.0.0.1:${backendPort}/api/health`,
       reuseExistingServer: false,
       timeout: 30_000,
-      env: { GX_E2E_PASSWORD: e2ePassword, GX_UI_ACCESS_LOG: '0', GX_E2E_PROXY_TOKEN_FILE: `${process.cwd()}/test-results/proxy-token` },
+      env: { GX_E2E_PASSWORD: e2ePassword, GX_UI_ACCESS_LOG: '0', GX_E2E_PROXY_TOKEN_FILE: `${process.cwd()}/${outputDir}/proxy-token` },
     },
     {
       command: 'python3 -m gx_playground',
@@ -52,7 +58,7 @@ export default defineConfig({
         GX_PG_HOSTS: '127.0.0.1', GX_PG_PORT: String(pgPort),
         GX_PG_UPSTREAM: `http://127.0.0.1:${backendPort}`,
         GX_PG_STATIC_DIR: staticDir,
-        GX_PG_PROXY_TOKEN_FILE: `${process.cwd()}/test-results/proxy-token`,
+        GX_PG_PROXY_TOKEN_FILE: `${process.cwd()}/${outputDir}/proxy-token`,
         GX_PG_CONTROL_URL: `http://127.0.0.1:${backendPort}/`,
       },
     },

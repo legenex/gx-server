@@ -100,13 +100,29 @@ ALLOW: tuple[tuple[frozenset[str], re.Pattern[str]], ...] = tuple(
         ("GET", r"/v1/voice/voices/(vc_[0-9a-f]{24}|preset:[a-z_]{2,16})"),
         ("GET,POST", r"/v1/voice/jobs/vj_[0-9a-f]{32}(/cancel|/takes/[0-3]/(content|save))?"),
         ("GET,POST,DELETE", r"/v1/music(/[A-Za-z0-9_\-]+){0,2}"),
+        # Build V3 LIV: the Live page (session) and the public gx-live API (gateway key)
+        ("GET,POST", r"/api/live/(model|sessions)"),
+        ("GET,POST", r"/api/live/sessions/live_[0-9a-f]{32}(/(end|events|turns|transcript|delete-content))?"),
+        ("GET,POST", r"/v1/live/(model|sessions)"),
+        ("GET,POST", r"/v1/live/sessions/live_[0-9a-f]{32}(/(ticket|end|events|turns|transcript))?"),
+        # Build V3 CAL: Call Agents (session) and the public gx-call API (gateway key)
+        ("GET", r"/api/call/(catalog|model|agents|sessions|compare)"),
+        ("POST", r"/api/call/(agents|preview|sessions)"),
+        ("GET,POST", r"/api/call/integrations/secrets"),
+        ("POST", r"/api/call/integrations/secrets/[a-z][a-z0-9_\-]{1,40}/delete"),
+        ("GET,POST", r"/api/call/agents/agt_[0-9a-f]{24}(/(status|clone|versions))?"),
+        ("GET,POST", r"/api/call/sessions/call_[0-9a-f]{32}(/(events|end|transfer|state|delete-content))?"),
+        ("GET,POST", r"/v1/call/(agents|sessions)"),
+        ("GET", r"/v1/call/(model|agents/agt_[0-9a-f]{24})"),
+        ("GET,POST", r"/v1/call/sessions/call_[0-9a-f]{32}"
+                     r"(/(ticket|state|transcript|tools|events|transfer|end|result))?"),
     ))
 REQUEST_HEADERS = ("cookie", "content-type", "content-length", "x-csrf-token", "accept", "accept-encoding",
                    "range", "if-none-match", "x-title", "x-filename")
 RESPONSE_HEADERS = ("content-type", "content-length", "content-encoding", "content-range", "accept-ranges",
                     "content-disposition", "cache-control", "set-cookie", "etag", "vary", "location",
                     "retry-after", "last-modified")
-SPA_ROUTE = re.compile(r"/(dashboard|images|video|music|voice|library|history|models|logs|settings)"
+SPA_ROUTE = re.compile(r"/(dashboard|images|video|music|voice|live|call|library|history|models|logs|settings)"
                        r"(/[a-z0-9_\-]{0,64}){0,2}")
 
 CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; "

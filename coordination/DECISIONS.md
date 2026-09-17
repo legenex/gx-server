@@ -1286,3 +1286,106 @@ services. The user explicitly added three public aliases.
 * **Playground:** pages load lazily from `web/js/routes.js`; Creative Flows is
   a React + TypeScript + `@xyflow/react` island built by Vite; every other
   page stays on the existing dependency-free design system.
+
+## D-041 — Deployment is proven, not assumed; and "denied" is diagnosed, not guessed
+
+2026-09-17, lead (brownfield completion pass). Amends nothing; adds the
+deployment and diagnosis contracts that the Build V3 workstreams depend on.
+
+### 1. The deployed Playground must be provable from the checkout
+
+**Context.** The Playground read `web/` into memory once at start-up. The
+service had been running since 10:29 while the frontend was edited until
+17:17, so the browser was served a seven-hour-old snapshot, and eleven files
+created after start-up — including `js/routes.js` and the Voice, Models, Logs
+and Settings pages — returned 404 while existing on disk (B-031). Every
+symptom read as "the UI is broken" rather than "the UI is not deployed", and
+several hours went into the wrong half of that sentence.
+
+**Decision.**
+
+* `Static` **revalidates per lookup**: one `stat()`, and the entry is rebuilt
+  when mtime, size or inode changed. New files appear, deleted files 404. Path
+  resolution rejects `..`, hidden segments and anything outside `web/`.
+  `GX_PG_STATIC_FREEZE=1` restores the snapshot behaviour for tests that pin an
+  ETag.
+* `legenex/playground/scripts/deploy.sh` is **the only sanctioned deployment
+  path**. It builds what needs building, restarts only when the Python package
+  or the unit changed (holding `state/build-v3/restart.lock`), and then
+  compares the ETag the running server returns for **every** file under `web/`
+  with `sha256` of that file on disk. Any mismatch, or any file on disk that is
+  not served, **fails the deploy**.
+* The standing rule for every workstream: after a frontend change, run
+  `deploy.sh`. Changing the source is not deploying it, and only the ETag
+  comparison settles which one happened.
+
+**Why not just "always restart".** A restart is the heavy answer to a question
+that is usually "no". Revalidation makes ordinary frontend edits live at once,
+and the ETag check means nobody has to remember either way — the script answers
+it.
+
+### 2. A product-shape gate that runs against the deployed site
+
+`legenex/playground/e2e/live.navigation.spec.js` (project `live`) signs in to
+the **deployed** Playground and asserts the complete Build V3 navigation
+(Create: Dashboard, Creative Flows, Images, Video, Music, Voice · Realtime:
+Live, Call Agents · Manage: Library, History, Models, Logs, Settings), the
+Control Center link in the header, and then, per page: it opens, it is not a
+placeholder, **it did not throw while loading**, every visible control has an
+accessible name, something is keyboard-focusable with a visible ring, there are
+no console or network errors, and axe reports no WCAG 2.2 AA violations. It
+generates nothing, so it costs no GPU and can run at any time.
+
+The error-boundary assertion exists because a page that throws still renders a
+heading and still passes axe. Without it, the Music page — which had shipped
+using six `music-form.js` exports it never imported, and rendered only "This
+page could not be loaded: aiPanel is not defined" — counted as healthy.
+
+### 3. Hugging Face: metadata access and file access are different questions
+
+**Context.** `HFClient._get` mapped 401 and 403 to one message, "access denied
+by Hugging Face (gated or private; a token with access is required)". For a
+gated repository that message is actively misleading: the metadata call
+succeeds, the file call fails, and the advice it gives ("a token with access")
+cannot work when the token is fine and the *account* has not been granted
+access. That sentence is why an earlier pass kept minting tokens (B-030).
+
+**Decision.**
+
+* `HFError` carries a machine code: `unauthenticated` (401 — no usable token),
+  `gated_not_granted` (403 with `X-Error-Code: GatedRepo` — the token works,
+  the account is not on the authorized list), `forbidden`, `not_found`,
+  `upstream`. Hugging Face's own `X-Error-Message` is passed through verbatim.
+* `HFClient.info()` returns a structured `access` verdict — `ok`, `reason`,
+  `probed_file`, `http_status`, `message`, `token_user` and the **exact human
+  action**. For `gated_not_granted` that action names the browser step and says
+  in so many words that a new token cannot fix it.
+* `token_state()` reports `user`, `account_type`, `type`, `token_name`,
+  `created_at` and `gated_repos` (the fine-grained `canReadGatedRepos`
+  permission), and reports a token file that is not 0600 as invalid with the
+  reason. It never contains the token.
+* The Model Manager renders exactly that live state. No hard-coded "this model
+  is gated, add a token" sentence survives anywhere in the UI.
+
+Tests: `legenex/control-ui/tests/test_hf_access.py` (12, hermetic; a local
+stub Hub serving metadata 200 with files 401/403) pins each distinction,
+including that the `gated_not_granted` action must contain "A new token cannot
+fix this".
+
+### 4. The registry carries all eleven aliases
+
+`legenex/models/registry.json` now has `gx-voice`, `gx-call` and `gx-live`
+alongside the existing eight, each with its repository, pinned revision, path,
+licence, capabilities and components as verified from the `.gx-manifest.json`
+files on gx10-02. `gx_control_ui.footprints sync` can only attach a measured
+footprint to an alias that already exists, so registering them is what lets
+VOI, CAL and LIV publish measurements instead of "not measured yet".
+
+### 5. Generated bundles are excluded from the hand-written-source checks
+
+`scripts/build-check.mjs` honours `GX_BUILD_EXCLUDE` (comma-separated
+directories relative to the web root). The Playground sets it to `flows`: the
+Creative Flows Vite output is validated by its own build, and measuring a
+React bundle against the hand-written asset budget or the no-`innerHTML` rule
+tests nothing real.
+

@@ -51,6 +51,15 @@ function sourceFingerprint() {
 
 const fingerprint = sourceFingerprint();
 
+/** The Playground QA gate requires a final newline in every tracked file under
+ *  web/ (and no trailing blank). Vite emits neither, so the build adds it. */
+function normalizeNewlines(files) {
+  for (const f of files) {
+    const buf = readFileSync(f);
+    if (buf.length && buf[buf.length - 1] !== 0x0a) writeFileSync(f, Buffer.concat([buf, Buffer.from('\n')]));
+  }
+}
+
 if (!existsSync(outDir)) {
   fail(`the bundle directory ${relative(uiRoot, outDir)} does not exist - run "npm run build"`);
 } else {
@@ -88,8 +97,12 @@ if (!existsSync(outDir)) {
 
   const files = walk(outDir).filter((f) => !f.endsWith(STAMP));
   if (!files.length) fail('the bundle directory is empty');
+  if (write) normalizeNewlines(files);
   for (const f of files) {
     const name = relative(outDir, f);
+    if (!write && statSync(f).size && !readFileSync(f).subarray(-1).equals(Buffer.from('\n'))) {
+      fail(`${name}: no final newline (the Playground QA gate rejects it) - run "npm run build"`);
+    }
     if (f.endsWith('.map')) fail(`${name}: source maps must not be shipped`);
     if (f.endsWith('.html')) fail(`${name}: the island is a module, it must not ship an HTML document`);
     if (!/\.(js|css|json|svg|woff2?|png|webp)$/.test(f)) fail(`${name}: unexpected file type in the bundle`);

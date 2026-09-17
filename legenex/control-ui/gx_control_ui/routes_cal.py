@@ -92,8 +92,9 @@ def api_call_agents(h: Handler) -> None:
 @_errors
 def api_call_agent_create(h: Handler) -> None:
     body = h._body(MAX_BODY)
-    cfg = body.get("config") if isinstance(body.get("config"), dict) else ca.default_config(
-        str(body.get("template") or "intakepilot_mva") if body.get("template") in ca.USE_CASES else "intakepilot_mva")
+    raw = body.get("config")
+    cfg: dict = raw if isinstance(raw, dict) else ca.default_config(
+        str(body.get("template")) if body.get("template") in ca.USE_CASES else "intakepilot_mva")
     agent = h.app.call_agents.create(cfg, user=_user(h), note=str(body.get("note") or "created")[:200])
     h._json(201, agent)
 
@@ -180,7 +181,7 @@ def api_call_secrets(h: Handler) -> None:
 @_errors
 def api_call_secret_set(h: Handler) -> None:
     body = h._body(8192)  # the value goes to the server only and is never returned
-    res = h.app.call_secrets.set(str(body.get("name") or ""), body.get("value"))
+    res = h.app.call_secrets.set(str(body.get("name") or ""), str(body.get("value") or ""))
     h.app.actions.audit(user=_user(h), ip=h._client_ip(), action="call.secret.set", outcome="ok", name=res["name"])
     h._json(200, res)
 

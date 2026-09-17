@@ -342,32 +342,84 @@
           "file": "legenex/media/workflows/qwen-image-2512-uncensored, qwen-image-2512-lightning, qwen-image-2512-quality, qwen-image-edit-2511, qwen-image-edit-2511-masked, qwen-image-edit-2511-transform, sdxl-visionmaster-pro-v3, sdxl-visionmaster-pro-v3-img2img, sdxl-visionmaster-pro-v3-inpaint"
         }
       ],
-      "variants": {
-        "visionmaster-pro-v3": {
-          "label": "VisionmasterPro_V3",
-          "operations": [
-            "generate",
-            "edit"
-          ],
-          "family": "sdxl",
-          "footprint": "measured live; see coordination/build-v3/img.md"
-        },
-        "qwen-image-2512": {
+      "variants": [
+        {
+          "id": "qwen-image-2512",
           "label": "Qwen Image 2512",
-          "operations": [
-            "generate"
+          "family": "qwen-image",
+          "repository": "Comfy-Org/Qwen-Image_ComfyUI",
+          "revision": "not recorded at download (MODELS.md)",
+          "licence": "apache-2.0",
+          "base": "Qwen-Image-2512 fp8_e4m3fn + Lightning 4-step LoRA",
+          "resolution": "512x512 to 1664x928; default 1328x1328",
+          "capabilities": [
+            "text-to-image",
+            "quality fast/standard/hd",
+            "negative prompt",
+            "NSFW adapter on by default (0.6)"
           ],
-          "family": "qwen-image"
+          "workflows": [
+            "qwen-image-2512-uncensored",
+            "qwen-image-2512-lightning",
+            "qwen-image-2512-quality"
+          ],
+          "default": "generation",
+          "status": "in use",
+          "measured": "1024x1024 in 26.2 s on 2026-09-17 (router job image-c087349dec2743b1, qwen-image-2512-lightning)"
         },
-        "qwen-image-edit-2511": {
+        {
+          "id": "qwen-image-edit-2511",
           "label": "Qwen Image Edit 2511",
-          "operations": [
-            "edit",
-            "variation"
+          "family": "qwen-image",
+          "repository": "Comfy-Org/Qwen-Image-Edit_ComfyUI",
+          "revision": "7d41107b653d3039be20972fb82398b01b3213eb",
+          "licence": "apache-2.0",
+          "base": "Qwen-Image-Edit-2511 fp8mixed + Lightning 4-step LoRA",
+          "resolution": "follows the source, fitted to the router's edit target",
+          "capabilities": [
+            "instruction edit",
+            "masked edit",
+            "variation",
+            "7 edit modes",
+            "edit quality fast/quality",
+            "NSFW adapter off by default for edits"
           ],
-          "family": "qwen-image"
+          "workflows": [
+            "qwen-image-edit-2511",
+            "qwen-image-edit-2511-masked",
+            "qwen-image-edit-2511-transform"
+          ],
+          "default": "editing and variations",
+          "status": "in use",
+          "measured": "not measured since the Build V3 edit fix; see the IMG live acceptance"
+        },
+        {
+          "id": "visionmaster-pro-v3",
+          "label": "VisionmasterPro_V3",
+          "family": "sdxl",
+          "repository": "votepurchase/pornmasterPro_noobV3VAE",
+          "revision": "75f59d136b165d48f3e678bb057af99f7cf1a71e",
+          "licence": "creativeml-openrail-m",
+          "base": "SDXL / NoobAI, epsilon prediction, diffusers format (UNet + CLIP-L + CLIP-G + VAE)",
+          "resolution": "832x1216 default; at most about 1.6 megapixels",
+          "capabilities": [
+            "text-to-image",
+            "image-to-image",
+            "masked inpainting",
+            "negative prompt",
+            "NoobAI quality tags",
+            "no instruction following"
+          ],
+          "workflows": [
+            "sdxl-visionmaster-pro-v3",
+            "sdxl-visionmaster-pro-v3-img2img",
+            "sdxl-visionmaster-pro-v3-inpaint"
+          ],
+          "default": "",
+          "status": "downloaded and verified on gx10-02; never loaded by ComfyUI yet",
+          "measured": "not measured; the first load is case src_vm of the IMG live acceptance"
         }
-      }
+      ]
     },
     "gx-video": {
       "runtime": "ComfyUI 0.35.0 behind gx-media-router 2.3 on gx10-02 (asynchronous jobs)",
@@ -602,7 +654,7 @@
     "gx-live": {
       "node": "gx10-02",
       "task": "realtime-omnimodal-conversation",
-      "runtime": "MiniCPM-o 4.5 transformers remote code (4.51.0) on torch 2.14/cu130, SDPA (no flash-attn on sm_121), in gx-live-engine:minicpmo45-503e754-t214, behind the gx-live supervisor (legenex/live), port 18850",
+      "runtime": "transformers 4.51.0 remote code (MiniCPMO) on torch 2.14.0+cu130, SDPA bfloat16 (no flash-attn on sm_121), in gx-live-engine:minicpmo45-503e754-t214, behind the gx-live supervisor (legenex/live), port 18850",
       "image": "gx-live-engine:minicpmo45-503e754-t214",
       "repository": "openbmb/MiniCPM-o-4_5",
       "revision": "503e754207c94da6bb26850b4469f367c9ea3582",
@@ -611,7 +663,7 @@
       "licence": "apache-2.0",
       "uncensored": null,
       "memory": "not measured yet",
-      "measured": null,
+      "measured": "cold load 34 GiB / 31 GiB resident / 102 s startup on gx10-02 (probe 1, 2026-09-17); half-duplex streaming speech 1.5-1.9x realtime, ASR 1.4 s for 4 s of speech",
       "startup": "supervisor starts at boot; the engine loads when a live session opens and unloads when idle",
       "capabilities": [
         "realtime speech conversation",
@@ -641,6 +693,19 @@
         "startup_s": 102.0,
         "measured": "2026-09-17",
         "evidence": "/srv/logs/acceptance/build-v3/liv/probe1-feasibility"
+      },
+      "quantization": "none (bf16)",
+      "languages": [
+        "en",
+        "zh"
+      ],
+      "protocol": "gx-live.v1",
+      "concurrent_sessions": 1,
+      "service": {
+        "port": 18850,
+        "unit": "gx-live.service",
+        "container": "gx-live-engine",
+        "health": "http://192.168.100.11:18850/health"
       }
     }
   },

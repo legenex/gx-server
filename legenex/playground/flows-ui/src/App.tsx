@@ -280,7 +280,9 @@ function EditorShell({ record, onClose, onOpenFlow }: EditorProps) {
 
   // --------------------------------------------------------------- autosave
   useEffect(() => saver.subscribe(() => { setStatus({ ...saver.status }); }), [saver]);
-  useEffect(() => () => { saver.stop(); }, [saver]);
+  // Leaving the page (nav rail, sign-out) must not drop what was typed: the
+  // last save is flushed before the autosaver is torn down.
+  useEffect(() => () => { void saver.flush().finally(() => { saver.stop(); }); }, [saver]);
   useEffect(() => {
     const online = () => { saver.online(); };
     window.addEventListener('online', online);

@@ -24,6 +24,13 @@ if [ ! -x .venv/bin/ruff ] || [ ! -x .venv/bin/mypy ]; then
   /usr/bin/python3 -m venv .venv
   .venv/bin/pip install -q ruff mypy
 fi
+# Pillow is a TEST dependency (the media tests build real PNGs). Without it the
+# media/manager tests error out under .venv while passing under the system
+# Python, which reads as a broken suite rather than a missing package.
+.venv/bin/python -c 'import PIL' 2>/dev/null || {
+  step "bootstrap .venv (Pillow, for the media tests)"
+  .venv/bin/pip install -q Pillow
+}
 if [ ! -d node_modules/@playwright/test ]; then
   step "bootstrap node_modules (npm ci)"
   npm ci --no-fund --no-audit

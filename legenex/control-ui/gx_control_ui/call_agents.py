@@ -14,6 +14,7 @@ current version number. Sessions always record the exact version they used.
 
 from __future__ import annotations
 
+import builtins
 import copy
 import difflib
 import hashlib
@@ -21,7 +22,8 @@ import json
 import re
 import secrets
 import time
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from . import call_intake as ci
 from .netguard import BlockedURL, check_url
@@ -169,7 +171,8 @@ def default_config(use_case: str = "intakepilot_mva") -> dict:
                            "days": {d: [["08:00", "20:00"]] for d in ("mon", "tue", "wed", "thu", "fri")},
                            "closed_dates": []},
         "business_hours_behaviour": "Outside business hours, take the intake and promise a callback next business day.",
-        "voicemail_behaviour": "If you reach voicemail, leave a short message with the callback number and end the call.",
+        "voicemail_behaviour": ("If you reach voicemail, leave a short message with the callback number "
+                                "and end the call."),
         "fallback_behaviour": "If you cannot help, offer a callback and end the call politely.",
         "knowledge": ("The office offers free consultations. Attorneys work on contingency, so there is no fee "
                       "unless the case is won.") if mva else "",
@@ -221,8 +224,8 @@ def _integration(item: object, where: str, *, events: bool) -> dict:
     secret_ref = item.get("secret_ref") or None
     if secret_ref is not None and (not isinstance(secret_ref, str) or not SECRET_NAME_RE.match(secret_ref)):
         raise AgentError(f"{where}: secret_ref must name a stored integration secret")
-    out = {"name": name, "url": _url(item.get("url"), where), "secret_ref": secret_ref,
-           "enabled": item.get("enabled", True) is not False}
+    out: dict[str, Any] = {"name": name, "url": _url(item.get("url"), where), "secret_ref": secret_ref,
+                           "enabled": item.get("enabled", True) is not False}
     if events:
         ev = item.get("events") or ["call.ended"]
         if not isinstance(ev, list) or not ev or any(e not in WEBHOOK_EVENTS for e in ev):
@@ -493,7 +496,7 @@ class AgentStore:
         agent["version_created_by"] = ver["created_by"]
         return agent
 
-    def versions(self, agent_id: str) -> list[dict]:
+    def versions(self, agent_id: str) -> builtins.list[dict]:
         self.get(agent_id)
         with self.connect() as con:
             return [dict(r) for r in con.execute(

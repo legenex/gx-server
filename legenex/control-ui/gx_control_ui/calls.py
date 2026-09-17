@@ -20,14 +20,12 @@ The model context is never the source of truth: every captured field is in
 
 from __future__ import annotations
 
-import copy
 import hashlib
 import hmac
 import json
 import logging
 import os
 import re
-import secrets
 import shutil
 import subprocess
 import threading
@@ -36,8 +34,9 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from . import call_agents as ca
 from . import call_intake as ci
@@ -707,7 +706,8 @@ class CallManager:
         data = json.dumps(_meta_only(event))[:8000]
         with self.connect() as con:
             if seq:
-                con.execute("INSERT OR IGNORE INTO call_events (session_id, seq, type, at, data) VALUES (?, ?, ?, ?, ?)",
+                con.execute("INSERT OR IGNORE INTO call_events (session_id, seq, type, at, data) "
+                            "VALUES (?, ?, ?, ?, ?)",
                             (sid, seq, event.get("type"), (event.get("t") or self.clock() * 1000) / 1000.0, data))
             else:
                 last = con.execute("SELECT COALESCE(MAX(seq), 0) FROM call_events WHERE session_id = ? AND seq >= ?",
@@ -779,7 +779,7 @@ class CallManager:
         try:
             self.realtime.end(sid, REALTIME_DISPOSITION.get(disposition, "completed"))
         except Exception:  # noqa: BLE001 - the registry may not know it (restart)
-            pass
+            log.info("realtime registry did not know %s when it ended", sid)
         with self._lock:
             timer = self._end_timers.pop(sid, None)
         if timer:
@@ -899,7 +899,8 @@ class CallManager:
                 title=f"Call recording: {agent['config']['name']} ({sid[-8:]})",
                 model_alias="gx-call", duration=round((size - 44) / 4 / 22050, 2), sample_rate=22050, channels=2,
                 settings={"session_id": sid, "agent_id": agent["agent_id"], "agent_version": agent["version"],
-                          "tracks": "left: caller, right: agent", "consent_notice": agent["config"]["recording"]["notice"]},
+                          "tracks": "left: caller, right: agent",
+                          "consent_notice": agent["config"]["recording"]["notice"]},
                 source_kind="call_session", source_ref=sid, is_test=agent.get("mode") == "test",
                 tags=["call-recording"]))
             self._update_session(sid, recording_asset_id=asset["id"])
@@ -917,7 +918,7 @@ class CallManager:
         """caller.wav (16 kHz) + agent.wav (22.05 kHz) -> call.wav (stereo, 22.05 kHz).
 
         ffmpeg runs in the Library's network-less tools image (same as MediaTools)."""
-        os.chmod(work, 0o777)  # the ffmpeg container runs as another uid
+        os.chmod(work, 0o777)  # noqa: S103 - a private temp dir the ffmpeg container runs against as another uid
         res = subprocess.run(
             ["docker", "run", "--rm", "--network", "none", "--memory", "1g", "--cpus", "2",
              "-v", f"{work}:/m", "--entrypoint", "ffmpeg", self.ffmpeg_image, "-v", "error", "-y",
@@ -994,7 +995,8 @@ class CallManager:
 
     def list_sessions(self, *, owner: str | None = None, agent_id: str | None = None, limit: int = 50) -> list[dict]:
         sql = "SELECT session_id FROM call_sessions"
-        where, args = [], []
+        where: list[str] = []
+        args: list[Any] = []
         if owner:
             where.append("owner = ?")
             args.append(owner)

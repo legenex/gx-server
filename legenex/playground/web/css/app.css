@@ -1131,3 +1131,48 @@ textarea.input { resize: vertical; line-height: 1.5; }
   .voice-avatar { border: 1px solid CanvasText; }
   .consent { border: 1px solid CanvasText; }
 }
+
+/* ---------------------------------------------------------------- Live (LIV) */
+.live-grid { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 16px; align-items: start; }
+.live-stage { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.live-side { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.live-status {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 14px; border-radius: var(--radius-sm);
+  border: 1px solid var(--border); background: var(--surface-2);
+}
+.live-state-text { font-weight: 650; }
+.live-level { height: 6px; border-radius: 999px; background: var(--surface-3); overflow: hidden; }
+.live-level-fill { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--accent-2), var(--accent)); transition: width .08s linear; }
+.live-video-wrap { position: relative; display: flex; flex-direction: column; gap: 6px; }
+.live-video { width: 100%; max-height: 280px; border-radius: var(--radius-sm); background: var(--media-bg); object-fit: contain; }
+.live-log {
+  list-style: none; margin: 0; padding: 12px; display: flex; flex-direction: column; gap: 10px; min-height: 220px;
+  max-height: 46vh; overflow-y: auto; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface);
+}
+.live-empty { color: var(--muted); font-size: 14px; }
+.live-line { display: flex; flex-direction: column; gap: 2px; padding: 8px 12px; border-radius: var(--radius-sm); background: var(--surface-2); }
+.live-line-assistant { background: color-mix(in srgb, var(--accent) 10%, var(--surface-2)); }
+.live-line-who { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.live-line-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.live-line-note { font-style: italic; }
+.live-composer { display: flex; gap: 8px; align-items: flex-end; }
+.live-text { flex: 1; resize: vertical; min-height: 44px; }
+.live-controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.live-controls .icon-btn[aria-pressed="true"] { color: var(--accent-text); border-color: var(--border-strong); }
+.live-controls .icon-btn.is-muted { color: var(--danger); }
+.live-side .card-head { flex-wrap: wrap; row-gap: 8px; }
+.live-side .card-actions { flex-wrap: wrap; }
+.live-tools { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.live-tool { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border-radius: var(--radius-xs); background: var(--surface-2); border-left: 3px solid var(--border-strong); }
+.live-tool[data-state="ok"] { border-left-color: var(--ok); }
+.live-tool[data-state="failed"] { border-left-color: var(--danger); }
+.live-tool[data-state="loading"], .live-tool[data-state="waiting"] { border-left-color: var(--warn); }
+.live-tool-name { font-family: var(--mono); font-size: 12px; }
+@media (max-width: 900px) {
+  .live-grid { grid-template-columns: 1fr; }
+  .live-log { max-height: 50vh; }
+}
+@media (prefers-reduced-motion: reduce) { .live-level-fill { transition: none; } }
+@media (forced-colors: active) {
+  .live-status, .live-log, .live-line, .live-tool { border: 1px solid CanvasText; }
+}

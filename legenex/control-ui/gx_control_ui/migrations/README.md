@@ -22,5 +22,5 @@ Rules:
 | 040 | gx-voice |
 | 050 | gx-call / Call Agents |
 | 060 | gx-live |
-| 070 | image models / edits |
+| 070 | image models / edits (tables are prefixed `img_`) |
 | 080 | platform: Playground preferences (PLT) |

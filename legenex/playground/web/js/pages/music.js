@@ -9,6 +9,9 @@ import { icon } from '../icons.js';
 import { center, friendlyError, isMusic, jobCard, phaseOf, submitMusic } from '../jobs.js';
 import { navigate } from '../nav.js';
 import {
+  aiPanel, conditioningPreview, lockButton, referencePanel, styleTagEditor, vocalControls,
+} from '../music-form.js';
+import {
   badge, button, callout, chips, composer, disclosure, dropzone, emptyState, field, iconButton, kv, numberInput,
   pageHeader, readNumber, seedField, select, skeletonLines, slider, tabs, textInput, toggle,
 } from '../ui.js';

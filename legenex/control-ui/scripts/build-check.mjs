@@ -29,7 +29,17 @@ function walk(dir) {
   });
 }
 
-const files = walk(root);
+// Directories holding generated bundles (Creative Flows' Vite output). Their
+// contents are hand-written by nobody, so the hand-written-source rules below
+// (no innerHTML, import hygiene, size budget) do not apply; each bundle is
+// validated by its own build's checks. Comma-separated, relative to the root.
+const excluded = (process.env.GX_BUILD_EXCLUDE || '').split(',').map((s) => s.trim()).filter(Boolean);
+const isExcluded = (f) => excluded.some((d) => {
+  const rel = relative(root, f);
+  return rel === d || rel.startsWith(`${d}/`);
+});
+
+const files = walk(root).filter((f) => !isExcluded(f));
 const jsFiles = files.filter((f) => f.endsWith('.js'));
 const exportsOf = new Map();
 
@@ -109,6 +119,16 @@ for (const p of pages) {
 const BUDGET = Number(process.env.GX_BUILD_BUDGET_KB || 400) * 1024;
 const total = files.reduce((n, f) => n + statSync(f).size, 0);
 if (total > BUDGET) fail('web/', `asset size ${total} B exceeds budget ${BUDGET} B`);
+
+// The aggregate alone stops being a useful signal as the app gains pages: pages
+// are lazy-loaded, so a visitor downloads the shell plus ONE page, never the
+// total. Cap each module as well, which is what actually reaches a browser and
+// is what catches a single page turning into a monolith.
+const MODULE_BUDGET = Number(process.env.GX_BUILD_MODULE_KB || 64) * 1024;
+for (const f of jsFiles) {
+  const size = statSync(f).size;
+  if (size > MODULE_BUDGET) fail(f, `module ${size} B exceeds the per-module budget ${MODULE_BUDGET} B`);
+}
 
 if (errors.length) {
   console.error(`build check FAILED (${errors.length}):`);

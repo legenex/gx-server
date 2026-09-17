@@ -1,15 +1,23 @@
 // Call Agents (Build V3 CAL): the agent list, the versioned editor with its
 // compiled-prompt preview, duplication, enabling, the Call tab (engine banner,
 // secure-context callout, a refused start) and the History tab.
-// The backend is the real Control Center; gx-call itself is not configured in
-// the fixture, which is exactly the "node 2 not available" path the page must
-// survive without a dead button.
+//
+// The backend is the real Control Center. gx-call itself has no service key in
+// the fixture, which is exactly the "node 2 is not available" path the page has
+// to survive: a real 503, reported to the user, with no dead button.
+//
+// The tests share one backend, so they run in order and build on each other.
 import { expect, test } from '@playwright/test';
 import { axeCheck, gotoPage, login, watchPage } from './helpers.js';
 
-const TEMPLATE_NAME = 'IntakePilot MVA intake';
+test.describe.configure({ mode: 'serial' });
 
-async function openAgents(page) {
+const TEMPLATE_NAME = 'IntakePilot MVA intake';
+const EDITED_NAME = 'Night line intake';
+// The browser logs every 4xx/5xx response; several of them are deliberate here.
+const HTTP_NOISE = [/Failed to load resource/];
+
+async function openCall(page) {
   await gotoPage(page, 'call');
   await expect(page.locator('#page-call h1')).toHaveText('Call Agents');
   return page.locator('#page-call');
@@ -25,14 +33,28 @@ async function createTemplateAgent(page) {
   return editor;
 }
 
-test('agents: template, editor, compiled prompt, new version and enable', async ({ page }) => {
+test('empty state: no agents, and the Call tab says so', async ({ page }) => {
   const problems = watchPage(page);
   await login(page);
-  const root = await openAgents(page);
+  const root = await openCall(page);
   await expect(root.getByRole('tablist', { name: 'Call Agents sections' }).getByRole('tab'))
     .toHaveText(['Agents', 'Call', 'History']);
   await expect(root.getByText('No call agents yet')).toBeVisible();
   await axeCheck(page, 'call agents empty');
+  await root.getByRole('tab', { name: 'Call' }).click();
+  await expect(root.getByText('No agent is enabled')).toBeVisible();
+  await root.getByRole('button', { name: 'Go to agents' }).click();
+  await expect(root.getByText('No call agents yet')).toBeVisible();
+  await root.getByRole('tab', { name: 'History' }).click();
+  await expect(root.getByText('No calls yet')).toBeVisible();
+  await axeCheck(page, 'call history empty');
+  expect(problems).toEqual([]);
+});
+
+test('agents: template, editor, compiled prompt, new version, enable and duplicate', async ({ page }) => {
+  const problems = watchPage(page, { allow: HTTP_NOISE }); // one preview is deliberately invalid
+  await login(page);
+  await openCall(page);
 
   const editor = await createTemplateAgent(page);
   // the editor shows the real, saved configuration
@@ -58,59 +80,46 @@ test('agents: template, editor, compiled prompt, new version and enable', async 
   await tools.getByRole('button', { name: 'Send webhook' }).click();
 
   // a real edit saves a new immutable version
-  await editor.getByLabel('Name', { exact: true }).fill('Night line intake');
+  await editor.getByLabel('Name', { exact: true }).fill(EDITED_NAME);
   await editor.getByRole('button', { name: 'Save new version' }).click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
-  const card = page.locator('#page-call .card', { hasText: 'Night line intake' });
+  const card = page.locator('#page-call .card', { hasText: EDITED_NAME }).first();
   await expect(card).toBeVisible();
-  await expect(card.getByText('v2')).toBeVisible();
-  await expect(card.getByText('draft')).toBeVisible();
+  await expect(card.getByText('v2', { exact: true })).toBeVisible();
+  await expect(card.getByText('draft', { exact: true })).toBeVisible();
 
   // enable it, then duplicate it
-  await page.getByRole('button', { name: 'Enable Night line intake' }).click();
-  await expect(card.getByText('enabled')).toBeVisible();
-  await page.getByRole('button', { name: 'Duplicate Night line intake' }).click();
+  await page.getByRole('button', { name: `Enable ${EDITED_NAME}` }).click();
+  await expect(card.getByText('enabled', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: `Duplicate ${EDITED_NAME}` }).click();
   const prompt = page.getByRole('dialog');
-  await expect(prompt.getByLabel('Name of the copy')).toHaveValue('Night line intake (copy)');
+  await expect(prompt.getByLabel('Name of the copy')).toHaveValue(`${EDITED_NAME} (copy)`);
   await prompt.getByRole('button', { name: 'Duplicate', exact: true }).click();
-  await expect(page.locator('#page-call .card', { hasText: 'Night line intake (copy)' })).toBeVisible();
+  await expect(page.locator('#page-call .card', { hasText: `${EDITED_NAME} (copy)` })).toBeVisible();
   expect(problems).toEqual([]);
 });
 
-test('call tab: engine banner, secure-context callout and a refused start', async ({ page }) => {
-  // gx-call has no service key in the fixture, so POST /api/call/sessions is a
-  // real 503 the browser also logs; everything else must stay silent.
-  const problems = watchPage(page, { allow: [/Failed to load resource/] });
+test('call tab: the engine banner and the shared secure-context callout', async ({ page }) => {
+  const problems = watchPage(page);
   // a browser without getUserMedia must get the shared secure-context helper
   await page.addInitScript(() => {
     Object.defineProperty(navigator, 'mediaDevices', { configurable: true, get: () => undefined });
   });
   await login(page);
-  const root = await openAgents(page);
+  const root = await openCall(page);
   await expect(root.getByText('gx-call is not answering')).toBeVisible();
-
-  await root.getByRole('tab', { name: 'Call' }).click();
-  await expect(root.getByText('No agent is enabled')).toBeVisible();
-  await root.getByRole('button', { name: 'Go to agents' }).click();
-  await createTemplateAgent(page);
-  await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click();
-  await page.getByRole('button', { name: `Enable ${TEMPLATE_NAME}` }).click();
-
   await root.getByRole('tab', { name: 'Call' }).click();
   await expect(root.getByText('Microphone and camera need a secure connection')).toBeVisible();
-  const start = root.getByRole('button', { name: 'Start the call' });
-  await expect(start).toBeDisabled();
+  await expect(root.getByRole('link', { name: 'HTTPS setup help' })).toBeVisible();
+  await expect(root.getByRole('button', { name: 'Start the call' })).toBeDisabled();
   await axeCheck(page, 'call tab without a microphone');
   expect(problems).toEqual([]);
 });
 
-test('call tab: a start that gx-call refuses is reported, not swallowed', async ({ page }) => {
-  const problems = watchPage(page, { allow: [/Failed to load resource/] });
+test('call tab: a start that gx-call refuses is reported, and lands in the history', async ({ page }) => {
+  const problems = watchPage(page, { allow: HTTP_NOISE }); // the 503 from gx-call
   await login(page);
-  const root = await openAgents(page);
-  await createTemplateAgent(page);
-  await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click();
-  await page.getByRole('button', { name: `Enable ${TEMPLATE_NAME}` }).click();
+  const root = await openCall(page);
   await root.getByRole('tab', { name: 'Call' }).click();
   const start = root.getByRole('button', { name: 'Start the call' });
   await expect(start).toBeEnabled(); // 127.0.0.1 IS a secure context
@@ -119,21 +128,34 @@ test('call tab: a start that gx-call refuses is reported, not swallowed', async 
     start.click(),
   ]);
   expect(resp.status()).toBe(503);
-  await expect(page.locator('#toasts')).toContainText('gx-call');
+  await expect(page.locator('#toasts')).toContainText('not configured');
   await expect(start).toBeEnabled(); // the button comes back, it is not dead
+
+  // the refused call is recorded and can be inspected
+  await root.getByRole('tab', { name: 'History' }).click();
+  const row = root.locator('.log-row').first();
+  await expect(row.getByText('failed', { exact: true })).toBeVisible();
+  await axeCheck(page, 'call history with one call');
+  await row.getByRole('button', { name: 'Open' }).click();
+  const drawer = page.getByRole('dialog');
+  await expect(drawer.getByText('The call failed')).toBeVisible();
+  await expect(drawer.getByText('not_configured')).toBeVisible();
+  await axeCheck(page, 'call detail drawer');
+  await drawer.getByRole('button', { name: 'Close', exact: true }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
   expect(problems).toEqual([]);
 });
 
-test('history: empty state and accessibility', async ({ page }) => {
+test('the section tabs are fully keyboard operable', async ({ page }) => {
   const problems = watchPage(page);
   await login(page);
-  const root = await openAgents(page);
-  await root.getByRole('tab', { name: 'History' }).click();
-  await expect(root.getByText('No calls yet')).toBeVisible();
-  await axeCheck(page, 'call history');
-  // the tablist is fully keyboard operable
-  await root.getByRole('tab', { name: 'History' }).focus();
+  const root = await openCall(page);
+  await root.getByRole('tab', { name: 'Agents' }).focus();
+  await page.keyboard.press('End');
+  await expect(root.getByRole('tab', { name: 'History' })).toHaveAttribute('aria-selected', 'true');
   await page.keyboard.press('Home');
   await expect(root.getByRole('tab', { name: 'Agents' })).toHaveAttribute('aria-selected', 'true');
+  await page.keyboard.press('ArrowRight');
+  await expect(root.getByRole('tab', { name: 'Call' })).toHaveAttribute('aria-selected', 'true');
   expect(problems).toEqual([]);
 });

@@ -102,8 +102,8 @@ The fields per kind:
 
 | kind | fields |
 |---|---|
-| `t2i` | `prompt*`, `image_model` (generate models), `negative_prompt`, `size` (the model's `sizes`), `n` 1-4, `quality` standard/fast/hd (Qwen only), `steps` 1-100, `guidance` 0-20, `seed`, `title`, `uncensored` (bool, Qwen), `quality_tags` (bool, VisionmasterPro_V3) |
-| `edit` | `prompt*`, `source_id*` (image asset), `image_model` (edit models), `edit_mode` (the model's `edit_modes`), `edit_quality` fast/quality (Qwen), `strength` 0-1 (kept only when the mode's `strength_applies`), `negative_prompt`, `mask`, `mask_source`, `mask_rects`, `steps` 1-50, `seed`, `title`, `uncensored` |
+| `t2i` | `prompt*`, `image_model` (generate models), `negative_prompt`, `size` (the model's `sizes`), `n` 1-4, `quality` standard/fast/hd (Qwen only), `steps` 1-100, `guidance` 0-20, `seed`, `title`, `uncensored` (bool, Qwen; **on** by default for generation), `quality_tags` (bool, VisionmasterPro_V3) |
+| `edit` | `prompt*`, `source_id*` (image asset), `image_model` (edit models), `edit_mode` (the model's `edit_modes`), `edit_quality` fast/quality (Qwen), `strength` 0-1 (kept only when the mode's `strength_applies`), `negative_prompt`, `mask`, `mask_source`, `mask_rects`, `steps` 1-50, `seed`, `title`, `uncensored` (bool, Qwen; **off** by default for edits and variations — the edit adapter is a Qwen-Image LoRA, not a 2511 one) |
 | `variation` | `source_id*` (image), `prompt` (optional), `strength` 0-1 (below 0.5 keeps the scene; higher re-imagines it), `seed`, `title` |
 | `t2v` | `prompt*`, `size` (video_sizes), `seconds` 0.5-10, `fps` 8-24, `seed`, `title` |
 | `i2v` | `prompt*`, `source_id*` (image), `size`, `seconds`, `fps`, `seed`, `title` |

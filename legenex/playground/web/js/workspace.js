@@ -28,10 +28,24 @@ export function createStage({ type, session, actions, emptyTitle, emptyText }) {
   const selected = () => session.results.find((a) => a.id === session.selectedId)
     || recent.find((a) => a.id === session.selectedId) || null;
 
+  // Anything that re-renders the viewer used to rebuild its <video>, so a user
+  // watching a clip was thrown back to 0 whenever a job card ticked or a
+  // favourite was toggled. The media wrapper is kept and re-attached in the
+  // same task when nothing about the media itself changed; a media element
+  // that leaves and re-enters the document synchronously is not paused.
+  let mediaKey = null;
+  let mediaEl = null;
+  const mediaKeyOf = (a) => [a.id, a.type, a.url, a.thumbnail_url || '', a.width || '', a.height || ''].join('|');
+
   function renderViewer() {
     const a = selected();
+    const key = a ? mediaKeyOf(a) : null;
+    const keep = key !== null && key === mediaKey && mediaEl ? mediaEl : null;
+    if (keep) keep.remove();
     clear(viewer);
     if (!a) {
+      mediaKey = null;
+      mediaEl = null;
       viewer.append(emptyState({ icon: type === 'video' ? 'film' : 'image', title: emptyTitle, text: emptyText }));
       viewer.classList.add('viewer-empty');
       return;
@@ -60,11 +74,13 @@ export function createStage({ type, session, actions, emptyTitle, emptyText }) {
       iconButton('info', 'Details and lineage', () => detailsDrawer(a), { attrs: { 'data-action': 'details' } }),
       iconButton('trash', 'Delete', async () => { await deleteWithConfirm(a); }, { attrs: { class: 'icon-btn icon-btn-ghost danger', 'data-action': 'delete' } }),
     ].filter(Boolean);
-    const media = type === 'image'
+    const mediaWrap = keep || h('div', { class: 'viewer-media' }, type === 'image'
       ? h('button', { type: 'button', class: 'viewer-media-btn', 'aria-label': `Open ${titleOf(a)} fullscreen`, onclick: () => lightbox([a], 0) }, mediaView(a))
-      : mediaView(a);
+      : mediaView(a));
+    mediaKey = key;
+    mediaEl = mediaWrap;
     append(viewer, [
-      h('div', { class: 'viewer-media' }, media),
+      mediaWrap,
       h('div', { class: 'viewer-bar' },
         h('div', { class: 'viewer-meta' },
           h('p', { class: 'viewer-title', id: 'viewer-title' }, titleOf(a)),

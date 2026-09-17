@@ -27,6 +27,7 @@ from gx_control_ui import server as srv  # noqa: E402
 
 from music_stub import MusicStub  # noqa: E402
 from voice_stub import VoiceStub  # noqa: E402  (Build V3 VOI: the real gx-voice API, stub engine)
+from live_stub import LiveStub  # noqa: E402  (Build V3 LIV: the real gx-live API, stub engine)
 from wan_router_stub import WanRouterStub  # noqa: E402
 
 GIB = 2**30
@@ -266,15 +267,19 @@ def main() -> int:
     music = MusicStub(music_key)
     voice_key = "v" * 44
     voice = VoiceStub(voice_key, seconds_per_char=0.03)
+    live = LiveStub()
     # Build V3 WAN: the real media-router code answers /v1/loras and /v1/videos
     # (fake ComfyUI, synthetic LoRA headers); image routes still hit the stub.
     media_key = "e2e-media-" + os.urandom(8).hex()
     wan_router = WanRouterStub(media_key, fallback_url=stub.url)
     env = TempEnv(litellm_base=stub.url, media_base=wan_router.url, port=port, music_base=music.url,
                   voice_base=voice.url,
+                  live_base=live.url, rt_live_target=f"127.0.0.1:{live.port}",
                   orchestrator_base=stub.url)
     env.cfg.music_key_file.write_text(music_key)
     env.cfg.voice_key_file.write_text(voice_key)
+    (env.cfg.secrets_root / "gx-live").mkdir(parents=True, exist_ok=True)
+    (env.cfg.secrets_root / "gx-live" / "api-key").write_text(live.key)
     auth.PasswordStore(env.cfg.password_file).set_password("admin", password, n=2**12)
     app, servers = srv.build(env.cfg)
     app.media.router._key = lambda: media_key
@@ -370,6 +375,7 @@ def main() -> int:
         stub.close()
         music.close()
         voice.close()
+        live.close()
         wan_router.close()
         env.cleanup()
     return 0

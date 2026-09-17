@@ -112,6 +112,14 @@ for (const [group, name, label] of NAV) {
     const body = page.locator(`#page-${name}`);
     await expect(body.locator('.skeleton')).toHaveCount(0, { timeout: 30_000 });
 
+    // The app's own error boundary. A page that threw while loading still has a
+    // heading and passes axe, so without this a broken page reads as healthy —
+    // which is exactly how "aiPanel is not defined" survived on Music.
+    const boundary = body.locator('.callout-danger .callout-title', { hasText: 'could not be loaded' });
+    const broken = await boundary.count()
+      ? (await body.locator('.callout-danger .callout-text').first().innerText()).trim()
+      : null;
+
     // A real page, not a placeholder.
     const text = (await body.innerText()).trim();
     const placeholder = /coming soon|not implemented|placeholder|lorem ipsum|TODO/i.test(text);
@@ -144,10 +152,12 @@ for (const [group, name, label] of NAV) {
       return s.outlineStyle !== 'none' || s.boxShadow !== 'none' || a.matches(':focus-visible');
     });
 
-    report.pages[name] = { chars: text.length, placeholder, unnamed, focusVisible, problems: [...problems] };
+    report.pages[name] = { chars: text.length, placeholder, unnamed, focusVisible, broken,
+      problems: [...problems] };
     await page.screenshot({ path: join(EVIDENCE, `page-${name}.png`), fullPage: true });
     save();
 
+    expect(broken, `${label}: the page threw while loading`).toBeNull();
     expect(text.length, `${label}: the page rendered almost nothing`).toBeGreaterThan(40);
     expect(placeholder, `${label}: placeholder text is shipped`).toBe(false);
     expect(unnamed, `${label}: controls without an accessible name`).toEqual([]);

@@ -154,10 +154,14 @@ speaks the answer. Tool activity is shown on the Live page and recorded
 
 * Audio and camera frames exist only in memory on gx10-02 for the current
   turn and are never written to disk or logs.
-* The session record (Control Center database) holds times, counts,
-  latencies, tool names and outcomes, and error codes. Transcripts are kept
-  only in the browser unless the user presses **Save transcript**, which
-  stores them as a Library text asset.
+* The session record (Control Center database, migration `060_live.sql`)
+  holds times, counts, latencies, per-turn timings, tool names, argument
+  **names** only, outcomes and error codes, plus which Library assets
+  `search_library` surfaced. Transcripts are kept only in the browser unless
+  the user presses **Save transcript**, which stores them in `live_transcripts`
+  (the Media Library holds image, video and audio assets only, so a transcript
+  is not a Library asset). A saved transcript is deleted by **Delete
+  conversation** and automatically 30 days after the session ends.
 * Metric lines never contain transcript, prompt, audio or image content
   (`gxcommon.metrics` drops those fields).
 
