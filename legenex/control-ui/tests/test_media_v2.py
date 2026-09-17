@@ -276,11 +276,8 @@ class MigrationTests(unittest.TestCase):
         self.assertEqual(lib.search()["total"], 2)
         self.assertEqual(lib.stats()["schema_version"], 2)
 
-    # Fixed (minor): MediaLibrary._migrate() updates `current` inside the loop, so
-    # a brand-new library (user_version 0) runs migration 1, then sees
-    # current == 1 and writes library.pre-v2.db, a "rollback point" of an empty
-    # database that never existed before.
-    @unittest.expectedFailure
+    # Fixed (minor): a brand-new library used to write library.pre-v2.db, a
+    # "rollback point" of an empty database that never existed before.
     def test_fresh_library_has_no_backup(self):
         env = TempEnv()
         try:
