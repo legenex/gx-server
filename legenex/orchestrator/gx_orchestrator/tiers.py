@@ -48,6 +48,9 @@ class TierSpec:
     #: client's `max_tokens` to this before forwarding (agent clients ask for
     #: their whole window on every turn).
     max_output: int = 8_192
+    #: Output room gx-auto requires before it selects this tier (D-039). A
+    #: reasoning model spends thousands of tokens thinking, so it needs more.
+    planning_output: int = 4_096
     notes: str = ""
 
 
@@ -63,6 +66,7 @@ TIERS: dict[Tier, TierSpec] = {
         tools=True,
         cost_rank=1,
         max_output=8_192,
+        planning_output=4_096,
         notes="HauhauCS/Qwen3.5-4B-Uncensored-HauhauCS-Aggressive Q4_K_M + BF16 mmproj on "
               "llama.cpp. Multimodal, resident.",
     ),
@@ -75,6 +79,7 @@ TIERS: dict[Tier, TierSpec] = {
         tools=True,
         cost_rank=2,
         max_output=32_768,
+        planning_output=8_192,
         notes="kyaky/Qwen3.6-35B-A3B-Uncensored-NVFP4 on vLLM. Primary coding/tool tier, warm.",
     ),
     Tier.REASON: TierSpec(
@@ -86,6 +91,7 @@ TIERS: dict[Tier, TierSpec] = {
         tools=True,
         cost_rank=3,
         max_output=32_768,
+        planning_output=16_384,
         notes="Single-node reasoning tier on node 2 (see node02.yaml for the bound checkpoint).",
     ),
     Tier.MAX: TierSpec(
@@ -97,6 +103,7 @@ TIERS: dict[Tier, TierSpec] = {
         exclusive_cluster=True,
         cost_rank=4,
         max_output=65_536,
+        planning_output=16_384,
         notes="dealignai/DeepSeek-V4-Flash-0731-CRACK-NVFP4 on SGLang TP=2 across both nodes.",
     ),
 }
