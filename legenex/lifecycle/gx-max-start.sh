@@ -24,6 +24,8 @@ source "${here}/resource-guard.sh"
 
 # shellcheck source=./gx-max-safety.sh
 source "${here}/gx-max-safety.sh"
+# shellcheck source=./node2-holds.sh
+source "${here}/node2-holds.sh"
 
 # gx-max admission is the CLUSTER-TAKEOVER policy (D-025), not the ordinary
 # `estimate + 30 GiB reserve` formula. The old formula compared the measured
@@ -52,7 +54,11 @@ FORCE_DRAIN="${GXMAX_FORCE_DRAIN:-0}"
 # control plane was never actually drained before a gx-max run -- it stayed
 # up and free to spawn a model into the memory gx-max was about to claim.
 CONFLICTS_N1=(gx-mini gx-fast gx-llama-swap-node01)
-CONFLICTS_N2=(gx-reason gx-comfyui gx-media-router gx-llama-swap-node02)
+#
+# NOTE 2026-09-17 (D-036): gx-music is FIRST. Its engine is normally unloaded
+# by its own supervisor once the gx-max hold is set (drain_node2 waits for and
+# verifies that); the entry here is only the backstop.
+CONFLICTS_N2=(gx-music gx-reason gx-comfyui gx-media-router gx-llama-swap-node02)
 
 # ------------------------------------------------------- FAILURE UNWIND ----
 # LAUNCHED tracks whether any rank has actually been started. Until then a
@@ -155,6 +161,15 @@ drain_node1() {
   done
 }
 drain_node2() {
+  # gx-max hold first: gx-music refuses new engine loads from this moment and
+  # queued music jobs wait with an explicit gx-max reason (D-036).
+  gx_n2_hold_set gxmax || die "could not set the gx-max hold on node2"
+  local music
+  if music="$(gx_music_drain_node2)"; then
+    log "  node2: ${music}"
+  else
+    die "node2 music engine drain NOT verified (${music}); refusing to start rank1"
+  fi
   for c in "${CONFLICTS_N2[@]}"; do
     n2 "if [ \"\$(docker inspect -f '{{.State.Running}}' $c 2>/dev/null || echo false)\" = true ]; then echo '  node2: stopping $c'; docker stop -t 60 $c >/dev/null || echo '  node2: WARN failed to stop $c'; fi"
   done

@@ -16,6 +16,8 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${here}/lib.sh"
 # shellcheck source=./resource-guard.sh
 source "${here}/resource-guard.sh"
+# shellcheck source=./node2-holds.sh
+source "${here}/node2-holds.sh"
 
 FORCE=0; GRACE=300; RESTORE=1
 while [ $# -gt 0 ]; do
@@ -69,6 +71,10 @@ n2 "docker stop -t 30 ${GXMAX_RANK1_NAME} >/dev/null 2>&1 || true; docker rm -f 
 # containers are gone.
 gx_guard_release node1 gx-max-rank0 || true
 gx_guard_release node2 gx-max-rank1 || true
+
+# The drain window is over: lift the gx-max hold on node 2 (D-036). gx-music
+# stays blocked while node 2's llama-swap is still stopped (--no-restore).
+gx_n2_hold_clear gxmax || log "WARN: could not clear the gx-max hold on node2"
 
 # Give the kernel a moment to actually reclaim the unified-memory allocations.
 sleep 5

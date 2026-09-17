@@ -39,6 +39,8 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${here}/lib.sh"
 # shellcheck source=./resource-guard.sh
 source "${here}/resource-guard.sh"
+# shellcheck source=./node2-holds.sh
+source "${here}/node2-holds.sh"
 
 REASON="unspecified"; RESTORE=1
 while [ $# -gt 0 ]; do
@@ -163,6 +165,9 @@ done
 # node2's own remote convention lock (see gx-max-start.sh)
 n2_retry "flock -x -w 5 \$HOME/.gx-guard/node2.lock true 2>/dev/null && echo free || echo held" >/dev/null 2>&1 \
   && ok "node2 remote convention lock checked" || warn "could not check node2's remote lock"
+
+# ------------------------------------------ 7b. lift the node2 gx-max hold --
+if gx_n2_hold_clear gxmax; then ok "node2 gx-max hold cleared"; else warn "could not clear the node2 gx-max hold (it expires after 20 min)"; fi
 
 # ---------------------------------- 8. restore node2 (and node1) services --
 if [ "${RESTORE}" -eq 1 ]; then

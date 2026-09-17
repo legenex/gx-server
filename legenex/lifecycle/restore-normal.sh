@@ -18,6 +18,8 @@ repo="$(cd "${here}/../.." && pwd)"
 gateway="${repo}/legenex/gateway"
 
 log() { printf '[%s] restore: %s\n' "$(date -Is)" "$*" >&2; }
+# shellcheck source=./node2-holds.sh
+source "${here}/node2-holds.sh"
 
 # ------------------------------------------------------------------- node 1 --
 if [ -f "${gateway}/docker-compose.gateway.yml" ] && [ -f "${gateway}/.env" ]; then
@@ -87,6 +89,17 @@ if ssh -o BatchMode=yes -o ConnectTimeout=10 legenex-02@gx10-02 \
   done
 else
   log "node-2 media compose not present; skipping"
+fi
+
+# ------------------------------------------------------------ node 2 music --
+# gx-max's drain set node2.gxmax-hold and unloaded the music engine. Lift the
+# hold, then make sure the light supervisor runs; it never preloads weights,
+# and queued music jobs resume on their own (D-036).
+gx_n2_hold_clear gxmax || log "WARN: could not clear the node-2 gx-max hold"
+if music_health="$(gx_music_supervisor_ensure)"; then
+  log "gx-music supervisor: ${music_health}"
+else
+  log "WARN: gx-music supervisor not healthy: ${music_health}"
 fi
 
 log "normal operating state restored"
