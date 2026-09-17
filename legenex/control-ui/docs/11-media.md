@@ -105,7 +105,7 @@ queued video that waits for memory also has `phase: "waiting"` and a
 * **gx-music:** an idle music engine is unloaded automatically to make room,
   unless it is pinned or the Music profile is active.
 * **gx-reason:** it uses about 44 GiB, so while it is loaded neither video
-  nor images fit. They wait until it idles out (15 minutes) or you unload it
+  nor images fit. They wait until it idles out (20 minutes) or you unload it
   in Resource Control.
 * **Keyframe video edits are refused** (HTTP 422 `exceeds_node_reserve`,
   137 GiB would be needed). Use a strength below 0.5 (the restyle edit)

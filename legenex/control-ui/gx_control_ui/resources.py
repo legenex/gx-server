@@ -729,7 +729,7 @@ class ResourceController:
             if first in snap["pins"]:
                 nxt = f"{first} is pinned; unpin or unload it in Resource Control"
             elif profile == "text" and first == "gx-reason":
-                nxt = "Text profile keeps gx-reason loaded; it unloads after 15 minutes idle"
+                nxt = "Text profile keeps gx-reason loaded; it unloads after 20 minutes idle"
             elif busy:
                 nxt = f"{', '.join(busy)} is working; the scheduler waits for it"
             elif profile == "music" and first == "gx-music":

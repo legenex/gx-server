@@ -191,7 +191,8 @@ def text_live(alias: str, svc: dict, now: float | None = None) -> dict:
     """
     now = now or time.time()
     probe = svc.get("text_status") or {}
-    body = probe.get("body") if probe.get("ok") and isinstance(probe.get("body"), dict) else {}
+    raw = probe.get("body")
+    body: dict = raw if probe.get("ok") and isinstance(raw, dict) else {}
     entry = dict((body.get("aliases") or {}).get(alias) or {})
     gw = svc.get("gateway_text") or {}
     gw_last = (gw.get("by_alias") or {}).get(alias)

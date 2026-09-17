@@ -64,7 +64,7 @@ address appears in any config in this directory.
 |---|---|---|---|
 | `gx-mini` | `http://gx-llama-swap-node01:8080/v1` | llama.cpp, node 1 | Qwen3.5-4B-Q4_K_M + BF16 mmproj. Multimodal (vision is a capability of this model — there is no `gx-vision` alias). Resident, `ttl: 0`, always hot. |
 | `gx-fast` | `http://gx-llama-swap-node01:8080/v1` | vLLM, node 1 | ~30–40B MoE, agentic. **Checkpoint pending.** Unloads after 30 min idle. |
-| `gx-reason` | `http://192.168.100.11:28080/v1` | vLLM, node 2 | ~100–125B sparse MoE. **Checkpoint pending.** Unloads after 15 min idle. |
+| `gx-reason` | `http://192.168.100.11:28080/v1` | vLLM, node 2 | `nvidia/Qwen3.6-27B-NVFP4` (interim, B-025). Unloads after 20 min idle (D-039). |
 | `gx-max` | `http://host.docker.internal:18900/v1` | SGLang TP=2, **both** nodes | Routed through the lead's orchestrator so acquisition/drain is enforced. **Never** pointed at `:30000`. **No fallbacks.** |
 | `gx-auto` | `http://host.docker.internal:18900/v1` | orchestrator | Tier selection is the lead's logic. This gateway is a pass-through. |
 | `gx-image` | `http://192.168.100.11:18800/v1` | ComfyUI, node 2 | **Upstream pending.** |

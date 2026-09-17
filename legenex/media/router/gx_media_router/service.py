@@ -399,7 +399,7 @@ class MediaService:
         else:
             blocker = "another gx10-02 tenant (gx-reason)" + (" and gx-music" if music_holds else "")
             reason = f"Waiting for enough gx10-02 memory (held by {blocker}): {numbers}"
-            nxt = ("retries automatically; gx-reason unloads after 15 minutes idle, or unload it in Resource "
+            nxt = ("retries automatically; gx-reason unloads after 20 minutes idle, or unload it in Resource "
                    "Control")
         return {"ok": ok, "reason": reason, "details": {
             "required_gib": round(required, 1), "available_gib": round(avail, 1), "reserve_gib": reserve,

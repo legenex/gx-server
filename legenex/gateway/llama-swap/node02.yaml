@@ -227,8 +227,11 @@ models:
   # gx-fast for tool calls; qwen3 reasoning parser extracts <think> content
   # into reasoning_content instead of burning the output budget on it.
   #
-  # ttl: 900 -> 15 min idle then unload. Node 2 must be able to hand its
-  # memory back to gx-max / ComfyUI quickly.
+  # ttl: 1200 -> 20 min idle then unload (D-039). A cold start costs ~6 min
+  # and a reasoning answer several more, so 15 min made follow-up questions
+  # pay the load again. The TTL stays well inside the media router's 30-min
+  # resource wait (GX_MEDIA_RESOURCE_WAIT): a queued image/video job waits at
+  # most ~21 min for gx-reason to unload and never times out on it.
   gx-reason:
     name: "gx-reason"
     description: >
@@ -238,7 +241,7 @@ models:
       GGUF/llama.cpp tier (B-011).
     proxy: "http://127.0.0.1:25800"
     checkEndpoint: /health
-    ttl: 900
+    ttl: 1200
     unloadTimeout: 180
     # The first line refuses a start while gx10-02 is in Maintenance mode
     # (D-037: the Control Center's hold file, mounted read-only at /srv/guard).

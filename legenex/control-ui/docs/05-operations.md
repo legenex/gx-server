@@ -6,7 +6,7 @@
 |---|---|---|---|
 | `gx-mini` | llama-swap starts it (seconds) | llama-swap stops it | resident; reloads on the next request |
 | `gx-fast` | llama-swap starts vLLM on gx10-01 | llama-swap stops it | loads on demand; unloads after 30 min idle |
-| `gx-reason` | llama-swap starts vLLM on gx10-02 | llama-swap stops it | loads on demand; unloads after 15 min idle |
+| `gx-reason` | llama-swap starts vLLM on gx10-02 | llama-swap stops it | loads on demand; unloads after 20 min idle (D-039) |
 | `gx-max` | orchestrator **acquire** (two-node takeover) | orchestrator **graceful release** | acquires on a direct request; releases after 30 min idle |
 | `gx-image` / `gx-video` | — (first generation loads) | ComfyUI frees image **and** video weights | weights stay warm until freed |
 | `gx-auto` | — | — | routing only |
