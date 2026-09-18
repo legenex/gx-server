@@ -17,6 +17,7 @@ Port values (JSON, persisted in run state and the cache)::
 
 from __future__ import annotations
 
+import base64
 import json
 import re
 import shutil
@@ -37,6 +38,8 @@ from .services import Cancelled, NodeFailure, Services, parse_json_answer
 
 VAR_RE = re.compile(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}")
 MAX_TEXT = 20000
+#: inline image ceiling for a vision call (the gateway rejects more)
+MAX_IMAGE_BYTES = 12_000_000
 PREVIEW = 4000
 
 
@@ -587,6 +590,44 @@ def _ai_llm(ctx: NodeContext) -> NodeResult:
                            max_tokens=int(ctx.config.get("max_tokens", 1024)))
     return NodeResult({"text": [text_value(text[:MAX_TEXT])]}, model=_llm_model_label(meta), meta=meta,
                       payload={"model": model, "messages": _short_messages(messages)})
+
+
+@executor("ai.vision")
+def _ai_vision(ctx: NodeContext) -> NodeResult:
+    """An image on a text input: read the picture, hand the answer on as text.
+
+    This is the one conversion the catalogue could not do before, so an image
+    could never reach an LLM or a prompt. The image is sent inline to a
+    vision-capable alias through the same gateway every other text node uses.
+    """
+    row = ctx.asset_row(ctx.one("image", "image") or {}, "image")
+    path = ctx.services.library.file_path(row)
+    data = Path(path).read_bytes()
+    if len(data) > MAX_IMAGE_BYTES:
+        raise NodeFailure(f"{ctx.label}: the image is {len(data) // 1_000_000} MB; "
+                          f"the gateway accepts up to {MAX_IMAGE_BYTES // 1_000_000} MB",
+                          code="payload_too_large")
+    mime = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "webp": "image/webp"}.get(
+        str(row.get("ext") or "").lower(), "image/png")
+    instruction = ctx.render(str(ctx.config.get("instruction") or "")).strip() \
+        or "Describe this image in detail: the subject, the setting, the lighting and the mood."
+    extra = "\n\n".join(t for t in ctx.texts("context") if t.strip())
+    if extra:
+        instruction = f"{instruction}\n\n{extra}"
+    messages = [{"role": "user", "content": [
+        {"type": "text", "text": instruction[:8000]},
+        {"type": "image_url",
+         "image_url": {"url": "data:" + mime + ";base64," + base64.b64encode(data).decode()}},
+    ]}]
+    # gx-fast is the default because it is resident and vision-capable; gx-auto
+    # cannot be used blind here, since it may route to a text-only tier.
+    model = str(ctx.config.get("model") or "gx-fast")
+    text, meta = _llm_call(ctx, model, messages,
+                           temperature=float(ctx.config.get("temperature", 0.7)),
+                           max_tokens=int(ctx.config.get("max_tokens", 512)))
+    return NodeResult({"text": [text_value(text[:MAX_TEXT])]}, model=_llm_model_label(meta), meta=meta,
+                      payload={"model": model, "image_asset": row["id"],
+                               "instruction": instruction[:PREVIEW]})
 
 
 def _short_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
