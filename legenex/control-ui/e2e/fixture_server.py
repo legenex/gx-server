@@ -275,6 +275,13 @@ def main() -> int:
     env = TempEnv(litellm_base=stub.url, media_base=wan_router.url, port=port, music_base=music.url,
                   voice_base=voice.url,
                   live_base=live.url, rt_live_target=f"127.0.0.1:{live.port}",
+                  # There is no gx-call stub, and the config default is the REAL
+                  # supervisor on gx10-02. An offline fixture must never reach the
+                  # live cluster: before gx-call existed that only looked harmless
+                  # because node 2 never answered, and the moment it did the
+                  # engine-banner test started depending on cluster state. Point it
+                  # at a closed loopback port so "not answering" is deterministic.
+                  call_base="http://127.0.0.1:1", rt_call_target="127.0.0.1:1",
                   orchestrator_base=stub.url)
     env.cfg.music_key_file.write_text(music_key)
     env.cfg.voice_key_file.parent.mkdir(parents=True, exist_ok=True)
