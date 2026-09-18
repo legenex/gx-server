@@ -194,7 +194,7 @@ class AgentTests(unittest.TestCase):
         prompt = ca.compile_prompt(cfg)
         self.assertTrue(prompt.isascii())
         self.assertIn("legal advice", prompt.lower())
-        self.assertNotIn("guarantee", prompt.lower())
+        self.assertIn("do not guarantee eligibility", prompt.lower())
         tools = ca.compile_tools(cfg)
         self.assertIn("update_intake_fields", [t["name"] for t in tools])
         self.assertLessEqual(len(tools), ca.MAX_TOOLS_PER_AGENT)
