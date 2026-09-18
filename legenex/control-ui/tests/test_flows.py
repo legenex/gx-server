@@ -248,7 +248,8 @@ class TemplateTests(unittest.TestCase):
             for n in clean["nodes"]:
                 self.assertTrue(cat.NODES[n["type"]].available, (tpl["id"], n["type"]))
         self.assertEqual(ids, {"builtin_mva_video_ad", "builtin_talking_character", "builtin_social_ad_pack",
-                               "builtin_voiceover", "builtin_music_video"})
+                               "builtin_voiceover", "builtin_music_video",
+                               "builtin_image_voiceover", "builtin_ai_campaign"})
 
     def test_template_voices_are_real_presets(self) -> None:
         import sys

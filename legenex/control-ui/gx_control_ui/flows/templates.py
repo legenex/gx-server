@@ -220,12 +220,130 @@ def _music_video() -> dict[str, Any]:
         ])
 
 
+def _image_voiceover() -> dict[str, Any]:
+    """The worked example for the adapter layer: a picture becomes a narrated clip.
+
+    It exercises the three conversions a real creative flow needs -- image to
+    text (Describe Image), text to structured (JSON output) and structured back
+    to text (Select) -- plus a fan-out from one image to two consumers and a
+    fan-in of video + audio.
+    """
+    return _graph(
+        "Image to Voiceover Video",
+        "A picture and a one-line idea become a short narrated video: the image is read by a vision model, "
+        "an LLM writes both the motion prompt and the narration, then the clip and the voice are muxed.",
+        [
+            ("photo", "image.generate", "Source image", {
+                "prompt": ("A ceramic coffee cup steaming on a wooden desk beside a notebook, morning window "
+                           "light, shallow depth of field, photorealistic"),
+                "size": "1024x1024", "quality": "standard"}),
+            ("look", "ai.vision", "Describe Image", {
+                "model": "gx-fast", "max_tokens": 300,
+                "instruction": "Describe this image in two sentences: the subject, the setting and the mood."}),
+            ("idea", "text.input", "Your idea", {
+                "text": "A calm 5-second advert for a slow-morning coffee brand."}),
+            ("plan", "ai.structured", "Plan the shot", {
+                "model": "gx-auto",
+                "instruction": ("Using the image description and the idea, write a short motion prompt for an "
+                                "image-to-video model and one sentence of narration to be spoken aloud. "
+                                "The narration must be under 20 words."),
+                "schema": [{"key": "video_prompt", "value": "string"},
+                           {"key": "voiceover", "value": "string"}]}),
+            ("vp", "util.select", "Motion prompt", {"path": "video_prompt"}),
+            ("vo", "util.select", "Narration", {"path": "voiceover"}),
+            ("clip", "video.i2v", "Animate the image", {"size": "480x832", "seconds": 5, "fps": 16}),
+            ("say", "voice.tts", "Narration voice", {
+                "voice_id": FEMALE_VOICE, "style": "warm, calm, unhurried", "language": "english"}),
+            ("mux", "compose.add_voice", "Add the narration", {"volume_db": 0, "fit": "longest"}),
+            ("final", "compose.export", "Final video", {"preset": "1080x1920", "quality": "standard"}),
+        ],
+        [
+            # the image fans out: it is both described and animated
+            ("photo", "image", "look", "image"),
+            ("photo", "image", "clip", "image"),
+            ("look", "text", "plan", "text"),
+            ("idea", "text", "plan", "text"),
+            # one structured answer fans out into two different branches
+            ("plan", "json", "vp", "json"),
+            ("plan", "json", "vo", "json"),
+            ("vp", "text", "clip", "prompt"),
+            ("vo", "text", "say", "text"),
+            # video and audio fan in
+            ("clip", "video", "mux", "video"),
+            ("say", "audio", "mux", "audio"),
+            ("mux", "video", "final", "video"),
+        ])
+
+
+def _campaign() -> dict[str, Any]:
+    """The advanced worked example: three generators, then two levels of fan-in."""
+    return _graph(
+        "AI Creative Campaign",
+        "A product shot and a campaign brief become a finished spot: vision analysis feeds a structured "
+        "creative plan, which drives video, voice-over and music in parallel, mixed and muxed into one video.",
+        [
+            ("shot", "image.generate", "Product shot", {
+                "prompt": ("A matte-black insulated water bottle standing on a mossy rock beside a mountain "
+                           "stream, soft overcast light, photorealistic product photography"),
+                "size": "1024x1024", "quality": "standard"}),
+            ("look", "ai.vision", "Analyse the shot", {
+                "model": "gx-fast", "max_tokens": 350,
+                "instruction": ("Describe this product and its setting for a creative team: what the product is, "
+                                "the environment, the lighting and the feeling it gives.")}),
+            ("brief", "text.input", "Campaign brief", {
+                "text": ("Launch spot for an outdoor water bottle. Audience: weekend hikers. "
+                         "Tone: calm, capable, unpretentious. One clear line about keeping water cold all day.")}),
+            ("plan", "ai.structured", "Creative plan", {
+                "model": "gx-auto",
+                "instruction": ("From the product analysis and the brief, write the creative plan. "
+                                "video_prompt: camera motion for an image-to-video model. "
+                                "voice_script: one spoken sentence under 20 words. "
+                                "music_prompt: a short description of the backing track."),
+                "schema": [{"key": "video_prompt", "value": "string"},
+                           {"key": "voice_script", "value": "string"},
+                           {"key": "music_prompt", "value": "string"}]}),
+            ("vp", "util.select", "Video prompt", {"path": "video_prompt"}),
+            ("vs", "util.select", "Voice script", {"path": "voice_script"}),
+            ("mp", "util.select", "Music prompt", {"path": "music_prompt"}),
+            ("clip", "video.i2v", "Generate video", {"size": "480x832", "seconds": 5, "fps": 16}),
+            ("say", "voice.tts", "Generate voice", {
+                "voice_id": MALE_VOICE, "style": "calm, grounded, unhurried", "language": "english"}),
+            ("track", "music.prompt", "Generate music", {
+                "style_tags": ["ambient", "acoustic", "calm"], "duration": 15, "instrumental": True}),
+            ("mix", "compose.mix_audio", "Mix voice and music", {"length": "longest", "volume_db": -14}),
+            ("mux", "compose.add_voice", "Add the mixed audio", {"volume_db": 0, "fit": "longest"}),
+            ("final", "compose.export", "Campaign video", {"preset": "1080x1920", "quality": "standard"}),
+        ],
+        [
+            ("shot", "image", "look", "image"),
+            ("shot", "image", "clip", "image"),
+            ("look", "text", "plan", "text"),
+            ("brief", "text", "plan", "text"),
+            # one plan fans out into three independent generator branches
+            ("plan", "json", "vp", "json"),
+            ("plan", "json", "vs", "json"),
+            ("plan", "json", "mp", "json"),
+            ("vp", "text", "clip", "prompt"),
+            ("vs", "text", "say", "text"),
+            ("mp", "text", "track", "prompt"),
+            # first fan-in: two audio sources into one mixer
+            ("say", "audio", "mix", "audio"),
+            ("track", "audio", "mix", "audio"),
+            # second fan-in: video + the mixed audio
+            ("clip", "video", "mux", "video"),
+            ("mix", "audio", "mux", "audio"),
+            ("mux", "video", "final", "video"),
+        ])
+
+
 BUILTINS: dict[str, tuple[str, str, Any]] = {
     "builtin_mva_video_ad": ("MVA video ad", "ads", _mva),
     "builtin_talking_character": ("Talking character ad", "ads", _talking),
     "builtin_social_ad_pack": ("Social ad pack", "ads", _social),
     "builtin_voiceover": ("Voiceover", "audio", _voiceover),
     "builtin_music_video": ("Music video", "music", _music_video),
+    "builtin_image_voiceover": ("Image to Voiceover Video", "video", _image_voiceover),
+    "builtin_ai_campaign": ("AI Creative Campaign", "ads", _campaign),
 }
 
 

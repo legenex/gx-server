@@ -428,7 +428,7 @@ class RouteTests(FlowBase):
         status, opts = self.req("GET", "/api/flows/options")
         self.assertIn("visionmaster-pro-v3", {m["id"] for m in opts["image_models"]})
         status, tpls = self.req("GET", "/api/flows/templates")
-        self.assertEqual(len([t for t in tpls["templates"] if t["builtin"]]), 5)
+        self.assertEqual(len([t for t in tpls["templates"] if t["builtin"]]), 7)
         status, flow = self.post("/api/flows", {"template_id": "builtin_talking_character", "name": "Mine"})
         self.assertEqual((status, flow["graph"]["name"]), (201, "Mine"))
         bad = json.loads(json.dumps(flow["graph"]))
