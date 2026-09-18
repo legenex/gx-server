@@ -120,7 +120,7 @@ def load() -> Config:
         backbone_revision=_env("GX_CALL_BACKBONE_REVISION", "6533e8de2c68e4536bf7c411d7a3ce5734111476"),
         runtime_repo="https://github.com/NVIDIA-NeMo/Speech (branch nemotron-labs-voicechat)",
         runtime_ref=_env("GX_CALL_RUNTIME_REF", "097dfe9e2f55baf653b83035868bdc89849f1b47"),
-        image=_env("GX_CALL_IMAGE", "gx-call-engine:voicechat-097dfe9-t214"),
+        image=_env("GX_CALL_IMAGE", "gx-call-engine:voicechat-097dfe9-t215"),
         voice=_env("GX_CALL_VOICE", "Aria"),
     )
     return Config(
