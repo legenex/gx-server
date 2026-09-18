@@ -71,7 +71,23 @@ export function portOf(nt: NodeTypeSpec | undefined, id: string, dir: 'in' | 'ou
   return (dir === 'in' ? nt?.inputs : nt?.outputs)?.find((p) => p.id === id);
 }
 
-export interface EdgeCheck { ok: boolean; reason: string }
+export interface EdgeCheck {
+  ok: boolean;
+  reason: string;
+  /** The edge already exists: the request is satisfied, so nothing is added and
+   *  nothing is reported. Asking twice for the same connection is not an error. */
+  duplicate?: boolean;
+}
+
+/** A catalogue node that turns `from` into any of `to`, or null when none exists. */
+export function conversionNode(cat: CatalogIndex, from: string, to: readonly string[]): string | null {
+  for (const node of cat.values()) {
+    const takes = node.inputs.some((p) => p.types.includes(from as never));
+    const gives = node.outputs.some((p) => p.types.some((t) => to.includes(t)));
+    if (takes && gives) return node.label || node.type;
+  }
+  return null;
+}
 
 /** Can source:sourcePort connect to target:targetPort? */
 export function checkConnection(doc: Pick<FlowDoc, 'nodes' | 'edges'>, cat: CatalogIndex, source: string,
@@ -84,17 +100,27 @@ export function checkConnection(doc: Pick<FlowDoc, 'nodes' | 'edges'>, cat: Cata
   const tPort = portOf(cat.get(dst.type), targetPort, 'in');
   if (!sPort || !tPort) return { ok: false, reason: 'Unknown port.' };
   const edges = doc.edges.filter((e) => e.id !== replacing);
+  // An exact duplicate is idempotent, not a failure: the end state the user asked
+  // for already holds. Rejecting it made isValidConnection() paint the handle
+  // invalid and raised a toast on every stray click-to-connect.
   if (edges.some((e) => e.source === source && e.source_port === sourcePort && e.target === target
     && e.target_port === targetPort)) {
-    return { ok: false, reason: 'These ports are already connected.' };
+    return { ok: true, reason: '', duplicate: true };
   }
   if (!tPort.multiple && edges.some((e) => e.target === target && e.target_port === targetPort)) {
     return { ok: false, reason: `"${tPort.label}" takes a single connection. Remove the existing one first.` };
   }
   const type = resolveTypes({ nodes: doc.nodes, edges }, cat).get(`${source}:${sourcePort}`) ?? null;
   if (type !== null && !tPort.types.includes(type as never)) {
-    return { ok: false, reason: `${tPort.label} accepts ${tPort.types.join(' or ')}, not ${type}. `
-      + 'Add a conversion node in between.' };
+    // Only advise a conversion when one actually exists. Telling someone to "add a
+    // conversion node" for image -> text, which nothing in the catalogue can do,
+    // sends them looking for a node that was never built.
+    const via = conversionNode(cat, type, tPort.types);
+    return {
+      ok: false,
+      reason: `${tPort.label} accepts ${tPort.types.join(' or ')}, not ${type}.`
+        + (via ? ` Add a "${via}" node in between.` : ''),
+    };
   }
   if (wouldCycle({ nodes: doc.nodes, edges }, source, target)) {
     return { ok: false, reason: 'That connection would create a loop; flows must be acyclic.' };
@@ -117,7 +143,8 @@ export function connectOptions(doc: FlowDoc, cat: CatalogIndex, source: string):
     for (const dst of doc.nodes) {
       const dnt = cat.get(dst.type);
       for (const tp of dnt?.inputs ?? []) {
-        if (!checkConnection(doc, cat, source, sp.id, dst.id, tp.id).ok) continue;
+        const check = checkConnection(doc, cat, source, sp.id, dst.id, tp.id);
+        if (!check.ok || check.duplicate) continue;
         out.push({ source, sourcePort: sp.id, target: dst.id, targetPort: tp.id, type: types.get(`${source}:${sp.id}`) ?? null,
           label: `${sp.label} → ${nodeName(dst, cat)}: ${tp.label}` });
       }

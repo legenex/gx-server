@@ -5,11 +5,14 @@ let csrf = null;
 const unauthListeners = new Set();
 
 export class ApiError extends Error {
-  constructor(status, message, code) {
+  constructor(status, message, code, issues) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
     this.code = code;
+    // Per-node/per-edge detail from a 422. Without this the Flows editor can
+    // only say "something was refused" and never which node to look at.
+    this.issues = Array.isArray(issues) ? issues : [];
   }
 }
 
@@ -55,7 +58,7 @@ export async function request(method, path, body, { signal, timeout = TIMEOUT_MS
   if (!res.ok) {
     const e = data && data.error;
     const msg = e && typeof e === 'object' ? e.message : (typeof e === 'string' ? e : `Request failed (HTTP ${res.status})`);
-    throw new ApiError(res.status, msg, e && e.code ? e.code : 'http');
+    throw new ApiError(res.status, msg, e && e.code ? e.code : 'http', e && e.issues);
   }
   return data;
 }

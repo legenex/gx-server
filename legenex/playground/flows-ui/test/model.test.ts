@@ -50,6 +50,51 @@ describe('graph rules', () => {
     expect(checkConnection(d, cat, 't', 'nope', 'g', 'prompt').reason).toBe('Unknown port.');
   });
 
+  it('treats an exact duplicate connection as an idempotent no-op', () => {
+    // Asking twice for a connection that already exists is not a failure: the
+    // end state the user wanted already holds. Rejecting it made every stray
+    // click-to-connect raise an error toast.
+    const d = doc();
+    d.edges.push({ id: 'e1', source: 't', source_port: 'text', target: 'g', target_port: 'prompt' });
+    const again = checkConnection(d, cat, 't', 'text', 'g', 'prompt');
+    expect(again.ok).toBe(true);
+    expect(again.duplicate).toBe(true);
+    expect(again.reason).toBe('');
+
+    const store = new EditorStore(cat, d);
+    const before = store.doc.edges.length;
+    const result = store.connect('t', 'text', 'g', 'prompt');
+    expect(result.ok).toBe(true);
+    expect(store.doc.edges.length).toBe(before);
+  });
+
+  it('fans one output out to several targets', () => {
+    // One source port feeding many downstream nodes must never be blocked.
+    const d = doc();
+    d.nodes.push({ id: 'g2', type: 'image.generate', label: '', notes: '', position: { x: 300, y: 300 },
+      config: {}, disabled: false, locked: false });
+    const store = new EditorStore(cat, d);
+    expect(store.connect('t', 'text', 'g', 'prompt').ok).toBe(true);
+    expect(store.connect('t', 'text', 'g2', 'prompt').ok).toBe(true);
+    const fromT = store.doc.edges.filter((e) => e.source === 't' && e.source_port === 'text');
+    expect(fromT.length).toBe(2);
+  });
+
+  it('only advises a conversion node when one actually exists', () => {
+    const d = doc();
+    // image -> text has no conversion in the catalogue, so no advice is given.
+    const noPath = checkConnection(d, cat, 'g', 'image', 'g', 'prompt');
+    expect(noPath.ok).toBe(false);
+    expect(noPath.reason).not.toContain('Add a');
+  });
+
+  it('does not offer a duplicate as a keyboard connection option', () => {
+    const d = doc();
+    d.edges.push({ id: 'e1', source: 't', source_port: 'text', target: 'g', target_port: 'prompt' });
+    const options = connectOptions(d, cat, 't');
+    expect(options.every((o) => !(o.target === 'g' && o.targetPort === 'prompt'))).toBe(true);
+  });
+
   it('resolves pass-through types through utility nodes', () => {
     const d = doc();
     d.edges.push({ id: 'e1', source: 'a', source_port: 'audio', target: 'd', target_port: 'value' });

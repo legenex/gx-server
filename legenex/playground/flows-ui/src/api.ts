@@ -25,13 +25,17 @@ const isFlow = (v: Json) => typeof v.id === 'string' && typeof v.version === 'nu
   && Array.isArray(v.graph.nodes) && Array.isArray(v.graph.edges);
 const isRun = (v: Json) => typeof v.id === 'string' && typeof v.status === 'string';
 
-export interface ApiErrorLike { status?: number; code?: string; message?: string; detail?: { issues?: Issue[] } }
+export interface ApiErrorLike {
+  status?: number; code?: string; message?: string;
+  /** The host's ApiError carries these directly; `detail` is the older shape. */
+  issues?: Issue[]; detail?: { issues?: Issue[] };
+}
 
 export function toHttpError(err: unknown): HttpError {
   if (err instanceof HttpError) return err;
   const e = (isObj(err) ? err : {}) as ApiErrorLike;
   const message = typeof e.message === 'string' ? e.message : String(err);
-  return new HttpError(e.status ?? 0, message, e.code ?? 'error', e.detail?.issues ?? []);
+  return new HttpError(e.status ?? 0, message, e.code ?? 'error', e.issues ?? e.detail?.issues ?? []);
 }
 
 export class FlowsApi {

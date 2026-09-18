@@ -334,11 +334,21 @@ class EngineTests(FlowBase):
         self.assertEqual(st["after"], "reused")
         self.assertEqual(st["yes"], "succeeded")
         self.assertEqual(st["no"], "skipped")
-        # an unfinished flow is refused before anything starts
+        # A disconnected, unfinished scratch node does NOT block the branches that
+        # are ready: it is dropped from the run and reported as skipped.
         g["nodes"].append(n("empty", "video.i2v"))
         flow = self.flows.update(flow["id"], {"graph": g, "version": flow["version"]}, owner=None, user="admin")
+        started = self.flows.run(flow["id"], {"mode": "full"}, owner=None, run_owner="ui", user="admin")
+        self.assertEqual([i["node_id"] for i in started["skipped"]], ["empty"])
+        self.flows.engine.wait(started["id"], 20)
+        done = self.flows.run_state(started["id"], owner=None)
+        self.assertNotIn("empty", done["nodes"], "the unfinished node is not part of the run")
+        self.assertEqual(done["status"], "succeeded")
+        # ...but a flow with nothing runnable at all is still refused up front.
+        only_empty = {"name": "Scratch", "nodes": [n("empty", "video.i2v")], "edges": []}
+        scratch = self.create(only_empty)
         with self.assertRaises(Exception) as cm:
-            self.flows.run(flow["id"], {"mode": "full"}, owner=None, run_owner="ui", user="admin")
+            self.flows.run(scratch["id"], {"mode": "full"}, owner=None, run_owner="ui", user="admin")
         self.assertEqual(cm.exception.code, "not_ready")  # type: ignore[attr-defined]
         self.assertEqual(cm.exception.issues[0]["node_id"], "empty")  # type: ignore[attr-defined]
         run = self.execute(flow, "node", node_id="no")

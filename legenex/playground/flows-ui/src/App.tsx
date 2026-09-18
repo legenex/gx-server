@@ -249,12 +249,18 @@ function EditorShell({ record, onClose, onOpenFlow }: EditorProps) {
 
   const [store] = useState(() => new EditorStore(cat, record.graph));
   const state = useEditorState(store);
+  // Server-reported REFUSALS only. record.readiness is a list of "what is still
+  // unfinished" hints, which the server happily saves; seeding them here made
+  // every half-built flow open under a red "refused" alert that nothing cleared.
+  const [serverIssues, setServerIssues] = useState<Issue[]>([]);
   const [saver] = useState(() => new Autosaver({
     store,
     flowId: record.id,
     version: record.version,
     save: (doc: FlowDoc, version: number) => api.save(record.id, doc, version),
     storage,
+    // A save that succeeded means the graph was accepted; drop any earlier refusal.
+    onSaved: () => { setServerIssues([]); },
   }));
   const [status, setStatus] = useState<SaveStatus>(saver.status);
   const [run, setRun] = useState<FlowRun | null>(record.last_run);
@@ -268,7 +274,6 @@ function EditorShell({ record, onClose, onOpenFlow }: EditorProps) {
     const kept = readDraft(safeStorage(), record.id);
     return kept && kept.savedAt > record.updated_at * 1000 + 1000 ? kept : null;
   });
-  const [serverIssues, setServerIssues] = useState<Issue[]>(record.readiness);
   const rootRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
   const issuesId = useId();
@@ -596,7 +601,11 @@ function EditorShell({ record, onClose, onOpenFlow }: EditorProps) {
 
         {status.issues.length || serverIssues.length ? (
           <div className="callout callout-danger gxf-banner" role="alert">
-            <strong>The server refused this graph</strong>
+            <strong>
+              {(status.issues.length + serverIssues.length) === 1
+                ? '1 node needs attention'
+                : `${status.issues.length + serverIssues.length} nodes need attention`}
+            </strong>
             <ul>{[...status.issues, ...serverIssues].map((i) => <li key={`${i.code}-${i.message}`}>{i.message}</li>)}</ul>
           </div>
         ) : null}

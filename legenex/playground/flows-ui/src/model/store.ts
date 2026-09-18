@@ -282,6 +282,9 @@ export class EditorStore {
   connect(source: string, sourcePort: string, target: string, targetPort: string): EdgeCheck {
     const check = checkConnection(this.state.doc, this.cat, source, sourcePort, target, targetPort);
     if (!check.ok) return check;
+    // Idempotent: the edge is already there, so there is nothing to add and no
+    // undo step to record.
+    if (check.duplicate) return check;
     const edge: FlowEdge = { id: newId('e', this.state.doc.edges.map((e) => e.id)), source, source_port: sourcePort,
       target, target_port: targetPort };
     this.change((d) => { d.edges.push(edge); });

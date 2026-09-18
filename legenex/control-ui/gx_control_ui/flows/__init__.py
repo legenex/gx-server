@@ -22,6 +22,7 @@ from typing import Any
 from . import ai as ai_mod
 from . import catalog as cat
 from .engine import FAILED_STATES, FlowEngine, plan_for
+from .graph import Graph
 from .schema import FlowValidationError, readiness, validate_document
 from .services import NodeFailure, Services
 from .store import FlowError, FlowStore
@@ -311,6 +312,24 @@ class FlowService:
         if not graph["nodes"]:
             raise FlowError("the flow is empty; add nodes first")
         issues = readiness(graph, only=members)
+        # A whole-canvas run is scoped to the branches that can actually run. An
+        # unfinished scratch node off to one side used to make "Run flow" refuse
+        # the entire canvas, including branches that were complete and unrelated
+        # to it. Drop the unready nodes and everything downstream of them, and
+        # run the rest; only refuse when nothing is left.
+        skipped: list[dict[str, Any]] = []
+        if issues and mode == "full":
+            g = Graph(list(members), [(e["source"], e["target"]) for e in graph["edges"]
+                                      if e["source"] in members and e["target"] in members])
+            drop: set[str] = set()
+            for issue in issues:
+                nid = issue.get("node_id")
+                if nid in members:
+                    drop |= {nid} | g.downstream(nid)
+            remaining = members - drop
+            if remaining:
+                members, skipped = remaining, issues
+                issues = readiness(graph, only=members)
         if issues:
             raise FlowError(f"the flow is not ready to run: {issues[0]['message']}", 422, "not_ready", issues)
         live = self.live_unavailable()
@@ -332,8 +351,13 @@ class FlowService:
         run_id = self.engine.start(flow=flow, graph=graph, members=members, forced=forced, mode=mode,
                                    target=node_id, owner=run_owner, user=user, parent_run=parent)
         self.audit(user=user, ip="", action="flows.run", outcome="started", flow=flow_id, run=run_id, mode=mode,
-                   nodes=len(members))
-        return self.store.get_run(run_id)
+                   nodes=len(members), skipped=len(skipped))
+        run = self.store.get_run(run_id)
+        # So the UI can say WHICH branches were left out, instead of silently
+        # running a subset of the canvas.
+        if skipped:
+            run["skipped"] = skipped
+        return run
 
     def run_state(self, run_id: str, *, owner: str | None, graph: bool = False) -> dict:
         run = self.store.get_run(run_id, owner=owner, graph=graph)
