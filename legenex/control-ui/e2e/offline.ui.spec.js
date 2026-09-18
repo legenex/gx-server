@@ -40,7 +40,7 @@ test('every page renders with real data, no console errors and no serious a11y v
   expect(problems).toEqual([]);
 });
 
-test('dashboard shows both nodes, rails, eight aliases and git sync', async ({ page }) => {
+test('dashboard shows both nodes, rails, the canonical aliases and git sync', async ({ page }) => {
   await login(page, PASSWORD);
   const main = page.locator('#page-dashboard');
   await expect(main.getByRole('heading', { name: 'gx10-01' })).toBeVisible();
@@ -61,7 +61,7 @@ test('dashboard shows both nodes, rails, eight aliases and git sync', async ({ p
 test('models page: sanctioned controls, gx-max details and typed confirmation', async ({ page }) => {
   await login(page, PASSWORD);
   await gotoPage(page, 'models', 'Models');
-  await expect(page.locator('.model-card')).toHaveCount(8);
+  await expect(page.locator('.model-card')).toHaveCount(11);
   const music = page.locator('#model-gx-music');
   await expect(music).toContainText('ACE-Step/acestep-v15-xl-turbo');
   await expect(music).toContainText('d4a0b288b83ebb7e25a8c0b32c573c22e134e8ee');

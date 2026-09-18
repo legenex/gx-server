@@ -1,7 +1,18 @@
 # Models
 
-The eight aliases (seven on the gateway, plus gx-music on the music API) and the exact models behind them (pinned revisions are in
+The eleven aliases and the exact models behind them (pinned revisions are in
 `legenex/models/registry.json` and on each card in **Models**).
+
+Seven are chat models on the LiteLLM gateway (`gx-mini`, `gx-fast`, `gx-reason`,
+`gx-max`, `gx-auto`, `gx-image`, `gx-video`). Four are specialized services with
+their own APIs and their own supervisors on gx10-02: `gx-music`, `gx-voice`,
+`gx-call` and `gx-live`.
+
+For those four, the card separates two different things: the **supervisor**,
+which is resident and answers its health endpoint, and the **engine**, which
+holds the weights and is loaded on demand. An engine showing *UNLOADED* under a
+*READY* supervisor is the normal idle state, not a fault — the weights load with
+the next request and unload again when the service goes idle.
 
 ## Which model should I use?
 
