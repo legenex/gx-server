@@ -2,7 +2,8 @@
 
 The specialists publish lines like::
 
-    FOOTPRINT gx-voice node=gx10-02 cold_gib=14.2 resident_gib=11.8 startup_s=38 measured=2026-09-17 evidence=/srv/logs/acceptance/build-v3/voi/x.log
+    FOOTPRINT gx-voice node=gx10-02 cold_gib=14.2 resident_gib=11.8 startup_s=38
+              measured=2026-09-17 evidence=/srv/logs/acceptance/build-v3/voi/x.log
 
 in ``coordination/build-v3/{voi,cal,liv}.md``. ``python3 -m
 gx_control_ui.footprints sync`` validates them and records them in

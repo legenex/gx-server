@@ -186,7 +186,8 @@ class ReferenceAnalyzer:
         hint = body.get("hint") or ""
         if not isinstance(hint, str) or len(hint) > HINT_MAX:
             raise ReferenceError_(f"hint must be text up to {HINT_MAX} characters")
-        session = {"id": secrets.token_hex(12), "user": user, "created_at": time.time(), "state": "starting",
+        session: dict[str, Any] = {"id": secrets.token_hex(12), "user": user,
+                   "created_at": time.time(), "state": "starting",
                    "detail": "", "source": {}, "audio_analysed": False, "measured": None, "understanding": None,
                    "suggestions": None, "field_sources": {}, "labels": LABELS, "notice": "", "error": None,
                    "job_id": None, "understand": body.get("understand", True) is True,

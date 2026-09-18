@@ -172,8 +172,8 @@ V3_SERVICES: dict[str, dict[str, Any]] = {
 def v3_policy(alias: str, fp: dict | None = None) -> RuntimePolicy:
     """The RuntimePolicy of a Build V3 supervisor from its measured footprint (or none)."""
     meta = V3_SERVICES[alias]
-    ok = isinstance(fp, dict) and isinstance(fp.get("cold_gib"), (int, float)) \
-        and isinstance(fp.get("resident_gib"), (int, float))
+    fp = fp if isinstance(fp, dict) else {}
+    ok = isinstance(fp.get("cold_gib"), (int, float)) and isinstance(fp.get("resident_gib"), (int, float))
     cold = float(fp["cold_gib"]) if ok else 0.0  # type: ignore[index]
     resident = float(fp["resident_gib"]) if ok else 0.0  # type: ignore[index]
     startup = f"{fp.get('startup_s'):.0f} s (measured)" if ok and isinstance(fp.get("startup_s"), (int, float)) \
@@ -201,7 +201,8 @@ def apply_measurements(aliases: dict) -> None:
     """Refresh the Build V3 policies from the registry's measured footprints."""
     for alias in V3_SERVICES:
         spec = aliases.get(alias) if isinstance(aliases, dict) else None
-        fp = spec.get("measured_footprint") if isinstance(spec, dict) else None
+        _fp_raw = spec.get("measured_footprint") if isinstance(spec, dict) else None
+        fp: dict = _fp_raw if isinstance(_fp_raw, dict) else {}
         if POLICIES[alias].measured_ok != bool(fp) or fp:
             POLICIES[alias] = v3_policy(alias, fp)
 
@@ -312,7 +313,8 @@ def admission_view(alias: str, avail_gib: float | None, residents: dict[str, dic
         plan.append(a)
         freed += gib
     blocking = sorted(others, key=lambda a: -POLICIES[a].footprint_gib)
-    held = ", ".join(f"{a} ({f'~{POLICIES[a].footprint_gib:.0f} GiB' if POLICIES[a].measured_ok else 'size not measured'}"
+    held = ", ".join(f"{a} ("
+                     f"{f'~{POLICIES[a].footprint_gib:.0f} GiB' if POLICIES[a].measured_ok else 'size not measured'}"
                      f"{', busy' if others[a].get('active') else ''}{', pinned' if a in pins else ''})"
                      for a in blocking)
     reason = (f"{alias} needs {growth:.0f} GiB plus the {RESERVE_GIB:.0f} GiB reserve"

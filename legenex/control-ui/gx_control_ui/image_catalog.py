@@ -324,7 +324,7 @@ def _grid_via_pillow(path: Path, cols: int, rows: int) -> list[list[float]] | No
     try:
         with Image.open(path) as im:
             im.load()
-            small = im.convert("L").resize((cols, rows), Image.BILINEAR)
+            small = im.convert("L").resize((cols, rows), Image.Resampling.BILINEAR)
     except (OSError, ValueError):
         return None
     px = list(small.getdata())

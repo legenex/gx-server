@@ -134,7 +134,8 @@ def build(cfg: Any) -> dict[str, Node2Service]:
 
 def runtime_view(alias: str, health: dict, *, gx_busy: bool, maint: bool) -> dict:
     """Resource Control runtime entry for a node-2 supervisor (pure)."""
-    mem = health.get("memory") if isinstance(health.get("memory"), dict) else {}
+    _mem_raw = health.get("memory")
+    mem: dict = _mem_raw if isinstance(_mem_raw, dict) else {}
     if gx_busy:
         state, detail = "BLOCKED", "drained while gx-max owns the cluster"
     elif not health.get("reachable"):

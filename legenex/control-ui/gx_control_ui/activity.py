@@ -58,7 +58,8 @@ def normalise(kind: str, item: dict) -> dict | None:
     link = item.get("link")
     if not (isinstance(link, str) and re.fullmatch(r"#/[a-z\-]{2,24}(\?[A-Za-z0-9_=&.\-]{0,200})?", link)):
         link = None
-    detail = item.get("detail") if isinstance(item.get("detail"), dict) else {}
+    _detail_raw = item.get("detail")
+    detail: dict = _detail_raw if isinstance(_detail_raw, dict) else {}
     duration = item.get("duration_ms")
     return {
         "id": _clean(str(item.get("id") or ""), 80),

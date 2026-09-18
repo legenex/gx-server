@@ -10,7 +10,6 @@ import socket
 import unittest
 from unittest import mock
 
-from support import TempEnv
 from test_music import StubBase, sine_wav
 
 from gx_control_ui import netguard
@@ -97,8 +96,8 @@ class OembedTests(unittest.TestCase):
     def test_real_netguard_refuses_a_rebinding_answer(self):
         # the oEmbed host resolves to loopback: netguard must refuse before connecting
         with mock.patch.object(socket, "getaddrinfo",
-                               return_value=[(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", 443))]):
-            with self.assertRaises(ref.ReferenceError_) as cm:
+                               return_value=[(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", 443))]), \
+                self.assertRaises(ref.ReferenceError_) as cm:
                 ref.fetch_oembed("youtube", "https://www.youtube.com/watch?v=dQw4w9WgXcQ", netguard.fetch)
         self.assertEqual(cm.exception.code, "blocked_url")
 

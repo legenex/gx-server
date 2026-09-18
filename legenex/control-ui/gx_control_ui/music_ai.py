@@ -406,9 +406,8 @@ def apply_build(current: dict, proposal: dict, locked: set[str]) -> tuple[dict, 
             if after != before and not _is_empty(field, after):
                 _change(changes, field, "kept_locked", before, after, "locked")
             continue
-        if field == "seed" or field in PLANNER_FIELDS:
-            if after is None:
-                continue
+        if (field == "seed" or field in PLANNER_FIELDS) and after is None:
+            continue
         if after != before:
             merged[field] = after
             _change(changes, field, "set", before, after)
@@ -483,8 +482,8 @@ def merge_improvement(current: dict, proposal: dict, locked: set[str], *, improv
 
 
 def _vocal_consistency(merged: dict, changes: list[dict], locked: set[str]) -> None:
-    if merged.get("instrumental"):
-        if merged.get("vocal_intent") not in (None, "auto") and "vocal_intent" not in locked:
+    if merged.get("instrumental") \
+            and merged.get("vocal_intent") not in (None, "auto") and "vocal_intent" not in locked:
             _change(changes, "vocal_intent", "set", merged["vocal_intent"], "auto", "instrumental: no vocals")
             merged["vocal_intent"] = "auto"
 
@@ -534,7 +533,7 @@ class MusicAI:
             self._busy.discard(user)
 
     def _ask(self, messages: list[dict], *, schema_name: str, schema: dict, validate: Callable[[Any], tuple],
-             max_tokens: int, temperature: float) -> tuple[dict, dict]:
+             max_tokens: int, temperature: float) -> tuple[Any, dict]:
         """Bounded retries: transport errors back off; invalid answers are fed back."""
         feedback: list[dict] = []
         last_problem = "no answer"

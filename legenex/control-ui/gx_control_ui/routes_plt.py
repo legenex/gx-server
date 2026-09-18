@@ -37,6 +37,8 @@ def api_realtime_authorize(h: Handler) -> None:
     for name, value in (("service", service), ("session_id", session_id)):
         if not isinstance(value, str):
             raise ValueError(f"{name} is required")
+    # re-bind as str so the checker carries the isinstance narrowing to the call
+    service, session_id = str(service), str(session_id)
     for name, value in (("ticket", ticket), ("origin", origin), ("host", host)):
         if value is not None and (not isinstance(value, str) or len(value) > 512):
             raise ValueError(f"{name} must be text")
