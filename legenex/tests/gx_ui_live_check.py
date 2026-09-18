@@ -283,6 +283,8 @@ def suite_manager(s: Session, rep: Report) -> None:
     rep.check("full URL lookup + metadata", by_url["repository"] == "kyaky/Qwen3.6-35B-A3B-Uncensored-NVFP4" and
               by_url["moe"] and by_url["vision"] and "vLLM (llama-swap)" in by_url["runtimes"],
               params=by_url["parameters"], size=by_url["size_bytes"], licence=by_url["licence"])
+    # A known-gated repository, used purely as a fixture for gated detection.
+    # It is NOT the gx-reason target (D-042); gx-reason is ungated.
     gated = s.call("POST", "/api/manager/lookup", {"ref": "iSkye/Qwen3.8-Flash-Next-NVFP4-ablit-a070"}, expect=200)
     rep.check("gated status detected", bool(gated["gated"]), gated=gated["gated"], accessible=gated["accessible"])
     overlay = s.call("POST", "/api/manager/lookup",

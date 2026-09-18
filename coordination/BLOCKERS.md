@@ -1235,8 +1235,10 @@ Superseded after acceptance. Each replacement has produced real output:
 | gx10-02 | `/srv/models/vllm/Qwen3.5-122B-A10B-NVFP4-FP8Dense-GB10` | 74 G | retired (root-owned: needs `docker run --rm -v /srv/models/vllm:/m alpine rm -rf /m/Qwen3.5-122B-A10B-NVFP4-FP8Dense-GB10`) |
 | gx10-02 | `/srv/models/image/diffusion_models/hidream_i1_full_fp8.safetensors` | 16 G | no workflow references it |
 
-**Keep:** `/srv/models/vllm/Qwen3.6-27B-NVFP4` on gx10-02. It is the live
-interim gx-reason model until B-025 is closed.
+**Keep:** `/srv/models/vllm/Qwen3.8-27B-Uncensored-NVFP4` on gx10-02 (26.61 GiB).
+It is the live gx-reason checkpoint (D-042). *Superseded note: this line used to
+protect `/srv/models/vllm/Qwen3.6-27B-NVFP4`, which the user deleted on
+2026-09-18; that directory is gone and must not be recreated.*
 
 **How:**
 * **Model Manager route:** Model Manager → *Accept* on the alias, then
@@ -1300,8 +1302,16 @@ current key works.
 
 ## B-030 (S2) — gx-reason's approved model is gated per user and `legenex` is not on its authorized list
 
-**Status:** OPEN. **Needs a human action that cannot be performed from a
-terminal.** **Found:** 2026-09-17 20:40 SAST (brownfield completion pass).
+**Status: CLOSED — OBSOLETE (2026-09-18).** Not fixed: the gate still exists.
+The model behind it is simply no longer wanted. On 2026-09-18 the user replaced
+the gx-reason target with the ungated
+`wyattearp/Qwen3.8-27B-Uncensored-NVFP4` @ `91ec573a3d8e660b78b7161395e4a5b6247c2c8b`,
+which is installed, verified and live (see D-042). **Nothing is waiting on a
+human for gx-reason any more.** Do not re-open this to chase iSkye access, and
+do not rotate Hugging Face tokens for it. Everything below is the historical
+record of the investigation.
+
+**Found:** 2026-09-17 20:40 SAST (brownfield completion pass).
 Supersedes B-025.
 
 **Repository:** `iSkye/Qwen3.8-Flash-Next-NVFP4-ablit-a070`

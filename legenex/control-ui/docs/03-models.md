@@ -19,7 +19,7 @@ The eight aliases (seven on the gateway, plus gx-music on the music API) and the
 |---|---|---|---|---|---|---|---|---|
 | `gx-mini` | `HauhauCS/Qwen3.5-4B-Uncensored-HauhauCS-Aggressive` (Q4_K_M) | gx10-01 | llama.cpp | 65,536 / 8,192 | yes | yes | yes | resident |
 | `gx-fast` | `kyaky/Qwen3.6-35B-A3B-Uncensored-NVFP4` | gx10-01 | vLLM | 131,072 / 32,768 | yes | yes | yes | resident (cold load ~4 min) |
-| `gx-reason` | `nvidia/Qwen3.6-27B-NVFP4` (**interim**, see below) | gx10-02 | vLLM | 65,536 / 16,384 | yes | yes | no | on demand, ~6–7 min |
+| `gx-reason` | `wyattearp/Qwen3.8-27B-Uncensored-NVFP4` | gx10-02 | vLLM | 65,536 / 16,384 | yes | yes | yes | on demand, ~6.5 min |
 | `gx-max` | `dealignai/DeepSeek-V4-Flash-0731-CRACK-NVFP4` | both | SGLang TP=2 | 327,680 / 65,536 | no | yes | yes | explicit, ~10 min |
 | `gx-auto` | router | gx10-01 | orchestrator | 57,344 / 8,192 | via tier | yes | via tier | always |
 | `gx-image` | Qwen-Image-2512 + Qwen-Image-Edit-2511 | gx10-02 | ComfyUI | n/a | n/a | n/a | yes | first job loads |
@@ -50,13 +50,18 @@ The eight aliases (seven on the gateway, plus gx-music on the music API) and the
 
 ## gx-reason
 
-* **Target model:** `iSkye/Qwen3.8-Flash-Next-NVFP4-ablit-a070` (92.7B,
-  abliterated, single-DGX-Spark layout). It is **gated** on Hugging Face and
-  no token with access is configured, so it is not installed yet.
-* **Serving now (interim):** `nvidia/Qwen3.6-27B-NVFP4`, a stock (not
-  uncensored) 27B dense model, so the tier keeps working.
-* **To finish:** Model Manager → Hugging Face access → save a read token
-  whose account accepted the model terms, then install and assign the target.
+* **Model:** `wyattearp/Qwen3.8-27B-Uncensored-NVFP4` @
+  `91ec573a3d8e660b78b7161395e4a5b6247c2c8b` — "Qwen3.8-27B Dense Uncensored
+  NVFP4". Uncensored, dense 27B, multimodal, Apache-2.0, ungated.
+* **Measured (2026-09-18):** 392 s cold start, ~9 tok/s decode, 51.2 GiB node
+  footprint on gx10-02. Reasoning is separated from the answer; tool calling
+  and image input both work.
+* **Lifecycle:** on demand. The engine unloads after 20 minutes idle and the
+  memory returns; the next request loads it again. "Unloaded" is the normal
+  idle state, not a fault.
+* **History:** this replaced the interim `nvidia/Qwen3.6-27B-NVFP4` and the
+  abandoned `iSkye/Qwen3.8-Flash-Next-NVFP4-ablit-a070` target on 2026-09-18
+  (D-042). Neither is a fallback and neither should be reinstalled.
 
 ## gx-max
 

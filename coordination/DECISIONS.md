@@ -1389,3 +1389,65 @@ Creative Flows Vite output is validated by its own build, and measuring a
 React bundle against the hand-written asset budget or the no-`innerHTML` rule
 tests nothing real.
 
+
+---
+
+## D-042 — gx-reason is Qwen3.8-27B Uncensored NVFP4; Qwen3.6 and the iSkye target are both retired
+
+2026-09-18, on the user's explicit instruction. Supersedes the gx-reason half
+of D-021 and closes B-030. Amends no locked decision: gx-reason keeps its
+alias, its node, its runtime and its on-demand lifecycle.
+
+**Context.** gx-reason had two identities in play at once. It *served*
+`nvidia/Qwen3.6-27B-NVFP4`, a stock NVIDIA checkpoint adopted under D-021 as an
+explicitly interim tier after the llama.cpp GDN kernel bug (B-011). It was
+*planned* to become `iSkye/Qwen3.8-Flash-Next-NVFP4-ablit-a070`, which had been
+blocked since B-030 behind a Hugging Face gate that no token could open — the
+model's terms need a human in a browser, so no agent could finish it.
+
+**Decision.** The user replaced both with a single checkpoint:
+
+* **Repository:** `wyattearp/Qwen3.8-27B-Uncensored-NVFP4`
+* **Revision:** `91ec573a3d8e660b78b7161395e4a5b6247c2c8b` (pinned, not `main`)
+* **Display name:** Qwen3.8-27B Dense Uncensored NVFP4
+* **Base model:** `JonathanColetti/Qwen3.8-27B-Uncensored`, Apache-2.0, ungated
+
+Consequences, all deliberate:
+
+* **The interim is over.** `nvidia/Qwen3.6-27B-NVFP4` was deleted from gx10-02
+  by the user on 2026-09-18. It is **not** a fallback. Do not reinstall it, and
+  do not describe gx-reason as interim anywhere in current documentation.
+* **B-030 is closed as OBSOLETE, not fixed.** The gate still exists; the model
+  behind it is simply no longer wanted. Nothing is waiting on a human for
+  gx-reason any more.
+* **The engine did not change.** The checkpoint is
+  `Qwen3_5ForConditionalGeneration` — the same hybrid-attention family the
+  existing `jstarkg/vllm-gb10-flashnext:0.28-sm121-r6` image already serves for
+  gx-fast. Support was verified inside the deployed image *before* any config
+  was edited, so no new or rebuilt image was introduced and gx-fast was not
+  touched.
+* **Two vLLM flags changed, for reasons, not by habit.**
+  `--quantization modelopt` was **removed**: it names NVIDIA's ModelOpt format,
+  while this checkpoint declares `compressed-tensors` / `nvfp4` in its own
+  `config.json`, which vLLM auto-detects. `--speculative-config` (MTP) was
+  **removed for bring-up**: the MTP head ships with the checkpoint and is
+  available later, but standard inference is established first.
+* **The memory figure was re-measured, not inherited.** The old model's ~44 GiB
+  was not carried over. Measured 2026-09-18 at
+  `--gpu-memory-utilization 0.42`: MemAvailable 114.68 GiB idle -> 63.45 GiB
+  loaded, i.e. a real **51.2 GiB** node footprint, returning to 114.68 GiB after
+  unload. Cold load 392 s; decode about 9 tok/s without MTP.
+* **Name collision warning.** This is **not** the retired
+  `gx10-vllm/Qwen3.8-27B-Uncensored` runtime (locked decision 15), which stays
+  retired. That is a local runtime folder; this is an upstream NVFP4 repository
+  with a pinned revision. The older warnings in MODELS.md and BLOCKERS.md that
+  say "do not confuse this with ..." now need reading with that distinction in
+  mind.
+
+**Verification (2026-09-18).** All 22 files verified on disk against the pinned
+revision (26.61 GiB, 14 sha256-checked, `.gx-manifest.json` written). Live:
+multi-step reasoning correct (11:36 / 156 km), a coding-debug task correct
+(named both the in-place mutation and the even-length bug), reasoning separated
+from content, tool calling through `qwen3_xml`, and **vision** — it read the
+red jacket out of a real generated source image. Served through LiteLLM as
+`gx-reason` with reasoning surfaced. Unloads cleanly and the memory returns.

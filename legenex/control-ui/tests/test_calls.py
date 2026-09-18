@@ -146,8 +146,36 @@ class AgentTests(unittest.TestCase):
     def tearDown(self):
         self.env.cleanup()
 
-    def test_default_template_is_valid_and_compiles(self):
+    def test_default_config_is_a_general_voice_agent(self):
+        """No template choice means a blank, unbranded general agent."""
         cfg = ca.validate_config(ca.default_config())
+        self.assertEqual(cfg["use_case"], "general")
+        self.assertEqual(cfg, ca.validate_config(ca.default_config("general")))
+        self.assertEqual((cfg["required_fields"], cfg["optional_fields"], cfg["tags"]), ([], [], []))
+        self.assertEqual(cfg["tool_permissions"], ["end_call"])
+        self.assertEqual((cfg["company"], cfg["brand"]), ("", ""))
+        prompt = ca.compile_prompt(cfg)
+        self.assertTrue(prompt.isascii())
+        self.assertIn("Start the call right away", prompt)
+        self.assertNotIn("caller_name", prompt)  # no intake is forced on a general agent
+        self.assertNotIn("update_intake_fields", prompt)  # it may not call that tool
+        blob = json.dumps(ca.default_config()).lower()
+        for word in ("intakepilot", "accident", "attorney", "injury"):
+            self.assertNotIn(word, blob)
+
+    def test_mva_template_is_optional_and_product_neutral(self):
+        """The intake template stays available - just not as the default, and not as the product."""
+        self.assertEqual(ca.USE_CASES[0], "general")  # the picker offers the general agent first
+        self.assertEqual(set(ca.USE_CASES), {"general", "intakepilot_mva"})
+        cfg = ca.validate_config(ca.default_config("intakepilot_mva"))
+        self.assertEqual(cfg["use_case"], "intakepilot_mva")  # the stored id is unchanged
+        self.assertEqual(ci.MVA_SCHEMA_ID, "intakepilot.mva.v1")  # so is the schema id
+        self.assertEqual(cfg["structured_output_schema"]["$id"], ci.MVA_SCHEMA_ID)
+        self.assertEqual(cfg["name"], "Motor vehicle accident intake")
+        # nothing the user reads carries the product name any more (the ids do, on purpose)
+        self.assertNotIn("intakepilot", json.dumps(
+            [cfg["name"], cfg["description"], cfg["company"], cfg["brand"], cfg["opening_greeting"],
+             cfg["tags"], list(ca.USE_CASE_LABELS.values()), ci.MVA_SCHEMA["title"]]).lower())
         prompt = ca.compile_prompt(cfg)
         self.assertTrue(prompt.isascii())
         self.assertIn("Start the call right away", prompt)
@@ -155,7 +183,6 @@ class AgentTests(unittest.TestCase):
         tools = ca.compile_tools(cfg)
         self.assertEqual([t["name"] for t in tools], cfg["tool_permissions"])
         self.assertLessEqual(len(tools), ca.MAX_TOOLS_PER_AGENT)
-        ca.validate_config(ca.default_config("general"))
 
     def test_versioning_clone_status_and_diff(self):
         agent = self.store.create(ca.default_config(), user="admin")
@@ -191,7 +218,7 @@ class AgentTests(unittest.TestCase):
         self.assertTrue(any(a["action"] == "call.agent.save" for a in self.audit))
 
     def test_validation_errors(self):
-        base = ca.default_config()
+        base = ca.default_config("intakepilot_mva")
         cases = {
             "too many tools": {"tool_permissions": list(ca.TOOL_CATALOG)},
             "unknown tool": {"tool_permissions": ["rm_rf"]},
@@ -217,7 +244,7 @@ class AgentTests(unittest.TestCase):
                 ca.validate_config({**base, **patch})
 
     def test_integrations_validate(self):
-        cfg = ca.validate_config({**ca.default_config(), "webhooks": [
+        cfg = ca.validate_config({**ca.default_config("intakepilot_mva"), "webhooks": [
             {"name": "office", "url": "https://hooks.example.com/gx", "events": ["call.ended"],
              "secret_ref": "office-hook"}],
             "tool_permissions": ["update_intake_fields", "send_webhook"],
@@ -226,6 +253,24 @@ class AgentTests(unittest.TestCase):
                 "name": "leaddistro", "url": "https://ld.example.com/leads"}}})
         self.assertEqual(cfg["webhooks"][0]["secret_ref"], "office-hook")
         self.assertTrue(cfg["leaddistro"]["enabled"])
+
+
+class CallPageCopyTests(unittest.TestCase):
+    """The Call Agents page must offer a voice agent, not one vendor's intake product."""
+
+    source = (REPO / "legenex" / "playground" / "web" / "js" / "pages" / "call.js").read_text()
+
+    def test_empty_state_offers_a_voice_agent(self):
+        empty = self.source.split("function renderAgents()", 1)[1].split("function createAgent", 1)[0]
+        self.assertIn("Create a voice agent", empty)
+        self.assertNotIn("Create the IntakePilot template", empty)
+        self.assertNotIn("IntakePilot", self.source)
+
+    def test_the_use_case_picker_is_driven_by_the_catalogue(self):
+        picker = self.source.split("function pickUseCase()", 1)[1].split("async function cloneAgent", 1)[0]
+        self.assertIn("catalog.use_case_labels", picker)
+        self.assertIn("catalog.use_cases || ['general']", picker)  # the fallback is the general agent
+        self.assertNotIn("intakepilot_mva", picker)  # no hard-coded template name in the page
 
 
 # ------------------------------------------------------------- full call --
@@ -322,7 +367,7 @@ class CallFlowTests(unittest.TestCase):
         self.env.cleanup()
 
     def agent(self, **patch):
-        cfg = {**ca.default_config(), **patch}
+        cfg = {**ca.default_config("intakepilot_mva"), **patch}
         agent = self.agents.create(cfg, user="admin")
         return self.agents.set_status(agent["agent_id"], user="admin", status="enabled")
 
@@ -484,7 +529,7 @@ class CallFlowTests(unittest.TestCase):
         self.assertEqual(asset["source_ref"], sid)
 
     def test_refusals(self):
-        agent = self.agents.create(ca.default_config(), user="admin")  # draft
+        agent = self.agents.create(ca.default_config("intakepilot_mva"), user="admin")  # draft
         with self.assertRaises(CallError) as ctx:
             self.manager.create_session(agent_id=agent["agent_id"], owner="key:" + "0" * 16, via="api",
                                         user_label="key", require_enabled=True)
@@ -655,6 +700,47 @@ class RouteTests(unittest.TestCase):
         self.assertEqual(listing["sessions"][0]["session_id"], sess["session_id"])
         status, ended = self.req("POST", f"/api/call/sessions/{sess['session_id']}/end", {})
         self.assertEqual(status, 200)
+
+    def test_general_agent_is_the_default_and_survives_its_lifecycle(self):
+        """No template means a blank general agent; it persists, versions and archives."""
+        self.login()
+        status, agent = self.req("POST", "/api/call/agents", {})
+        self.assertEqual(status, 201, agent)
+        aid = agent["agent_id"]
+        self.assertEqual((agent["use_case"], agent["config"]["use_case"]), ("general", "general"))
+        self.assertEqual(agent["config"]["tool_permissions"], ["end_call"])
+        self.assertNotIn("intakepilot", json.dumps(agent["config"]).lower())
+        # an unknown template falls back to the general agent, never to an intake one
+        _, other = self.req("POST", "/api/call/agents", {"template": "not_a_template"})
+        self.assertEqual(other["config"]["use_case"], "general")
+        # the catalogue offers the general agent first and names the template neutrally
+        _, cat = self.req("GET", "/api/call/catalog")
+        self.assertEqual(cat["use_cases"][0], "general")
+        self.assertEqual(cat["use_case_labels"]["general"], "General voice agent")
+        self.assertNotIn("intakepilot", json.dumps(list(cat["use_case_labels"].values())).lower())
+        self.assertEqual(sorted(cat["templates"]), sorted(ca.USE_CASES))
+        # it persists: it can be read back and it is listed
+        status, got = self.req("GET", f"/api/call/agents/{aid}")
+        self.assertEqual((status, got["version"], got["status"]), (200, 1, "draft"))
+        self.assertIn(aid, [a["agent_id"] for a in self.req("GET", "/api/call/agents")[1]["agents"]])
+        # an edit creates a new immutable version and leaves version 1 alone
+        cfg = {**got["config"], "personality": "Brisk and cheerful."}
+        status, saved = self.req("POST", f"/api/call/agents/{aid}", {"config": cfg, "base_version": 1})
+        self.assertEqual((status, saved["version"]), (200, 2))
+        self.assertEqual([v["version"] for v in
+                          self.req("GET", f"/api/call/agents/{aid}/versions")[1]["versions"]], [2, 1])
+        self.assertEqual(self.req("GET", f"/api/call/agents/{aid}?version=1")[1]["config"]["personality"],
+                         got["config"]["personality"])
+        # "delete" is an archive: gone from the list, still readable, and no longer editable
+        status, arch = self.req("POST", f"/api/call/agents/{aid}/status", {"status": "archived"})
+        self.assertEqual((status, arch["status"]), (200, "archived"))
+        self.assertNotIn(aid, [a["agent_id"] for a in self.req("GET", "/api/call/agents")[1]["agents"]])
+        self.assertIn(aid, [a["agent_id"] for a in
+                            self.req("GET", "/api/call/agents?archived=1")[1]["agents"]])
+        self.assertEqual(self.req("GET", f"/api/call/agents/{aid}")[0], 200)
+        status, err = self.req("POST", f"/api/call/agents/{aid}",
+                               {"config": {**cfg, "personality": "Loud."}})
+        self.assertEqual((status, err["error"]["code"]), (409, "archived"))
 
     def test_public_api(self):
         self.login()

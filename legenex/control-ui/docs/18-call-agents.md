@@ -51,8 +51,15 @@ The page has three sections.
 
 ### Agents
 
-* **New agent** creates a complete, working agent from a template
-  (IntakePilot MVA intake, or a general agent) as a **draft**.
+* **New agent** creates a complete, working agent as a **draft**. The picker
+  offers the **General voice agent** first - that is the default, a blank,
+  unbranded agent - followed by the optional starting points, currently
+  **Motor vehicle accident intake** (a ready-made injury-intake agent with its
+  own JSON Schema, required fields and tools). Creating an agent without
+  choosing anything gives the general agent, never an intake template.
+  * The template ids stored in the database (`general`, `intakepilot_mva`) and
+    the intake schema id (`intakepilot.mva.v1`) are unchanged, so agents and
+    call state created earlier keep working; only what the page shows changed.
 * **Edit** opens the editor. It covers the name and branding, the eleven
   behaviour texts (role, personality, opening line, call flow, objection
   handling, conversation rules, prohibited behaviour, transfer rules, out of

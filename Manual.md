@@ -20,7 +20,7 @@ on GX-Playground (section 7).
 |---|---|---|
 | `gx-mini` | fast small tasks, vision input (uncensored Qwen3.5-4B) | node 1 |
 | `gx-fast` | general chat, coding, tools, vision (uncensored Qwen3.6-35B-A3B) | node 1 |
-| `gx-reason` | multi-step reasoning (interim Qwen3.6-27B until B-025 is closed) | node 2 |
+| `gx-reason` | multi-step reasoning, coding, tools and vision (uncensored Qwen3.8-27B dense) | node 2 |
 | `gx-max` | the hardest prompts; uncensored DeepSeek-V4-Flash (CRACK) across **both** nodes | both |
 | `gx-auto` | lets the router pick; understands Kilo Code requests; **never** starts gx-max | — |
 | `gx-image` | image generation, edit (`/v1/images/edits`) and variation | node 2 |

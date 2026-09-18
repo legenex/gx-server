@@ -23,6 +23,23 @@ function resultLine(r) {
   return h('span', { class: r.ok ? '' : 'text-crit' }, `${bits.join(' · ')}${r.detail ? ` — ${r.detail}` : ''}`);
 }
 
+// Badge vocabulary for the two-part state (service vs weights). The badge
+// levels come from dom.js; the label is the state itself.
+const STATE_BADGE = {
+  READY: 'ready', LOADED: 'loaded', LOADING: 'loading', BUSY: 'running', QUEUED: 'queued',
+  UNLOADED: 'unloaded', ERROR: 'error', BLOCKED: 'held',
+};
+
+function partBadge(state) {
+  if (!state) return undefined;
+  return stateBadge(STATE_BADGE[state] || 'unknown', state);
+}
+
+// GX-Playground runs on port 8090 next to the Control Center (as on the dashboard).
+function playgroundHref(page) {
+  return `${location.protocol}//${location.hostname}:8090/${page}`;
+}
+
 function allowed(op, state, alias) {
   if (alias === 'gx-music') {
     if (op === 'load') return ['ready', 'unloaded'].includes(state);
@@ -41,8 +58,15 @@ function controls(m) {
   const wrap = h('div', { class: 'btn-row' });
   const ops = Object.entries(m.actions || {});
   if (!ops.length) {
-    wrap.append(h('span', { class: 'muted small' },
-      m.alias === 'gx-auto' ? 'Routing alias — nothing to load. It uses whichever tiers are available.' : 'No controls.'));
+    if (m.alias === 'gx-auto') {
+      wrap.append(h('span', { class: 'muted small' }, 'Routing alias — nothing to load. It uses whichever tiers are available.'));
+    } else if (m.kind === 'audio-realtime') {
+      // The engine loads when a session opens; load/unload live in Resource Control.
+      wrap.append(h('span', { class: 'muted small' }, 'Loads on demand when a session opens. '),
+        h('a', { class: 'small', href: '#/resources' }, 'Resource Control →'));
+    } else {
+      wrap.append(h('span', { class: 'muted small' }, 'No controls.'));
+    }
     return wrap;
   }
   for (const [op, spec] of ops) {
@@ -68,6 +92,15 @@ function controls(m) {
       h('a', { class: 'small', href: '#/resources' }, 'Resource Control →'));
   }
   return wrap;
+}
+
+function playgroundLink(m) {
+  if (!m.playground) return null;
+  return h('div', { class: 'btn-row' },
+    h('a', {
+      class: 'btn btn-ghost btn-sm', href: playgroundHref(m.playground),
+      target: '_blank', rel: 'noopener noreferrer', id: `pg-${m.alias}`,
+    }, 'Open in Playground ↗'));
 }
 
 function renderBusy() {
@@ -204,12 +237,56 @@ function componentsTable(m) {
     ]), { caption: `${m.alias} components` }));
 }
 
+const KIND_LABEL = {
+  llm: 'Text model', media: 'Media service', 'audio-realtime': 'Audio / realtime service',
+};
+
+function dependsOn(m) {
+  if (!m.depends_on || !m.depends_on.length) return undefined;
+  return h('span', {}, m.depends_on.map((d) => h('span', { class: 'dep' },
+    h('a', {
+      href: `https://huggingface.co/${d.repository}/tree/${d.revision || 'main'}`,
+      target: '_blank', rel: 'noopener noreferrer',
+    }, d.repository), d.role ? ` — ${d.role}` : '')));
+}
+
+// A service alias has two states: the supervisor (a resident systemd --user
+// process on gx10-02) and the engine it loads on demand. An idle engine is
+// READY, not offline.
+function serviceRows(m) {
+  const sup = (m.live || {}).supervisor;
+  const svc = m.service || {};
+  const fp = m.measured_footprint || {};
+  if (!sup && !svc.port) return [];
+  const mem = (sup && sup.memory) || {};
+  const sessions = sup && (sup.active_sessions ?? sup.active_jobs);
+  return [
+    ['Supervisor (gx10-02)', h('span', {}, partBadge(m.service_state),
+      svc.port ? ` ${svc.unit || 'systemd --user'} · port ${svc.port}` : '')],
+    ['Engine residency', h('span', {}, partBadge(m.engine_state),
+      sup && sup.container ? ` · container ${sup.container.state}` : ' · no engine container')],
+    ['Memory estimate', mem.estimate_gib ? `${num(mem.estimate_gib, 1)} GiB held while loaded` : undefined],
+    ['Resident now', mem.resident_gib ? `${num(mem.resident_gib, 1)} GiB` : undefined],
+    ['Measured footprint', fp.resident_gib
+      ? `${num(fp.resident_gib, 1)} GiB resident${fp.cold_gib ? ` (${num(fp.cold_gib, 1)} GiB peak while loading)` : ''} — measured ${fp.measured}`
+      : undefined],
+    ['Cold startup', fp.startup_s ? `${num(fp.startup_s, 0)} s` : undefined],
+    ['First audio', fp.first_audio_s ? `${num(fp.first_audio_s, 1)} s` : undefined],
+    ['Active sessions', sessions === undefined || sessions === null ? undefined : String(sessions)],
+    ['Supervisor version', (sup && sup.version) || undefined],
+    ['Last health', sup && sup.checked_at ? ago(sup.checked_at) : undefined],
+  ];
+}
+
 function modelCard(m) {
   const res = m.results || {};
+  const llm = m.kind === 'llm' || !m.kind;
   const facts = kv([
     ['Purpose', m.purpose],
+    ['Type', KIND_LABEL[m.kind] || undefined],
     ['Model', repoLink(m)],
     ['Revision (pinned)', m.revision ? h('code', {}, m.revision) : '—'],
+    ['Depends on', dependsOn(m)],
     ['Family', m.family || undefined],
     ['Parameters', m.parameters || undefined],
     ['Active parameters (MoE)', m.active_parameters || undefined],
@@ -218,11 +295,12 @@ function modelCard(m) {
     ['Engine / runtime', m.engine],
     ['Node(s)', (m.nodes || []).join(', ') || '—'],
     ['Local path', m.path ? h('code', {}, m.path) : undefined],
-    ['Context window', m.context ? `${m.context.toLocaleString()} tokens` : 'n/a'],
-    ['Max output', m.max_output ? `${m.max_output.toLocaleString()} tokens` : 'n/a'],
-    ['Vision', yesno(m.vision)],
-    ['Tool calling', yesno(m.tools)],
-    ['Reasoning output', typeof m.reasoning === 'string' ? m.reasoning : yesno(m.reasoning)],
+    // Chat-completion facts only where they mean something (D-040).
+    ['Context window', llm ? (m.context ? `${m.context.toLocaleString()} tokens` : 'n/a') : undefined],
+    ['Max output', llm ? (m.max_output ? `${m.max_output.toLocaleString()} tokens` : 'n/a') : undefined],
+    ['Vision', llm ? yesno(m.vision) : undefined],
+    ['Tool calling', llm ? yesno(m.tools) : undefined],
+    ['Reasoning output', llm ? (typeof m.reasoning === 'string' ? m.reasoning : yesno(m.reasoning)) : undefined],
     ['Startup behaviour', m.startup],
     ['Memory impact', m.resource],
     ['Endpoint path', h('code', {}, m.endpoint)],
@@ -240,6 +318,7 @@ function modelCard(m) {
       h('code', {}, String(m.runtime_revision || '').slice(0, 12))) : undefined],
     ['Supported', m.capabilities ? h('span', {}, m.capabilities.map((c) => h('span', { class: 'chip' }, c))) : undefined],
     ['Not supported', m.not_supported ? m.not_supported.join('; ') : undefined],
+    ...serviceRows(m),
   ]);
   const interim = m.interim && m.target ? h('div', { class: 'callout callout-danger', role: 'note' },
     h('strong', {}, 'Interim model. '), `Target: ${m.target.repository} @ ${String(m.target.revision).slice(0, 12)}. `,
@@ -254,6 +333,7 @@ function modelCard(m) {
   h('p', { class: 'muted small' }, m.state_detail || ''),
   interim,
   controls(m),
+  playgroundLink(m),
   facts,
   componentsTable(m),
   textPanel(m),
@@ -270,9 +350,11 @@ export default {
     focusAlias = params && params[0] ? params[0] : null;
     clear(root);
     root.append(
-      h('p', { class: 'lead' }, 'The eight public aliases. Controls call the sanctioned lifecycle only: llama-swap for gx-mini / gx-fast / gx-reason, ',
-        'the orchestrator for gx-max, the media router for gx-image / gx-video, the gx-music supervisor for gx-music. ',
-        'There is no direct docker start for gx-max. Profiles, pins and Maintenance live in ', h('a', { href: '#/resources' }, 'Resource Control'), '.'),
+      h('p', { class: 'lead' }, 'The eleven public aliases. Controls call the sanctioned lifecycle only: llama-swap for gx-mini / gx-fast / gx-reason, ',
+        'the orchestrator for gx-max, the media router for gx-image / gx-video, and the gx10-02 supervisors for gx-music, ',
+        'gx-voice, gx-call and gx-live. Those four keep their engine unloaded until a request or a session needs it: ',
+        'an idle engine is READY, not offline. There is no direct docker start for gx-max. ',
+        'Profiles, pins and Maintenance live in ', h('a', { href: '#/resources' }, 'Resource Control'), '.'),
       h('div', { class: 'btn-row' },
         h('a', { class: 'btn btn-ghost btn-sm', href: '#/playground' }, 'Try a model in the playground →'),
         h('a', { class: 'btn btn-ghost btn-sm', href: '#/docs/models' }, 'Which model should I use? →')),

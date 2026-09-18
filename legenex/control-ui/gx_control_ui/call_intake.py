@@ -1,4 +1,4 @@
-"""Structured call state: the IntakePilot MVA schema, validation and local reference data.
+"""Structured call state: the motor vehicle accident schema, validation and local reference data.
 
 The authoritative call state lives in the application database
 (``call_state``), never in the model's context. Tools and API clients change
@@ -21,6 +21,9 @@ import re
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+#: Stored schema id of the motor vehicle accident intake template. It is a
+#: persisted identifier on existing call state, so it never changes; the
+#: user-facing title below is the product-neutral one.
 MVA_SCHEMA_ID = "intakepilot.mva.v1"
 
 US_STATES = {
@@ -39,7 +42,7 @@ _STATE_BY_NAME = {v.lower(): k for k, v in US_STATES.items()}
 
 MVA_SCHEMA: dict = {
     "$id": MVA_SCHEMA_ID,
-    "title": "IntakePilot motor vehicle accident intake",
+    "title": "Motor vehicle accident intake",
     "type": "object",
     "properties": {
         "caller_name": {"type": "string", "title": "Caller name", "minLength": 2, "maxLength": 120},

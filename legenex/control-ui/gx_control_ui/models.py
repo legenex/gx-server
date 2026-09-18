@@ -1,10 +1,17 @@
-"""The eight public aliases: static facts plus live state.
+"""The eleven public aliases: static facts plus live state.
 
-Static facts are taken from the reviewed configuration files
+`legenex/models/registry.json` is the single source of truth for WHICH aliases
+exist (L-10 as amended by D-036 and D-040) and for the model bound to each one;
+`ALIAS_ROLE` below only adds what is a property of the alias rather than of the
+model. The rest of the static facts come from the reviewed configuration files
 (`legenex/gateway/litellm/config.yaml`, `llama-swap/node0{1,2}.yaml`,
 `legenex/lifecycle/gx-max.conf`) and the measured values in TEST_RESULTS.md.
 Live state is derived only from real probes -- a container existing is never
 reported as "healthy".
+
+Two live states, not one: for the node-2 services (gx-music, gx-voice, gx-call,
+gx-live) the supervisor is a resident process and the engine is weights it
+loads on demand. An idle engine is READY, never offline.
 """
 
 from __future__ import annotations
@@ -15,7 +22,13 @@ import time
 from pathlib import Path
 from typing import Any
 
-from .services import ALL_ALIASES, Cluster
+from .node2_services import SPECS as NODE2_SPECS
+from .services import Cluster
+from .util import HTTPError, http_json
+
+#: What a card is. Media and audio/realtime aliases are services with an
+#: on-demand engine; the LLM aliases are llama-swap / lifecycle managed.
+LLM, MEDIA, AUDIO = "llm", "media", "audio-realtime"
 
 #: Behaviour that is a property of the alias, not of the model bound to it.
 ALIAS_ROLE: dict[str, dict[str, Any]] = {
@@ -23,21 +36,25 @@ ALIAS_ROLE: dict[str, dict[str, Any]] = {
         "purpose": "Fastest tier: chat, extraction, classification, simple vision, lightweight tools. Always hot.",
         "endpoint": "LiteLLM gx-mini -> gx-llama-swap-node01 -> 127.0.0.1:19001",
         "controls": ["load", "unload", "restart"],
+        "kind": LLM,
     },
     "gx-fast": {
         "purpose": "Primary interactive coding / tools / agent tier (Kilo Code). Kept warm.",
         "endpoint": "LiteLLM gx-fast -> gx-llama-swap-node01 -> vLLM",
         "controls": ["load", "unload", "restart"],
+        "kind": LLM,
     },
     "gx-reason": {
         "purpose": "Single-node deep reasoning: hard maths, architecture, difficult debugging.",
         "endpoint": "LiteLLM gx-reason -> 192.168.100.11:28080 (fabric) -> vLLM",
         "controls": ["load", "unload", "restart"],
+        "kind": LLM,
     },
     "gx-max": {
         "purpose": "The largest model: explicit hardest work. Takes over BOTH nodes.",
         "endpoint": "LiteLLM gx-max -> gx-orchestrator :18900 -> SGLang :30000 (rank 0)",
         "controls": ["load", "unload", "restart", "force_release"],
+        "kind": LLM,
         "topology": {"tp": 2, "nnodes": 2, "rank0": "gx10-01", "rank1": "gx10-02",
                      "dist_init_addr": "192.168.100.10:5000", "image": "lmsysorg/sglang:dev-v4f-2dgx-v2"},
     },
@@ -46,16 +63,21 @@ ALIAS_ROLE: dict[str, dict[str, Any]] = {
                    "is already running.",
         "endpoint": "LiteLLM gx-auto -> gx-orchestrator :18900",
         "controls": [],
+        "kind": LLM,
     },
     "gx-image": {
         "purpose": "Uncensored text-to-image, instruction image editing and variations.",
         "endpoint": "LiteLLM /v1/images/generations and /v1/images/edits -> 192.168.100.11:18800 (fabric)",
         "controls": ["unload"],
+        "kind": MEDIA,
+        "playground": "#/images",
     },
     "gx-video": {
         "purpose": "Uncensored text-to-video, image-to-video and video editing (asynchronous jobs).",
         "endpoint": "LiteLLM /v1/videos, /v1/videos/edits -> 192.168.100.11:18800 (fabric)",
         "controls": ["unload"],
+        "kind": MEDIA,
+        "playground": "#/video",
     },
     "gx-music": {
         "purpose": "Music: songs with lyrics and vocals, instrumentals, style tags, remix, repaint and extend "
@@ -63,21 +85,60 @@ ALIAS_ROLE: dict[str, dict[str, Any]] = {
         "endpoint": "GX-Playground / music API on gx10-01 -> 192.168.100.11:18820 (fabric) -> ACE-Step",
         "controls": ["load", "unload"],
         "task": "music-generation",
+        "kind": MEDIA,
+        "playground": "#/music",
+    },
+    "gx-voice": {
+        "purpose": "Text to speech: preset and saved voices, voice design, authorized reference cloning "
+                   "(Qwen3-TTS, asynchronous jobs).",
+        "endpoint": "GX-Playground /v1/voice/* on gx10-01 and the gateway's POST /v1/audio/speech "
+                    "-> 192.168.100.11:18830 (fabric) -> Qwen3-TTS",
+        "controls": ["load", "unload"],
+        "kind": AUDIO,
+        "playground": "#/voice",
+    },
+    "gx-call": {
+        "purpose": "Realtime voice agents: speech to speech with turn taking, barge-in, tool calls, transcripts "
+                   "and recordings.",
+        "endpoint": "GX-Playground Call Agents over the WebSocket tunnel -> 192.168.100.11:18840 (fabric) "
+                    "-> VoiceChat",
+        "controls": ["load", "unload"],
+        "kind": AUDIO,
+        "playground": "#/call",
+    },
+    "gx-live": {
+        "purpose": "Realtime multimodal conversation: speech with barge-in, live camera vision and tools.",
+        "endpoint": "GX-Playground Live over the WebSocket tunnel -> 192.168.100.11:18850 (fabric) -> MiniCPM-o",
+        "controls": ["load", "unload"],
+        "kind": AUDIO,
+        "playground": "#/live",
     },
 }
+#: Default task per kind when the registry entry does not name one.
+_DEFAULT_TASK = {LLM: "chat", MEDIA: "media-generation", AUDIO: "audio-generation"}
 
 REGISTRY_PATH = Path(__file__).resolve().parents[2] / "models" / "registry.json"
 
 
 def catalog(path: Path | None = None) -> dict[str, dict[str, Any]]:
-    """Model-card facts: alias role + the bound model from legenex/models/registry.json."""
+    """Model-card facts: the registry entry + the alias role.
+
+    The registry is the list: every alias it binds gets a card, in its order,
+    so a new alias never has to be added twice. An alias that has a role but no
+    registry entry (a half-finished binding) still gets a card, last, rather
+    than disappearing from the page.
+    """
     try:
         reg = json.loads((path or REGISTRY_PATH).read_text(encoding="utf-8")).get("aliases", {})
     except (OSError, ValueError):
         reg = {}
+    if not isinstance(reg, dict):
+        reg = {}
     out: dict[str, dict[str, Any]] = {}
-    for alias, role in ALIAS_ROLE.items():
-        spec = reg.get(alias, {})
+    for alias in list(reg) + [a for a in ALIAS_ROLE if a not in reg]:
+        role = ALIAS_ROLE.get(alias, {})
+        spec = reg.get(alias) or {}
+        kind = role.get("kind") or (AUDIO if str(spec.get("task", "")).startswith("realtime") else MEDIA)
         node = spec.get("node") or ""
         components = spec.get("components") or []
         model = spec.get("repository")
@@ -109,15 +170,36 @@ def catalog(path: Path | None = None) -> dict[str, dict[str, Any]]:
             "target": spec.get("target"),
             "previous": spec.get("previous"),
             "components": components,
-            "task": spec.get("task") or role.get("task") or ("chat" if alias not in ("gx-image", "gx-video")
-                                                              else "media-generation"),
+            "task": spec.get("task") or role.get("task") or _DEFAULT_TASK[kind],
             "capabilities": spec.get("capabilities"),
             "not_supported": spec.get("not_supported"),
             "image": spec.get("image"),
             "runtime_repository": spec.get("runtime_repository"),
             "runtime_revision": spec.get("runtime_revision"),
+            #: What the card is, so the page can show the right fields (D-040).
+            "kind": kind,
+            #: Which GX-Playground page serves this alias, as a hash route.
+            "playground": role.get("playground"),
+            #: Node-2 supervisor facts (port / unit / container / health URL).
+            "service": spec.get("service") or _service_facts(alias),
+            #: Other weights this alias's engine needs before it can serve.
+            "depends_on": spec.get("depends_on") or [],
+            "measured_footprint": spec.get("measured_footprint"),
+            "notes": spec.get("notes"),
         }
     return out
+
+
+def _service_facts(alias: str) -> dict[str, Any] | None:
+    """Supervisor facts for an alias whose registry entry omits them.
+
+    Ports and container names come from `node2_services.SPECS`, which is what
+    Resource Control actually talks to; nothing is hard-coded twice.
+    """
+    spec = NODE2_SPECS.get(alias)
+    if spec is None:
+        return None
+    return {"port": spec.port, "unit": f"{alias}.service", "container": spec.container, "label": spec.label}
 
 
 #: Back-compatible name used by older callers and tests.
@@ -214,6 +296,117 @@ def _containers(facts: dict) -> dict[str, dict]:
     return {c["name"]: c for c in ((facts or {}).get("docker") or {}).get("containers", [])}
 
 
+def _tenant_bases(cfg: Any) -> dict[str, str]:
+    """alias -> supervisor base URL for the node-2 services.
+
+    gx-music predates the Build V3 service specs (D-036), so it is named here;
+    the rest come from `node2_services.SPECS`. Addresses are the configured
+    fabric ones, never Tailscale (L-3).
+    """
+    bases = {"gx-music": cfg.music_base}
+    for alias, spec in NODE2_SPECS.items():
+        bases[alias] = getattr(cfg, f"{spec.prefix}_base", None) or f"http://192.168.100.11:{spec.port}"
+    return bases
+
+
+_TENANT_TTL = 3.0
+_tenant_lock = threading.Lock()
+_tenant_cache: dict[str, tuple[float, dict]] = {}
+
+
+def _probe_tenant(base: str) -> dict:
+    """GET <supervisor>/health, shaped like a `services.py` probe and cached briefly."""
+    now = time.time()
+    with _tenant_lock:
+        hit = _tenant_cache.get(base)
+        if hit and now - hit[0] < _TENANT_TTL:
+            return hit[1]
+    try:
+        status, body = http_json("GET", f"{base.rstrip('/')}/health", timeout=3)
+        out = {"ok": 200 <= status < 300, "status": status, "body": body, "checked_at": now}
+    except HTTPError as exc:
+        out = {"ok": False, "status": 0, "error": exc.message, "checked_at": now}
+    with _tenant_lock:
+        _tenant_cache[base] = (now, out)
+    return out
+
+
+def tenant_probes(cluster: Cluster, svc: dict) -> dict[str, dict]:
+    """One probe-shaped /health per node-2 supervisor.
+
+    The cached service snapshot already carries gx-music (and anything a later
+    snapshot publishes as `tenant_<alias>`); the rest are read here behind the
+    same short TTL. Offline runs never touch the network.
+    """
+    out: dict[str, dict] = {}
+    for alias, base in _tenant_bases(cluster.cfg).items():
+        cached = svc.get(f"tenant_{alias}") or (svc.get("music") if alias == "gx-music" else None)
+        if isinstance(cached, dict):
+            out[alias] = cached
+        elif getattr(cluster.cfg, "offline", False):
+            out[alias] = {"ok": False, "status": 0, "error": "offline"}
+        else:
+            out[alias] = _probe_tenant(base)
+    return out
+
+
+#: Supervisor engine state -> (card state, engine state, detail). READY is the
+#: supervisor; the engine is LOADED only while the weights are resident.
+_ENGINE_STATES: dict[str, tuple[str, str, str]] = {
+    "ready": ("loaded", "LOADED", "weights resident"),
+    "busy": ("loaded", "BUSY", "working"),
+    "generating": ("loaded", "BUSY", "generating"),
+    "running": ("loaded", "BUSY", "working"),
+    "loading": ("loading", "LOADING", "loading the weights"),
+    "waiting": ("loading", "QUEUED", "waiting for memory on gx10-02"),
+    "queued": ("loading", "QUEUED", "queued"),
+    "unloading": ("unloading", "BUSY", "unloading the engine"),
+    "unloaded": ("ready", "UNLOADED", ""),
+    "stopped": ("ready", "UNLOADED", ""),
+    "": ("ready", "UNLOADED", ""),
+    "failed": ("error", "ERROR", "the last engine load failed"),
+    "error": ("error", "ERROR", "the supervisor reports an error"),
+}
+
+
+def tenant_state(alias: str, probe: dict, *, gxmax_state: str, startup: str = "") -> dict:
+    """Card state for one on-demand node-2 service (pure).
+
+    An idle engine is READY, not offline: the supervisor is up and the weights
+    load with the next request. Only an unreachable supervisor, a failed load
+    or a gx-max takeover is a problem the user has to act on.
+    """
+    raw_body = probe.get("body")
+    body: dict = raw_body if isinstance(raw_body, dict) else {}
+    mem = body.get("memory") if isinstance(body.get("memory"), dict) else {}
+    engine_raw = str(body.get("state") or body.get("engine") or "").lower()
+    out = {"health": body, "engine_raw": engine_raw, "memory": mem,
+           "active_sessions": body.get("active_sessions"), "active_jobs": body.get("active_jobs"),
+           "version": body.get("version"), "checked_at": probe.get("checked_at")}
+    if gxmax_state in ("ready", "acquiring", "releasing"):
+        return {**out, "state": "unavailable", "detail": f"engine held off: gx-max is {gxmax_state}",
+                "service_state": "BLOCKED", "engine_state": "BLOCKED"}
+    if not probe.get("ok"):
+        return {**out, "state": "unavailable", "service_state": "ERROR", "engine_state": "ERROR",
+                "detail": f"the {alias} supervisor on gx10-02 is not reachable"}
+    state, engine_state, detail = _ENGINE_STATES.get(engine_raw, ("error", "ERROR", f"unknown state {engine_raw!r}"))
+    if engine_state == "UNLOADED":
+        detail = f"on demand — the engine loads with the next request{f' ({startup})' if startup else ''}"
+    return {**out, "state": state, "detail": detail, "service_state": "READY", "engine_state": engine_state}
+
+
+def _cold_hint(info: dict) -> str:
+    """"about 104 s cold" from the measured footprint, or "" when nothing was measured."""
+    fp = info.get("measured_footprint") or {}
+    seconds = fp.get("startup_s")
+    return f"about {round(float(seconds))} s cold" if isinstance(seconds, (int, float)) else ""
+
+
+#: Card state -> the two-part state when a branch does not set one itself.
+_ENGINE_FROM_STATE = {"loaded": "LOADED", "degraded": "LOADED", "loading": "LOADING", "unloading": "BUSY",
+                      "unloaded": "UNLOADED", "ready": "READY", "error": "ERROR", "unavailable": "ERROR"}
+
+
 def live_state(cluster: Cluster, results: ResultLog) -> list[dict]:
     svc = cluster.services.get() or {}
     n1 = cluster.node1.get() or {}
@@ -227,12 +420,15 @@ def live_state(cluster: Cluster, results: ResultLog) -> list[dict]:
     media = svc.get("media") or {}
     raw_media = media.get("body")
     media_body: dict = raw_media if media.get("ok") and isinstance(raw_media, dict) else {}
-    out = []
 
     cards = catalog()
-    for alias in ALL_ALIASES:
-        info = dict(cards[alias])
+    tenants = tenant_probes(cluster, svc)
+    out = []
+    for alias, card in cards.items():
+        info = dict(card)
         state, detail = "unavailable", ""
+        service_state: str | None = None
+        engine_state: str | None = None
         extra: dict[str, Any] = {}
 
         if alias in ("gx-mini", "gx-fast", "gx-reason"):
@@ -240,6 +436,7 @@ def live_state(cluster: Cluster, results: ResultLog) -> list[dict]:
             raw, reachable = _swap_entry(svc, f"swap_{node}", alias)
             if gxmax_state in ("ready", "acquiring", "releasing"):
                 state, detail = "unavailable", f"drained: gx-max is {gxmax_state}"
+                service_state = engine_state = "BLOCKED"
             elif not reachable:
                 state, detail = "unavailable", f"{node} llama-swap unreachable"
             elif raw in ("loaded", "ready"):
@@ -294,28 +491,25 @@ def live_state(cluster: Cluster, results: ResultLog) -> list[dict]:
             else:
                 state, detail = "unavailable", "orchestrator unreachable"
             extra["orchestrator_view"] = tiers
-        elif alias == "gx-music":
-            music = svc.get("music") or {}
-            raw_music = music.get("body")
-            mbody: dict = raw_music if isinstance(raw_music, dict) else {}
-            engine = mbody.get("engine")
-            if gxmax_state in ("ready", "acquiring", "releasing"):
-                state, detail = "unavailable", f"engine held off: gx-max is {gxmax_state}"
-            elif not music.get("ok"):
-                state, detail = "unavailable", "music supervisor on gx10-02 unreachable"
-            elif engine == "ready":
-                state, detail = "loaded", "ACE-Step loaded"
-            elif engine in ("loading", "unloading"):
-                state, detail = "loading" if engine == "loading" else "unloading", engine
-            elif engine == "failed":
-                state, detail = "error", "the last engine load failed"
-            else:
-                state, detail = "ready", "on demand (loads with the next job, ~90 s)"
-            extra["music"] = {"supervisor": mbody, "container": c2.get("gx-music")}
+        elif alias in tenants:
+            # gx-music, gx-voice, gx-call, gx-live: a resident supervisor with
+            # an on-demand engine. Idle is READY, never offline.
+            ts = tenant_state(alias, tenants[alias], gxmax_state=gxmax_state, startup=_cold_hint(info))
+            state, detail = ts["state"], ts["detail"]
+            service_state, engine_state = ts["service_state"], ts["engine_state"]
+            container = ((info.get("service") or {}).get("container")) or alias
+            extra["supervisor"] = {"health": ts["health"], "container": c2.get(container),
+                                   "engine_state": engine_state, "service_state": service_state,
+                                   "memory": ts["memory"], "version": ts["version"],
+                                   "active_sessions": ts["active_sessions"], "active_jobs": ts["active_jobs"],
+                                   "checked_at": ts["checked_at"]}
+            if alias == "gx-music":  # the shape the music job view has always read
+                extra["music"] = {"supervisor": ts["health"], "container": c2.get("gx-music")}
         else:  # media
             comfy = (media_body or {}).get("comfyui") or {}
             if gxmax_state in ("ready", "acquiring", "releasing"):
                 state, detail = "unavailable", f"drained: gx-max is {gxmax_state}"
+                service_state = engine_state = "BLOCKED"
             elif not media.get("ok"):
                 state, detail = "unavailable", "media router unreachable"
             elif not comfy.get("reachable"):
@@ -341,6 +535,10 @@ def live_state(cluster: Cluster, results: ResultLog) -> list[dict]:
             "alias": alias,
             "state": state,
             "state_detail": detail,
+            # Service and weights are two different questions (D-040): the
+            # supervisor can be READY while the engine is UNLOADED.
+            "service_state": service_state or ("ERROR" if state in ("unavailable", "error") else "READY"),
+            "engine_state": engine_state or _ENGINE_FROM_STATE.get(state, "ERROR"),
             "results": results.get(alias),
             "live": extra,
         })

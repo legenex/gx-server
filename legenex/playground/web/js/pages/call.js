@@ -257,7 +257,7 @@ export default {
         return emptyState({
           icon: 'phone', title: 'No call agents yet',
           text: 'An agent decides what the voice model is told, which tools it may use and what it must collect.',
-          action: button('Create the IntakePilot template', { icon: 'plus', variant: 'primary', onClick: () => createAgent() }),
+          action: button('Create a voice agent', { icon: 'plus', variant: 'primary', onClick: () => createAgent() }),
         });
       }
       return h('div', { class: 'grid-2' }, visible.map(agentCard));
@@ -277,8 +277,10 @@ export default {
 
     function pickUseCase() {
       return new Promise((resolve) => {
-        const options = (catalog.use_cases || ['intakepilot_mva']).map((u) => [u, u === 'intakepilot_mva'
-          ? 'IntakePilot motor vehicle accident intake' : 'General call agent']);
+        // The server lists the general agent first; it is the default choice and
+        // the rest are optional templates.
+        const labels = catalog.use_case_labels || {};
+        const options = (catalog.use_cases || ['general']).map((u) => [u, labels[u] || u]);
         const sel = select(options, options[0][0]);
         let picked = null;
         const create = button('Create', { variant: 'primary', onClick: () => { picked = sel.value; dlg.close('ok'); } });

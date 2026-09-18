@@ -537,7 +537,13 @@
           "revision": "19671f406d603126926c1b7e2adc169acbcade22",
           "file": "music/acestep/checkpoints/{vae,Qwen3-Embedding-0.6B}"
         }
-      ]
+      ],
+      "service": {
+        "port": 18820,
+        "unit": "gx-music.service",
+        "container": "gx-music",
+        "health": "http://192.168.100.11:18820/health"
+      }
     },
     "gx-voice": {
       "node": "gx10-02",
@@ -611,23 +617,29 @@
         "startup_s": 35.0,
         "measured": "2026-09-17",
         "evidence": "/srv/logs/acceptance/build-v3/voi/footprint-20260917T191026Z/summary.json"
+      },
+      "service": {
+        "port": 18830,
+        "unit": "gx-voice.service",
+        "container": "gx-voice-engine",
+        "health": "http://192.168.100.11:18830/health"
       }
     },
     "gx-call": {
       "node": "gx10-02",
       "task": "realtime-voice-conversation",
-      "runtime": "NVIDIA NemotronLabs VoiceChat 11B in gx-call-engine, behind the gx-call supervisor (legenex/call), port 18840",
+      "runtime": "NVIDIA NemotronLabs VoiceChat 11B in gx-call-engine:voicechat-097dfe9-t215, behind the gx-call supervisor (legenex/call), port 18840",
       "runtime_repository": "https://github.com/NVIDIA-NeMo/Speech",
-      "runtime_revision": "branch nemotron-labs-voicechat",
-      "image": "gx-call-engine",
+      "runtime_revision": "097dfe9e2f55baf653b83035868bdc89849f1b47",
+      "image": "gx-call-engine:voicechat-097dfe9-t215",
       "repository": "nvidia/NVIDIA-NemotronLabs-VoiceChat-11B",
       "revision": "a4c40ca5b4fe77db13e9840ca4a2b91becf030c8",
       "path": "/srv/models/voicechat/NVIDIA-NemotronLabs-VoiceChat-11B",
       "family": "NemotronLabs VoiceChat 11B",
       "licence": "openmdw-1.1",
       "uncensored": null,
-      "memory": "not measured yet",
-      "measured": null,
+      "memory": "34.5 GiB resident on gx10-02 while a call is up (measured 2026-09-18); admission estimate 48 GiB + 30 GiB reserve",
+      "measured": "cold load 74-104 s; first audio 1.2 s after the caller stops speaking; the engine unloads cleanly and MemAvailable returns (2026-09-18)",
       "startup": "supervisor starts at boot; the engine loads when a call session opens and unloads when idle",
       "capabilities": [
         "realtime speech-to-speech",
@@ -647,7 +659,28 @@
           "revision": "a4c40ca5b4fe77db13e9840ca4a2b91becf030c8",
           "file": "voicechat/NVIDIA-NemotronLabs-VoiceChat-11B"
         }
-      ]
+      ],
+      "depends_on": [
+        {
+          "role": "text backbone the VoiceChat engine loads with the speech model",
+          "repository": "nvidia/NVIDIA-Nemotron-Nano-9B-v2",
+          "revision": "6533e8de2c68e4536bf7c411d7a3ce5734111476",
+          "file": "voicechat/hf-cache"
+        }
+      ],
+      "measured_footprint": {
+        "node": "gx10-02",
+        "resident_gib": 34.5,
+        "startup_s": 104.0,
+        "first_audio_s": 1.2,
+        "measured": "2026-09-18"
+      },
+      "service": {
+        "port": 18840,
+        "unit": "gx-call.service",
+        "container": "gx-call-engine",
+        "health": "http://192.168.100.11:18840/health"
+      }
     },
     "gx-live": {
       "node": "gx10-02",

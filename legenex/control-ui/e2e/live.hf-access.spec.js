@@ -1,13 +1,17 @@
 // LIVE: the Model Manager tells the truth about the Hugging Face token and about
-// per-repository FILE access (B-030, D-041).
+// per-repository FILE access (D-041; the behaviour was found via B-030).
 //
 // Metadata access and file access are gated separately: a gated repository
 // answers 200 for /api/models/... and 403 for resolve/... until the account has
 // been granted access. Collapsing those into one "access denied (a token with
 // access is required)" message is what sent an earlier pass round in circles
 // minting tokens for a gate no token can open. This asserts the deployed UI
-// shows the live token state and, for the approved gx-reason target, names the
+// shows the live token state and, for a genuinely gated repository, names the
 // real reason and the real human action.
+//
+// NOTE: the repository below is used ONLY as a known-gated fixture. It is no
+// longer the gx-reason target -- gx-reason serves the ungated
+// wyattearp/Qwen3.8-27B-Uncensored-NVFP4 since D-042. Any gated repo would do.
 //
 //   npx playwright test --project=live e2e/live.hf-access.spec.js
 //

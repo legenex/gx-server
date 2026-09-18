@@ -9,6 +9,9 @@ from gx_control_ui.models import CATALOG, ResultLog, live_state
 from gx_control_ui.services import ALL_ALIASES, Cluster
 
 GIB = 2**30
+#: L-10 as amended by D-036 (gx-music) and D-040 (gx-voice, gx-call, gx-live).
+CANONICAL = ("gx-mini", "gx-fast", "gx-reason", "gx-max", "gx-auto", "gx-image", "gx-video", "gx-music",
+             "gx-voice", "gx-call", "gx-live")
 
 
 def facts(avail=100, kernel_ok=True, psi_full=0.0, hostwatch="ok=5 warn=0 crit=0", containers=(), reachable=True):
@@ -101,6 +104,16 @@ class TestLiveState(unittest.TestCase):
             "media": {"ok": True, "body": {"busy": False, "comfyui": {"reachable": True}}},
             "music": {"ok": True, "body": {"status": "ok", "engine": "unloaded", "active_jobs": 0}},
             "sglang": {"ok": False},
+            # The node-2 supervisors: resident processes whose engine is unloaded.
+            "tenant_gx-voice": {"ok": True, "body": {
+                "status": "ok", "service": "gx-voice", "state": "unloaded", "busy": False, "active_jobs": 0,
+                "memory": {"estimate_gib": 12.0, "resident_gib": 0.0}, "version": "1.0.0"}},
+            "tenant_gx-call": {"ok": True, "body": {
+                "status": "ok", "service": "gx-call", "state": "unloaded", "busy": False, "active_sessions": 0,
+                "memory": {"estimate_gib": 48.0, "resident_gib": 0.0, "reserve_gib": 30.0}, "version": "1.0.0"}},
+            "tenant_gx-live": {"ok": True, "body": {
+                "status": "ok", "service": "gx-live", "state": "unloaded", "busy": False, "active_sessions": 0,
+                "memory": {"estimate_gib": 34.0, "resident_gib": 0.0}, "version": "1.0.0"}},
         }
         self.state = "down"
         self.cluster.services._fn = lambda: self.svc
@@ -111,15 +124,24 @@ class TestLiveState(unittest.TestCase):
     def tearDown(self):
         self.env.cleanup()
 
-    def states(self):
+    def cards(self):
         for c in (self.cluster.services, self.cluster.lifecycle):
             c.invalidate()
-        return {m["alias"]: m["state"] for m in live_state(self.cluster, self.results)}
+        return {m["alias"]: m for m in live_state(self.cluster, self.results)}
+
+    def states(self):
+        return {a: m["state"] for a, m in self.cards().items()}
 
     def test_normal(self):
         self.assertEqual(self.states(), {
             "gx-mini": "loaded", "gx-fast": "unloaded", "gx-reason": "loading", "gx-max": "unloaded",
-            "gx-auto": "loaded", "gx-image": "ready", "gx-video": "ready", "gx-music": "ready"})
+            "gx-auto": "loaded", "gx-image": "ready", "gx-video": "ready", "gx-music": "ready",
+            "gx-voice": "ready", "gx-call": "ready", "gx-live": "ready"})
+
+    def test_every_alias_appears_exactly_once(self):
+        aliases = [m["alias"] for m in live_state(self.cluster, self.results)]
+        self.assertEqual(aliases, list(CANONICAL))
+        self.assertEqual(len(aliases), len(set(aliases)))
 
     def test_music_states(self):
         self.svc["music"]["body"]["engine"] = "ready"
@@ -132,8 +154,11 @@ class TestLiveState(unittest.TestCase):
         self.svc["sglang"] = {"ok": True}
         s = self.states()
         self.assertEqual(s["gx-max"], "loaded")
-        for alias in ("gx-mini", "gx-fast", "gx-reason", "gx-image", "gx-video", "gx-music"):
+        for alias in ("gx-mini", "gx-fast", "gx-reason", "gx-image", "gx-video", "gx-music",
+                      "gx-voice", "gx-call", "gx-live"):
             self.assertEqual(s[alias], "unavailable", alias)
+        call = self.cards()["gx-call"]
+        self.assertEqual((call["service_state"], call["engine_state"]), ("BLOCKED", "BLOCKED"))
 
     def test_gxmax_ready_without_health_is_error(self):
         self.state = "ready"
@@ -155,7 +180,13 @@ class TestLiveState(unittest.TestCase):
         self.assertEqual(self.states()["gx-image"], "error")
 
     def test_catalog_is_complete_and_locked(self):
-        self.assertEqual(tuple(CATALOG), ALL_ALIASES)
+        # L-10 as amended by D-036 and D-040: eleven aliases, in registry order,
+        # each exactly once. The registry is the list; ALIAS_ROLE only adds the
+        # behaviour that belongs to the alias rather than to the model.
+        self.assertEqual(tuple(CATALOG), CANONICAL)
+        self.assertEqual(len(set(CATALOG)), len(CANONICAL))
+        for alias in ALL_ALIASES:  # the eight that predate Build V3 are still there
+            self.assertIn(alias, CATALOG, alias)
         gx = CATALOG["gx-max"]
         self.assertEqual(gx["model"], "dealignai/DeepSeek-V4-Flash-0731-CRACK-NVFP4")  # D-032
         self.assertIn("SGLang", gx["engine"])
@@ -163,6 +194,74 @@ class TestLiveState(unittest.TestCase):
         self.assertEqual(gx["topology"]["rank1"], "gx10-02")
         self.assertFalse(CATALOG["gx-max"]["vision"])
         self.assertTrue(CATALOG["gx-mini"]["vision"])
+
+    def test_specialised_aliases_have_a_kind_and_a_playground_page(self):
+        kinds = {a: CATALOG[a]["kind"] for a in CANONICAL}
+        self.assertEqual({a: kinds[a] for a in ("gx-mini", "gx-fast", "gx-reason", "gx-max", "gx-auto")},
+                         dict.fromkeys(("gx-mini", "gx-fast", "gx-reason", "gx-max", "gx-auto"), "llm"))
+        self.assertEqual({a: kinds[a] for a in ("gx-image", "gx-video", "gx-music")},
+                         dict.fromkeys(("gx-image", "gx-video", "gx-music"), "media"))
+        self.assertEqual({a: kinds[a] for a in ("gx-voice", "gx-call", "gx-live")},
+                         dict.fromkeys(("gx-voice", "gx-call", "gx-live"), "audio-realtime"))
+        self.assertEqual(CATALOG["gx-voice"]["playground"], "#/voice")
+        self.assertEqual(CATALOG["gx-call"]["playground"], "#/call")
+        self.assertEqual(CATALOG["gx-live"]["playground"], "#/live")
+
+    def test_specialised_cards_do_not_need_chat_metadata(self):
+        for alias in ("gx-voice", "gx-call", "gx-live", "gx-music"):
+            card = CATALOG[alias]
+            with self.subTest(alias):
+                # No context window, no tool/vision flags, no llama-swap entry...
+                self.assertIsNone(card["context"], alias)
+                self.assertIsNone(card["max_output"], alias)
+                self.assertNotEqual(card["task"], "chat", alias)
+                # ...but everything the card actually renders is there.
+                self.assertTrue(card["purpose"] and card["endpoint"], alias)
+                self.assertTrue(card["model"] and card["model"] != "—", alias)
+                self.assertEqual(card["nodes"], ["gx10-02"], alias)
+                self.assertTrue(card["capabilities"], alias)
+
+    def test_voice_and_call_are_bound_and_measured(self):
+        voice, call = CATALOG["gx-voice"], CATALOG["gx-call"]
+        self.assertEqual(voice["repository"], "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice")
+        self.assertEqual(call["repository"], "nvidia/NVIDIA-NemotronLabs-VoiceChat-11B")
+        self.assertEqual(call["revision"], "a4c40ca5b4fe77db13e9840ca4a2b91becf030c8")
+        self.assertEqual(call["image"], "gx-call-engine:voicechat-097dfe9-t215")
+        self.assertEqual(call["service"]["port"], 18840)
+        # The backbone the engine cannot serve without (t215 acceptance).
+        dep = call["depends_on"][0]
+        self.assertEqual(dep["repository"], "nvidia/NVIDIA-Nemotron-Nano-9B-v2")
+        self.assertEqual(dep["revision"], "6533e8de2c68e4536bf7c411d7a3ce5734111476")
+        self.assertEqual(call["measured_footprint"]["resident_gib"], 34.5)
+        for alias in ("gx-voice", "gx-call", "gx-live"):
+            self.assertRegex(CATALOG[alias]["revision"], r"^[0-9a-f]{40}$", alias)
+
+    def test_an_unloaded_engine_is_ready_not_offline(self):
+        card = self.cards()["gx-call"]
+        self.assertEqual(card["state"], "ready")
+        self.assertEqual((card["service_state"], card["engine_state"]), ("READY", "UNLOADED"))
+        self.assertIn("on demand", card["state_detail"])
+        self.assertEqual(card["live"]["supervisor"]["memory"]["estimate_gib"], 48.0)
+
+    def test_service_and_engine_states_are_separate(self):
+        body = self.svc["tenant_gx-call"]["body"]
+        for raw, state, engine in (("ready", "loaded", "LOADED"), ("loading", "loading", "LOADING"),
+                                   ("busy", "loaded", "BUSY"), ("waiting", "loading", "QUEUED"),
+                                   ("unloading", "unloading", "BUSY"), ("failed", "error", "ERROR")):
+            body["state"] = raw
+            card = self.cards()["gx-call"]
+            with self.subTest(raw):
+                self.assertEqual(card["state"], state)
+                self.assertEqual(card["engine_state"], engine)
+                # The supervisor answered, so the service itself is up.
+                self.assertEqual(card["service_state"], "READY")
+
+    def test_unreachable_supervisor_is_the_only_service_error(self):
+        self.svc["tenant_gx-voice"] = {"ok": False, "status": 0, "error": "connection refused"}
+        card = self.cards()["gx-voice"]
+        self.assertEqual(card["state"], "unavailable")
+        self.assertEqual((card["service_state"], card["engine_state"]), ("ERROR", "ERROR"))
+        self.assertIn("not reachable", card["state_detail"])
 
     def test_result_log_persists(self):
         self.results.record("gx-mini", "inference", True, "391", latency_ms=12)

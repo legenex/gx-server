@@ -31,7 +31,11 @@ from .netguard import BlockedURL, check_url
 AGENT_ID_RE = re.compile(r"^agt_[0-9a-f]{24}$")
 STATUSES = ("draft", "enabled", "disabled", "archived")
 MODES = ("test", "production")
-USE_CASES = ("intakepilot_mva", "general")
+USE_CASES = ("general", "intakepilot_mva")  # the general agent is the default; the rest are templates
+#: What the use-case picker calls each template. The stored ids never change
+#: (existing rows keep working); only these labels are product-neutral.
+USE_CASE_LABELS = {"general": "General voice agent",
+                   "intakepilot_mva": "Motor vehicle accident intake"}
 SECRET_NAME_RE = re.compile(r"^[a-z][a-z0-9_\-]{1,40}$")
 INTEGRATION_NAME_RE = re.compile(r"^[a-z][a-z0-9_\-]{1,40}$")
 WEBHOOK_EVENTS = ("call.started", "call.ended", "intake.updated", "intake.completed", "transfer.requested",
@@ -128,25 +132,32 @@ def new_agent_id() -> str:
     return "agt_" + secrets.token_hex(12)
 
 
-def default_config(use_case: str = "intakepilot_mva") -> dict:
-    """A complete, working IntakePilot MVA agent (the Call Agents page's template)."""
+def default_config(use_case: str = "general") -> dict:
+    """A complete, working agent configuration for one use case.
+
+    The default is the **general** voice agent: gx-call is a general
+    voice-agent product, so an agent created without a template choice starts
+    blank and unbranded. The motor vehicle accident intake is one optional
+    template; its stored id stays ``intakepilot_mva`` so existing rows and
+    their versions keep working.
+    """
     mva = use_case == "intakepilot_mva"
     return {
-        "name": "IntakePilot MVA intake" if mva else "New call agent",
+        "name": "Motor vehicle accident intake" if mva else "New call agent",
         "description": "Answers motor vehicle accident enquiries, collects the intake and warm-transfers "
                        "qualified callers." if mva else "",
         "model": "gx-call",
         "voice": "Aria",
         "use_case": use_case,
-        "company": "IntakePilot" if mva else "",
-        "brand": "IntakePilot Injury Help Line" if mva else "",
+        "company": "",
+        "brand": "Injury Help Line" if mva else "",
         "system_instructions": (
             "You are the intake specialist for an injury law office. You take calls from people who were in a "
             "motor vehicle accident, collect the intake details and help them get to an attorney quickly."
             if mva else "You are a helpful phone agent."),
         "personality": "Warm, calm and efficient. Short sentences. Never rushed.",
-        "opening_greeting": ("Thank you for calling the IntakePilot injury help line. I am here to help after "
-                             "your accident. May I have your name?") if mva else "Hello, how can I help you today?",
+        "opening_greeting": ("Thank you for calling the injury help line. I am here to help after your "
+                             "accident. May I have your name?") if mva else "Hello, how can I help you today?",
         "qualification_flow": (
             "1. Ask for the caller's name and a phone number. 2. Ask when and in which state the accident "
             "happened. 3. Ask what happened and who was at fault. 4. Ask about injuries and treatment. 5. Ask if "
@@ -158,19 +169,26 @@ def default_config(use_case: str = "intakepilot_mva") -> dict:
         "objection_handling": ("If the caller is unsure about calling a lawyer, explain that the consultation "
                                "is free and there is no obligation.") if mva else "",
         "conversation_rules": ("Ask one question at a time. Confirm phone numbers by repeating them. Save each "
-                               "answer with update_intake_fields as soon as you hear it."),
+                               "answer with update_intake_fields as soon as you hear it.") if mva else
+                              ("Ask one question at a time. Confirm phone numbers and email addresses by "
+                               "repeating them back."),
         "prohibited_behaviour": ("Never give legal advice or promise an outcome. Never invent facts. Never ask "
-                                 "for social security or bank numbers."),
+                                 "for social security or bank numbers.") if mva else
+                                ("Never invent facts and never promise anything you cannot deliver. Never ask "
+                                 "for social security, card or bank numbers."),
         "tool_permissions": (["update_intake_fields", "lookup_accident_state_rules", "request_warm_transfer",
                               "check_business_hours", "end_call"] if mva else ["end_call"]),
         "tool_on_hold": {},
         "transfer_rules": ("Transfer qualified callers, and anyone who asks for a person, after the required "
                            "fields are saved.") if mva else "",
-        "transfer_destination": {"type": "queue", "value": "intake-specialists", "integration": None},
+        "transfer_destination": {"type": "queue", "value": "intake-specialists" if mva else "",
+                                 "integration": None},
         "business_hours": {"timezone": "America/New_York",
                            "days": {d: [["08:00", "20:00"]] for d in ("mon", "tue", "wed", "thu", "fri")},
                            "closed_dates": []},
-        "business_hours_behaviour": "Outside business hours, take the intake and promise a callback next business day.",
+        "business_hours_behaviour": ("Outside business hours, take the intake and promise a callback next "
+                                     "business day.") if mva else
+                                    "Outside business hours, take a message and promise a callback next business day.",
         "voicemail_behaviour": ("If you reach voicemail, leave a short message with the callback number "
                                 "and end the call."),
         "fallback_behaviour": "If you cannot help, offer a callback and end the call politely.",
@@ -184,7 +202,7 @@ def default_config(use_case: str = "intakepilot_mva") -> dict:
             "type": "object", "properties": {"caller_name": {"type": "string", "maxLength": 120},
                                              "notes": {"type": "string", "maxLength": 2000},
                                              "disposition": ci.MVA_SCHEMA["properties"]["disposition"]}},
-        "tags": ["intakepilot", "mva"] if mva else [],
+        "tags": ["mva", "intake"] if mva else [],
         "recording": {"enabled": False, "notice": "This call may be recorded for quality and training."},
         "retention_days": 30,
         "max_call_minutes": 20,

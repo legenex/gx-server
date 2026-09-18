@@ -121,21 +121,51 @@ gx-max has not been started at any point in this pass.
 | **MUS** | Page was dead on arrival (`aiPanel is not defined`) and is now live. Music acceptance in progress. |
 | **PLT/LEAD** | Deployment contract, HTTPS, the realtime tunnel, registry, migrations, the Hugging Face diagnosis, and the deployed-site gates. |
 
-### gx-reason: unchanged, and the blocker is now precise (B-030)
+### gx-reason: NEW MODEL, live and accepted (D-042, closes B-030)
 
-gx-reason still serves the interim `nvidia/Qwen3.6-27B-NVFP4`, which is **not
-deleted**. The approved target
-`iSkye/Qwen3.8-Flash-Next-NVFP4-ablit-a070` @ `91c3e3d4…` (92.68 B parameters,
-98.66 GiB — both confirmed against the live HF API) returns **403
-`X-Error-Code: GatedRepo`, "you are not in the authorized list"** for its files,
-while its metadata returns 200. The token is valid, fine-grained, identifies
-user **`legenex`**, and already carries `canReadGatedRepos: true`. **No token can
-fix this**; a human must accept the model's terms in a browser. See B-030.
+gx-reason serves **`wyattearp/Qwen3.8-27B-Uncensored-NVFP4`** @
+`91ec573a3d8e660b78b7161395e4a5b6247c2c8b` — "Qwen3.8-27B Dense Uncensored
+NVFP4". Installed, revision-pinned and verified on 2026-09-18: all 22 files
+checked against that revision on disk (26.61 GiB, 14 sha256-checked,
+`.gx-manifest.json` written).
 
-The Model Manager no longer blurs this: 401 and 403 are separate machine codes
-with separate human actions, Hugging Face's own error message is passed through
-verbatim, and the token panel shows configured/valid/user/type/token
-name/created/gated-repo permission from live state only.
+This replaced **both** earlier identities at the user's explicit instruction:
+
+* the interim `nvidia/Qwen3.6-27B-NVFP4` — **deleted from gx10-02**, not a
+  fallback, not to be reinstalled;
+* the previously planned `iSkye/Qwen3.8-Flash-Next-NVFP4-ablit-a070` —
+  **abandoned**. **B-030 is closed as obsolete**: the Hugging Face gate still
+  exists, but the model behind it is no longer wanted, so nothing about
+  gx-reason is waiting on a human.
+
+Not to be confused with the retired `gx10-vllm/Qwen3.8-27B-Uncensored` runtime,
+which stays retired — that is a local runtime folder, this is an upstream NVFP4
+repository at a pinned revision.
+
+**The engine did not change.** The checkpoint is
+`Qwen3_5ForConditionalGeneration`, the same hybrid-attention family the existing
+`jstarkg/vllm-gb10-flashnext:0.28-sm121-r6` image already serves for gx-fast;
+support was verified inside the deployed image before any config was edited.
+Two flags changed with reasons: `--quantization modelopt` removed (this
+checkpoint declares `compressed-tensors`/`nvfp4`, which vLLM auto-detects), and
+`--speculative-config` (MTP) removed for bring-up.
+
+**Measured live, 2026-09-18** (not inherited from the old model):
+
+| | |
+|---|---|
+| Cold load | 392 s |
+| Decode | ~9 tok/s (no MTP) |
+| MemAvailable idle / loaded / after unload | 114.68 / 63.45 / 114.68 GiB |
+| Real node footprint | **51.2 GiB** at `--gpu-memory-utilization 0.42` |
+| Context | 65536 |
+
+Accepted end to end: multi-step reasoning (11:36 / 156 km, correct), a coding
+debug task (named both the in-place mutation and the even-length bug),
+reasoning separated from content, tool calling through `qwen3_xml`, and
+**vision** — it read the red jacket out of a real generated image. Served
+through LiteLLM as `gx-reason`; gx-auto escalates to it for hard prompts
+(proved in `gateway-text.jsonl`). Unloads cleanly and the memory returns.
 
 ## Previous update — 2026-09-17 11:00 SAST (final integration pass: gx-music, GX-Playground, Resource Control)
 

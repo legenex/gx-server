@@ -113,18 +113,19 @@ WORKLOAD_SIZING: dict[str, WorkloadSpec] = {
         "swap:true (exclusive-one-at-a-time) today.",
     ),
     "gx-reason": WorkloadSpec(
-        "gx-reason", "node2", WorkloadClass.LARGE, 45.0,
-        "nvidia/Qwen3.6-27B-NVFP4 on vLLM, replacing the broken "
-        "Qwen3.5-122B-A10B GGUF/llama.cpp combination (B-011, isolated to a "
-        "llama.cpp CUDA/GDN kernel bug for this hybrid architecture, not the "
-        "checkpoint). 20.42 GiB of weights + a 0.35 vLLM pool. 45 GiB is "
-        "CONFIRMED BY MEASUREMENT 2026-09-16, no longer just a ceiling: "
-        "loading it moved node2 from 114 -> 70 GiB MemAvailable, i.e. a real "
-        "~44 GiB node-level footprint. Note this figure comes from "
-        "/proc/meminfo, which is what compute_admission() reads -- the "
-        "container's own memory cgroup reports only ~11 GiB because the CUDA "
-        "pool is not charged to it on this hardware (B-021), so never size "
-        "this from `docker stats`. Still owns node2 exclusively (D-007) -- "
+        "gx-reason", "node2", WorkloadClass.LARGE, 52.0,
+        "wyattearp/Qwen3.8-27B-Uncensored-NVFP4 @91ec573a on vLLM (D-042), "
+        "replacing the interim nvidia/Qwen3.6-27B-NVFP4 and the abandoned "
+        "iSkye target. 26.61 GiB of weights + a 0.42 vLLM pool. 52 GiB is "
+        "CONFIRMED BY MEASUREMENT 2026-09-18, not a ceiling: loading it moved "
+        "node2 from 114.68 -> 63.45 GiB MemAvailable, i.e. a real 51.2 GiB "
+        "node-level footprint, and unloading returned it to 114.68. The "
+        "previous model's ~44 GiB figure was NOT carried over -- this "
+        "checkpoint is 6 GiB larger on disk and runs a larger pool. Note this "
+        "figure comes from /proc/meminfo, which is what compute_admission() "
+        "reads -- the container's own memory cgroup reports far less because "
+        "the CUDA pool is not charged to it on this hardware (B-021), so never "
+        "size this from `docker stats`. Still owns node2 exclusively (D-007) -- "
         "never co-scheduled with ComfyUI or any other large/exclusive "
         "workload.",
     ),

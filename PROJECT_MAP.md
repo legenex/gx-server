@@ -161,19 +161,11 @@ repository is **public**.
 
 ## Pending decisions and limitations
 
-* **B-030** (supersedes B-025): the approved gx-reason checkpoint
-  `iSkye/Qwen3.8-Flash-Next-NVFP4-ablit-a070` is gated **per user**, and the
-  account is not on its authorized list.
-  * The only genuine human blocker in the project.
-  * A valid fine-grained token IS configured; it authenticates as `legenex`
-    and already carries `canReadGatedRepos: true`. Metadata reads return 200;
-    file reads return **403 `X-Error-Code: GatedRepo`**. **Another token cannot
-    change this.**
-  * Human action: open the model page in a browser signed in as `legenex` and
-    accept its terms (the repository is `gated: auto`, so access is granted
-    immediately).
-  * The interim `nvidia/Qwen3.6-27B-NVFP4` keeps serving and is **not
-    deleted**.
+* ~~**B-030**: the approved gx-reason checkpoint is gated per user.~~
+  **CLOSED as obsolete, 2026-09-18 (D-042).** The user replaced the target with
+  the ungated `wyattearp/Qwen3.8-27B-Uncensored-NVFP4`, which is installed and
+  live. The iSkye gate still exists; the model behind it is no longer wanted.
+  **There is no human blocker for gx-reason any more.**
 * **B-023:** node 1 still reaches the swap ceiling during the gx-max load. It
   was re-measured on 2026-09-17: minimum 9.4 GiB available, swap at the
   ceiling. Whether the drain should also stop Open WebUI and AgentOS remains
@@ -248,15 +240,10 @@ output directory and ports, or the runs delete each other's traces —
 
 ## Next logical step
 
-**Close B-030 — the one thing an agent cannot do.** Open
-<https://huggingface.co/iSkye/Qwen3.8-Flash-Next-NVFP4-ablit-a070> in a browser
-signed in to Hugging Face as **`legenex`** and accept the model's terms. The
-token is already configured and already has the gated-repo permission; the
-account simply is not on the repository's authorized list, and no token change
-can alter that. Once access is granted, Model Manager stages, verifies,
-test-serves and assigns the checkpoint on gx10-02 without further input, and
-the interim `nvidia/Qwen3.6-27B-NVFP4` is deleted only after that acceptance
-passes.
+gx-reason, gx-call, gx-mini, gx-fast, gx-auto and the media tiers are all live
+and accepted. The remaining work is finishing the Creative Flows adapter layer
+and its two worked templates (see `coordination/build-v3/`), and the periodic
+full regression. Nothing in the project is currently waiting on a human.
 
 Then, in order:
 

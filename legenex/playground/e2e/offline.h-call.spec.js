@@ -12,7 +12,10 @@ import { axeCheck, gotoPage, login, watchPage } from './helpers.js';
 
 test.describe.configure({ mode: 'serial' });
 
-const TEMPLATE_NAME = 'IntakePilot MVA intake';
+// The default is the general agent; the motor vehicle accident intake is one
+// optional template, picked explicitly in the "Start from" list.
+const GENERAL_NAME = 'New call agent';
+const TEMPLATE_NAME = 'Motor vehicle accident intake';
 const EDITED_NAME = 'Night line intake';
 // The browser logs every 4xx/5xx response; several of them are deliberate here.
 const HTTP_NOISE = [/Failed to load resource/];
@@ -23,13 +26,18 @@ async function openCall(page) {
   return page.locator('#page-call');
 }
 
-async function createTemplateAgent(page) {
+async function createAgent(page, { template } = {}) {
   await page.getByRole('button', { name: 'New agent' }).click();
   const dialog = page.getByRole('dialog');
-  await expect(dialog.getByLabel('Start from')).toBeVisible();
+  const startFrom = dialog.getByLabel('Start from');
+  await expect(startFrom).toBeVisible();
+  // the general voice agent is the first option and therefore the default
+  await expect(startFrom.locator('option').first()).toHaveText('General voice agent');
+  await expect(startFrom).toHaveValue('general');
+  if (template) await startFrom.selectOption({ label: template });
   await dialog.getByRole('button', { name: 'Create', exact: true }).click();
   const editor = page.getByRole('dialog');
-  await expect(editor.getByRole('heading', { name: `Edit ${TEMPLATE_NAME}` })).toBeVisible();
+  await expect(editor.getByRole('heading', { name: `Edit ${template || GENERAL_NAME}` })).toBeVisible();
   return editor;
 }
 
@@ -40,6 +48,9 @@ test('empty state: no agents, and the Call tab says so', async ({ page }) => {
   await expect(root.getByRole('tablist', { name: 'Call Agents sections' }).getByRole('tab'))
     .toHaveText(['Agents', 'Call', 'History']);
   await expect(root.getByText('No call agents yet')).toBeVisible();
+  // the empty state offers a voice agent, not one vendor's intake product
+  await expect(root.getByRole('button', { name: 'Create a voice agent' })).toBeVisible();
+  await expect(root.getByRole('button', { name: 'Create the IntakePilot template' })).toHaveCount(0);
   await axeCheck(page, 'call agents empty');
   await root.getByRole('tab', { name: 'Call' }).click();
   await expect(root.getByText('No agent is enabled')).toBeVisible();
@@ -56,7 +67,7 @@ test('agents: template, editor, compiled prompt, new version, enable and duplica
   await login(page);
   await openCall(page);
 
-  const editor = await createTemplateAgent(page);
+  const editor = await createAgent(page, { template: TEMPLATE_NAME });
   // the editor shows the real, saved configuration
   await expect(editor.getByLabel('Name', { exact: true })).toHaveValue(TEMPLATE_NAME);
   await expect(editor.getByLabel('Role and task')).toContainText('intake specialist');

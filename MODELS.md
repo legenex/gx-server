@@ -56,38 +56,39 @@ Alternatives considered:
   repo recipes referenced. Note the repo's `Alibaba/Qwen3.5-35B-A3B-Uncensored-HauhauCS-*`
   path was a **local folder, not an upstream ID** — fetching it returns HTTP 401.
 
-## gx-reason — interim `nvidia/Qwen3.6-27B-NVFP4`; approved target `iSkye/Qwen3.8-Flash-Next-NVFP4-ablit-a070`
+## gx-reason — `wyattearp/Qwen3.8-27B-Uncensored-NVFP4`
 
-**LIVE since 2026-09-16 on the interim checkpoint.** This tier was re-engined
-after B-011; see the "superseded" note below for what it replaced and why.
+**LIVE since 2026-09-18 (D-042).** Display name: **Qwen3.8-27B Dense Uncensored
+NVFP4**. This replaced both the interim `nvidia/Qwen3.6-27B-NVFP4` (deleted from
+gx10-02, not a fallback) and the abandoned
+`iSkye/Qwen3.8-Flash-Next-NVFP4-ablit-a070` target — **B-030 is closed as
+obsolete**, because that model is no longer wanted.
 
-> **The approved target is `iSkye/Qwen3.8-Flash-Next-NVFP4-ablit-a070` @
-> `91c3e3d4daf14f8e9389b95f43112410f06ed3d5`** — 92.68 B parameters, 98.66 GiB,
-> NVFP4/MXFP8, vision, abliterated, base `Mia-AiLab/Qwen3.8-Flash-Next-NVFP4`.
-> Both figures confirmed against the live Hugging Face API on 2026-09-17.
-> It is **not installed**: the repository is gated per user and the account
-> `legenex` is not on its authorized list (**B-030** — a human must accept the
-> terms in a browser; no token can fix it). The interim model keeps serving and
-> is deleted only after the new one passes a full acceptance.
->
-> Do not confuse this with the retired `gx10-vllm/Qwen3.8-27B-Uncensored`
-> runtime, which is a different model and stays retired.
+> **Not** the retired `gx10-vllm/Qwen3.8-27B-Uncensored` runtime (locked
+> decision 15), which stays retired. That is a local runtime folder; this is an
+> upstream NVFP4 repository pinned to an immutable revision. The names are
+> similar and the artefacts are not.
 
 | Field | Value |
 |---|---|
-| Verified | `GET https://huggingface.co/api/models/nvidia/Qwen3.6-27B-NVFP4` → **HTTP 200**, `gated: false`, `private: false` |
-| Quantisation | NVIDIA ModelOpt `MIXED_PRECISION` — W4A16_NVFP4 MLP + FP8 linear-attention projections, FP8 KV cache. vLLM resolves it as `modelopt_mixed`. |
-| License | Apache-2.0 |
-| Disk | **20.42 GiB** (21,921,697,184 B, 3 shards — measured on disk, matches the HF API exactly) |
-| Engine | vLLM, `jstarkg/vllm-gb10-flashnext:0.28-sm121-r6` — the **same image already proven for gx-fast** |
+| Repository | `wyattearp/Qwen3.8-27B-Uncensored-NVFP4` |
+| Revision | `91ec573a3d8e660b78b7161395e4a5b6247c2c8b` (pinned; never served from `main`) |
+| Base model | `JonathanColetti/Qwen3.8-27B-Uncensored` |
+| Verified | 2026-09-18 — all 22 files checked on disk against that revision, 14 sha256-checked, `.gx-manifest.json` written |
+| Quantisation | NVFP4 via **compressed-tensors** (auto-detected from `config.json`; `--quantization modelopt` is wrong for this checkpoint and was removed) |
+| License | Apache-2.0, ungated |
+| Disk | **26.61 GiB** (28,571,880,859 B, 12 shards + an MTP head) |
+| Engine | vLLM, `jstarkg/vllm-gb10-flashnext:0.28-sm121-r6` — the **same image already proven for gx-fast**; arch support confirmed inside the image before any config change |
 | Node | gx10-02 |
-| Architecture | `Qwen3_5ForConditionalGeneration`, dense 27B, 64 layers, hybrid attention (3× linear/GDN : 1× full) |
-| Context | 262 144 native; **served at 65 536** (KV headroom, per D-009) |
-| Vision | Yes — the checkpoint carries a `vision_config` and image/video processors |
-| Tools | Yes (`--tool-call-parser qwen3_xml`) — configured, not yet exercised live |
-| Measured RAM | **~44 GiB** node-level with `--gpu-memory-utilization 0.35` (MemAvailable 114 → 70 GiB). Still owns node 2 exclusively — do not co-schedule with ComfyUI. |
-| Measured speed | 12.4 tok/s generation; 401 s cold start |
-| Why | It is the same `qwen3_5` hybrid-attention family that gx-fast already runs correctly on vLLM on this exact hardware, so it reuses a confirmed-good engine/architecture pairing. Dense 27B activates its full parameter count per token — a real compute step up from gx-fast's ~3B active — while being small enough to dodge B-009's ~55 GiB vLLM ceiling. |
+| Architecture | `Qwen3_5ForConditionalGeneration`, dense 27B, 64 layers, hybrid attention: **48 linear-attention + 16 full-attention**. Only those 16 layers hold a KV cache, which is why 65 536 context is cheap here. |
+| Context | 262 144 native; **served at 65 536** (D-009) |
+| Vision | **Yes, exercised live** — `qwen3_5_vision` encoder, depth 27. It read the red jacket out of a real generated source image. |
+| Tools | **Yes, exercised live** — `--tool-call-parser qwen3_xml` returned a correct `get_weather` call |
+| Reasoning | **Yes, exercised live** — separated from `content` by `--reasoning-parser qwen3` |
+| Measured RAM | **51.2 GiB** node-level at `--gpu-memory-utilization 0.42` (MemAvailable 114.68 → 63.45 GiB, back to 114.68 after unload). Re-measured for this checkpoint; the old model's 44 GiB was **not** carried over. |
+| Measured speed | ~9 tok/s decode (no MTP); **392 s** cold start |
+| Speculative decoding | The checkpoint ships `model-mtp.safetensors`, but MTP is **off** for bring-up. Standard inference first; re-enabling it is a separate measured change. |
+| Why | Uncensored, dense 27B, multimodal, and the same `qwen3_5` hybrid-attention family gx-fast already runs correctly on vLLM on this exact hardware — so it reuses a confirmed-good engine/architecture pairing rather than introducing an unverified one. |
 
 ### Superseded gx-reason candidates (do not re-deploy without reading B-011)
 
@@ -238,7 +239,7 @@ endpoint rather than a batch job.
 |---|---|---|
 | DeepSeek V4 Flash | both | 164 GB each (duplicated — no shared FS) |
 | Qwen3.6-35B-A3B-NVFP4 | node 1 | 23.5 GB |
-| Qwen3.6-27B-NVFP4 (gx-reason, LIVE) | node 2 | 20.4 GiB |
+| Qwen3.8-27B-Uncensored-NVFP4 (gx-reason, LIVE) | node 2 | 26.61 GiB |
 | Qwen3.5-122B-A10B-NVFP4-FP8Dense-GB10 (unused) | node 2 | 74 GB |
 | Qwen3.5-122B-A10B GGUF (rejected, B-011) | node 2 | 73 GB |
 | Qwen3.5-4B GGUF | node 1 | 3.2 GB |

@@ -7,34 +7,33 @@ is never a history — see `CHANGELOG.md`, `TEST_RESULTS.md` and
 Last updated: 2026-09-17 ~22:10 SAST, by the lead agent on gx10-01, after the
 Build V3 integration pass (D-040, D-041).
 
-## READ THIS FIRST — the one thing that needs a human
+## READ THIS FIRST — gx-reason changed, and B-030 is closed
 
-**`coordination/BLOCKERS.md` B-030.** gx-reason's approved checkpoint
-`iSkye/Qwen3.8-Flash-Next-NVFP4-ablit-a070` @ `91c3e3d4…` is **gated per user**,
-and the account is not on its authorized list.
+**There is no longer anything waiting on a human for gx-reason.**
 
-This is not a token problem, and it is worth being precise because an earlier
-pass lost hours to the opposite conclusion:
+gx-reason now serves **`wyattearp/Qwen3.8-27B-Uncensored-NVFP4`** @
+`91ec573a3d8e660b78b7161395e4a5b6247c2c8b` ("Qwen3.8-27B Dense Uncensored
+NVFP4"), installed, verified and live since 2026-09-18 (D-042).
 
-* a fine-grained token **is** configured at
-  `/srv/projects/gx-cluster/secrets/hf/token` (0600);
-* it authenticates as **`legenex`** and already carries
-  `canReadGatedRepos: true`;
-* repository **metadata** returns **200** with it (92.68 B parameters,
-  98.66 GiB — both confirmed);
-* repository **files** return **403** with
-  `X-Error-Code: GatedRepo`, *"you are not in the authorized list"*.
+That replaced **both** of the previous identities, on the user's explicit
+instruction:
 
-> **Action:** open
-> <https://huggingface.co/iSkye/Qwen3.8-Flash-Next-NVFP4-ablit-a070> in a
-> browser signed in to Hugging Face as **`legenex`** and click **"Agree and
-> access repository"**. The repo is `gated: auto`, so access is granted
-> immediately. **Creating another token cannot change this.**
+* `nvidia/Qwen3.6-27B-NVFP4` — the interim checkpoint. **Deleted from gx10-02.**
+  It is not a fallback. Do not reinstall it.
+* `iSkye/Qwen3.8-Flash-Next-NVFP4-ablit-a070` — the previously approved target.
+  **Abandoned.** Do not continue troubleshooting its Hugging Face gate and do
+  not rotate tokens for it. **B-030 is closed as OBSOLETE** — the gate is real,
+  but the model behind it is no longer wanted.
 
-Afterwards nothing else is needed from you: Model Manager stages, verifies,
-test-serves and assigns the checkpoint on gx10-02, and the interim
-`nvidia/Qwen3.6-27B-NVFP4` is deleted **only** after that acceptance passes.
-Until then the interim model keeps serving and is not deleted.
+Do not confuse the new checkpoint with the retired
+`gx10-vllm/Qwen3.8-27B-Uncensored` runtime (locked decision 15), which stays
+retired. Similar names, different artefacts: one is a local runtime folder, the
+other an upstream NVFP4 repository at a pinned revision.
+
+Measured on 2026-09-18, not inherited: 51.2 GiB node footprint at
+`--gpu-memory-utilization 0.42`, 392 s cold load, ~9 tok/s decode, 65 536
+context. Reasoning, coding, tool calling and vision all exercised live, through
+the LiteLLM `gx-reason` alias. Unloads cleanly; memory returns.
 
 ## What is running
 
@@ -102,5 +101,5 @@ shows "not measured yet" for `gx-call`.
 ## Where to look next
 
 `CURRENT_STATE.md` (what is running), `ARCHITECTURE.md` (what is locked),
-`coordination/BLOCKERS.md` (B-030 first), `PROJECT_MAP.md` → *Next logical
+`coordination/BLOCKERS.md`, `PROJECT_MAP.md` → *Next logical
 step*, and `coordination/build-v3/*.md` for each workstream's own evidence.

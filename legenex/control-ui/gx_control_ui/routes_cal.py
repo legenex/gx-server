@@ -62,6 +62,7 @@ def api_call_catalog(h: Handler) -> None:
         "tools": [{"name": n, "label": t["label"], "summary": t["summary"], "on_hold": t["on_hold"]}
                   for n, t in ca.TOOL_CATALOG.items()],
         "max_tools": ca.MAX_TOOLS_PER_AGENT, "voices": list(ca.VOICES), "use_cases": list(ca.USE_CASES),
+        "use_case_labels": dict(ca.USE_CASE_LABELS),
         "statuses": list(ca.STATUSES), "modes": list(ca.MODES), "webhook_events": list(ca.WEBHOOK_EVENTS),
         "post_call_when": list(ca.POST_CALL_WHEN), "text_limits": ca.TEXT_LIMITS,
         "mva_schema": ci.MVA_SCHEMA, "mva_required": ci.MVA_REQUIRED_DEFAULT,
@@ -93,8 +94,10 @@ def api_call_agents(h: Handler) -> None:
 def api_call_agent_create(h: Handler) -> None:
     body = h._body(MAX_BODY)
     raw = body.get("config")
+    # No template (or an unknown one) means a blank GENERAL agent: gx-call is a
+    # general voice-agent product, the intake templates are opt-in.
     cfg: dict = raw if isinstance(raw, dict) else ca.default_config(
-        str(body.get("template")) if body.get("template") in ca.USE_CASES else "intakepilot_mva")
+        str(body.get("template")) if body.get("template") in ca.USE_CASES else "general")
     agent = h.app.call_agents.create(cfg, user=_user(h), note=str(body.get("note") or "created")[:200])
     h._json(201, agent)
 

@@ -38,7 +38,7 @@ Last reviewed: 2026-09-15.
 ## 4. gx-reason
 
 - [x] **UNBLOCKED 2026-09-16 — B-011 closed.** The tier was re-engined onto
-  `nvidia/Qwen3.6-27B-NVFP4` + vLLM (D-021). Difficult reasoning inference
+  `wyattearp/Qwen3.8-27B-Uncensored-NVFP4` + vLLM (D-042). Difficult reasoning inference
   passes on GPU through the real gateway: the bat-and-ball problem answered
   correctly, `reasoning_content` separated, 12.4 tok/s. The original garbage
   repro prompt now returns " Paris." (`TEST_RESULTS.md` §14). Never routed to
