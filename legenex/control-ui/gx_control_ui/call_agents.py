@@ -31,11 +31,12 @@ from .netguard import BlockedURL, check_url
 AGENT_ID_RE = re.compile(r"^agt_[0-9a-f]{24}$")
 STATUSES = ("draft", "enabled", "disabled", "archived")
 MODES = ("test", "production")
-USE_CASES = ("general", "intakepilot_mva")  # the general agent is the default; the rest are templates
+USE_CASES = ("general", "intakepilot_mva", "workers_comp")  # general first; the rest are templates
 #: What the use-case picker calls each template. The stored ids never change
 #: (existing rows keep working); only these labels are product-neutral.
 USE_CASE_LABELS = {"general": "General voice agent",
-                   "intakepilot_mva": "Motor vehicle accident intake"}
+                   "intakepilot_mva": "Motor vehicle accident intake",
+                   "workers_comp": "Workers compensation intake"}
 SECRET_NAME_RE = re.compile(r"^[a-z][a-z0-9_\-]{1,40}$")
 INTEGRATION_NAME_RE = re.compile(r"^[a-z][a-z0-9_\-]{1,40}$")
 WEBHOOK_EVENTS = ("call.started", "call.ended", "intake.updated", "intake.completed", "transfer.requested",
@@ -142,67 +143,123 @@ def default_config(use_case: str = "general") -> dict:
     their versions keep working.
     """
     mva = use_case == "intakepilot_mva"
-    return {
-        "name": "Motor vehicle accident intake" if mva else "New call agent",
-        "description": "Answers motor vehicle accident enquiries, collects the intake and warm-transfers "
-                       "qualified callers." if mva else "",
-        "model": "gx-call",
-        "voice": "Aria",
-        "use_case": use_case,
-        "company": "",
-        "brand": "Injury Help Line" if mva else "",
-        "system_instructions": (
+    wc = use_case == "workers_comp"
+    if wc:
+        name = "Workers Comp Intake Agent"
+        description = "Collects workers compensation lead intake for follow-up. Does not give legal advice."
+        brand = "Workers Comp Help Line"
+        instructions = (
+            "You are collecting workers compensation intake information for follow-up. Greet clearly, ask one "
+            "logical question at a time, skip anything already answered, allow corrections, and handle "
+            "I don't know by recording unknown. Do not claim the caller has a valid claim, do not give legal "
+            "advice, and do not guarantee eligibility or compensation. Summarize what you collected and ask "
+            "the caller to confirm before closing.")
+        greeting = "Thank you for calling the workers compensation help line. I am collecting information for a follow-up. May I have your name?"
+        flow = (
+            "1. Name and phone, email if offered. 2. State. 3. Employer and job role. 4. Injury date, type, "
+            "how it happened, and whether it happened while working. 5. Employer notified and incident report. "
+            "6. Medical treatment. 7. Current work status and missed work. 8. Claim filed or denied if known. "
+            "9. Workers comp insurance if known. 10. Already represented. 11. Best callback time and consent "
+            "to follow up. 12. Summarize and confirm. Handle silence by repeating the question once, then offer "
+            "a callback.")
+        required = list(ci.WC_REQUIRED_DEFAULT)
+        optional = list(ci.WC_OPTIONAL_DEFAULT)
+        schema = copy.deepcopy(ci.WC_SCHEMA)
+        tools = ["update_intake_fields", "check_business_hours", "request_warm_transfer", "end_call"]
+        tags = ["workers_comp", "intake"]
+        knowledge = ("You only collect intake information for a human follow-up. You are not determining "
+                     "eligibility. If asked for legal advice, say you cannot give it and offer a callback.")
+        objections = "If the caller is unsure, explain you are only taking information for a follow-up, with no obligation."
+        prohibited = ("Never give legal advice, never say the caller has a valid case, never promise "
+                      "compensation or eligibility, never invent facts, never ask for social security or bank numbers.")
+        transfer = "Transfer if the caller asks for a person after required fields are saved, or if they already have an attorney and still want a specialist."
+        hours_behaviour = "Outside business hours, finish the intake if the caller wants to continue, then promise a callback next business day."
+    elif mva:
+        name = "Motor vehicle accident intake"
+        description = "Answers motor vehicle accident enquiries, collects the intake and warm-transfers qualified callers."
+        brand = "Injury Help Line"
+        instructions = (
             "You are the intake specialist for an injury law office. You take calls from people who were in a "
-            "motor vehicle accident, collect the intake details and help them get to an attorney quickly."
-            if mva else "You are a helpful phone agent."),
-        "personality": "Warm, calm and efficient. Short sentences. Never rushed.",
-        "opening_greeting": ("Thank you for calling the injury help line. I am here to help after your "
-                             "accident. May I have your name?") if mva else "Hello, how can I help you today?",
-        "qualification_flow": (
+            "motor vehicle accident, collect the intake details and help them get to an attorney quickly.")
+        greeting = "Thank you for calling the injury help line. I am here to help after your accident. May I have your name?"
+        flow = (
             "1. Ask for the caller's name and a phone number. 2. Ask when and in which state the accident "
             "happened. 3. Ask what happened and who was at fault. 4. Ask about injuries and treatment. 5. Ask if "
             "they already have an attorney. A caller qualifies when the accident happened within the state's "
             "filing deadline, someone else was at least partly at fault, the caller was injured and has no "
-            "attorney.") if mva else "",
-        "required_fields": list(ci.MVA_REQUIRED_DEFAULT) if mva else [],
-        "optional_fields": list(ci.MVA_OPTIONAL_DEFAULT) if mva else [],
-        "objection_handling": ("If the caller is unsure about calling a lawyer, explain that the consultation "
-                               "is free and there is no obligation.") if mva else "",
+            "attorney.")
+        required = list(ci.MVA_REQUIRED_DEFAULT)
+        optional = list(ci.MVA_OPTIONAL_DEFAULT)
+        schema = copy.deepcopy(ci.MVA_SCHEMA)
+        tools = ["update_intake_fields", "lookup_accident_state_rules", "request_warm_transfer",
+                 "check_business_hours", "end_call"]
+        tags = ["mva", "intake"]
+        knowledge = ("The office offers free consultations. Attorneys work on contingency, so there is no fee "
+                     "unless the case is won.")
+        objections = "If the caller is unsure about calling a lawyer, explain that the consultation is free and there is no obligation."
+        prohibited = "Never give legal advice or promise an outcome. Never invent facts. Never ask for social security or bank numbers."
+        transfer = "Transfer qualified callers, and anyone who asks for a person, after the required fields are saved."
+        hours_behaviour = "Outside business hours, take the intake and promise a callback next business day."
+    else:
+        name = "New call agent"
+        description = ""
+        brand = ""
+        instructions = "You are a helpful phone agent."
+        greeting = "Hello, how can I help you today?"
+        flow = ""
+        required = []
+        optional = []
+        schema = {"type": "object", "properties": {"caller_name": {"type": "string", "maxLength": 120},
+                                                   "notes": {"type": "string", "maxLength": 2000},
+                                                   "disposition": ci.MVA_SCHEMA["properties"]["disposition"]}}
+        tools = ["end_call"]
+        tags = []
+        knowledge = ""
+        objections = ""
+        prohibited = "Never invent facts and never promise anything you cannot deliver. Never ask for social security, card or bank numbers."
+        transfer = ""
+        hours_behaviour = "Outside business hours, take a message and promise a callback next business day."
+    return {
+        "name": name,
+        "description": description,
+        "model": "gx-call",
+        "voice": "Aria",
+        "use_case": use_case,
+        "company": "",
+        "brand": brand,
+        "system_instructions": instructions,
+        "personality": "Warm, calm and efficient. Short sentences. Never rushed.",
+        "opening_greeting": greeting,
+        "qualification_flow": flow,
+        "required_fields": required,
+        "optional_fields": optional,
+        "objection_handling": objections,
         "conversation_rules": ("Ask one question at a time. Confirm phone numbers by repeating them. Save each "
-                               "answer with update_intake_fields as soon as you hear it.") if mva else
+                               "answer with update_intake_fields as soon as you hear it. Skip questions already "
+                               "answered. If the caller corrects themselves, update the record. If they say they "
+                               "do not know, store unknown and continue.") if (mva or wc) else
                               ("Ask one question at a time. Confirm phone numbers and email addresses by "
                                "repeating them back."),
-        "prohibited_behaviour": ("Never give legal advice or promise an outcome. Never invent facts. Never ask "
-                                 "for social security or bank numbers.") if mva else
-                                ("Never invent facts and never promise anything you cannot deliver. Never ask "
-                                 "for social security, card or bank numbers."),
-        "tool_permissions": (["update_intake_fields", "lookup_accident_state_rules", "request_warm_transfer",
-                              "check_business_hours", "end_call"] if mva else ["end_call"]),
+        "prohibited_behaviour": prohibited,
+        "tool_permissions": tools,
         "tool_on_hold": {},
-        "transfer_rules": ("Transfer qualified callers, and anyone who asks for a person, after the required "
-                           "fields are saved.") if mva else "",
-        "transfer_destination": {"type": "queue", "value": "intake-specialists" if mva else "",
+        "transfer_rules": transfer,
+        "transfer_destination": {"type": "queue", "value": "intake-specialists" if (mva or wc) else "",
                                  "integration": None},
         "business_hours": {"timezone": "America/New_York",
                            "days": {d: [["08:00", "20:00"]] for d in ("mon", "tue", "wed", "thu", "fri")},
                            "closed_dates": []},
-        "business_hours_behaviour": ("Outside business hours, take the intake and promise a callback next "
-                                     "business day.") if mva else
-                                    "Outside business hours, take a message and promise a callback next business day.",
+        "business_hours_behaviour": hours_behaviour,
         "voicemail_behaviour": ("If you reach voicemail, leave a short message with the callback number "
                                 "and end the call."),
         "fallback_behaviour": "If you cannot help, offer a callback and end the call politely.",
-        "knowledge": ("The office offers free consultations. Attorneys work on contingency, so there is no fee "
-                      "unless the case is won.") if mva else "",
+        "knowledge": knowledge,
         "webhooks": [],
         "crm": [],
         "leaddistro": {"enabled": False, "integration": None, "campaign": ""},
         "post_call_actions": [],
-        "structured_output_schema": copy.deepcopy(ci.MVA_SCHEMA) if mva else {
-            "type": "object", "properties": {"caller_name": {"type": "string", "maxLength": 120},
-                                             "notes": {"type": "string", "maxLength": 2000},
-                                             "disposition": ci.MVA_SCHEMA["properties"]["disposition"]}},
-        "tags": ["mva", "intake"] if mva else [],
+        "structured_output_schema": schema,
+        "tags": tags,
         "recording": {"enabled": False, "notice": "This call may be recorded for quality and training."},
         "retention_days": 30,
         "max_call_minutes": 20,

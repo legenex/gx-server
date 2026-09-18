@@ -114,13 +114,23 @@ export function Canvas({ onReject, onAddAt, reducedMotion, theme }: {
     }
   }, [store, doc.nodes]);
 
-  const isValidConnection = useCallback<IsValidConnection>((c) => Boolean(c.source && c.target && c.sourceHandle
-    && c.targetHandle && checkConnection(store.doc, cat, c.source, c.sourceHandle, c.target, c.targetHandle).ok),
-  [store, cat]);
+  const isValidConnection = useCallback<IsValidConnection>((c) => {
+    if (!c.source || !c.target || c.source === c.target) return false;
+    // Handles are often unset while the pointer is still dragging; rejecting
+    // here prevented onConnect from ever firing. Validate fully on drop.
+    if (!c.sourceHandle || !c.targetHandle) return true;
+    return checkConnection(store.doc, cat, c.source, c.sourceHandle, c.target, c.targetHandle).ok;
+  }, [store, cat]);
 
   const onConnect = useCallback((c: Connection) => {
     if (!c.sourceHandle || !c.targetHandle) return;
     const result = store.connect(c.source, c.sourceHandle, c.target, c.targetHandle);
+    if (!result.ok) onReject(result.reason);
+  }, [store, onReject]);
+
+  const onReconnect = useCallback((oldEdge: Edge, c: Connection) => {
+    if (!c.sourceHandle || !c.targetHandle) return;
+    const result = store.reconnect(oldEdge.id, c.source, c.sourceHandle, c.target, c.targetHandle);
     if (!result.ok) onReject(result.reason);
   }, [store, onReject]);
 
@@ -160,8 +170,12 @@ export function Canvas({ onReject, onAddAt, reducedMotion, theme }: {
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
+        onReconnect={onReconnect}
         onConnectEnd={onConnectEnd}
         isValidConnection={isValidConnection}
+        connectionRadius={28}
+        edgesReconnectable
+        nodesConnectable
         onMoveEnd={onMoveEnd}
         onNodeDoubleClick={(_, n) => { actions.inspect(n.id); }}
         defaultViewport={doc.viewport}

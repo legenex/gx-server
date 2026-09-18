@@ -296,6 +296,24 @@ export class EditorStore {
     this.change((d) => { d.edges = d.edges.filter((e) => !edgeIds.includes(e.id)); });
   }
 
+  reconnect(edgeId: string, source: string, sourcePort: string, target: string, targetPort: string): EdgeCheck {
+    const check = checkConnection(this.state.doc, this.cat, source, sourcePort, target, targetPort, edgeId);
+    if (!check.ok) return check;
+    if (check.duplicate) {
+      this.disconnect([edgeId]);
+      return check;
+    }
+    this.change((d) => {
+      const edge = d.edges.find((e) => e.id === edgeId);
+      if (!edge) return;
+      edge.source = source;
+      edge.source_port = sourcePort;
+      edge.target = target;
+      edge.target_port = targetPort;
+    });
+    return check;
+  }
+
   /** Add a pre-built graph (AI draft or template) next to the existing nodes. */
   replaceDoc(doc: FlowDoc): void {
     this.change((d) => {

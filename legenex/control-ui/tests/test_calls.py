@@ -166,7 +166,7 @@ class AgentTests(unittest.TestCase):
     def test_mva_template_is_optional_and_product_neutral(self):
         """The intake template stays available - just not as the default, and not as the product."""
         self.assertEqual(ca.USE_CASES[0], "general")  # the picker offers the general agent first
-        self.assertEqual(set(ca.USE_CASES), {"general", "intakepilot_mva"})
+        self.assertEqual(set(ca.USE_CASES), {"general", "intakepilot_mva", "workers_comp"})
         cfg = ca.validate_config(ca.default_config("intakepilot_mva"))
         self.assertEqual(cfg["use_case"], "intakepilot_mva")  # the stored id is unchanged
         self.assertEqual(ci.MVA_SCHEMA_ID, "intakepilot.mva.v1")  # so is the schema id

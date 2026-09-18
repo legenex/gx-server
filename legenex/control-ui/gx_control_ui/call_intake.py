@@ -92,6 +92,60 @@ MVA_OPTIONAL_DEFAULT = ["email", "accident_city", "accident_location", "accident
                         "passengers", "notes"]
 SYSTEM_FIELDS = ("qualification_status", "disposition", "transfer_status")
 
+WC_SCHEMA_ID = "gx.workers_comp.v1"
+WC_SCHEMA: dict = {
+    "$id": WC_SCHEMA_ID,
+    "title": "Workers compensation intake",
+    "type": "object",
+    "properties": {
+        "caller_name": {"type": "string", "title": "Caller name", "minLength": 2, "maxLength": 120},
+        "phone": {"type": "string", "title": "Phone", "format": "phone"},
+        "email": {"type": "string", "title": "Email", "format": "email"},
+        "accident_state": {"type": "string", "title": "State", "format": "us_state"},
+        "employer_name": {"type": "string", "title": "Employer", "maxLength": 200},
+        "job_role": {"type": "string", "title": "Job role", "maxLength": 200},
+        "injury_date": {"type": "string", "title": "Injury date", "format": "date"},
+        "injury_type": {"type": "string", "title": "Injury type", "maxLength": 200},
+        "injury_description": {"type": "string", "title": "Injury description", "maxLength": 600},
+        "how_occurred": {"type": "string", "title": "How it happened", "maxLength": 600},
+        "happened_at_work": {"type": "string", "title": "Happened while working",
+                             "enum": ["yes", "no", "unknown"]},
+        "employer_notified": {"type": "string", "title": "Employer notified",
+                              "enum": ["yes", "no", "unknown"]},
+        "incident_report": {"type": "string", "title": "Incident report",
+                            "enum": ["yes", "no", "unknown"]},
+        "treatment": {"type": "string", "title": "Medical treatment",
+                      "enum": ["none", "er", "hospitalized", "urgent_care", "doctor", "other", "unknown"]},
+        "hospital": {"type": "string", "title": "Hospital or clinic", "maxLength": 200},
+        "doctor": {"type": "string", "title": "Doctor", "maxLength": 200},
+        "work_status": {"type": "string", "title": "Current work status",
+                        "enum": ["working", "off_work", "light_duty", "terminated", "unknown"]},
+        "missed_work": {"type": "string", "title": "Missed work", "enum": ["yes", "no", "unknown"]},
+        "claim_filed": {"type": "string", "title": "Claim filed", "enum": ["yes", "no", "unknown"]},
+        "claim_status": {"type": "string", "title": "Claim status",
+                         "enum": ["none", "pending", "accepted", "denied", "disputed", "unknown"]},
+        "wc_insurance": {"type": "string", "title": "Workers comp insurance", "maxLength": 200},
+        "attorney_status": {"type": "string", "title": "Attorney status",
+                            "enum": ["none", "has_attorney", "had_attorney", "consulting", "unknown"]},
+        "callback_time": {"type": "string", "title": "Best callback time", "maxLength": 80},
+        "consent_followup": {"type": "string", "title": "Consent to follow up",
+                             "enum": ["yes", "no", "unknown"]},
+        "notes": {"type": "string", "title": "Notes", "maxLength": 2000},
+        "qualification_status": {"type": "string", "title": "Qualification",
+                                 "enum": ["unknown", "qualified", "not_qualified", "needs_review"]},
+        "disposition": {"type": "string", "title": "Disposition",
+                        "enum": ["in_progress", "intake_complete", "transferred", "callback_requested",
+                                 "not_interested", "wrong_number", "disqualified", "voicemail", "abandoned"]},
+        "transfer_status": {"type": "string", "title": "Transfer",
+                            "enum": ["none", "requested", "connected", "failed", "cancelled"]},
+    },
+}
+WC_REQUIRED_DEFAULT = ["caller_name", "phone", "accident_state", "employer_name", "injury_date",
+                       "injury_description", "happened_at_work", "attorney_status", "consent_followup"]
+WC_OPTIONAL_DEFAULT = ["email", "job_role", "injury_type", "how_occurred", "employer_notified",
+                       "incident_report", "treatment", "hospital", "doctor", "work_status", "missed_work",
+                       "claim_filed", "claim_status", "wc_insurance", "callback_time", "notes"]
+
 
 class StateError(ValueError):
     pass

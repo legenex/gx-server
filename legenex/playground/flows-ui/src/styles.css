@@ -164,9 +164,12 @@
 .gxf-canvas { position: absolute; inset: 0; }
 .gxf-canvas .react-flow__attribution { font-size: 10px; opacity: .55; }
 .gxf-canvas .react-flow__handle {
-  width: 11px; height: 11px; border-radius: 50%;
+  width: 14px; height: 14px; border-radius: 50%;
   border: 2px solid var(--surface); background: var(--muted);
+  z-index: 5; pointer-events: all;
 }
+.gxf-port-in .react-flow__handle { left: -8px; right: auto; top: 50%; transform: translateY(-50%); }
+.gxf-port-out .react-flow__handle { right: -8px; left: auto; top: 50%; transform: translateY(-50%); }
 .gxf-canvas .react-flow__handle:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .gxf-canvas .react-flow__edge-path { stroke-width: 2; }
 .gxf-canvas .react-flow__edge.selected .react-flow__edge-path { stroke-width: 3.5; }
