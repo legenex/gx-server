@@ -24,7 +24,7 @@ from typing import Any
 
 from .node2_services import SPECS as NODE2_SPECS
 from .services import Cluster
-from .util import HTTPError, http_json
+from .util import HTTPError, TTLCache, http_json
 
 #: What a card is. Media and audio/realtime aliases are services with an
 #: on-demand engine; the LLM aliases are llama-swap / lifecycle managed.
@@ -309,26 +309,29 @@ def _tenant_bases(cfg: Any) -> dict[str, str]:
     return bases
 
 
-_TENANT_TTL = 3.0
 _tenant_lock = threading.Lock()
-_tenant_cache: dict[str, tuple[float, dict]] = {}
+_tenant_caches: dict[str, TTLCache] = {}
 
 
 def _probe_tenant(base: str) -> dict:
-    """GET <supervisor>/health, shaped like a `services.py` probe and cached briefly."""
+    """GET <supervisor>/health, shaped like a `services.py` probe."""
     now = time.time()
-    with _tenant_lock:
-        hit = _tenant_cache.get(base)
-        if hit and now - hit[0] < _TENANT_TTL:
-            return hit[1]
     try:
         status, body = http_json("GET", f"{base.rstrip('/')}/health", timeout=3)
-        out = {"ok": 200 <= status < 300, "status": status, "body": body, "checked_at": now}
+        return {"ok": 200 <= status < 300, "status": status, "body": body, "checked_at": now}
     except HTTPError as exc:
-        out = {"ok": False, "status": 0, "error": exc.message, "checked_at": now}
+        return {"ok": False, "status": 0, "error": exc.message, "checked_at": now}
+
+
+def _tenant_cache(base: str, ttl: float) -> TTLCache:
+    """One stale-while-revalidate cache per supervisor, so a dark node-2
+    service never stalls the Models page (the same rule as `Cluster`)."""
     with _tenant_lock:
-        _tenant_cache[base] = (now, out)
-    return out
+        cache = _tenant_caches.get(base)
+        if cache is None:
+            cache = TTLCache(lambda: _probe_tenant(base), ttl, first_wait=4)
+            _tenant_caches[base] = cache
+        return cache
 
 
 def tenant_probes(cluster: Cluster, svc: dict) -> dict[str, dict]:
@@ -346,7 +349,8 @@ def tenant_probes(cluster: Cluster, svc: dict) -> dict[str, dict]:
         elif getattr(cluster.cfg, "offline", False):
             out[alias] = {"ok": False, "status": 0, "error": "offline"}
         else:
-            out[alias] = _probe_tenant(base)
+            probe = _tenant_cache(base, cluster.cfg.service_ttl).get()
+            out[alias] = probe if isinstance(probe, dict) else {"ok": False, "status": 0, "error": "no probe yet"}
     return out
 
 

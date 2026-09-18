@@ -302,7 +302,7 @@ def main() -> int:
                   "(ssim >= 0.90 and phash distance <= 8), an empty file, or a router error.",
               "", "A masked case is judged inside the mask instead: it FAILS when the masked region came "
                   f"back as a copy (ssim_masked >= {NEAR_DUP_SSIM} and phash <= {NEAR_DUP_PHASH}, or "
-                  f"mad_masked_white < {MASK_CHANGED_MAD}) and when the region the mask protects moved "
+                  f"mad_masked_white < {MASK_CHANGED_MAD}), or when the region the mask protects moved "
                   f"(mad_masked_black > {MASK_KEPT_MAD}).", ""]
     (out_dir / "RESULTS.md").write_text("\n".join(lines))
     print(f"\n{summary['counts']}\nevidence: {out_dir}")
