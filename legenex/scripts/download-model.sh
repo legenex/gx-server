@@ -51,4 +51,11 @@ p = snapshot_download(
 print(\"downloaded to\", p)
 "
   '
+
+# The container writes as root, so without this the snapshot lands root-owned and
+# the host user cannot write .gx-manifest.json into it (hf-verify.py then dies with
+# EACCES after doing all the hashing work). Hand it back to whoever ran the script.
+docker run --rm -v "${parent}:/out" alpine \
+  chown -R "$(id -u):$(id -g)" "/out/$(basename "$DEST")"
+
 echo "[$(date -Is)] done: $(du -sh "$DEST" | cut -f1) at ${DEST}"
