@@ -384,6 +384,6 @@ test('model manager: inventory, alias bindings and delete protection', async ({ 
   await expect(live.getByRole('button', { name: 'Delete' })).toBeDisabled();
   const unused = page.locator('tr', { hasText: 'unused-e2e' });
   await expect(unused.getByRole('button', { name: 'Delete' })).toBeEnabled();
-  await expect(page.getByText('No token configured')).toBeVisible();
+  await expect(page.getByText('Not configured')).toBeVisible();
   expect(problems).toEqual([]);
 });
