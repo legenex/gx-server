@@ -13,6 +13,7 @@ __pycache__/
 *.pyc
 vllm/build/
 test-results/
+test-results-*/
 FORUM_UPDATE.md
 probe-models.sh
 ds4/
