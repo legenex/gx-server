@@ -241,14 +241,14 @@ models:
   # model card documents for this checkpoint, and the same pair gx-fast uses.
   # Vision needs no flag: the checkpoint is natively multimodal.
   #
-   # DFlash2 speculative decoding ADDED 2026-09-18:
-   #   --speculative-config with method "dflash", draft_model pointing to
-   #   wyattearp/Qwen3.8-27B-DFlash2, num_speculative_tokens 7 (per the HF
-   #   README), draft_sample_method probabilistic. The draft has 5 layers,
-   #   targets 64 target layers, uses block diffusion (block_size 8). Memory:
-   #   +~3.6 GB on top of the base model, well within the GPU fraction.
-   #   Measure throughput gain before tuning num_speculative_tokens.
-   # --safetensors-load-strategy prefetch was TRIED and reverted (2026-09-17)
+  # DFlash2 speculative decoding ADDED 2026-09-18:
+  #   --speculative-config with method "dflash", draft_model pointing to
+  #   wyattearp/Qwen3.8-27B-DFlash2, num_speculative_tokens 7 (per the HF
+  #   README), draft_sample_method probabilistic. The draft has 5 layers,
+  #   targets 64 target layers, uses block diffusion (block_size 8). Memory:
+  #   +~3.6 GB on top of the base model, well within the GPU fraction.
+  #   Measure throughput gain before tuning num_speculative_tokens.
+  # --safetensors-load-strategy prefetch was TRIED and reverted (2026-09-17)
   # on the previous checkpoint: the limit is the container cgroup holding page
   # cache plus weights, not the NVMe; prefetch only adds cache pressure.
   #
