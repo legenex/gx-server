@@ -509,7 +509,7 @@ def live_state(cluster: Cluster, results: ResultLog) -> list[dict]:
                                    "checked_at": ts["checked_at"]}
             if alias == "gx-music":  # the shape the music job view has always read
                 extra["music"] = {"supervisor": ts["health"], "container": c2.get("gx-music")}
-        else:  # media
+        elif alias in ("gx-image", "gx-video"):
             comfy = (media_body or {}).get("comfyui") or {}
             if gxmax_state in ("ready", "acquiring", "releasing"):
                 state, detail = "unavailable", f"drained: gx-max is {gxmax_state}"
@@ -524,6 +524,9 @@ def live_state(cluster: Cluster, results: ResultLog) -> list[dict]:
                 state, detail = "ready", "on demand"
             extra["media"] = media_body
             extra["containers"] = {"router": c2.get("gx-media-router"), "comfyui": c2.get("gx-comfyui")}
+        else:
+            # A registry binding with no probe wired up yet: say so, never guess.
+            state, detail = "unavailable", "no live probe for this alias yet"
 
         if alias in ("gx-mini", "gx-fast", "gx-reason", "gx-max", "gx-auto"):
             text = text_live(alias, svc)
