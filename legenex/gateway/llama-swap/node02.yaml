@@ -160,18 +160,18 @@ macros:
   #     ModelOpt checkpoints. This checkpoint declares
   #     quantization_config.quant_method = "compressed-tensors", format "nvfp4",
   #     which vLLM auto-detects from config.json. Forcing modelopt here would
-   #     mis-describe the checkpoint.
-   #   * `--speculative-config` (DFlash2) ADDED 2026-09-18: speculative draft
-   #     head `wyattearp/Qwen3.8-27B-DFlash2` (5-layer draft targeting 64 layers,
-   #     block diffusion with probabilistic sampling). Expected: 2-4x speedup
-   #     over standard decode on the same 27B NVFP4 checkpoint. Memory impact:
-   #     the draft adds ~3.6 GB (model.safetensors 3.6 GB, tiny vs the 27 GB
-   #     base), well within the 0.42 GPU fraction. Benchmark first, then tune
-   #     num_speculative_tokens. Draft is pinned to the revision on HF.
-   gx_reason_model_dir: "/models/vllm/Qwen3.8-27B-Uncensored-NVFP4"
-   gx_reason_host_dir: "Qwen3.8-27B-Uncensored-NVFP4"
-   gx_reason_draft_dir: "/models/vllm/Qwen3.8-27B-DFlash2"
-   gx_reason_draft_host_dir: "Qwen3.8-27B-DFlash2"
+  #     mis-describe the checkpoint.
+  #   * `--speculative-config` (DFlash2) ADDED 2026-09-18: speculative draft
+  #     head `wyattearp/Qwen3.8-27B-DFlash2` (5-layer draft targeting 64 layers,
+  #     block diffusion with probabilistic sampling). Expected: 2-4x speedup
+  #     over standard decode on the same 27B NVFP4 checkpoint. Memory impact:
+  #     the draft adds ~3.6 GB (model.safetensors 3.6 GB, tiny vs the 27 GB
+  #     base), well within the 0.42 GPU fraction. Benchmark first, then tune
+  #     num_speculative_tokens. Draft is pinned to the revision on HF.
+  gx_reason_model_dir: "/models/vllm/Qwen3.8-27B-Uncensored-NVFP4"
+  gx_reason_host_dir: "Qwen3.8-27B-Uncensored-NVFP4"
+  gx_reason_draft_dir: "/models/vllm/Qwen3.8-27B-DFlash2"
+  gx_reason_draft_host_dir: "Qwen3.8-27B-DFlash2"
 
   # STARTING POINT, TO BE RE-MEASURED -- deliberately NOT the old model's
   # figure. This checkpoint is 28.57 GB on disk (26.6 GiB), materially larger
