@@ -202,7 +202,7 @@ class Static:
                 self.get("/" + p.relative_to(self.root).as_posix())
 
     @property
-    def files(self) -> dict[str, "Static.Entry"]:
+    def files(self) -> dict[str, Static.Entry]:
         """The currently cached entries. Kept for callers that enumerate the tree."""
         with self._lock:
             return {k: v for k, (_sig, v) in self._cache.items() if v is not None}
@@ -223,7 +223,7 @@ class Static:
         return p
 
     @staticmethod
-    def _build(p: Path, data: bytes) -> "Static.Entry":
+    def _build(p: Path, data: bytes) -> Static.Entry:
         ctype = mimetypes.guess_type(p.name)[0] or "application/octet-stream"
         if ctype.startswith("text/") or ctype in ("application/json", "image/svg+xml",
                                                   "application/manifest+json"):
@@ -231,7 +231,7 @@ class Static:
         gz = gzip.compress(data, 6) if len(data) > 1024 and not ctype.startswith("image/png") else None
         return (data, gz, ctype, '"' + hashlib.sha256(data).hexdigest()[:20] + '"')
 
-    def get(self, path: str) -> "Static.Entry | None":
+    def get(self, path: str) -> Static.Entry | None:
         with self._lock:
             cached = self._cache.get(path)
         if cached is not None and self.freeze:
