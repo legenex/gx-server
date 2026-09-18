@@ -172,6 +172,8 @@ macros:
   gx_reason_host_dir: "Qwen3.8-27B-Uncensored-NVFP4"
   gx_reason_draft_dir: "/models/vllm/Qwen3.8-27B-DFlash2"
   gx_reason_draft_host_dir: "Qwen3.8-27B-DFlash2"
+  # Git-controlled DFlash launcher (run-vllm.sh + spec.json). Host path on gx10-02.
+  gx_dflash_launcher: "/home/legenex-02/Documents/Projects/Server/gx-cluster/legenex/gateway/llama-swap/dflash2"
 
   # STARTING POINT, TO BE RE-MEASURED -- deliberately NOT the old model's
   # figure. This checkpoint is 28.57 GB on disk (26.6 GiB), materially larger
@@ -290,13 +292,14 @@ models:
       -e VLLM_USE_DEEP_GEMM=0
       -v ${models_root}/vllm:/models/vllm:ro
       -v ${models_root}/vllm/Qwen3.8-27B-DFlash2:/models/dflash2:ro
+      -v ${gx_dflash_launcher}:/opt/dflash2:ro
       -v ${vllm_cache_root}/gx-reason:/root/.cache
       --memory ${gx_reason_mem_limit}
       --memory-swap ${gx_reason_mem_limit}
       --oom-score-adj ${gx_reason_oom_score_adj}
       --entrypoint /bin/sh
       ${vllm_image}
-      /models/dflash2/run-vllm.sh
+      /opt/dflash2/run-vllm.sh
       ${gx_reason_model_dir}
       --served-model-name gx-reason
       --host ${host} --port 25800

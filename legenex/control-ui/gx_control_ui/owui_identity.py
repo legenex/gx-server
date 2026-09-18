@@ -154,6 +154,38 @@ def description(alias: str, entry: dict) -> str:
     return f"{ROLE.get(alias, alias).capitalize()}. Underlying model: {entry.get('repository')}{base}."
 
 
+# Open WebUI 0.11.3: native function calling + scoped builtin tools.
+# Defaults in OWUI are True for chats/memory/knowledge; pin them off for
+# ordinary chat. ask_user lives under builtinTools.user_input.
+BUILTIN_TOOLS = {
+    "user_input": True,
+    "time": False,
+    "files": False,
+    "knowledge": False,
+    "chats": False,
+    "subagents": False,
+    "memory": False,
+    "web_search": False,
+    "image_generation": False,
+    "code_interpreter": False,
+    "notes": False,
+    "channels": False,
+    "tasks": False,
+    "automations": False,
+    "calendar": False,
+    "notifications": False,
+}
+
+
+def _vision(alias: str, entry: dict) -> bool:
+    if alias in ("gx-max",):
+        return False
+    if alias == "gx-auto":
+        return True
+    mods = str((entry.get("identity") or {}).get("modalities") or "").lower()
+    return "image" in mods
+
+
 def desired_rows(registry: dict, *, synced_at: str | None = None) -> list[dict]:
     aliases = registry.get("aliases") or {}
     rows = []
@@ -163,10 +195,17 @@ def desired_rows(registry: dict, *, synced_at: str | None = None) -> list[dict]:
             continue
         prompt = router_prompt(registry) if alias == "gx-auto" else model_prompt(alias, entry)
         digest = hashlib.sha256(prompt.encode("utf-8")).hexdigest()[:16]
+        vision = _vision(alias, entry)
         rows.append({
             "id": alias, "name": alias, "base_model_id": None,
-            "params": {"system": prompt},
+            "params": {"system": prompt, "function_calling": "native"},
             "meta": {"description": description(alias, entry), "tags": [{"name": "gx-cluster"}],
+                     "capabilities": {
+                         "vision": vision, "builtin_tools": True, "file_upload": vision,
+                         "web_search": False, "image_generation": False,
+                         "code_interpreter": False, "memory": False,
+                     },
+                     "builtinTools": dict(BUILTIN_TOOLS),
                      MARKER: {"source": "legenex/models/registry.json", "alias": alias,
                               "repository": entry.get("repository"), "revision": entry.get("revision"),
                               "facts_verified": alias == "gx-auto" or facts_match(entry),
@@ -286,7 +325,12 @@ class OpenWebUIIdentity:
     @staticmethod
     def _differs(cur: dict, row: dict) -> bool:
         stored = (cur.get("meta") or {}).get(MARKER) or {}
-        return ((cur.get("params") or {}).get("system") != row["params"]["system"]
+        params = cur.get("params") or {}
+        meta = cur.get("meta") or {}
+        return (params.get("system") != row["params"]["system"]
+                or params.get("function_calling") != row["params"].get("function_calling")
+                or (meta.get("builtinTools") or {}) != (row["meta"].get("builtinTools") or {})
+                or (meta.get("capabilities") or {}) != (row["meta"].get("capabilities") or {})
                 or cur.get("name") != row["name"] or cur.get("base_model_id") is not None
                 or stored.get("repository") != row["meta"][MARKER]["repository"])
 

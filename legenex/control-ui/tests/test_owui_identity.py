@@ -128,6 +128,16 @@ class PromptTests(unittest.TestCase):
             self.assertNotRegex(json.dumps(r), r"sk-[A-Za-z0-9]{8,}")
         self.assertEqual(rows[0]["meta"][oi.MARKER]["repository"], FULL)
         self.assertEqual(oi.desired_rows(REGISTRY)[0]["params"], rows[0]["params"], "stable")
+        for r in rows:
+            self.assertEqual(r["params"]["function_calling"], "native")
+            self.assertTrue(r["meta"]["builtinTools"]["user_input"])
+            self.assertFalse(r["meta"]["builtinTools"]["chats"])
+            self.assertFalse(r["meta"]["builtinTools"]["memory"])
+            self.assertFalse(r["meta"]["builtinTools"]["knowledge"])
+            self.assertTrue(r["meta"]["capabilities"]["builtin_tools"])
+        by_id = {r["id"]: r for r in rows}
+        self.assertTrue(by_id["gx-mini"]["meta"]["capabilities"]["vision"])
+        self.assertFalse(by_id["gx-max"]["meta"]["capabilities"]["vision"])
 
 
 class SyncTests(unittest.TestCase):
