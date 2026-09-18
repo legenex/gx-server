@@ -198,10 +198,11 @@ test('live page: a late speech transcript is put in front of its answer (B-LIV-6
   const sid = await startSession(page);
 
   await say(page, 'late transcript');
-  await expect(page.locator('#live-transcript .live-line-user')).toContainText('USER QUESTION',
-    { timeout: 30_000 });
-  await expect(page.locator('#live-transcript .live-line-assistant')).toContainText('ASSISTANT RESPONSE',
-    { timeout: 30_000 });
+  // The typed turn echoes its own user line, so filter to the spoken one.
+  await expect(page.locator('#live-transcript .live-line-user')
+    .filter({ hasText: 'USER QUESTION' })).toHaveCount(1, { timeout: 30_000 });
+  await expect(page.locator('#live-transcript .live-line-assistant')
+    .filter({ hasText: 'ASSISTANT RESPONSE' })).toHaveCount(1, { timeout: 30_000 });
 
   // DOM order: the question must come before the answer it belongs to.
   const speakers = await page.locator('#live-transcript .live-line').evaluateAll(
