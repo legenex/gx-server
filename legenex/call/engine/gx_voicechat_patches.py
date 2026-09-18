@@ -37,6 +37,20 @@ GB10.
    one token per frame, exactly what the model computes without a cache
    (verified by ``gx_call_engine.py --selftest-cache``, which compares logits of
    the cached and uncached paths on the same inputs).
+
+4. ``GX_VC_CPU_CONV_NO_ONEDNN`` (default on): oneDNN's aarch64 JIT miscompiles
+   the depthwise conv1d in the EAR-TTS codec's ConvNeXt blocks on this CPU.
+   ``DuplexEARTTS.__init__`` calls ``get_codec_silence_frame()``, which runs the
+   codec encoder BEFORE the model is moved to the GPU, so that conv runs on the
+   CPU and the JIT aborts the whole load with::
+
+       bad err=15 in Xbyak::Error
+       RuntimeError: illegal immediate parameter (range error)
+
+   Disabling the oneDNN path sends those convolutions to ATen's own aarch64
+   kernels instead. It costs nothing that matters: the only CPU convolutions in
+   this engine are the one-off silence frame at construction time -- every
+   per-call convolution runs on the GPU -- and the arithmetic is unchanged.
 """
 
 from __future__ import annotations
@@ -273,6 +287,27 @@ def _patch_hybrid_cache() -> None:
     log.info("patch: streaming contexts use GxHybridCache for the Nemotron-H backbone")
 
 
+# --------------------------------------------------- 4. CPU conv on aarch64 --
+def _patch_cpu_conv() -> None:
+    """Route CPU convolutions away from oneDNN's broken aarch64 JIT.
+
+    Only meaningful on aarch64; anywhere else this is a no-op so the image
+    stays portable.
+    """
+    import platform
+
+    if platform.machine() not in ("aarch64", "arm64"):
+        APPLIED["cpu_conv_no_onednn"] = False
+        return
+    backend = getattr(torch.backends, "mkldnn", None)
+    if backend is None or not backend.is_available():
+        APPLIED["cpu_conv_no_onednn"] = False
+        return
+    backend.enabled = False
+    APPLIED["cpu_conv_no_onednn"] = True
+    log.info("patch: oneDNN disabled for CPU ops (aarch64 depthwise-conv1d JIT bug)")
+
+
 def apply_all() -> dict[str, bool]:
     if _enabled("GX_VC_MMAP_LOAD"):
         _patch_mmap_load()
@@ -280,4 +315,6 @@ def apply_all() -> dict[str, bool]:
         _patch_early_cast()
     if _enabled("GX_VC_HYBRID_CACHE"):
         _patch_hybrid_cache()
+    if _enabled("GX_VC_CPU_CONV_NO_ONEDNN"):
+        _patch_cpu_conv()
     return dict(APPLIED)
