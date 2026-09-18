@@ -105,6 +105,21 @@ class StubEngineHandler(BaseHTTPRequestHandler):
                 ws.send_text(json.dumps({"type": "tool.request", "call_id": "call_" + "cd" * 8,
                                          "name": "delegate_to_gx",
                                          "arguments": {"model": "gx-max", "task": "x"}}))
+            elif ev["type"] == "input.text" and ev["text"] == "late transcript":
+                # B-LIV-6: a SPOKEN turn's transcript only arrives once the reply is
+                # already running (PROTOCOL.md section 4). Reproduce that order exactly
+                # -- response.started, then transcript.user(source=speech) -- so the
+                # page's re-ordering is tested rather than reviewed. Real VAD does this
+                # on every spoken turn; no other stub path can produce it.
+                response += 1
+                ws.send_text(json.dumps({"type": "response.started", "response": response, "turn": 1,
+                                         "trigger": "speech"}))
+                ws.send_text(json.dumps({"type": "transcript.assistant.delta", "response": response,
+                                         "text": "ASSISTANT RESPONSE"}))
+                ws.send_text(json.dumps({"type": "transcript.user", "turn": 1,
+                                         "text": "USER QUESTION", "source": "speech"}))
+                ws.send_text(json.dumps({"type": "response.done", "response": response, "status": "completed",
+                                         "text": "ASSISTANT RESPONSE", "metrics": {"turn_ms": 500}}))
             elif ev["type"] == "input.text":
                 response += 1
                 ws.send_text(json.dumps({"type": "response.started", "response": response, "turn": 1,
