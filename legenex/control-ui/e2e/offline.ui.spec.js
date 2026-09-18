@@ -45,10 +45,11 @@ test('dashboard shows both nodes, rails, the canonical aliases and git sync', as
   const main = page.locator('#page-dashboard');
   await expect(main.getByRole('heading', { name: 'gx10-01' })).toBeVisible();
   await expect(main.getByRole('heading', { name: 'gx10-02' })).toBeVisible();
-  await expect(main.locator('.model-tile')).toHaveCount(8);
+  await expect(main.locator('.model-tile')).toHaveCount(11);
   await expect(main.locator('#dash-playground')).toHaveAttribute('href', /:8090\/$/);
   await expect(main.getByText('HEALTHY').first()).toBeVisible();
-  for (const alias of ['gx-mini', 'gx-fast', 'gx-reason', 'gx-max', 'gx-auto', 'gx-image', 'gx-video', 'gx-music']) {
+  for (const alias of ['gx-mini', 'gx-fast', 'gx-reason', 'gx-max', 'gx-auto', 'gx-image', 'gx-video',
+    'gx-music', 'gx-voice', 'gx-call', 'gx-live']) {
     await expect(main.locator('.model-tile .model-name').getByText(alias, { exact: true })).toHaveCount(1);
   }
   await expect(main.getByText('All three HEADs match')).toBeVisible();
