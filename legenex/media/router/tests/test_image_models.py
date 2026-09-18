@@ -73,6 +73,51 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(plan.params["mask_grow"], 16)
         self.assertTrue(plan.masked)
 
+    def test_masked_edits_never_ask_the_model_to_preserve_the_picture(self):
+        """The mask preserves; the prompt paints.
+
+        A masked Qwen edit still shows the model the whole clean source as a reference
+        latent, so a "keep everything else exactly as it is" clause is obeyed inside the
+        mask as well and the edit returns the source (edit_masked_lower: ssim 0.987,
+        phash 0, MAD 2.9 inside the mask). The masked prompt must describe the content.
+        """
+        keep_words = ("Keep everything else", "exactly as it is", "Keep the background",
+                      "Keep the main subject", "Keep the same subject", "composition unchanged")
+        for mode in im.UI_EDIT_MODES:
+            if im.EDIT_MODES[mode].qwen_reference == "none":
+                continue  # transform refuses a mask outright
+            with self.subTest(mode=mode):
+                masked = im.plan_edit(self.qwen, mode, "tall green grass.", None, has_mask=True)
+                self.assertTrue(masked.masked)
+                for word in keep_words:
+                    self.assertNotIn(word, masked.prompt)
+                self.assertIn("tall green grass", masked.prompt)
+        # the plain "change" mode sends the bare content description, like the inpaint
+        # path that always worked; without a mask it keeps its preservation clause
+        self.assertEqual(im.plan_edit(self.qwen, "change", "tall green grass.", None, has_mask=True).prompt,
+                         "tall green grass")
+        self.assertIn("Keep everything else",
+                      im.plan_edit(self.qwen, "change", "tall green grass.", None, has_mask=False).prompt)
+
+    def test_masked_remove_still_names_the_thing_to_remove(self):
+        """`remove`'s instruction names what goes away, so its masked prompt keeps the verb."""
+        plan = im.plan_edit(self.qwen, "remove", "the bicycle.", None, has_mask=True)
+        self.assertTrue(plan.prompt.startswith("Remove the following from the image: the bicycle."))
+        self.assertIn("Fill the area it occupied", plan.prompt)
+        self.assertNotIn("Keep everything else", plan.prompt)
+
+    def test_masked_edits_run_the_full_denoise_and_report_it_honestly(self):
+        """No masked denoise override: int(steps/denoise) makes 0.88 and 1.0 the same 4 sigmas."""
+        for mode in ("change", "add", "remove", "background", "subject"):
+            with self.subTest(mode=mode):
+                plan = im.plan_edit(self.qwen, mode, "x", None, has_mask=True)
+                self.assertEqual(plan.params["denoise"], 1.0)
+                self.assertEqual(plan.public()["denoise"], plan.params["denoise"])
+
+    def test_public_reports_the_denoise_the_graph_was_given(self):
+        plan = im.EditPlan("w", "change", "p", 1.0, {"denoise": 0.5}, None, True)
+        self.assertEqual(plan.public()["denoise"], 0.5, "public() must not report a denoise that never ran")
+
     def test_quality_path_disables_lightning(self):
         plan = im.plan_edit(self.qwen, "change", "x", None, has_mask=False, quality="quality")
         self.assertEqual((plan.params["lightning_strength"], plan.params["steps"], plan.params["cfg"]), (0.0, 20, 4.0))
@@ -289,6 +334,82 @@ class AdmissionTests(unittest.TestCase):
         service._resident_models = frozenset(service.workflows.get("qwen-image-edit-2511").models)
         self.assertEqual(service._resident_footprint(), 57.0)
         self.assertEqual(service._memory_view()["footprint_gib"]["image_sdxl"], 64.0)
+
+
+class MaskedAcceptanceTests(unittest.TestCase):
+    """The acceptance harness must judge a masked case inside the mask.
+
+    Whole-image SSIM measures the mask's size, not the edit: half the frame replaced
+    perfectly still scores about 0.5, and a small mask repainted completely still scores
+    about 1.0. Only `image_accept`'s pure verdict function is exercised here (stdlib only,
+    no numpy, no router).
+    """
+
+    accept = None
+
+    @classmethod
+    def setUpClass(cls):
+        import importlib.util
+        path = Path(__file__).resolve().parents[2] / "tools" / "image_accept.py"
+        spec = importlib.util.spec_from_file_location("image_accept", path)
+        cls.accept = importlib.util.module_from_spec(spec)
+        sys.modules["image_accept"] = cls.accept  # @dataclass resolves its module by name
+        spec.loader.exec_module(cls.accept)
+
+    def case(self):
+        return self.accept.Case("edit_masked_lower", "masked", "edit", mask="lower")
+
+    def metrics(self, **over):
+        m = {"ssim": 0.51, "phash_dist": 24, "hist_corr": 0.7, "mad": 48.0, "near_duplicate": False,
+             "mask_white_fraction": 0.5, "ssim_masked": 0.04, "ssim_unmasked": 0.99,
+             "mad_masked_white": 95.9, "mad_masked_black": 0.1, "phash_masked_dist": 20,
+             "masked_near_duplicate": False}
+        m.update(over)
+        return m
+
+    def test_a_real_masked_edit_passes(self):
+        self.assertEqual(self.accept.masked_verdict(self.case(), self.metrics())[0], "PASS")
+
+    def test_a_masked_region_that_came_back_unchanged_fails(self):
+        # the measured failure: the masked half was repainted as the source
+        status, detail = self.accept.masked_verdict(
+            self.case(), self.metrics(ssim=0.987, phash_dist=0, mad=1.5, near_duplicate=True,
+                                      ssim_masked=0.974, mad_masked_white=2.92, mad_masked_black=0.03,
+                                      phash_masked_dist=0, masked_near_duplicate=True))
+        self.assertEqual(status, "FAIL")
+        self.assertIn("copy of the source", detail)
+
+    def test_a_mask_floor_change_is_not_a_change(self):
+        """MAD ~2 inside the mask is Qwen's preservation floor, whatever SSIM says."""
+        status, _ = self.accept.masked_verdict(self.case(),
+                                               self.metrics(ssim_masked=0.5, mad_masked_white=2.9))
+        self.assertEqual(status, "FAIL")
+
+    def test_an_edit_that_leaks_outside_the_mask_fails(self):
+        status, detail = self.accept.masked_verdict(self.case(), self.metrics(mad_masked_black=95.9))
+        self.assertEqual(status, "FAIL")
+        self.assertIn("mask protects", detail)
+
+    def test_a_barely_changed_mask_is_weak(self):
+        status, _ = self.accept.masked_verdict(self.case(),
+                                               self.metrics(ssim_masked=0.95, phash_masked_dist=9,
+                                                            mad_masked_white=12.0))
+        self.assertEqual(status, "WEAK")
+
+    def test_unmasked_thresholds_are_untouched(self):
+        """The masked path must never relax the whole-image verdict for unmasked cases."""
+        self.assertEqual((self.accept.NEAR_DUP_SSIM, self.accept.NEAR_DUP_PHASH), (0.90, 8))
+        self.assertEqual((self.accept.GOOD_SSIM, self.accept.GOOD_PHASH), (0.88, 10))
+        plain = self.accept.Case("edit_add", "add", "edit")
+        payload = {"metrics": {"ssim": 0.95, "phash_dist": 2, "hist_corr": 1.0, "mad": 3.0,
+                               "near_duplicate": True}}
+        out = Path(__file__)  # any existing, non-empty file stands in for the PNG
+        self.assertEqual(self.accept.verdict(plain, payload, out)[0], "FAIL")
+
+    def test_a_masked_case_without_masked_metrics_falls_back_to_the_whole_image(self):
+        payload = {"metrics": {"ssim": 0.99, "phash_dist": 0, "hist_corr": 1.0, "mad": 0.5,
+                               "near_duplicate": True}}
+        self.assertEqual(self.accept.verdict(self.case(), payload, Path(__file__))[0], "FAIL")
 
 
 if __name__ == "__main__":

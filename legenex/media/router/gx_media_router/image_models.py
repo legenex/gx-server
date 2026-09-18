@@ -24,6 +24,15 @@ reference-latent modes; only `transform` and `variation`, which drop the
 reference latent, map it. The numbers that quantify this come from the IMG
 live acceptance run (see "Live acceptance" in coordination/build-v3/img.md);
 it has NOT run yet, so nothing here claims a measurement.
+
+Why a masked Qwen edit sends a different prompt: the mask is what preserves the
+image (SetLatentNoiseMask limits where the sampler may write and the decode is
+composited back over the source through the mask), while the whole clean source
+is still shown to the model as a reference latent. Adding "keep everything else
+exactly as it is" to a masked edit therefore tells the model to reproduce the
+source *inside* the mask as well, which is what it did (edit_masked_lower came
+back at ssim 0.987 / phash 0). Masked edits send the content to paint instead --
+the same shape of prompt as the inpaint path that always worked.
 """
 
 from __future__ import annotations
@@ -79,6 +88,10 @@ class EditMode:
     sdxl_needs_mask: bool
     #: mask grow in pixels at the working size (masked templates)
     mask_grow: int = 8
+    #: Qwen instruction template for a MASKED edit. A mask already decides where the
+    #: sampler may write, so the masked prompt describes the CONTENT to paint and never
+    #: asks for preservation (see plan_edit); the default is the caller's text as typed.
+    qwen_masked_template: str = "{instruction}"
 
     def public(self, model: str) -> dict:
         if model == VISIONMASTER:
@@ -107,12 +120,18 @@ EDIT_MODES: dict[str, EditMode] = {m.id: m for m in (
              "Adds something new to the scene with matching light, perspective and scale.",
              "Add the following to the image: {instruction}. Place it naturally with matching lighting, "
              "perspective and scale. " + _KEEP,
-             "index_timestep_zero", (0.92, 1.0), (0.6, 1.0), True),
+             # (1.0, 1.0) like every other reference-latent mode: on the 4-step Lightning
+             # schedule ComfyUI derives the sigmas from int(steps/denoise), so 0.92..1.0 all
+             # collapse to the same 4 sigmas. A range there only advertised a strength that
+             # could not do anything (and the regression test forbids a partial Qwen denoise).
+             "index_timestep_zero", (1.0, 1.0), (0.6, 1.0), True),
     EditMode("remove", "Remove",
              "Removes something and fills the gap so it blends with its surroundings.",
              "Remove the following from the image: {instruction}. Fill the area it occupied so it blends "
              "seamlessly with its surroundings. " + _KEEP,
-             "index_timestep_zero", (1.0, 1.0), (0.8, 1.0), True, 16),
+             "index_timestep_zero", (1.0, 1.0), (0.8, 1.0), True, 16,
+             qwen_masked_template="Remove the following from the image: {instruction}. Fill the area it "
+                                  "occupied so it blends seamlessly with its surroundings."),
     EditMode("restyle", "Restyle",
              "Redraws the whole picture in a new style; the composition stays.",
              "Redraw the entire image in this style: {instruction}. Keep the same subject, pose and "
@@ -220,8 +239,10 @@ class EditPlan:
     masked: bool
 
     def public(self) -> dict:
-        return {"edit_mode": self.mode, "denoise": self.denoise, "strength_applied": self.strength,
-                "masked": self.masked, "workflow": self.workflow}
+        # denoise is reported from params, which is what the graph is actually bound to;
+        # self.denoise is the value the mode's range produced before any per-template rule.
+        return {"edit_mode": self.mode, "denoise": self.params.get("denoise", self.denoise),
+                "strength_applied": self.strength, "masked": self.masked, "workflow": self.workflow}
 
 
 def _scale(rng: tuple[float, float], strength: float) -> float:
@@ -271,18 +292,29 @@ def plan_edit(model: ImageModel, mode_id: str | None, instruction: str, strength
         params["reference_method"] = mode.qwen_reference
     if has_mask:
         params["mask_grow"] = mode.mask_grow
-        # Masked edits need slightly lower denoise so the masked region actually changes;
-        # at denoise=1.0 the reference-latent pins the whole image too tightly and the
-        # masked delta is drowned by the unmasked recovery (D-031 lesson).
-        if denoise >= 0.99:
-            params["denoise"] = 0.88
+        # No denoise override here. A masked edit used to be forced to 0.88 "so the masked
+        # region actually changes"; it changed nothing, because ComfyUI builds the schedule
+        # from int(steps/denoise) and int(4/0.88) == 4 gives the same four sigmas as 1.0. It
+        # only made the recorded metadata disagree with the graph. What actually kept the
+        # masked region unchanged was the prompt (see below).
     if quality == "quality":
         # true-CFG path of the base model: no Lightning distill, real negative prompt
         params.update({"lightning_strength": 0.0, "steps": 20, "cfg": 4.0})
     elif quality not in (None, "", "fast"):
         raise ValidationError("edit_quality must be 'fast' or 'quality'", param="edit_quality")
-    prompt = mode.qwen_template.format(instruction=instruction.rstrip(" .")) if mode.id != "instruct" \
-        else instruction
+    if mode.id == "instruct":
+        prompt = instruction
+    else:
+        # Masked edits use the mode's masked template. The mask is what preserves the
+        # picture: SetLatentNoiseMask stops the sampler writing outside it and the decode is
+        # composited back over the source through it. The model is still shown the whole
+        # clean source as a reference latent, so a "keep everything else exactly as it is"
+        # clause is read as an instruction for the masked region too and the model dutifully
+        # repaints the source there (measured on edit_masked_lower: ssim 0.987, phash 0, and
+        # MAD 2.9 inside the mask == Qwen's preservation floor). The masked prompt therefore
+        # describes the CONTENT to paint, exactly like the inpaint path that works.
+        template = mode.qwen_masked_template if has_mask else mode.qwen_template
+        prompt = template.format(instruction=instruction.rstrip(" ."))
     return EditPlan(workflow, mode.id, prompt, denoise, params, applied, has_mask)
 
 

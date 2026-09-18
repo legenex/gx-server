@@ -7,6 +7,12 @@ with its own source (SSIM, perceptual-hash distance, colour histogram) by
 ``image_eval.py``, every output file must be a real PNG of non-zero size, and
 a case that comes back as a near-duplicate of its source FAILS.
 
+A MASKED case is judged on the mask's own regions instead, because the
+whole-image numbers measure the size of the mask rather than the quality of the
+edit (half the frame replaced perfectly still scores ssim ~0.5; a small mask
+repainted completely still scores ssim ~1.0). It passes only when the white
+"may change" region really changed AND the black region still holds the source.
+
 It never starts a container itself: everything goes through the media router
 on gx10-02, which owns ComfyUI admission, the node flock and the 30 GiB
 reserve. It refuses to start while a gx-max or Maintenance hold exists.
@@ -50,6 +56,13 @@ NEAR_DUP_PHASH = 8
 #: an edit that really changed something clears at least one of these
 GOOD_SSIM = 0.88
 GOOD_PHASH = 10
+#: masked cases only -- inside the mask: Qwen repaints a region it was told to keep at
+#: about MAD 2-3 (measured on the halves of edit_clothing/edit_add it was told to keep),
+#: so an edit that genuinely painted something new must be clear of that floor
+MASK_CHANGED_MAD = 6.0
+#: masked cases only -- outside the mask: the workflow composites those pixels back from
+#: the source, so this is ~0; the allowance is for the grown, feathered mask edge
+MASK_KEPT_MAD = 8.0
 
 
 @dataclass
@@ -173,6 +186,25 @@ def run_eval(args: list[str]) -> dict:
         return {"error": f"unreadable output: {proc.stdout[:500]}"}
 
 
+def masked_verdict(case: Case, m: dict) -> tuple[str, str]:
+    """Judge a masked edit on the mask's regions: white had to change, black had to survive."""
+    phash = m.get("phash_masked_dist") or 0
+    detail = (f"masked: ssim {m['ssim_masked']} phash {phash} mad_white {m['mad_masked_white']} "
+              f"mad_black {m['mad_masked_black']} (whole image: ssim {m.get('ssim')} "
+              f"phash {m.get('phash_dist')} mad {m.get('mad')})")
+    near = (m["ssim_masked"] >= NEAR_DUP_SSIM and phash <= NEAR_DUP_PHASH) \
+        or m["mad_masked_white"] < MASK_CHANGED_MAD
+    if case.expect_near_duplicate:
+        return ("PASS" if near else "FAIL"), detail + " (expected a near-duplicate)"
+    if m["mad_masked_black"] > MASK_KEPT_MAD:
+        return "FAIL", detail + " -> the area the mask protects was changed as well"
+    if near:
+        return "FAIL", detail + " -> the masked area came back as a copy of the source"
+    if m["ssim_masked"] > GOOD_SSIM and phash < GOOD_PHASH:
+        return "WEAK", detail + " -> the masked area changed, but barely; look at the images"
+    return "PASS", detail
+
+
 def verdict(case: Case, payload: dict, out: Path) -> tuple[str, str]:
     if "error" in payload:
         return "FAIL", payload["error"][:300]
@@ -181,6 +213,8 @@ def verdict(case: Case, payload: dict, out: Path) -> tuple[str, str]:
     if case.kind == "generate":
         return "PASS", f"{png_size(out)[0]}x{png_size(out)[1]}, {out.stat().st_size} bytes"
     m = payload.get("metrics") or {}
+    if case.mask and m.get("ssim_masked") is not None:
+        return masked_verdict(case, m)
     near = bool(m.get("near_duplicate"))
     detail = (f"ssim {m.get('ssim')} phash {m.get('phash_dist')} hist {m.get('hist_corr')} "
               f"mad {m.get('mad')}")
@@ -265,7 +299,11 @@ def main() -> int:
     for r in results:
         lines.append(f"| `{r['case']}` | {r['what']} | **{r['verdict']}** | {r['detail']} |")
     lines += ["", "A verdict of FAIL on an edit means the result was a near-duplicate of its source "
-                  "(ssim >= 0.90 and phash distance <= 8), an empty file, or a router error.", ""]
+                  "(ssim >= 0.90 and phash distance <= 8), an empty file, or a router error.",
+              "", "A masked case is judged inside the mask instead: it FAILS when the masked region came "
+                  f"back as a copy (ssim_masked >= {NEAR_DUP_SSIM} and phash <= {NEAR_DUP_PHASH}, or "
+                  f"mad_masked_white < {MASK_CHANGED_MAD}) and when the region the mask protects moved "
+                  f"(mad_masked_black > {MASK_KEPT_MAD}).", ""]
     (out_dir / "RESULTS.md").write_text("\n".join(lines))
     print(f"\n{summary['counts']}\nevidence: {out_dir}")
     return 1 if summary["counts"]["FAIL"] else 0
