@@ -184,6 +184,49 @@ test('live page: the transcript is saved only when asked', async ({ page }) => {
   expect(problems).toEqual([]);
 });
 
+test('live page: a late speech transcript is put in front of its answer (B-LIV-6)', async ({ page }) => {
+  // A SPOKEN turn's transcript only arrives once the reply is already running
+  // (PROTOCOL.md section 4), so appending it makes the conversation read
+  // backwards. This drives that exact protocol order through the stub engine --
+  // response.started, then transcript.user(source=speech) -- and asserts the
+  // ordering in BOTH the DOM and the saved transcript. Typed turns cannot
+  // reproduce it, which is why the fix went unverified.
+  test.setTimeout(180_000);
+  const problems = watchPage(page);
+  await login(page);
+  await gotoPage(page, 'live');
+  const sid = await startSession(page);
+
+  await say(page, 'late transcript');
+  await expect(page.locator('#live-transcript .live-line-user')).toContainText('USER QUESTION',
+    { timeout: 30_000 });
+  await expect(page.locator('#live-transcript .live-line-assistant')).toContainText('ASSISTANT RESPONSE',
+    { timeout: 30_000 });
+
+  // DOM order: the question must come before the answer it belongs to.
+  const speakers = await page.locator('#live-transcript .live-line').evaluateAll(
+    (nodes) => nodes.map((n) => `${n.dataset.speaker}:${n.textContent}`));
+  const userAt = speakers.findIndex((t) => t.startsWith('user:') && t.includes('USER QUESTION'));
+  const botAt = speakers.findIndex((t) => t.startsWith('assistant:') && t.includes('ASSISTANT RESPONSE'));
+  expect(userAt).toBeGreaterThanOrEqual(0);
+  expect(botAt).toBeGreaterThanOrEqual(0);
+  expect(userAt).toBeLessThan(botAt);
+
+  // ...and the persisted transcript must agree with what was on screen.
+  await page.locator('#live-save').click();
+  await expect(page.locator('.toast')).toContainText('Transcript saved');
+  const stored = await (await page.request.get(`/api/live/sessions/${sid}/transcript`)).json();
+  expect(stored.saved).toBe(true);
+  const sUser = stored.entries.findIndex((e) => e.speaker === 'user' && e.text.includes('USER QUESTION'));
+  const sBot = stored.entries.findIndex((e) => e.speaker === 'assistant' && e.text.includes('ASSISTANT RESPONSE'));
+  expect(sUser).toBeGreaterThanOrEqual(0);
+  expect(sBot).toBeGreaterThanOrEqual(0);
+  expect(sUser).toBeLessThan(sBot);
+
+  await endSession(page);
+  expect(problems).toEqual([]);
+});
+
 test('live page: phone layout and accessibility', async ({ page }) => {
   const problems = watchPage(page);
   await page.setViewportSize({ width: 390, height: 844 });
