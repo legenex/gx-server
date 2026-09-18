@@ -1988,3 +1988,102 @@ into one misleading message:
 Against the real repository, with the real token: metadata **200**, files
 **403 GatedRepo**, token user `legenex`, `canReadGatedRepos: true`.
 
+
+---
+
+# §24 Build V3 final pass — 2026-09-18
+
+## 24.1 gx-reason on the new checkpoint (D-042)
+
+`wyattearp/Qwen3.8-27B-Uncensored-NVFP4` @ `91ec573a3d8e660b78b7161395e4a5b6247c2c8b`.
+
+**Install.** Downloaded with the revision pinned, then verified file by file
+against that revision: **22 files, 26.61 GiB, 14 sha256-checked**,
+`.gx-manifest.json` written. Arch support (`Qwen3_5ForConditionalGeneration`)
+was confirmed *inside the deployed vLLM image* before any config was edited, so
+no new image was introduced and gx-fast was untouched.
+
+**Memory, sampled at 1 Hz on gx10-02:**
+
+| | GiB |
+|---|---|
+| MemAvailable, idle | 114.68 |
+| MemAvailable, loaded | 63.45 |
+| Minimum during load | 59.57 |
+| MemAvailable after unload | 114.68 |
+| **Real node footprint** | **51.2** |
+| Swap used, max | 3.38 (of 64) |
+
+The reserve floor (30 GiB) was never approached. The old model's ~44 GiB figure
+was **not** carried over.
+
+**Inference.**
+
+| Check | Result |
+|---|---|
+| Cold load to first answer | **392.2 s** (17×23 = 391, correct) |
+| Multi-step reasoning | **correct** — 11:36, 156 km, with working shown |
+| Coding / debugging | **correct** — named both the in-place mutation and the even-length bug |
+| Reasoning extraction | **yes** — separated from `content` (204 chars on a short prompt) |
+| Tool calling (`qwen3_xml`) | **yes** — `get_weather {"city": "Cape Town"}`, finish_reason `tool_calls` |
+| **Vision** | **yes** — read the red jacket out of a real generated source image (38.7 s) |
+| Through LiteLLM as `gx-reason` | **yes**, 10.7 s, reasoning surfaced |
+| Decode speed | ~9 tok/s (no MTP) |
+
+**Lifecycle.** Explicit unload: container gone in 2.3 s, `/running` empty,
+memory returned. **TTL unload fired on its own after the 20-minute idle**,
+container disappeared, MemAvailable back to 114.08 GiB.
+
+**No silent fallback.** LiteLLM is configured `fallbacks: []`,
+`context_window_fallbacks: []`, `content_policy_fallbacks: []`, `num_retries: 0`.
+Observed live: a bad `voice` argument to gx-voice produced
+*"No fallback model group found for original model_group=gx-voice. Fallbacks=[]"*
+rather than a substituted answer, and an unknown alias returned an explicit 400.
+
+## 24.2 gx-auto routing, proved from the gateway log
+
+`/srv/logs/gx-text/gateway-text.jsonl`:
+
+| Request | Routed to | Elapsed |
+|---|---|---|
+| "capital of Japan" | **gx-mini** | 160.9 ms |
+| "prove √2 is irrational" | **gx-reason** | 334,634 ms (incl. cold load) |
+
+Both answers correct. The tier is recorded per request, so the decision is
+evidence rather than inference.
+
+## 24.3 gx-call — first successful engine load on this cluster
+
+12/12 PASS. See `coordination/build-v3/cal.md` for the full table and the
+oneDNN/Xbyak root cause. Headlines: cold load 74–104 s, resident 34.5 GiB,
+**52.08 s of real synthesised reply audio at RMS 431**, first audio **1.2 s**,
+23 finalised transcript turns, real `random_number` and `get_weather` tool
+dispatch, 2.7 MB recording, clean unload to 0.0 GiB.
+
+## 24.4 gx-voice through the gateway
+
+`POST /v1/audio/speech`, `model=gx-voice`, voice `serena`: HTTP 200 in 36.2 s
+(including the cold engine load), 153,644 bytes, **WAV 1ch 24 kHz, 3.20 s,
+RMS 1812**. Real audio, not silence.
+
+## 24.5 gx-image — the two outstanding cases
+
+| Case | Before | After |
+|---|---|---|
+| `edit_add` | ssim 0.8831 / phash 8, **WEAK** | ssim 0.8913 / phash 10 — **PASS** |
+| `edit_masked_lower` | ssim 0.9098 / phash 2, **FAIL** | mad_white 19.78, mad_black 0.07 — **PASS** |
+
+Root cause was the 4-step Lightning schedule, not the mask and not the prompt;
+both hypotheses were tested on the same source, mask and seed. No threshold was
+weakened — the masked case is now judged on *stricter* mask-aware metrics.
+
+## 24.6 Suites
+
+| Suite | Result |
+|---|---|
+| Control Center (`unittest`) | **724 tests, OK** |
+| Orchestrator + lifecycle | **230 tests, OK** |
+| Media router | **186 tests, OK** |
+| Flows (backend) | **58 tests, OK** |
+| flows-ui (vitest) | **17 tests, OK**; typecheck and lint clean |
+| gitleaks (`gitleaks git .`) | **no leaks found**, 365 commits scanned |

@@ -568,3 +568,54 @@ Reported, not "fixed" by rewriting someone else's code (BUILD_V3 rule 10):
   but the Playground history API is a browser route only.
 * `assets.js` and the Library still show provenance from `settings`; the new
   `img_*` tables have no UI of their own yet.
+
+---
+
+## FINAL — 2026-09-18, both outstanding cases pass
+
+Goal met. `edit_add` and `edit_masked_lower` were the only two cases still
+failing after the VisionmasterPro_V3 wave; both now pass, and no acceptance
+threshold was weakened to get there.
+
+| Case | Before | After | Verdict |
+|---|---|---|---|
+| `edit_add` | ssim 0.8831 / phash 8 (WEAK) | ssim 0.8913 / phash 10, mad 8.71 | **PASS** |
+| `edit_masked_lower` | ssim 0.9098 / phash 2 (FAIL) | mad_white **19.78**, mad_black **0.07**, ssim_masked 0.6842, phash_masked 12 | **PASS** |
+
+### What was actually wrong with the masked edit
+
+Not the mask. The mask's dimensions, polarity, feather, `SetLatentNoiseMask`
+and the final `ImageCompositeMasked` were all correct from the start — proved
+by measuring the two halves separately: the region outside the mask came back
+at MAD 0.03, i.e. bit-identical. The masked region simply never changed, at
+MAD 3.1, which is indistinguishable from the ~2.0 floor Qwen leaves in regions
+it is deliberately preserving (measured on `edit_clothing` 1.96, `edit_add` 2.01).
+
+Two hypotheses were tested against the same source, mask and seed:
+
+1. **The prompt.** The masked path appended "Keep everything else in the image
+   exactly as it is…", which the model reads as covering the masked region too.
+   Rewriting it to describe the content to paint: **MAD 3.1 — no better.**
+2. **The sampling schedule.** Running the identical request on the true-CFG
+   path (20 steps, cfg 4.0, no Lightning distill): **MAD 24.3, ssim_masked 0.47,
+   and still MAD 0.03 outside the mask.** Decisive.
+
+Four distilled Lightning steps cannot reconstruct new content inside a mask
+while the reference latent is showing the model the original — there is no
+schedule left to denoise past it. Masked edits therefore default to the
+true-CFG schedule; `edit_quality="fast"` opts back out.
+
+### Two secondary defects found and fixed on the way
+
+* `EditPlan.public()` reported `self.denoise` rather than the denoise actually
+  submitted, so every masked edit recorded a value it did not run.
+* A `denoise = 0.88` override for masked edits was a **no-op**: ComfyUI builds
+  the schedule from `int(steps/denoise)`, and `int(4/0.88) == 4` is the same
+  four sigmas as 1.0. Removed.
+* `image_eval.py` was mask-unaware — whole-image SSIM cannot fall below ~0.5
+  for a half-image mask, so it would have scored a *correct* small-mask edit as
+  a near-duplicate. It now reports `ssim_masked`, `mad_masked_white` and
+  `mad_masked_black`, and masked cases are judged on those.
+
+Evidence: `/srv/logs/acceptance/build-v3/img/v3-final-03/` (targeted) and
+`.../v3-final-full/` (full suite).

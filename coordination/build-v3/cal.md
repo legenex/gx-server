@@ -464,3 +464,76 @@ deferred to the GPU slot and is step 2 of the acceptance plan above.
   all five gate steps pass.
 - 2026-09-17 21:09: `gx-call-engine:voicechat-097dfe9-t214` **BUILT** (1e61699df9e7, 18.3 GB).
   Import gate **PASSED**: VoiceChatEngine, VoiceChatPatches, Tracker all importable.
+
+---
+
+## FINAL — 2026-09-18, gx-call is live and accepted (12/12)
+
+The supervisor had never been installed and the engine had never loaded. Both
+are now done, and the acceptance is real.
+
+### Root cause of the engine failure
+
+Not the Nemotron Nano backbone. An earlier run had failed on a missing offline
+backbone config, but that was an **older image**; the canonical image resolves
+`AutoConfig.from_pretrained("nvidia/NVIDIA-Nemotron-Nano-9B-v2")` from the
+mounted offline cache without complaint.
+
+The real fault was in the TTS codec:
+
+```
+bad err=15 in Xbyak::Error
+RuntimeError: illegal immediate parameter (range error)
+  at F.conv1d  (ear_tts_vae_codec.py, ConvNeXt dwconv)
+```
+
+`DuplexEARTTS.__init__` computes a codec silence frame **before the model is
+moved to the GPU**, so that depthwise conv1d runs on the CPU, where oneDNN's
+aarch64 JIT miscompiles it and aborts the entire load. Fixed by disabling the
+oneDNN CPU path on aarch64 — a fourth entry in the existing
+`gx_voicechat_patches` set, env-toggleable like the other three
+(`GX_VC_CPU_CONV_NO_ONEDNN`). The only CPU convolutions in this engine are that
+one-off silence frame; every per-call convolution runs on the GPU, and the
+arithmetic is unchanged. Shipped as `gx-call-engine:voicechat-097dfe9-t215`.
+
+### Install
+
+`legenex/call/scripts/install-node2.sh` — the unit's install steps lived only in
+a comment, so they had never been run: no API key (a hard startup blocker), no
+state directory, no recordings directory, no symlink. The script is idempotent
+and the supervisor is now `enabled` (safe at boot; it never loads the model).
+The same key is mirrored to gx10-01 so the Control Center can reach it.
+
+### Acceptance — 12/12 PASS
+
+| | |
+|---|---|
+| Image | `gx-call-engine:voicechat-097dfe9-t215` |
+| VoiceChat | `nvidia/NVIDIA-NemotronLabs-VoiceChat-11B` @ `a4c40ca5b4fe77db13e9840ca4a2b91becf030c8` |
+| Backbone | `nvidia/NVIDIA-Nemotron-Nano-9B-v2` @ `6533e8de2c68e4536bf7c411d7a3ce5734111476` |
+| Cold load | 74–104 s via the supervisor |
+| Resident | 34.5 GiB; min MemAvailable during load 70.4 GiB (reserve 30) |
+| Caller audio | 84.46 s of real speech streamed as PCM16 16 kHz |
+| Reply audio | **52.08 s, 2,296,728 bytes, RMS 431** (silence floor 200) |
+| First audio | **1.2 s** |
+| Transcript | 335 deltas, 23 finalised turns, caller turn transcribed |
+| Tools | **real dispatch**: `random_number`, `get_weather`, 2 results accepted |
+| Recording | HTTP 200, 2,695,084 bytes |
+| Unload | 34.5 → 0.0 GiB, memory returned |
+
+Admission was also proved to refuse safely: with gx-reason holding node 2 the
+load returned an explicit `503 insufficient_memory` naming the arithmetic, not
+an OOM and not a silent fallback.
+
+### The old harness
+
+`tools/call_accept.py` was rewritten from scratch. The previous one could not
+pass legitimately — it POSTed to `/v1/calls` (no such route), sent no
+Authorization header, used a `session_id` the validator rejects, polled the
+wrong port, compared a health key neither service emits, wrote a **zero-byte
+`.png`** labelled a screenshot, and returned PASS for any 2xx on a single POST.
+Its output must not be treated as evidence for anything.
+
+Evidence: `/srv/logs/acceptance/build-v3/call/v3-final/` — `agent_reply.wav`,
+`recording_caller.wav`, `transcript.txt`, `events.json`, `summary.json`,
+`RESULTS.md`.

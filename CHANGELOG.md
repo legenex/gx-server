@@ -9,6 +9,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-09-18
+
+### Changed
+
+- **gx-reason is now `wyattearp/Qwen3.8-27B-Uncensored-NVFP4`** @
+  `91ec573a3d8e660b78b7161395e4a5b6247c2c8b` ("Qwen3.8-27B Dense Uncensored
+  NVFP4"), replacing both the interim `nvidia/Qwen3.6-27B-NVFP4` and the
+  abandoned `iSkye/Qwen3.8-Flash-Next-NVFP4-ablit-a070` target (D-042).
+  Uncensored, dense 27B, vision and tool calling, served at 65 536 context.
+  Measured: 392 s cold load, ~9 tok/s decode, 51.2 GiB node footprint, memory
+  returns on unload. **B-030 is closed as obsolete** - nothing about gx-reason
+  is waiting on a human any more.
+- The engine image did not change: arch support for `Qwen3_5ForConditionalGeneration`
+  was verified inside the deployed vLLM image before any config was edited.
+  `--quantization modelopt` removed (this checkpoint is compressed-tensors/nvfp4)
+  and MTP speculative decoding left off for bring-up.
+- **Masked image edits default to the true-CFG schedule** (20 steps, cfg 4.0)
+  instead of the 4-step Lightning distill. Four distilled steps could not
+  repaint a masked region while the reference latent showed the model the
+  original. `edit_quality="fast"` opts back out.
+- The Control Center Models page is **driven by the canonical registry**
+  instead of a hard-coded eight-alias dict, and now shows all eleven aliases.
+
+### Added
+
+- **gx-call is live.** The supervisor is installed and enabled on gx10-02, and
+  the VoiceChat engine loads for the first time on this cluster. Real
+  acceptance: 12/12 - real caller speech in, 52 s of real synthesised reply
+  audio out, 1.2 s first-audio latency, live transcript, a real tool
+  round-trip, a 2.7 MB recording, clean unload with the memory returned.
+- Control Center cards for **gx-voice** and **gx-call**, with a supervisor /
+  engine-residency split so an on-demand engine that is unloaded reads as
+  READY rather than offline.
+- `legenex/gateway/deploy-node2.sh` and `legenex/call/scripts/install-node2.sh`:
+  sanctioned deploy/install paths that previously existed only as comments.
+- `download-model.sh` pins an immutable Hugging Face revision and hands the
+  snapshot back to the invoking user.
+
+### Fixed
+
+- **gx-call's engine could never load.** oneDNN's aarch64 JIT miscompiled the
+  depthwise conv1d in the EAR-TTS codec, which runs on the CPU before the model
+  reaches the GPU, and aborted the whole load with an Xbyak error. Disabled the
+  oneDNN CPU path on aarch64 (image `voicechat-097dfe9-t215`).
+- **Creative Flows refused graphs it had not refused.** The red "server refused
+  this graph" banner was seeded from the server's *readiness* hints, which it
+  saves happily, and nothing ever cleared it. Server-side issues never reached
+  the UI at all. Duplicate connections were errors instead of no-ops, and every
+  type mismatch advised "add a conversion node" even when none exists.
+- A whole-canvas flow run is now scoped to the branches that can run: an
+  unfinished scratch node no longer refuses the entire canvas.
+- The gx-call acceptance harness no longer fabricates evidence. The previous one
+  called routes that do not exist and wrote a zero-byte `.png` as a screenshot.
+- Call Agents is no longer coupled to IntakePilot: the default is a general
+  voice agent and the empty state says "Create a voice agent".
+
 ## [0.18.0] - 2026-09-17
 
 Build V3 integration: the complete creative and realtime product is deployed
