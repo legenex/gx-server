@@ -146,14 +146,33 @@ def run_call(wav: Path, out: Path, record: bool) -> dict:
             "name": "GX acceptance agent",
             "system_prompt": ("You are a concise, friendly voice assistant taking a test call. "
                               "Answer in one or two short sentences. Use a tool when one fits."),
-            "tools": [{
-                "name": "get_weather",
-                "description": "Current weather for a city.",
-                "parameters": {"type": "object",
-                               "properties": {"city": {"type": "string"}},
-                               "required": ["city"]},
-                "on_hold": ["Let me check that for you."],
-            }],
+            # These match what the checkpoint's own tool_call.wav actually asks
+            # for -- a random number, a currency conversion and the weather.
+            # Registering unrelated tools makes the model decline instead of
+            # calling, which proves nothing about tool dispatch.
+            "tools": [
+                {"name": "random_number",
+                 "description": "Pick a random integer between two bounds.",
+                 "parameters": {"type": "object",
+                                "properties": {"minimum": {"type": "integer"},
+                                               "maximum": {"type": "integer"}},
+                                "required": ["minimum", "maximum"]},
+                 "on_hold": ["One moment."]},
+                {"name": "convert_currency",
+                 "description": "Convert an amount from one currency to another.",
+                 "parameters": {"type": "object",
+                                "properties": {"amount": {"type": "number"},
+                                               "from": {"type": "string"},
+                                               "to": {"type": "string"}},
+                                "required": ["amount", "from", "to"]},
+                 "on_hold": ["Let me check the exchange rate."]},
+                {"name": "get_weather",
+                 "description": "Current weather for a city.",
+                 "parameters": {"type": "object",
+                                "properties": {"city": {"type": "string"}},
+                                "required": ["city"]},
+                 "on_hold": ["Let me check that for you."]},
+            ],
         },
     }
     status, created = api("/v1/call/sessions", spec)
@@ -202,7 +221,7 @@ def run_call(wav: Path, out: Path, record: bool) -> dict:
             pending = tool_calls[tool_results_sent:]
         for tc in pending:
             api(f"/v1/call/sessions/{sid}/tool-results",
-                {"call_id": tc["call_id"], "output": "18 degrees and clear."})
+                {"call_id": tc["call_id"], "output": _tool_answer(tc["name"])})
             tool_results_sent += 1
         return tool_results_sent
 
@@ -258,7 +277,13 @@ def run_call(wav: Path, out: Path, record: bool) -> dict:
     transcript = [e for e in server_events if e.get("type", "").startswith("transcript")]
     (out / "events.json").write_text(json.dumps(server_events, indent=2), encoding="utf-8")
 
-    roles = [e.get("role") or e.get("speaker") for e in transcript]
+    finals = [e for e in server_events
+              if e.get("type") in ("transcript.user.final", "transcript.agent.final")]
+    first_user = next((e["seq"] for e in finals if ".user." in e["type"]), None)
+    turns = [("user" if ".user." in e["type"] else "agent",
+              (e.get("text") or "").strip()) for e in finals]
+    (out / "transcript.txt").write_text(
+        "\n".join(f"{who.upper():5s}: {text}" for who, text in turns) + "\n", encoding="utf-8")
     return {
         "session_id": sid,
         "wav": wav.name,
@@ -270,7 +295,9 @@ def run_call(wav: Path, out: Path, record: bool) -> dict:
         "socket_events": socket_events,
         "server_events": len(server_events),
         "transcript_entries": len(transcript),
-        "transcript_roles": roles[:12],
+        "transcript_finals": len(finals),
+        "first_user_final_seq": first_user,
+        "transcript_preview": [f"{w}: {t[:70]}" for w, t in turns[:8]],
         "tool_calls": tools_seen,
         "tool_results_sent": tool_results_sent,
         "recording_status": rec_status,
@@ -278,6 +305,18 @@ def run_call(wav: Path, out: Path, record: bool) -> dict:
         "session_ended_event": ended,
         "audio_file": str(audio_path) if agent_pcm else None,
     }
+
+
+#: deterministic answers, so a rerun cannot change what the model was told
+_TOOL_ANSWERS = {
+    "random_number": "27",
+    "convert_currency": "18.40 EUR",
+    "get_weather": "18 degrees and clear.",
+}
+
+
+def _tool_answer(name: str) -> str:
+    return _TOOL_ANSWERS.get(name, "done")
 
 
 def _absorb_text(msg, events: list, tool_calls: list) -> None:
@@ -349,8 +388,11 @@ def main() -> int:
          f"(silence floor {MIN_RMS}) -> {m['audio_file']}")
     case("first-audio latency", m["first_audio_latency_s"] is not None,
          f"{m['first_audio_latency_s']}s")
-    case("transcript", m["transcript_entries"] > 0,
-         f"{m['transcript_entries']} entries, roles {m['transcript_roles']}")
+    case("transcript", m["transcript_entries"] > 0 and m["transcript_finals"] > 1,
+         f"{m['transcript_entries']} deltas, {m['transcript_finals']} finalised turns; "
+         f"first: {m['transcript_preview'][:3]}")
+    case("caller turn is transcribed", m["first_user_final_seq"] is not None,
+         f"first finalised caller turn at seq {m['first_user_final_seq']}")
     case("events", m["server_events"] > 0, f"{m['server_events']} server-side events")
     if m["tool_calls"]:
         case("tool call round trip", m["tool_results_sent"] > 0,
