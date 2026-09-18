@@ -181,7 +181,7 @@ def run_call(wav: Path, out: Path, record: bool) -> dict:
             except Exception:  # noqa: BLE001 - a close ends the call normally
                 return
             with lock:
-                if msg.binary:
+                if not msg.is_text:
                     if msg.data and first_audio_at[0] is None:
                         first_audio_at[0] = time.time()
                     agent_pcm.extend(msg.data)
@@ -246,9 +246,14 @@ def run_call(wav: Path, out: Path, record: bool) -> dict:
 
     rec_status, rec_bytes = (0, b"")
     if record:
-        rec_status, rec_bytes = raw_get(f"/v1/call/sessions/{sid}/recording?track=caller")
-        if rec_status == 200 and rec_bytes:
-            (out / "recording_caller.wav").write_bytes(rec_bytes)
+        # The recording only exists once the session is terminal AND the writer
+        # has flushed it, so a fetch straight after /end races and returns 409.
+        for _ in range(30):
+            rec_status, rec_bytes = raw_get(f"/v1/call/sessions/{sid}/recording?track=caller")
+            if rec_status == 200 and rec_bytes:
+                (out / "recording_caller.wav").write_bytes(rec_bytes)
+                break
+            time.sleep(2)
 
     transcript = [e for e in server_events if e.get("type", "").startswith("transcript")]
     (out / "events.json").write_text(json.dumps(server_events, indent=2), encoding="utf-8")
@@ -277,8 +282,8 @@ def run_call(wav: Path, out: Path, record: bool) -> dict:
 
 def _absorb_text(msg, events: list, tool_calls: list) -> None:
     try:
-        obj = json.loads(msg.text)
-    except (ValueError, AttributeError):
+        obj = json.loads(msg.text())
+    except (ValueError, AttributeError, UnicodeDecodeError):
         return
     events.append(obj)
     if obj.get("type") == "tool.call":
