@@ -73,6 +73,27 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(plan.params["mask_grow"], 16)
         self.assertTrue(plan.masked)
 
+    def test_masked_edits_use_the_true_cfg_schedule_not_the_4_step_lightning_one(self):
+        """Four distilled steps cannot repaint a masked region.
+
+        Measured on edit_masked_lower with the same source, mask and seed: 4 Lightning
+        steps left the masked area at MAD 3.1 (Qwen's ~2.0 "preserving this" floor),
+        while 20 steps at cfg 4.0 gave MAD 24.3 and ssim_masked 0.47 with the area
+        outside the mask still bit-identical. The reference latent keeps showing the
+        model the original, so there has to be enough schedule left to denoise past it.
+        """
+        masked = im.plan_edit(self.qwen, "change", "tall green grass", None, has_mask=True)
+        self.assertEqual(masked.params["steps"], 20)
+        self.assertEqual(masked.params["cfg"], 4.0)
+        self.assertEqual(masked.params["lightning_strength"], 0.0)
+        # An unmasked edit is unaffected: it keeps the fast Lightning schedule.
+        plain = im.plan_edit(self.qwen, "change", "tall green grass", None, has_mask=False)
+        self.assertNotIn("steps", plain.params)
+        # ...and an explicit "fast" still wins for a caller who wants speed.
+        fast = im.plan_edit(self.qwen, "change", "tall green grass", None,
+                            has_mask=True, quality="fast")
+        self.assertNotIn("steps", fast.params)
+
     def test_masked_edits_never_ask_the_model_to_preserve_the_picture(self):
         """The mask preserves; the prompt paints.
 

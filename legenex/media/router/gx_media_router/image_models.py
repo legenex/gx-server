@@ -297,11 +297,19 @@ def plan_edit(model: ImageModel, mode_id: str | None, instruction: str, strength
         # from int(steps/denoise) and int(4/0.88) == 4 gives the same four sigmas as 1.0. It
         # only made the recorded metadata disagree with the graph. What actually kept the
         # masked region unchanged was the prompt (see below).
-    if quality == "quality":
+    if quality not in (None, "", "fast", "quality"):
+        raise ValidationError("edit_quality must be 'fast' or 'quality'", param="edit_quality")
+    # A MASKED edit defaults to the true-CFG schedule, not the 4-step Lightning one.
+    # Measured on edit_masked_lower, same source, mask and seed: on 4 Lightning steps the
+    # masked region came back at MAD 3.1 -- indistinguishable from Qwen's ~2.0 "I am
+    # preserving this" floor -- while 20 steps at cfg 4.0 gave MAD 24.3 and ssim_masked
+    # 0.47, with the region outside the mask still bit-identical (MAD 0.03). Four distilled
+    # steps cannot reconstruct new content inside a mask when the reference latent is
+    # showing the model the original: there is nowhere for the denoise to happen. Callers
+    # who want speed over a real edit can still pass edit_quality="fast" explicitly.
+    if quality == "quality" or (has_mask and quality in (None, "")):
         # true-CFG path of the base model: no Lightning distill, real negative prompt
         params.update({"lightning_strength": 0.0, "steps": 20, "cfg": 4.0})
-    elif quality not in (None, "", "fast"):
-        raise ValidationError("edit_quality must be 'fast' or 'quality'", param="edit_quality")
     if mode.id == "instruct":
         prompt = instruction
     else:
