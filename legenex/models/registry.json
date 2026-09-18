@@ -109,7 +109,7 @@
       "files": [],
       "node": "gx10-02",
       "path": "/srv/models/vllm/Qwen3.8-27B-Uncensored-NVFP4",
-      "runtime": "vLLM 0.28 via llama-swap on gx10-02",
+      "runtime": "vLLM 0.28 via llama-swap on gx10-02 (MTP speculative decoding enabled)",
       "binding": {
         "file": "legenex/gateway/llama-swap/node02.yaml",
         "macros": [
@@ -130,7 +130,7 @@
       "licence": "apache-2.0",
       "startup": "on demand, unloads after 20 minutes idle; cold start about 6.5 minutes",
       "memory": "about 55 GiB on gx10-02 (measured 2026-09-18)",
-      "measured": "cold load 392 s; decode about 9 tok/s; multi-step reasoning, coding, tools and vision all correct (2026-09-18)",
+      "measured": "cold load 392 s; decode about 25-28 tok/s with MTP speculative decoding (model-mtp.safetensors, 5 steps); multi-step reasoning, coding, tools and vision all correct (2026-09-18)",
       "identity": {
         "repository": "wyattearp/Qwen3.8-27B-Uncensored-NVFP4",
         "revision": "91ec573a3d8e660b78b7161395e4a5b6247c2c8b",
