@@ -1,0 +1,682 @@
+{
+  "config": {
+    "argv": [
+      "/home/legenex/.nvm/versions/node/v22.23.2/bin/node",
+      "/home/legenex/Documents/Projects/Server/gx-cluster/legenex/playground/node_modules/.bin/playwright",
+      "test",
+      "--project=offline",
+      "e2e/offline.f-history-resources.spec.js",
+      "e2e/offline.h-flows.spec.js"
+    ],
+    "configFile": "/home/legenex/Documents/Projects/Server/gx-cluster/legenex/playground/playwright.config.js",
+    "rootDir": "/home/legenex/Documents/Projects/Server/gx-cluster/legenex/playground/e2e",
+    "failOnFlakyTests": false,
+    "forbidOnly": false,
+    "fullyParallel": false,
+    "globalSetup": null,
+    "globalTeardown": null,
+    "globalTimeout": 0,
+    "grep": {},
+    "grepInvert": null,
+    "maxFailures": 0,
+    "metadata": {
+      "actualWorkers": 1
+    },
+    "preserveOutput": "always",
+    "projects": [
+      {
+        "outputDir": "/home/legenex/Documents/Projects/Server/gx-cluster/legenex/playground/test-results-isolated",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "offline",
+        "name": "offline",
+        "testDir": "/home/legenex/Documents/Projects/Server/gx-cluster/legenex/playground/e2e",
+        "testIgnore": [],
+        "testMatch": [
+          "/offline\\..*\\.spec\\.js/"
+        ],
+        "timeout": 120000
+      },
+      {
+        "outputDir": "/home/legenex/Documents/Projects/Server/gx-cluster/legenex/playground/test-results-isolated",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "live",
+        "name": "live",
+        "testDir": "/home/legenex/Documents/Projects/Server/gx-cluster/legenex/playground/e2e",
+        "testIgnore": [],
+        "testMatch": [
+          "/live\\..*\\.spec\\.js/"
+        ],
+        "timeout": 3600000
+      }
+    ],
+    "quiet": false,
+    "reporter": [
+      [
+        "list",
+        null
+      ],
+      [
+        "json",
+        {
+          "outputFile": "test-results-isolated/results.json"
+        }
+      ]
+    ],
+    "reportSlowTests": {
+      "max": 5,
+      "threshold": 300000
+    },
+    "shard": null,
+    "tags": [],
+    "updateSnapshots": "missing",
+    "updateSourceMethod": "patch",
+    "version": "1.63.0",
+    "workers": 1,
+    "webServer": null
+  },
+  "suites": [
+    {
+      "title": "offline.f-history-resources.spec.js",
+      "file": "offline.f-history-resources.spec.js",
+      "column": 0,
+      "line": 0,
+      "specs": [
+        {
+          "title": "History lists media and music jobs with phases, filters and actions",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 120000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "offline",
+              "projectName": "offline",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 3062,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-09-18T08:25:31.112Z",
+                  "annotations": [],
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "dceabfd1a3e96522f2ac-1f9a709c4d6239da117e",
+          "file": "offline.f-history-resources.spec.js",
+          "line": 5,
+          "column": 1
+        },
+        {
+          "title": "profile selector offers exactly Auto/Text/Media/Music/Max and switching applies",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 120000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "offline",
+              "projectName": "offline",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 1768,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-09-18T08:25:34.248Z",
+                  "annotations": [],
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "dceabfd1a3e96522f2ac-172b0644b732c7226ea6",
+          "file": "offline.f-history-resources.spec.js",
+          "line": 77,
+          "column": 1
+        },
+        {
+          "title": "dashboard quick create submits and opens the workspace",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 120000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "offline",
+              "projectName": "offline",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 1157,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-09-18T08:25:36.023Z",
+                  "annotations": [],
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "dceabfd1a3e96522f2ac-86ba94c09fec082d29a3",
+          "file": "offline.f-history-resources.spec.js",
+          "line": 126,
+          "column": 1
+        }
+      ]
+    },
+    {
+      "title": "offline.h-flows.spec.js",
+      "file": "offline.h-flows.spec.js",
+      "column": 0,
+      "line": 0,
+      "specs": [
+        {
+          "title": "creates a flow and keeps it in the URL",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 120000,
+              "annotations": [
+                {
+                  "type": "serial",
+                  "location": {
+                    "file": "/home/legenex/Documents/Projects/Server/gx-cluster/legenex/playground/e2e/offline.h-flows.spec.js",
+                    "line": 0,
+                    "column": 0
+                  }
+                }
+              ],
+              "expectedStatus": "passed",
+              "projectId": "offline",
+              "projectName": "offline",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 969,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-09-18T08:25:37.195Z",
+                  "annotations": [
+                    {
+                      "type": "serial",
+                      "location": {
+                        "file": "/home/legenex/Documents/Projects/Server/gx-cluster/legenex/playground/e2e/offline.h-flows.spec.js",
+                        "line": 0,
+                        "column": 0
+                      }
+                    }
+                  ],
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "1a9031a7a0e2965dfe09-ee3d31d9052eb3a67737",
+          "file": "offline.h-flows.spec.js",
+          "line": 30,
+          "column": 1
+        },
+        {
+          "title": "adds nodes, connects compatible ports and refuses incompatible ones",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 120000,
+              "annotations": [
+                {
+                  "type": "serial",
+                  "location": {
+                    "file": "/home/legenex/Documents/Projects/Server/gx-cluster/legenex/playground/e2e/offline.h-flows.spec.js",
+                    "line": 0,
+                    "column": 0
+                  }
+                }
+              ],
+              "expectedStatus": "passed",
+              "projectId": "offline",
+              "projectName": "offline",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 1851,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-09-18T08:25:38.170Z",
+                  "annotations": [
+                    {
+                      "type": "serial",
+                      "location": {
+                        "file": "/home/legenex/Documents/Projects/Server/gx-cluster/legenex/playground/e2e/offline.h-flows.spec.js",
+                        "line": 0,
+                        "column": 0
+                      }
+                    }
+                  ],
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "1a9031a7a0e2965dfe09-acd5673d765ca8fa0c16",
+          "file": "offline.h-flows.spec.js",
+          "line": 47,
+          "column": 1
+        },
+        {
+          "title": "refuses an incompatible connection dragged on the canvas",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 120000,
+              "annotations": [
+                {
+                  "type": "serial",
+                  "location": {
+                    "file": "/home/legenex/Documents/Projects/Server/gx-cluster/legenex/playground/e2e/offline.h-flows.spec.js",
+                    "line": 0,
+                    "column": 0
+                  }
+                }
+              ],
+              "expectedStatus": "passed",
+              "projectId": "offline",
+              "projectName": "offline",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 2449,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-09-18T08:25:40.025Z",
+                  "annotations": [
+                    {
+                      "type": "serial",
+                      "location": {
+                        "file": "/home/legenex/Documents/Projects/Server/gx-cluster/legenex/playground/e2e/offline.h-flows.spec.js",
+                        "line": 0,
+                        "column": 0
+                      }
+                    }
+                  ],
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "1a9031a7a0e2965dfe09-3dafaa59d52fbfa28679",
+          "file": "offline.h-flows.spec.js",
+          "line": 81,
+          "column": 1
+        },
+        {
+          "title": "configures a node, autosaves and survives a reload",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 120000,
+              "annotations": [
+                {
+                  "type": "serial",
+                  "location": {
+                    "file": "/home/legenex/Documents/Projects/Server/gx-cluster/legenex/playground/e2e/offline.h-flows.spec.js",
+                    "line": 0,
+                    "column": 0
+                  }
+                }
+              ],
+              "expectedStatus": "passed",
+              "projectId": "offline",
+              "projectName": "offline",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 3324,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-09-18T08:25:42.481Z",
+                  "annotations": [
+                    {
+                      "type": "serial",
+                      "location": {
+                        "file": "/home/legenex/Documents/Projects/Server/gx-cluster/legenex/playground/e2e/offline.h-flows.spec.js",
+                        "line": 0,
+                        "column": 0
+                      }
+                    }
+                  ],
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "1a9031a7a0e2965dfe09-84a39cef5d14201043d7",
+          "file": "offline.h-flows.spec.js",
+          "line": 114,
+          "column": 1
+        },
+        {
+          "title": "runs a flow and shows the result on the node",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 120000,
+              "annotations": [
+                {
+                  "type": "serial",
+                  "location": {
+                    "file": "/home/legenex/Documents/Projects/Server/gx-cluster/legenex/playground/e2e/offline.h-flows.spec.js",
+                    "line": 0,
+                    "column": 0
+                  }
+                }
+              ],
+              "expectedStatus": "passed",
+              "projectId": "offline",
+              "projectName": "offline",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 5466,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-09-18T08:25:45.811Z",
+                  "annotations": [
+                    {
+                      "type": "serial",
+                      "location": {
+                        "file": "/home/legenex/Documents/Projects/Server/gx-cluster/legenex/playground/e2e/offline.h-flows.spec.js",
+                        "line": 0,
+                        "column": 0
+                      }
+                    }
+                  ],
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "1a9031a7a0e2965dfe09-2098182eb87156e73109",
+          "file": "offline.h-flows.spec.js",
+          "line": 149,
+          "column": 1
+        },
+        {
+          "title": "creates a flow from a built-in template",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 120000,
+              "annotations": [
+                {
+                  "type": "serial",
+                  "location": {
+                    "file": "/home/legenex/Documents/Projects/Server/gx-cluster/legenex/playground/e2e/offline.h-flows.spec.js",
+                    "line": 0,
+                    "column": 0
+                  }
+                }
+              ],
+              "expectedStatus": "passed",
+              "projectId": "offline",
+              "projectName": "offline",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 1281,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-09-18T08:25:51.281Z",
+                  "annotations": [
+                    {
+                      "type": "serial",
+                      "location": {
+                        "file": "/home/legenex/Documents/Projects/Server/gx-cluster/legenex/playground/e2e/offline.h-flows.spec.js",
+                        "line": 0,
+                        "column": 0
+                      }
+                    }
+                  ],
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "1a9031a7a0e2965dfe09-8dbfe7268be81ce73ffd",
+          "file": "offline.h-flows.spec.js",
+          "line": 186,
+          "column": 1
+        },
+        {
+          "title": "outline view lists nodes in execution order with their ports",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 120000,
+              "annotations": [
+                {
+                  "type": "serial",
+                  "location": {
+                    "file": "/home/legenex/Documents/Projects/Server/gx-cluster/legenex/playground/e2e/offline.h-flows.spec.js",
+                    "line": 0,
+                    "column": 0
+                  }
+                }
+              ],
+              "expectedStatus": "passed",
+              "projectId": "offline",
+              "projectName": "offline",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 3260,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-09-18T08:25:52.569Z",
+                  "annotations": [
+                    {
+                      "type": "serial",
+                      "location": {
+                        "file": "/home/legenex/Documents/Projects/Server/gx-cluster/legenex/playground/e2e/offline.h-flows.spec.js",
+                        "line": 0,
+                        "column": 0
+                      }
+                    }
+                  ],
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "1a9031a7a0e2965dfe09-d4c91df2d5e33aeb7a19",
+          "file": "offline.h-flows.spec.js",
+          "line": 205,
+          "column": 1
+        },
+        {
+          "title": "reports backend failures instead of showing an empty page",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 120000,
+              "annotations": [
+                {
+                  "type": "serial",
+                  "location": {
+                    "file": "/home/legenex/Documents/Projects/Server/gx-cluster/legenex/playground/e2e/offline.h-flows.spec.js",
+                    "line": 0,
+                    "column": 0
+                  }
+                }
+              ],
+              "expectedStatus": "passed",
+              "projectId": "offline",
+              "projectName": "offline",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 2168,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-09-18T08:25:55.838Z",
+                  "annotations": [
+                    {
+                      "type": "serial",
+                      "location": {
+                        "file": "/home/legenex/Documents/Projects/Server/gx-cluster/legenex/playground/e2e/offline.h-flows.spec.js",
+                        "line": 0,
+                        "column": 0
+                      }
+                    }
+                  ],
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "1a9031a7a0e2965dfe09-608e85e17a96edfa69fe",
+          "file": "offline.h-flows.spec.js",
+          "line": 232,
+          "column": 1
+        },
+        {
+          "title": "works at phone width",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 120000,
+              "annotations": [
+                {
+                  "type": "serial",
+                  "location": {
+                    "file": "/home/legenex/Documents/Projects/Server/gx-cluster/legenex/playground/e2e/offline.h-flows.spec.js",
+                    "line": 0,
+                    "column": 0
+                  }
+                }
+              ],
+              "expectedStatus": "passed",
+              "projectId": "offline",
+              "projectName": "offline",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 1027,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-09-18T08:25:58.012Z",
+                  "annotations": [
+                    {
+                      "type": "serial",
+                      "location": {
+                        "file": "/home/legenex/Documents/Projects/Server/gx-cluster/legenex/playground/e2e/offline.h-flows.spec.js",
+                        "line": 0,
+                        "column": 0
+                      }
+                    }
+                  ],
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "1a9031a7a0e2965dfe09-3d384439c79ade164d85",
+          "file": "offline.h-flows.spec.js",
+          "line": 254,
+          "column": 1
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "stats": {
+    "startTime": "2026-09-18T08:25:30.296Z",
+    "duration": 28834.092999999997,
+    "expected": 12,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  }
+}

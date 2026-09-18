@@ -272,6 +272,12 @@ def main() -> int:
     # (fake ComfyUI, synthetic LoRA headers); image routes still hit the stub.
     media_key = "e2e-media-" + os.urandom(8).hex()
     wan_router = WanRouterStub(media_key, fallback_url=stub.url)
+    # Playground.video_submit() authenticates via cfg.secret("GX_MEDIA_API_KEY")
+    # (a plain os.environ read), a separate path from app.media.router._key
+    # below. Both must agree with what WanRouterStub checks, or gx-video in the
+    # API Playground gets "missing or invalid API key" while gx-image (routed
+    # through the LiteLLM stub instead) works fine.
+    os.environ["GX_MEDIA_API_KEY"] = media_key
     env = TempEnv(litellm_base=stub.url, media_base=wan_router.url, port=port, music_base=music.url,
                   voice_base=voice.url,
                   live_base=live.url, rt_live_target=f"127.0.0.1:{live.port}",
