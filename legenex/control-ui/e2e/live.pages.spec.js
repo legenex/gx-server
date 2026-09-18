@@ -39,7 +39,10 @@ test('dashboard and runtime reflect both real nodes', async ({ page }) => {
   }
   expect(ov.rails.every((r) => r.ok)).toBe(true);
   expect(ov.tailscale.level).toBe('ok');
-  expect(ov.models.map((m) => m.alias)).toEqual(['gx-mini', 'gx-fast', 'gx-reason', 'gx-max', 'gx-auto', 'gx-image', 'gx-video']);
+  // D-036/D-040 (2026-09-17): the Models page lists all eleven canonical
+  // aliases, not just the seven served by the LiteLLM gateway.
+  expect(ov.models.map((m) => m.alias)).toEqual(['gx-mini', 'gx-fast', 'gx-reason', 'gx-max', 'gx-auto', 'gx-image', 'gx-video',
+    'gx-music', 'gx-voice', 'gx-call', 'gx-live']);
   expect(ov.git.node2_push_disabled).toBe(true);
   expect(ov.git.node1_head).toMatch(/^[0-9a-f]{40}$/);
   expect(ov.git.node2_head).toMatch(/^[0-9a-f]{40}$/);
