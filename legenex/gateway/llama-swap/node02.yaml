@@ -279,7 +279,6 @@ models:
       sh -c 'if [ -e /srv/guard/node2.maintenance-hold ]; then echo "gx-reason refused: gx10-02 is in Maintenance mode" >&2; exit 1; fi;
       docker exec gx-media-router python -m gx_media_router.free_node >/dev/null 2>&1;
       docker rm -f gx-reason >/dev/null 2>&1;
-      SPC="{"'"'"'method'"'"':'"'"'dflash'"'"','"'"'model'"'"':'"'"'/models/dflash2'"'"','"'"'num_speculative_tokens'"'"':7,'"'"'draft_sample_method'"'"':'"'"'probabilistic'"'"'}";
       exec docker run --rm --name gx-reason
       --network ${swap_netns}
       --device nvidia.com/gpu=all
@@ -308,6 +307,6 @@ models:
       --enable-auto-tool-choice
       --tool-call-parser qwen3_xml
       --reasoning-parser qwen3
-      --speculative-config ${SPC}
+      --speculative-config /models/dflash2/spec.json
       --trust-remote-code'
     cmdStop: "docker stop -t 150 gx-reason"
