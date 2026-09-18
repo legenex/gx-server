@@ -80,6 +80,20 @@ describe('graph rules', () => {
     expect(fromT.length).toBe(2);
   });
 
+  it('reconnects an edge onto a new target and persists ports', () => {
+    const d = doc();
+    d.nodes.push({ id: 'g2', type: 'image.generate', label: '', notes: '', position: { x: 300, y: 300 },
+      config: {}, disabled: false, locked: false });
+    const store = new EditorStore(cat, d);
+    expect(store.connect('t', 'text', 'g', 'prompt').ok).toBe(true);
+    const edgeId = at(store.doc.edges, 0).id;
+    expect(store.reconnect(edgeId, 't', 'text', 'g2', 'prompt').ok).toBe(true);
+    expect(store.doc.edges).toHaveLength(1);
+    expect(at(store.doc.edges, 0)).toMatchObject({
+      id: edgeId, source: 't', source_port: 'text', target: 'g2', target_port: 'prompt',
+    });
+  });
+
   it('only advises a conversion node when one actually exists', () => {
     const d = doc();
     // image -> text has no conversion in the catalogue, so no advice is given.

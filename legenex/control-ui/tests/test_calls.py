@@ -184,6 +184,21 @@ class AgentTests(unittest.TestCase):
         self.assertEqual([t["name"] for t in tools], cfg["tool_permissions"])
         self.assertLessEqual(len(tools), ca.MAX_TOOLS_PER_AGENT)
 
+    def test_workers_comp_template(self):
+        cfg = ca.validate_config(ca.default_config("workers_comp"))
+        self.assertEqual(cfg["use_case"], "workers_comp")
+        self.assertEqual(cfg["name"], "Workers Comp Intake Agent")
+        self.assertEqual(cfg["structured_output_schema"]["$id"], ci.WC_SCHEMA_ID)
+        self.assertIn("employer_name", cfg["required_fields"])
+        self.assertIn("consent_followup", cfg["required_fields"])
+        prompt = ca.compile_prompt(cfg)
+        self.assertTrue(prompt.isascii())
+        self.assertIn("legal advice", prompt.lower())
+        self.assertNotIn("guarantee", prompt.lower())
+        tools = ca.compile_tools(cfg)
+        self.assertIn("update_intake_fields", [t["name"] for t in tools])
+        self.assertLessEqual(len(tools), ca.MAX_TOOLS_PER_AGENT)
+
     def test_versioning_clone_status_and_diff(self):
         agent = self.store.create(ca.default_config(), user="admin")
         self.assertRegex(agent["agent_id"], r"^agt_[0-9a-f]{24}$")

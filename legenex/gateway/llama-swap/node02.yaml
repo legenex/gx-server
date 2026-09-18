@@ -294,7 +294,9 @@ models:
       --memory ${gx_reason_mem_limit}
       --memory-swap ${gx_reason_mem_limit}
       --oom-score-adj ${gx_reason_oom_score_adj}
+      --entrypoint /bin/sh
       ${vllm_image}
+      /models/dflash2/run-vllm.sh
       ${gx_reason_model_dir}
       --served-model-name gx-reason
       --host ${host} --port 25800
@@ -307,6 +309,5 @@ models:
       --enable-auto-tool-choice
       --tool-call-parser qwen3_xml
       --reasoning-parser qwen3
-      --speculative-config "$(cat /srv/models/vllm/Qwen3.8-27B-DFlash2/spec.json)"
       --trust-remote-code'
     cmdStop: "docker stop -t 150 gx-reason"

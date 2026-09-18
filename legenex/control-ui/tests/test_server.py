@@ -265,6 +265,14 @@ class TestAuthenticatedApi(ServerBase):
         status, _, body = self.post("/api/actions/system.refresh")
         self.assertEqual(status, 202, body)
 
+    def test_session_csrf_is_the_live_token(self):
+        status, _, body = self.req("GET", "/api/session")
+        self.assertEqual(status, 200)
+        self.assertEqual(body["csrf"], self.csrf)
+        self.csrf = body["csrf"]
+        status, _, out = self.post("/api/logout")
+        self.assertEqual(status, 200, out)
+
     def test_action_errors(self):
         self.assertEqual(self.post("/api/actions/shell")[0], 404)
         self.assertEqual(self.post("/api/actions/..%2f..")[0], 404)
