@@ -155,16 +155,16 @@ macros:
   # context. It is natively multimodal (qwen3_5_vision encoder, depth 27,
   # image_token_id 248056), so vision needs no extra flag.
   #
-  # TWO FLAGS CHANGED from the Qwen3.6 configuration:
+  # TWO FLAGS DELIBERATELY CHANGED from the Qwen3.6 configuration:
   #   * `--quantization modelopt` was REMOVED. That flag is specific to NVIDIA
   #     ModelOpt checkpoints. This checkpoint declares
   #     quantization_config.quant_method = "compressed-tensors", format "nvfp4",
   #     which vLLM auto-detects from config.json. Forcing modelopt here would
   #     mis-describe the checkpoint.
-  #   * `--speculative-config` (MTP) was ADDED back for performance. The previous
-  #     model measured 12.2 -> 25-28 tok/s with it. The checkpoint ships
-  #     model-mtp.safetensors. This is a measured change based on evidence from
-  #     the previous model's performance.
+  #   * `--speculative-config` (MTP) was REMOVED for bring-up. The checkpoint
+  #     does ship model-mtp.safetensors, so it is available later, but the
+  #     standing instruction is to establish stable standard inference FIRST
+  #     and only then optimise. Re-adding it is a measured change, not a given.
   gx_reason_model_dir: "/models/vllm/Qwen3.8-27B-Uncensored-NVFP4"
   gx_reason_host_dir: "Qwen3.8-27B-Uncensored-NVFP4"
 
@@ -236,9 +236,10 @@ models:
   # model card documents for this checkpoint, and the same pair gx-fast uses.
   # Vision needs no flag: the checkpoint is natively multimodal.
   #
-  # MTP speculative decoding ADDED for performance. The checkpoint ships
-  # model-mtp.safetensors. The previous model measured 12.2 -> 25-28 tok/s
-  # with it. This is based on evidence, not guesswork.
+  # NO --speculative-config during bring-up. The MTP head ships with the
+  # checkpoint (model-mtp.safetensors) and the previous model measured
+  # 12.2 -> 25-28 tok/s with it, but standard inference is established first;
+  # re-adding MTP is a separate, measured change.
   # --safetensors-load-strategy prefetch was TRIED and reverted (2026-09-17)
   # on the previous checkpoint: the limit is the container cgroup holding page
   # cache plus weights, not the NVMe; prefetch only adds cache pressure.
@@ -290,15 +291,12 @@ models:
       --host ${host} --port 25800
       --gpu-memory-utilization ${gx_reason_gpu_fraction}
       --max-model-len 65536
-      --max-num-seqs 16
-      --max-num-batched-tokens 32768
+      --max-num-seqs 8
+      --max-num-batched-tokens 16384
       --kv-cache-dtype fp8
       --enable-prefix-caching
       --enable-auto-tool-choice
       --tool-call-parser qwen3_xml
       --reasoning-parser qwen3
-      --speculative-model /models/vllm/Qwen3.8-27B-Uncensored-NVFP4/model-mtp.safetensors
-      --speculative-num-steps 5
-      --speculative-num-grammars 3
       --trust-remote-code'
     cmdStop: "docker stop -t 150 gx-reason"
