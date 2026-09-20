@@ -150,7 +150,7 @@ def run_agent(ui: UIClient, agent: dict, out: Path, pcm: bytes) -> dict:
 
     # Production path: Control Center creates the session with the real agent.
     st, created = ui._req("POST", "/api/call/sessions", {
-        "agent_id": agent["id"], "record": True,
+        "agent_id": agent["id"], "record": False,
     }, timeout=180)
     check("session created via Control Center", st in (200, 201, 202) and bool(created.get("session_id")),
           status=st, body=str(created)[:300])
