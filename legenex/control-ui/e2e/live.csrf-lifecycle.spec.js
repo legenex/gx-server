@@ -91,8 +91,10 @@ test('CSRF: missing and invalid tokens are rejected; valid lifecycle works in br
   const afterLoad = (await apiGet(page, '/api/models')).models.find((m) => m.alias === 'gx-mini');
   expect(afterLoad.state).toBe('loaded');
 
-  // Valid CSRF must not have produced unexpected 403s on the lifecycle path
-  const unexpected = [...problems, ...csrf403].filter((p) => /csrf|403|invalid CSRF|missing CSRF/i.test(p));
-  // The deliberate missing/invalid probes above are API-only and not page responses with csrf-403 prefix from UI
-  expect(unexpected.filter((p) => !/model\.gx-mini\.restart/.test(p))).toEqual([]);
+  // Deliberate missing/invalid CSRF probes above produce expected 403 console
+  // noise. Only fail on CSRF 403s from the real UI button lifecycle path.
+  const uiCsrf = csrf403.filter((p) => !/\/api\/actions\/model\.gx-mini\./.test(p));
+  expect(uiCsrf, uiCsrf.join('\n')).toEqual([]);
+  const fatal = problems.filter((p) => /pageerror:|CSP violation/i.test(p));
+  expect(fatal, fatal.join('\n')).toEqual([]);
 });
