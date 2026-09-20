@@ -5,10 +5,18 @@ import { expect } from '@playwright/test';
 
 export function livePassword() {
   if (process.env.GX_UI_PASSWORD) return process.env.GX_UI_PASSWORD;
-  const file = process.env.GX_UI_PASSWORD_FILE || (process.env.GX_UI_USER === 'acceptance'
+  const user = process.env.GX_UI_USER || 'acceptance';
+  const file = process.env.GX_UI_PASSWORD_FILE || (user === 'acceptance'
     ? '/srv/projects/gx-cluster/secrets/control-ui/acceptance-password'
     : '/srv/projects/gx-cluster/secrets/control-ui/initial-admin-password');
-  return readFileSync(file, 'utf8').trim();
+  try {
+    return readFileSync(file, 'utf8').trim();
+  } catch (err) {
+    if (user !== 'acceptance' && file.includes('initial-admin-password')) {
+      return readFileSync('/srv/projects/gx-cluster/secrets/control-ui/acceptance-password', 'utf8').trim();
+    }
+    throw err;
+  }
 }
 
 // A PNG with a red circle, a blue square and the digit 7, for vision checks.

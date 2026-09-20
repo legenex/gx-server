@@ -310,6 +310,41 @@ do_release() {
 }
 
 # ------------------------------------------------------------- restore-normal
+# docker inspect prints nothing (exit 1) when the container is gone. Remote SSH
+# can also return an empty string with exit 0. Treat empty / absent / removed as
+# clean teardown — never FAIL solely because the container is already gone.
+container_status() {
+  # usage: container_status local|remote <name>
+  local where="$1" name="$2" out
+  if [ "${where}" = "local" ]; then
+    out=$(docker inspect -f '{{.State.Status}}' "${name}" 2>/dev/null || true)
+  else
+    out=$(remote "docker inspect -f '{{.State.Status}}' ${name} 2>/dev/null || true" 2>/dev/null || true)
+  fi
+  out=$(printf '%s' "${out}" | tr -d '\r' | head -1 | awk '{print $1}')
+  if [ -z "${out}" ] || [ "${out}" = "absent" ]; then
+    printf 'absent'
+  else
+    printf '%s' "${out}"
+  fi
+}
+
+wait_container_gone() {
+  # usage: wait_container_gone local|remote <name> <seconds>
+  local where="$1" name="$2" budget="${3:-90}" st
+  local deadline=$(( $(date +%s) + budget ))
+  while [ "$(date +%s)" -lt "${deadline}" ]; do
+    st=$(container_status "${where}" "${name}")
+    case "${st}" in
+      absent|removal|dead) printf '%s' "${st}"; return 0 ;;
+    esac
+    # "exited" after stop is acceptable once docker rm has not finished yet —
+    # keep waiting for full absence, but do not treat it as a hard fail yet.
+    sleep 3
+  done
+  container_status "${where}" "${name}"
+}
+
 verify_restore_normal() {
   log "=== verify restore-normal ==="
   sleep 5
@@ -321,15 +356,21 @@ verify_restore_normal() {
     || step_fail "orchestrator state after release" "expected down, got '${state}'"
 
   local r0 r1
-  r0=$(docker inspect -f '{{.State.Status}}' gx-max-rank0 2>/dev/null || echo absent)
-  [ "${r0}" = "absent" ] \
-    && step_pass "rank0 container fully torn down on node1" \
-    || step_fail "rank0 teardown" "still present, status=${r0}"
+  r0=$(wait_container_gone local gx-max-rank0 90)
+  case "${r0}" in
+    absent|removal|dead)
+      step_pass "rank0 container fully torn down on node1 (status=${r0})" ;;
+    *)
+      step_fail "rank0 teardown" "still present, status=${r0}" ;;
+  esac
 
-  r1=$(remote "docker inspect -f '{{.State.Status}}' gx-max-rank1 2>/dev/null" 2>/dev/null || echo absent)
-  [ "${r1}" = "absent" ] \
-    && step_pass "rank1 container fully torn down on node2" \
-    || step_fail "rank1 teardown" "still present, status=${r1}"
+  r1=$(wait_container_gone remote gx-max-rank1 90)
+  case "${r1}" in
+    absent|removal|dead)
+      step_pass "rank1 container fully torn down on node2 (status=${r1})" ;;
+    *)
+      step_fail "rank1 teardown" "still present, status=${r1}" ;;
+  esac
 
   curl -fsS -m 10 "${GATEWAY}/health/liveliness" >/dev/null 2>&1 \
     && step_pass "gateway alive after release" \

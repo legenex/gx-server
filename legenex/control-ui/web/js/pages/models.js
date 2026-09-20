@@ -42,13 +42,15 @@ function playgroundHref(page) {
 
 function allowed(op, state, alias) {
   if (alias === 'gx-music') {
-    if (op === 'load') return ['ready', 'unloaded'].includes(state);
-    if (op === 'unload') return ['loaded'].includes(state);
+    if (op === 'load') return ['ready', 'unloaded', 'error', 'degraded'].includes(state);
+    if (op === 'unload') return ['loaded', 'ready', 'degraded', 'error'].includes(state);
   }
   switch (op) {
-    case 'load': return ['unloaded'].includes(state);
-    case 'unload': return ['loaded', 'loading', 'ready'].includes(state);
-    case 'restart': return ['loaded', 'unloaded'].includes(state);
+    case 'load': return ['unloaded', 'error', 'degraded'].includes(state);
+    case 'unload': return ['loaded', 'loading', 'ready', 'degraded', 'error'].includes(state);
+    // degraded/error must still allow restart — a failed last request is exactly
+    // when operators need unload→load, not a permanently disabled Restart button.
+    case 'restart': return ['loaded', 'unloaded', 'ready', 'degraded', 'error'].includes(state);
     case 'force_release': return true;
     default: return false;
   }
