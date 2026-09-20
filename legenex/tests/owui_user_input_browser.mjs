@@ -6,7 +6,8 @@ import { writeFileSync } from 'node:fs';
 const require = createRequire(new URL('../control-ui/package.json', import.meta.url));
 const { chromium } = require('playwright');
 
-const BASE = process.env.GX_OWUI_URL || 'https://chat.legenex.co';
+// Prefer loopback: Cloudflare on chat.legenex.co blocks some automated clients (1010).
+const BASE = process.env.GX_OWUI_URL || 'http://127.0.0.1:3000';
 const MODEL = process.env.GX_OWUI_MODEL || 'gx-fast';
 const OUT = process.env.GX_OWUI_OUT || '/tmp/owui-user-input.json';
 const SHOT = process.env.GX_OWUI_SHOT || '/tmp/owui-user-input.png';

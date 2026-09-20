@@ -44,7 +44,8 @@ def main() -> int:
         "name": "GX user_input acceptance", "models": MODELS,
     })
     uid = created["user_id"]
-    report: dict = {"run": run_id, "account": uid, "model": args.model, "checks": []}
+    report: dict = {"run": run_id, "account": uid, "model": args.model, "checks": [],
+                    "owui_url": os.environ.get("GX_OWUI_URL", "http://127.0.0.1:3000")}
 
     def check(label: str, ok: bool, **detail) -> None:
         report["checks"].append({"check": label, "ok": bool(ok), **detail})
@@ -60,6 +61,7 @@ def main() -> int:
             "GX_OWUI_MODEL": args.model,
             "GX_OWUI_OUT": str(out_json),
             "GX_OWUI_SHOT": str(shot),
+            "GX_OWUI_URL": os.environ.get("GX_OWUI_URL", "http://127.0.0.1:3000"),
         }
         res = subprocess.run(
             ["node", str(HERE / "owui_user_input_browser.mjs")],
@@ -84,7 +86,7 @@ def main() -> int:
         check("driver completed without exception", False, error=str(e)[:500])
     finally:
         try:
-            acc.owui({"op": "cleanup", "user_id": uid})
+            acc.owui({"op": "cleanup", "user_id": uid, "models": MODELS})
             check("disposable account cleaned up", True)
         except Exception as e:
             check("disposable account cleaned up", False, error=str(e)[:200])

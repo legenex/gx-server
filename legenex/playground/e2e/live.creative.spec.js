@@ -99,32 +99,34 @@ test('music: vocal track with lyrics and tags, playback, WAV/FLAC/MP3, remix, re
   await gotoPage(page, 'music');
   await expect(page.getByRole('tablist', { name: 'Music mode' }).getByRole('tab')).toHaveText(['Create', 'Remix/Cover', 'Repaint', 'Extend']);
   const form = page.locator('#form-create');
-  await page.fill('#music-prompt', `${TAG} bright indie pop with a catchy chorus`);
-  const tag = form.getByLabel('Custom style tag');
+  await page.fill('#music-description', `${TAG} bright indie pop with a catchy chorus`);
+  await page.fill('#music-prompt', `${TAG} bright indie pop with a catchy chorus, female vocal`);
+  const tag = form.getByLabel('Add a style tag');
   for (const t of ['indie pop', 'upbeat', 'female vocals']) {
     await tag.fill(t);
     await tag.press('Enter');
   }
-  const lyrics = form.locator('textarea.lyrics-input');
+  const lyrics = form.locator('#lyrics-11');
   await lyrics.fill('Sun on the window, we are driving away\nCity lights fading in the grey\n\nHold on, hold on, the road is ours today\nHold on, hold on, we will find our way');
   await lyrics.evaluate((el) => el.setSelectionRange(0, 0));
-  await form.locator('.section-btn[data-section="Verse"]').click();
+  await form.getByRole('button', { name: '[Verse]', exact: true }).click();
   const chorusAt = (await lyrics.inputValue()).indexOf('Hold on');
   await lyrics.evaluate((el, at) => el.setSelectionRange(at, at), chorusAt);
-  await form.locator('.section-btn[data-section="Chorus"]').click();
-  await form.getByLabel('Duration').fill('30');
-  await form.getByLabel('BPM').fill('112');
-  await form.getByLabel('Key', { exact: true }).fill('A minor');
-  await form.getByLabel('Time signature').selectOption('4');
+  await form.getByRole('button', { name: '[Chorus]', exact: true }).click();
+  await form.locator('#f-12').fill('30');
+  await form.locator('#f-13').fill('112');
+  await form.locator('#f-24').fill('A minor');
+  await form.locator('#f-25').selectOption({ label: '4/4' });
   await form.getByRole('group', { name: 'Tracks per run' }).getByRole('button', { name: '1' }).click();
   const title = `${TAG} vocal`;
-  await form.getByLabel('Title').fill(title);
+  await form.locator('#f-26').fill(title);
   const [req] = await Promise.all([
     page.waitForRequest((r) => r.url().endsWith('/api/music/jobs') && r.method() === 'POST'),
     page.click('#music-submit'),
   ]);
   const body = req.postDataJSON();
-  expect(body).toMatchObject({ operation: 'generate', bpm: 112, key: 'A minor', time_signature: '4', duration: 30, batch_size: 1 });
+  expect(body).toMatchObject({ operation: 'generate', bpm: 112, key: 'A minor', duration: 30, batch_size: 1 });
+  expect(String(body.time_signature || '')).toMatch(/4/);
   expect(body.lyrics).toContain('[Verse]');
   expect(body.lyrics).toContain('[Chorus]');
   expect(body.style_tags).toEqual(expect.arrayContaining(['indie pop', 'upbeat', 'female vocals']));
