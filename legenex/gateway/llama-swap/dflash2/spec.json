@@ -1,6 +1,6 @@
 {
   "method": "dflash",
   "model": "/models/vllm/Qwen3.8-27B-DFlash2",
-  "num_speculative_tokens": 7,
+  "num_speculative_tokens": 12,
   "draft_sample_method": "probabilistic"
 }
