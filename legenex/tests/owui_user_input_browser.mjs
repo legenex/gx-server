@@ -54,12 +54,15 @@ try {
 
   await page.goto(`${BASE}/?models=${encodeURIComponent(MODEL)}`, { waitUntil: 'domcontentloaded' });
   note('chat_opened', { model: MODEL });
+  await page.keyboard.press('Escape').catch(() => {});
+  await page.waitForTimeout(1500);
 
-  // Prefer the chat composer textarea.
-  const composer = page.locator('textarea').last();
-  await expectVisible(composer, 30_000);
-  await composer.fill(PROMPT);
-  await composer.press('Enter');
+  // OWUI 0.11 uses a contenteditable #chat-input (not a textarea).
+  const composer = page.locator('#chat-input, [contenteditable="true"]').first();
+  await expectVisible(composer, 60_000);
+  await composer.click();
+  await page.keyboard.type(PROMPT, { delay: 5 });
+  await page.keyboard.press('Enter');
   note('prompt_sent');
 
   // Wait for ask_user UI: option buttons or a user-input dialog.
