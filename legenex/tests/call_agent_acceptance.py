@@ -26,12 +26,9 @@ from http.cookiejar import MozillaCookieJar
 from pathlib import Path
 from urllib import error, request
 
-try:
-    import websocket  # websocket-client
-except ImportError:
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "--user", "websocket-client"],
-                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    import websocket
+REPO = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO / "legenex/call"))
+from gx_call import ws as gxws  # noqa: E402
 
 PG = os.environ.get("GX_PG_URL", "http://127.0.0.1:8090")
 PASS_FILE = Path("/srv/projects/gx-cluster/secrets/control-ui/acceptance-password")
@@ -156,76 +153,75 @@ def run_agent(pg: PGClient, agent: dict, out: Path, pcm: bytes) -> dict:
             break
         time.sleep(2)
 
-    ws_url = PG.replace("http://", "ws://").replace("https://", "wss://") + f"/rt/call/{sid}"
+    # Playground tunnel: cookie-authenticated WS on :8090 /rt/call/<sid>
+    from urllib.parse import urlparse
+    u = urlparse(PG)
+    host = u.hostname or "127.0.0.1"
+    port = u.port or (443 if u.scheme == "https" else 80)
     agent_pcm = bytearray()
     events: list[dict] = []
     first_audio: list[float | None] = [None]
     started = time.time()
     err_box: list[str] = []
     lock = threading.Lock()
-    opened = threading.Event()
+    stop = threading.Event()
 
-    def on_open(ws):
-        opened.set()
-
-    def on_message(ws, message):
-        with lock:
-            if isinstance(message, (bytes, bytearray)):
-                if message and first_audio[0] is None:
-                    first_audio[0] = time.time()
-                agent_pcm.extend(message)
-            else:
-                try:
-                    events.append(json.loads(message))
-                except Exception:
-                    events.append({"raw": str(message)[:200]})
-
-    def on_error(ws, error):
-        err_box.append(str(error))
-
-    def on_close(ws, status, msg):
-        pass
-
-    ws = websocket.WebSocketApp(
-        ws_url,
-        header=[f"Cookie: {pg.cookie_header()}", f"Origin: {PG}"],
-        on_open=on_open,
-        on_message=on_message,
-        on_error=on_error,
-        on_close=on_close,
-    )
-    th = threading.Thread(target=lambda: ws.run_forever(ping_interval=20, ping_timeout=10), daemon=True)
-    th.start()
-    if not opened.wait(60):
-        check("websocket joined via Playground tunnel", False, error="; ".join(err_box) or "timeout")
+    try:
+        sock = gxws.connect(
+            host, int(port), f"/rt/call/{sid}",
+            {"Cookie": pg.cookie_header(), "Origin": PG},
+            timeout=90.0,
+        )
+    except Exception as e:
+        check("websocket joined via Playground tunnel", False, error=str(e)[:400])
         pg._req("POST", f"/api/call/sessions/{sid}/end", {"reason": "ws fail"})
         return report
-    check("websocket joined via Playground tunnel", True, url=ws_url)
+    check("websocket joined via Playground tunnel", True, host=host, port=port, path=f"/rt/call/{sid}")
 
-    # Multi-turn: stream sample twice
+    def reader() -> None:
+        while not stop.is_set():
+            try:
+                msg = sock.recv()
+            except Exception as e:
+                err_box.append(str(e)[:200])
+                return
+            with lock:
+                if not msg.is_text:
+                    if msg.data and first_audio[0] is None:
+                        first_audio[0] = time.time()
+                    agent_pcm.extend(msg.data or b"")
+                else:
+                    try:
+                        events.append(json.loads(msg.data.decode("utf-8")))
+                    except Exception:
+                        events.append({"raw": msg.data[:200].decode("utf-8", "replace")})
+
+    th = threading.Thread(target=reader, daemon=True)
+    th.start()
+
     chunk = INPUT_RATE * 2 // 25
     try:
         for _turn in range(2):
             sent = 0
             while sent < len(pcm):
-                piece = bytes(pcm[sent:sent + chunk])
                 try:
-                    ws.send(piece, opcode=websocket.ABNF.OPCODE_BINARY)
+                    sock.send_binary(bytes(pcm[sent:sent + chunk]))
                 except Exception as e:
                     err_box.append(f"send: {e}")
                     break
                 sent += chunk
                 time.sleep(0.04)
-            time.sleep(10)
-        deadline = time.time() + 50
+            time.sleep(12)
+        deadline = time.time() + 60
         while time.time() < deadline:
             with lock:
                 if any(e.get("type") == "session.ended" for e in events if isinstance(e, dict)):
                     break
             time.sleep(0.5)
     finally:
+        stop.set()
         try:
-            ws.close()
+            sock.close()
         except Exception:
             pass
         th.join(timeout=5)
