@@ -6,12 +6,12 @@ Final completion run after DFlash2 correction. Evidence only.
 
 | Item | Value |
 |------|-------|
-| GX10-01 HEAD | `0e290ea23fb5881750b26cab9580cb81f6fe9d4f` |
-| Remote HEAD | `0e290ea23fb5881750b26cab9580cb81f6fe9d4f` |
-| GX10-02 HEAD | `0e290ea23fb5881750b26cab9580cb81f6fe9d4f` |
+| GX10-01 HEAD | `87054e0af32dc7580cca9934853b62ecf426397d` |
+| Remote HEAD | `87054e0af32dc7580cca9934853b62ecf426397d` |
+| GX10-02 HEAD | `87054e0af32dc7580cca9934853b62ecf426397d` |
 | Working trees | clean (integrity-audit PASS) |
 
-DFlash overlay landed in `71f2071` (autosync); ST budget finalized in `0e290ea`.
+DFlash overlay landed in `71f2071` (autosync); ST budget finalized in `87054e0`.
 
 ## DFlash2 (gx-reason)
 
