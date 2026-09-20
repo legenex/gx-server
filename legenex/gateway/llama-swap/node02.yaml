@@ -161,12 +161,15 @@ macros:
   #     quantization_config.quant_method = "compressed-tensors", format "nvfp4",
   #     which vLLM auto-detects from config.json. Forcing modelopt here would
   #     mis-describe the checkpoint.
-  #   * DFlash2 DISABLED 2026-09-20: wyattearp/Qwen3.8-27B-DFlash2 is on disk
-  #     (model.safetensors 3848817896 bytes) but vLLM 0.28 DFlashQwen3Model
-  #     cannot load it (missing candidate_selector and attention_conv). The
-  #     launcher at ${gx_dflash_launcher}/run-vllm.sh serves the target model
-  #     without --speculative-config. Do not re-enable until the engine
-  #     implements DFlash2.
+  #   * `--speculative-config` (DFlash2) ADDED 2026-09-18 / FIXED 2026-09-20:
+  #     speculative draft head `wyattearp/Qwen3.8-27B-DFlash2` (5-layer draft,
+  #     block diffusion + candidate_selector + attention_conv). The GB10 0.28
+  #     image shipped DFlash1 only and hardcoded decoder layers; the launcher
+  #     at ${gx_dflash_launcher}/run-vllm.sh applies the repo overlay so
+  #     DFlash2Qwen3Model builds DFlash2Qwen3DecoderLayer and loads the
+  #     ORIGINAL intact checkpoint (never filter tensors). Memory impact:
+  #     draft ~3.6 GB, within the 0.42 GPU fraction. Tune
+  #     num_speculative_tokens after measured benchmarks.
   gx_reason_model_dir: "/models/vllm/Qwen3.8-27B-Uncensored-NVFP4"
   gx_reason_host_dir: "Qwen3.8-27B-Uncensored-NVFP4"
   gx_reason_draft_dir: "/models/vllm/Qwen3.8-27B-DFlash2"
