@@ -360,4 +360,4 @@ hooks:
   on_startup:
     preload:
       - gx-mini
-      - gx-fast
+      - gx-code

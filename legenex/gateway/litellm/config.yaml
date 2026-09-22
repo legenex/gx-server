@@ -144,7 +144,7 @@ model_list:
   # checkpoints to Ornith-1.5-35B without changing this gateway contract.
   - model_name: gx-code
     litellm_params:
-      model: openai/gx-fast
+      model: openai/gx-code
       api_base: "http://gx-llama-swap-node01:8080/v1"
       api_key: os.environ/GX_SWAP_API_KEY
       drop_params: true
@@ -167,7 +167,7 @@ model_list:
       supports_vision: true
   - model_name: gx-code-01
     litellm_params:
-      model: openai/gx-fast
+      model: openai/gx-code
       api_base: "http://gx-llama-swap-node01:8080/v1"
       api_key: os.environ/GX_SWAP_API_KEY
       drop_params: true
