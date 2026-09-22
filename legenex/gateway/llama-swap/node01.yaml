@@ -242,8 +242,8 @@ models:
   # ttl 0 + startup preload -> resident, so a normal Kilo prompt never waits
   # for a multi-minute cold start. gx-max's drain still stops it (it stops the
   # whole llama-swap-node01 container) and restore-normal.sh brings it back.
-  gx-fast:
-    name: "gx-fast"
+  gx-fast-vllm-retired:
+    name: "gx-fast-vllm-retired"
     description: "kyaky Qwen3.6-35B-A3B Uncensored NVFP4 on vLLM. Coding, tools, vision. Node 1, resident."
     checkEndpoint: "/health"
     ttl: 0
@@ -285,6 +285,8 @@ models:
 
   gx-code:
     name: "gx-code"
+    aliases:
+      - gx-fast
     description: "Ornith-1.5-35B-A3B Uncensored Q5_K_M llama.cpp. Independent coding worker, node 1."
     proxy: "http://127.0.0.1:19011"
     checkEndpoint: "/health"
@@ -345,7 +347,6 @@ routing:
           swap: true
           exclusive: false
           members:
-            - gx-fast
             - gx-code
 
 # ==============================================================================
