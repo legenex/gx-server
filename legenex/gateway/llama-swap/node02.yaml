@@ -261,8 +261,8 @@ models:
   # stays well inside the media router's 30-min resource wait
   # (GX_MEDIA_RESOURCE_WAIT): a queued image/video job waits at most ~21 min
   # for gx-reason to unload and never times out on it.
-  gx-reason:
-    name: "gx-reason"
+  gx-reason-vllm-retired:
+    name: "gx-reason-vllm-retired"
     description: >
       Qwen3.8-27B Dense Uncensored NVFP4
       (wyattearp/Qwen3.8-27B-Uncensored-NVFP4) on vLLM. Dense 27B, hybrid
@@ -319,6 +319,8 @@ models:
 
   gx-code:
     name: "gx-code"
+    aliases:
+      - gx-reason
     description: "Ornith-1.5-35B-A3B Uncensored Q5_K_M llama.cpp. Independent coding worker, node 2."
     proxy: "http://127.0.0.1:19011"
     checkEndpoint: "/health"
