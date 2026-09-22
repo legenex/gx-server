@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Install the gx command and initialise local backup storage.
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+BIN="$HOME/.local/bin"
+CONF="$HOME/.config/gx-backup"
+mkdir -p "$BIN" "$CONF" "$HOME/Documents/Backups/restic/local"
+chmod 700 "$CONF"
+ln -sfn "$ROOT/scripts/gx.py" "$BIN/gx"
+chmod +x "$ROOT/scripts/gx.py" "$ROOT/backup/"*.sh "$ROOT/install" "$ROOT/backup" "$ROOT/restore" "$ROOT/doctor" "$ROOT/cleanup" 2>/dev/null || true
+# wrappers
+for name in backup restore doctor cleanup; do
+  ln -sfn "$ROOT/$name" "$BIN/gx-$name" 2>/dev/null || true
+done
+grep -q '.local/bin' "$HOME/.bashrc" 2>/dev/null || echo 'export PATH="$HOME/.local/bin:$PATH"' >>"$HOME/.bashrc"
+export PATH="$BIN:$PATH"
+if [[ ! -f "$CONF/restic-password" ]]; then
+  openssl rand -base64 48 >"$CONF/restic-password"
+  chmod 600 "$CONF/restic-password"
+  echo "generated restic password at $CONF/restic-password"
+fi
+bash "$ROOT/backup/restic.sh" init
+echo "gx installed -> $BIN/gx"
+"$BIN/gx" doctor || true

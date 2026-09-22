@@ -1,0 +1,10 @@
+hostname=gx10-01
+date=2026-09-22T22:54:26Z
+os=Ubuntu 24.04.5 LTS
+kernel=6.17.0-1032-nvidia
+arch=aarch64
+nvidia_smi=NVIDIA GB10, 580.173.02
+cuda=Build cuda_13.0.r13.0/compiler.36424714_0
+docker=29.2.1
+python=Python 3.12.3
+node=v22.23.2

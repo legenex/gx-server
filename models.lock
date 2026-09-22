@@ -1,0 +1,140 @@
+{
+  "schema": 1,
+  "updated": "2026-09-23T00:50:00Z",
+  "notes": "Pinned from live Hugging Face API on 2026-09-23. Public weights are recreated from these records, not stored in Git.",
+  "logical_modes": ["gx-mini", "gx-code", "gx-auto", "gx-max"],
+  "models": {
+    "gx-mini": {
+      "role": "always-on lightweight uncensored reasoning/coding helper",
+      "provider": "huggingface",
+      "repository": "junafinity/Ornith-1.5-9B-uncensored-GGUF-8bit",
+      "revision": "10d5524ca2258decffa044ddf233b17fb239e838",
+      "base_model": "junafinity/Ornith-1.5-9B-uncensored",
+      "upstream_base": "ornith-ai/Ornith-1.5-9B",
+      "license": "apache-2.0",
+      "architecture": "Ornith-1.5 / Qwen3.5-family hybrid (Gated DeltaNet + attention), 9B dense",
+      "quantization": "Q8_0",
+      "runtime": "llama.cpp",
+      "runtime_image": "legenex/llama-cpp-spark:latest",
+      "uncensored": true,
+      "vision": true,
+      "tools": true,
+      "reasoning": true,
+      "context_default": 32768,
+      "context_max": 65536,
+      "parallel": 2,
+      "nodes": ["gx10-01"],
+      "replica_policy": "single always-on replica on gx10-01 unless benchmarks show two replicas are free",
+      "files": [
+        {
+          "name": "Ornith-1.5-9B-uncensored-Q8_0.gguf",
+          "sha256": "f22694e52003f9679240c59bae01821ad8fccd8c7103ab7976adfcceee901573",
+          "size": 9527501056
+        },
+        {
+          "name": "mmproj-Ornith-1.5-9B-uncensored-f16.gguf",
+          "sha256": "6a8bd0223e7744346c0490025605231d049e2301557bf2404087580b846094e6",
+          "size": 918165536,
+          "role": "vision projector"
+        }
+      ],
+      "path": "/srv/models/gguf/Ornith-1.5-9B-uncensored-Q8_0",
+      "download": "hf download junafinity/Ornith-1.5-9B-uncensored-GGUF-8bit --revision 10d5524ca2258decffa044ddf233b17fb239e838 --local-dir /srv/models/gguf/Ornith-1.5-9B-uncensored-Q8_0",
+      "launch": {
+        "alias": "gx-mini",
+        "port": 19001,
+        "args": [
+          "-m", "/models/gguf/Ornith-1.5-9B-uncensored-Q8_0/Ornith-1.5-9B-uncensored-Q8_0.gguf",
+          "--mmproj", "/models/gguf/Ornith-1.5-9B-uncensored-Q8_0/mmproj-Ornith-1.5-9B-uncensored-f16.gguf",
+          "--alias", "gx-mini",
+          "--host", "0.0.0.0",
+          "--port", "19001",
+          "--ctx-size", "65536",
+          "--n-gpu-layers", "99",
+          "--parallel", "2",
+          "--flash-attn", "on",
+          "--jinja"
+        ]
+      },
+      "previous_live": {
+        "repository": "HauhauCS/Qwen3.5-4B-Uncensored-HauhauCS-Aggressive",
+        "revision": "c09cdbcdb1fefad6d335809d445621b5f5ba0c6e",
+        "path": "/srv/models/gguf/Qwen3.5-4B-Uncensored-HauhauCS-Aggressive",
+        "status": "kept on disk as rollback until Ornith gx-mini is accepted"
+      }
+    },
+    "gx-code": {
+      "role": "primary independent coding/reasoning worker, one process per GX10",
+      "provider": "huggingface",
+      "repository": "0xKitkat/Ornith-1.5-35B-A3B-Uncensored-GGUF",
+      "revision": "ab0eed77c73880afda789a3914003db2273fd64a",
+      "base_model": "ornith-ai/Ornith-1.5-35B-A3B",
+      "license": "apache-2.0",
+      "architecture": "qwen35moe / Ornith-1.5-35B-A3B, ~35B total ~3B active",
+      "quantization_candidates": ["Q5_K_M", "Q4_K_M"],
+      "quantization_selected": "Q5_K_M",
+      "quantization_selection_rule": "Prefer Q5_K_M when interactive speed is usable; fall back to Q4_K_M if Q5 is too slow on real coding tests.",
+      "runtime": "llama.cpp",
+      "runtime_image": "legenex/llama-cpp-spark:latest",
+      "uncensored": true,
+      "vision": true,
+      "tools": true,
+      "reasoning": true,
+      "context_default": 32768,
+      "context_max": 65536,
+      "nodes": ["gx10-01", "gx10-02"],
+      "independence": "two independent workers, not tensor-parallel",
+      "files": {
+        "Q5_K_M": {
+          "name": "Ornith-1.5-35B-Uncensored-Q5_K_M.gguf",
+          "sha256": "6580229b119ba14114b64c3f9571a968c7b28648dbc94decf8136a3ccd66b061",
+          "size": 25347532768
+        },
+        "Q4_K_M": {
+          "name": "Ornith-1.5-35B-Uncensored-Q4_K_M.gguf",
+          "sha256": "081fa0babd0e32432acf67d6af80b7e7550ae8a102a6ca6c48e4e39aab685bc9",
+          "size": 21713463264
+        },
+        "mmproj": {
+          "name": "mmproj-Ornith-1.5-35B-Uncensored-BF16.gguf",
+          "sha256": "554dc98cd0aeb4e5c3adc4ad85fba8dd76bbcfa5a400e437c4229c344b7c2a9b",
+          "size": 902822848
+        }
+      },
+      "path": "/srv/models/gguf/Ornith-1.5-35B-A3B-Uncensored",
+      "download_q5": "hf download 0xKitkat/Ornith-1.5-35B-A3B-Uncensored-GGUF --revision ab0eed77c73880afda789a3914003db2273fd64a --include Ornith-1.5-35B-Uncensored-Q5_K_M.gguf --include mmproj-Ornith-1.5-35B-Uncensored-BF16.gguf --local-dir /srv/models/gguf/Ornith-1.5-35B-A3B-Uncensored",
+      "previous_live": {
+        "gx10-01": {
+          "alias": "gx-fast",
+          "repository": "kyaky/Qwen3.6-35B-A3B-Uncensored-NVFP4",
+          "revision": "33d5cf837389a8f972913090d81da47886e08877",
+          "runtime": "vLLM 0.28"
+        },
+        "gx10-02": {
+          "alias": "gx-reason",
+          "repository": "wyattearp/Qwen3.8-27B-Uncensored-NVFP4",
+          "revision": "91ec573a3d8e660b78b7161395e4a5b6247c2c8b",
+          "runtime": "vLLM 0.28"
+        }
+      }
+    },
+    "gx-auto": {
+      "role": "intelligent router, not a model",
+      "runtime": "gx-orchestrator + LiteLLM",
+      "endpoint": "http://127.0.0.1:4000/v1",
+      "policy": "trivial/background -> gx-mini; substantial coding -> gx-code (queue, never silent downgrade); difficult/review -> gx-max"
+    },
+    "gx-max": {
+      "role": "coordinated dual-worker solver + independent reviewer using both gx-code workers",
+      "runtime": "gx-orchestrator workflow",
+      "does_not_load_third_model": true,
+      "legacy_optional": {
+        "alias": "gx-max-deepseek",
+        "repository": "dealignai/DeepSeek-V4-Flash-0731-CRACK-NVFP4",
+        "revision": "c66fe3848cb85ba90613743319286eb70576db39",
+        "runtime": "SGLang TP=2",
+        "status": "retained on disk, not the default gx-max"
+      }
+    }
+  }
+}

@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Filesystem cleanup is gated on a verified backup. See scripts/cleanup-plan.py
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+LATEST="$HOME/Documents/Backups/LATEST"
+if [[ ! -f "$LATEST" ]]; then
+  echo "Refusing cleanup: no verified backup identifier at $LATEST"
+  echo "Run: gx backup"
+  exit 2
+fi
+echo "Backup identifier: $(cat "$LATEST")"
+echo "Cleanup is driven by docs/FILESYSTEM-MIGRATION-REPORT.md"
+echo "This wrapper does not delete UNKNOWN files."
+exec python3 "$ROOT/scripts/gx.py" doctor

@@ -1,0 +1,46 @@
+# Secrets and local runtime — never commit
+.env
+.env.*
+!.env.sample
+*.pem
+*.key
+id_rsa
+id_ed25519
+id_ecdsa
+*.p12
+*.pfx
+restic-password
+age.key
+secrets/*.decrypted
+secrets/*.plain
+**/credentials
+**/.netrc
+
+# Backup data and model weights
+*.gguf
+*.safetensors
+*.bin
+*.pt
+*.ckpt
+*.onnx
+snapshots/data/
+/tmp/
+
+# Python / Node
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+node_modules/
+.pytest_cache/
+
+# Editor
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# Restic / dumps
+*.dump
+*.sql.gz
+dumps/
