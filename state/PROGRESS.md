@@ -4,25 +4,22 @@ Updated: 2026-09-23T00:50:00Z (SAST +02:00)
 
 ## Complete
 
-- Dual-node discovery: gx10-01 (this host) and gx10-02 via Tailscale + 200 Gbps RoCE
-- Read-only hardware/network/docker/service inventory started
-- Preferred Ornith repositories verified live on Hugging Face
-- restic 0.18.1 and age 1.2.1 installed to `~/.local/bin` on both nodes (no sudo)
-- Age identity and restic password generated; replicated to gx10-02 with mode 0600
-- GX Backup repository created at `/home/legenex/Documents/Projects/gx-backup`
+- Dual-node audit, restic+age, cross-node encrypted snapshots, restore tests
+- Private GitHub `legenex/gx-backup`
+- `gx` CLI: status, backup, doctor, models, mini/code/auto/max, logs, benchmark
+- Ornith gx-mini Q8_0 resident; Ornith gx-code Q5_K_M resident on gx10-01
+- Gateway aliases gx-auto / gx-mini / gx-code / gx-max
+- gx-max dual-worker (solver+reviewer) live: 17*19=323
+- OpenWebUI picker limited to four modes; chats preserved
+- GX-Cluster nav + Backup page
+- Docs + 2-page recovery PDF
+- Daily `gx-backup.timer`
 
-## In progress
+## Remains / known gaps
 
-- Write audit + backup tooling
-- Initial encrypted restic snapshot before any filesystem cleanup
-- Model download and four-mode gateway
-
-## Remains
-
-- Verified backup + restore tests
-- Filesystem reorganization
-- gx-mini / gx-code deploy and coding acceptance tests
-- gx-auto / gx-max workflow
-- AgentOS, OpenWebUI, GX-Cluster UI
-- Docs + PDF + GitHub private push
-- Independent review + final backup
+- No sudo: reboot persistence not proven from this session
+- No independent offsite mutable backup
+- MVA Progress Tracker not found
+- Hermes VPS not reconciled remotely
+- gx-code Ornith on gx10-02 not yet the live worker (gx-code-02 still gx-reason)
+- Six-task coding acceptance suite not fully executed against Ornith

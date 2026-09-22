@@ -68,5 +68,6 @@ gx benchmark
 - Fully independent offsite mutable backup absent.
 - MVA Progress Tracker not found; sample routing documented only.
 - Hermes VPS reconcile not applied remotely.
-- Ornith gx-mini first start OOM’d at 14g; limit raised to 24g (reload in progress at report time).
-- gx-code Ornith workers defined in llama-swap but not yet the resident preload (gx-fast still preloaded for availability).
+- Ornith gx-mini first start OOM’d at 14g; limit raised to 24g. Now resident and answering `Pong` in ~1s.
+- gx-code Ornith Q5_K_M resident on gx10-01 (`is_palindrome` in 1.51s, 21 tokens). gx10-02 `gx-code-02` still uses live gx-reason until that node’s llama.cpp worker is started.
+- Live measurements: gx-mini ~11 t/s counting 1–20; gx-code-01 ~53 t/s on a short function after thinking disabled; gx-max dual-worker 7.3s for `17*19=323`.
