@@ -155,7 +155,7 @@ model_list:
       supports_vision: true
   - model_name: gx-code
     litellm_params:
-      model: openai/gx-reason
+      model: openai/gx-code
       api_base: "http://192.168.100.11:28080/v1"
       api_key: os.environ/GX_SWAP_API_KEY
       drop_params: true
@@ -176,7 +176,7 @@ model_list:
       max_output_tokens: 16384
   - model_name: gx-code-02
     litellm_params:
-      model: openai/gx-reason
+      model: openai/gx-code
       api_base: "http://192.168.100.11:28080/v1"
       api_key: os.environ/GX_SWAP_API_KEY
       drop_params: true
