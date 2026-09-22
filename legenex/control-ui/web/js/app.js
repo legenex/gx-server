@@ -15,10 +15,11 @@ import keys from './pages/keys.js';
 import resources from './pages/resources.js';
 import storage from './pages/storage.js';
 import setup from './pages/setup.js';
+import backup from './pages/backup.js';
 
 const PAGES = {
   dashboard, models, resources, storage, manager, keys, setup, runtime, cluster, jobs, logs, playground, docs,
-  settings, create: creative, library: creative,
+  settings, backup, create: creative, library: creative,
 };
 const $ = (id) => document.getElementById(id);
 

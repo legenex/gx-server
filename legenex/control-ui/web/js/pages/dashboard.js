@@ -37,6 +37,11 @@ function render(ov) {
   const grid = h('div', { class: 'grid grid-dash' });
   grid.append(quickCards(extra.res, extra.storage));
 
+  grid.append(h('section', { class: 'card hero', 'aria-label': 'Logical modes' },
+    h('h2', { class: 'card-title' }, 'Modes'),
+    h('p', { class: 'muted small' }, 'Four operator choices. Downstream apps call the LiteLLM gateway.'),
+    h('p', {}, ['AUTO', 'MINI', 'CODE', 'MAX'].map((m) => h('span', { class: 'chip' }, m)))));
+
   grid.append(h('section', { class: `card hero level-${ov.overall}`, 'aria-label': 'Cluster summary' },
     h('div', { class: 'card-head' }, h('h2', { class: 'card-title' }, 'Cluster'), levelBadge(ov.overall)),
     h('p', {}, 'Two independent 128 GB unified-memory nodes joined by two ConnectX-7 RoCE rails. ',

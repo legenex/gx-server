@@ -57,6 +57,9 @@ class Config:
     gateway_base: str = field(
         default_factory=lambda: _env("GX_GATEWAY_BASE", "http://127.0.0.1:4000/v1")
     )
+    #: dual-worker (default) coordinates both gx-code workers. deepseek keeps
+    #: the legacy SGLang TP=2 path.
+    gxmax_mode: str = field(default_factory=lambda: _env("GX_MAX_MODE", "dual-worker"))
     #: The SGLang two-node engine, proxied directly for gx-max.
     gxmax_base: str = field(
         default_factory=lambda: _env("GX_MAX_BASE", "http://127.0.0.1:30000/v1")

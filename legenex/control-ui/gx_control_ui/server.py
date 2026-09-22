@@ -66,7 +66,7 @@ MAX_BODY = 64 * 1024
 #: a known asset is a plain 404.
 _SPA_ROUTE = re.compile(
     r"/(dashboard|models|create|library|manager|keys|runtime|cluster|jobs|logs|playground|docs|settings|"
-    r"resources|storage|setup)"
+    r"resources|storage|setup|backup)"
     r"(/[a-z0-9_\-]{0,64}){0,2}"
 )
 ACCESS_LOG = os.environ.get("GX_UI_ACCESS_LOG", "1") != "0"
@@ -1326,6 +1326,7 @@ from . import routes_flo  # noqa: E402,F401  (Build V3 FLO: Creative Flows, /v1/
 from . import routes_cal  # noqa: E402,F401  (Build V3 CAL: Call Agents, /v1/call)
 from . import routes_img  # noqa: E402,F401  (Build V3 IMG: image history, provenance, lineage)
 from . import routes_liv  # noqa: E402,F401  (Build V3 LIV: Live sessions, /v1/live)
+from . import routes_backup  # noqa: E402,F401  (GX Backup status / run / verify)
 
 
 def build(cfg: UIConfig) -> tuple[App, list[Server]]:

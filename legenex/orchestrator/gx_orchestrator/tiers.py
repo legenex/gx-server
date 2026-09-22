@@ -16,6 +16,7 @@ class Tier(str, Enum):
 
     MINI = "gx-mini"
     FAST = "gx-fast"
+    CODE = "gx-code"
     REASON = "gx-reason"
     MAX = "gx-max"
     IMAGE = "gx-image"
@@ -73,14 +74,24 @@ TIERS: dict[Tier, TierSpec] = {
     Tier.FAST: TierSpec(
         alias=Tier.FAST,
         node="gx10-01",
-        # vLLM --max-model-len 131072.
-        max_context=131_072,
+        max_context=65_536,
         vision=True,
         tools=True,
         cost_rank=2,
-        max_output=32_768,
+        max_output=16_384,
         planning_output=8_192,
-        notes="kyaky/Qwen3.6-35B-A3B-Uncensored-NVFP4 on vLLM. Primary coding/tool tier, warm.",
+        notes="Compatibility alias for gx-code (historical gx-fast).",
+    ),
+    Tier.CODE: TierSpec(
+        alias=Tier.CODE,
+        node="gx10-01+gx10-02",
+        max_context=65_536,
+        vision=True,
+        tools=True,
+        cost_rank=2,
+        max_output=16_384,
+        planning_output=8_192,
+        notes="Ornith-1.5-35B-A3B Uncensored GGUF on llama.cpp. Independent worker per node.",
     ),
     Tier.REASON: TierSpec(
         alias=Tier.REASON,
@@ -97,19 +108,19 @@ TIERS: dict[Tier, TierSpec] = {
     Tier.MAX: TierSpec(
         alias=Tier.MAX,
         node="gx10-01+gx10-02",
-        max_context=327_680,
-        vision=False,
+        max_context=65_536,
+        vision=True,
         tools=True,
-        exclusive_cluster=True,
+        exclusive_cluster=False,
         cost_rank=4,
-        max_output=65_536,
-        planning_output=16_384,
-        notes="dealignai/DeepSeek-V4-Flash-0731-CRACK-NVFP4 on SGLang TP=2 across both nodes.",
+        max_output=16_384,
+        planning_output=8_192,
+        notes="Dual-worker solver+reviewer using both gx-code workers. Optional DeepSeek TP=2 remains on disk.",
     ),
 }
 
 #: Tiers gx-auto is allowed to select, cheapest first.
-ROUTABLE: tuple[Tier, ...] = (Tier.MINI, Tier.FAST, Tier.REASON, Tier.MAX)
+ROUTABLE: tuple[Tier, ...] = (Tier.MINI, Tier.CODE, Tier.MAX)
 
 
 def cheaper_alternatives(tier: Tier) -> list[Tier]:

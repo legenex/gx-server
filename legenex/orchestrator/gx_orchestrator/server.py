@@ -36,6 +36,7 @@ from .health import AliasState, TierHealth, TierStatus
 from .lifecycle import AcquisitionError, GxMaxLifecycle, LifecycleStatus, State
 from .tiers import TIERS, ROUTABLE, Tier
 from .upstream import UpstreamError, open_post
+from . import dual_worker
 
 log = logging.getLogger("gx.server")
 
@@ -478,21 +479,21 @@ class Handler(BaseHTTPRequestHandler):
         fingerprint = request_fingerprint(payload)
         tiers = self.health.snapshot()
         lc_status = self.lifecycle.status()
-        max_status = _max_tier_status(lc_status, tiers[Tier.REASON])
+        max_status = _max_tier_status(lc_status, tiers.get(Tier.REASON) or tiers.get(Tier.CODE))
 
         # route() takes a plain tier->bool map; richer state lives in `tiers`
         # and `max_status` for /health/detailed and `gx status`.
         avail = {t: v.usable for t, v in tiers.items()}
-        avail[Tier.MAX] = max_status.usable
-        max_ready = lc_status.state is State.READY
-        decision = route(payload, available=avail, busy={Tier.MAX: lc_status.state is State.ACQUIRING})
+        dual = self.cfg.gxmax_mode == "dual-worker"
+        code_ok = bool((tiers.get(Tier.CODE) or tiers.get(Tier.FAST) or max_status).usable)
+        avail[Tier.MAX] = code_ok if dual else max_status.usable
+        max_ready = True if dual else lc_status.state is State.READY
+        decision = route(payload, available=avail, busy={Tier.MAX: False if dual else lc_status.state is State.ACQUIRING})
         note = ""
 
         if decision.tier is Tier.MAX and not max_ready:
             # gx-auto may USE gx-max when it is already up. It must never
-            # ACQUIRE it (human requirement, 2026-09-16): acquisition drains
-            # both nodes. Taking over the cluster is a deliberate act on the
-            # DIRECT gx-max path only.
+            # ACQUIRE DeepSeek. Dual-worker gx-max does not acquire SGLang.
             note = f"gx-max not running ({lc_status.state.value}); gx-auto does not acquire it"
             log.info("gx-auto selected gx-max but it is %s; routing to the best available "
                      "tier instead", lc_status.state.value)
@@ -542,18 +543,21 @@ class Handler(BaseHTTPRequestHandler):
                     {**NO_RETRY_HEADERS, "X-GX-Request-Id": request_id},
                 )
             elif decision.tier is Tier.MAX:
-                self.lifecycle.begin_use()
-                try:
-                    outcome = self._relay(
-                        f"{self.cfg.gxmax_base.rstrip('/')}/chat/completions",
-                        {**payload, "model": self.cfg.gxmax_model_id},
-                        routed_as=Tier.MAX,
-                        budget=budget,
-                        request_id=request_id,
-                        started=started,
-                    )
-                finally:
-                    self.lifecycle.end_use()
+                if self.cfg.gxmax_mode == "dual-worker":
+                    outcome = self._serve_dual_max(payload, budget=budget, request_id=request_id, started=started)
+                else:
+                    self.lifecycle.begin_use()
+                    try:
+                        outcome = self._relay(
+                            f"{self.cfg.gxmax_base.rstrip('/')}/chat/completions",
+                            {**payload, "model": self.cfg.gxmax_model_id},
+                            routed_as=Tier.MAX,
+                            budget=budget,
+                            request_id=request_id,
+                            started=started,
+                        )
+                    finally:
+                        self.lifecycle.end_use()
             else:
                 url = (
                     f"{self.cfg.gateway_base.rstrip('/')}/chat/completions"
@@ -606,32 +610,33 @@ class Handler(BaseHTTPRequestHandler):
                     {**NO_RETRY_HEADERS, "X-GX-Request-Id": request_id},
                 )
                 return
-            try:
-                self.lifecycle.acquire()
-            except AcquisitionError as exc:
-                # Explicit, per the locked architecture: a direct gx-max request may
-                # not be silently served by a smaller model.
-                outcome.status, outcome.error_code, outcome.error = 503, "gx_max_unavailable", str(exc)[:300]
-                self._send_error_json(
-                    503,
-                    f"gx-max could not be brought up and will NOT be substituted with "
-                    f"another model: {exc}",
-                    "gx_max_unavailable",
-                )
-                return
+            if self.cfg.gxmax_mode == "dual-worker":
+                outcome = self._serve_dual_max(payload, budget=budget, request_id=request_id, started=started)
+            else:
+                try:
+                    self.lifecycle.acquire()
+                except AcquisitionError as exc:
+                    outcome.status, outcome.error_code, outcome.error = 503, "gx_max_unavailable", str(exc)[:300]
+                    self._send_error_json(
+                        503,
+                        f"gx-max could not be brought up and will NOT be substituted with "
+                        f"another model: {exc}",
+                        "gx_max_unavailable",
+                    )
+                    return
 
-            self.lifecycle.begin_use()
-            try:
-                outcome = self._relay(
-                    f"{self.cfg.gxmax_base.rstrip('/')}/chat/completions",
-                    {**payload, "model": self.cfg.gxmax_model_id},
-                    routed_as=Tier.MAX,
-                    budget=budget,
-                    request_id=request_id,
-                    started=started,
-                )
-            finally:
-                self.lifecycle.end_use()
+                self.lifecycle.begin_use()
+                try:
+                    outcome = self._relay(
+                        f"{self.cfg.gxmax_base.rstrip('/')}/chat/completions",
+                        {**payload, "model": self.cfg.gxmax_model_id},
+                        routed_as=Tier.MAX,
+                        budget=budget,
+                        request_id=request_id,
+                        started=started,
+                    )
+                finally:
+                    self.lifecycle.end_use()
         finally:
             done = {
                 "event": "completed",
@@ -649,6 +654,40 @@ class Handler(BaseHTTPRequestHandler):
             }
             done["elapsed_ms"] = round((time.monotonic() - started) * 1000, 1)
             self._finish(Tier.MAX.value, done)
+
+    def _serve_dual_max(self, payload: dict[str, Any], *, budget, request_id: str, started: float) -> RelayOutcome:
+        """Solver + independent reviewer using both gx-code workers."""
+        key = self.cfg.gateway_key() or ""
+        url = f"{self.cfg.gateway_base.rstrip('/')}/chat/completions"
+        try:
+            try:
+                body = dual_worker.run_workflow(
+                    gateway_chat_url=url,
+                    api_key=key,
+                    original=payload,
+                    solver_model="gx-code-01",
+                    reviewer_model="gx-code-02",
+                    timeout=240,
+                )
+            except UpstreamError:
+                body = dual_worker.run_workflow(
+                    gateway_chat_url=url,
+                    api_key=key,
+                    original=payload,
+                    solver_model="gx-code",
+                    reviewer_model="gx-fast",
+                    timeout=240,
+                )
+            self._send_json(200, body, {"X-GX-Request-Id": request_id, "X-GX-Max-Mode": "dual-worker"})
+            elapsed = (time.monotonic() - started) * 1000
+            return RelayOutcome(status=200, elapsed_ms=elapsed, streamed=False)
+        except UpstreamError as exc:
+            code = self._send_upstream_error(exc, request_id)
+            return RelayOutcome(status=exc.status, error_code=code, error=str(exc)[:300], streamed=False)
+        except Exception as exc:  # noqa: BLE001
+            log.exception("gx-max dual-worker failed")
+            self._send_error_json(503, f"gx-max dual-worker failed: {exc}", "gx_max_unavailable")
+            return RelayOutcome(status=503, error_code="gx_max_unavailable", error=str(exc)[:300], streamed=False)
 
     # ------------------------------------------------------------------ relay
     def _send_upstream_error(self, exc: UpstreamError, request_id: str) -> str:

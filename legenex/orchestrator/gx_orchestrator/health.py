@@ -170,6 +170,9 @@ class TierHealth:
         )
         mini = node1_err or _tier_status_from_swap(*_swap_model_status(node1_json, Tier.MINI.value))
         fast = node1_err or _tier_status_from_swap(*_swap_model_status(node1_json, Tier.FAST.value))
+        code1 = node1_err or _tier_status_from_swap(*_swap_model_status(node1_json, Tier.CODE.value))
+        if not code1.usable:
+            code1 = fast
 
         node2_json, node2_err = _fetch_models(
             cfg.node2_swap_base,
@@ -178,8 +181,14 @@ class TierHealth:
             offline_reason="node2_offline",
         )
         reason = node2_err or _tier_status_from_swap(*_swap_model_status(node2_json, Tier.REASON.value))
+        code2 = node2_err or _tier_status_from_swap(*_swap_model_status(node2_json, Tier.CODE.value))
+        if not code2.usable:
+            code2 = reason
+        code = code1 if code1.usable else code2
+        if code1.usable and code2.usable:
+            code = TierStatus(AliasState.READY, "gx-code workers on both nodes", usable=True)
 
-        snap = {Tier.MINI: mini, Tier.FAST: fast, Tier.REASON: reason}
+        snap = {Tier.MINI: mini, Tier.FAST: fast, Tier.REASON: reason, Tier.CODE: code}
         with self._lock:
             self._cache = snap
             self._checked = time.time()

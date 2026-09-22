@@ -382,8 +382,9 @@ COMPLEXITY_REASON = REASONING_REASON
 
 _EXPLICIT_TIERS = {
     "mini": Tier.MINI, "gx-mini": Tier.MINI,
-    "fast": Tier.FAST, "gx-fast": Tier.FAST,
-    "reason": Tier.REASON, "gx-reason": Tier.REASON,
+    "fast": Tier.CODE, "gx-fast": Tier.CODE,
+    "code": Tier.CODE, "gx-code": Tier.CODE,
+    "reason": Tier.CODE, "gx-reason": Tier.CODE,
     "max": Tier.MAX, "gx-max": Tier.MAX,
 }
 
@@ -620,22 +621,22 @@ def _semantic_tier(f: RequestFeatures) -> tuple[Tier, list[str]]:
                 f"tier: task needs deeper reasoning (evidence {f.reasoning_score} >= {REASONING_REASON}: "
                 f"{','.join(f.indicators)})"
             )
-            return Tier.REASON, reasons
+            return Tier.CODE, reasons
     if f.intent in (INTENT_ACTION, INTENT_CONTINUATION):
-        reasons.append(f"tier: coding/agentic work ({f.intent}) -> default workhorse")
-        return Tier.FAST, reasons
+        reasons.append(f"tier: coding/agentic work ({f.intent}) -> gx-code")
+        return Tier.CODE, reasons
     if f.reasoning_score >= REASONING_FAST:
-        reasons.append(f"tier: some reasoning evidence ({','.join(f.indicators)}) -> workhorse")
-        return Tier.FAST, reasons
+        reasons.append(f"tier: some reasoning evidence ({','.join(f.indicators)}) -> gx-code")
+        return Tier.CODE, reasons
     if f.task_tokens > SIMPLE_MINI_MAX_TOKENS:
-        reasons.append(f"tier: long instruction ({f.task_tokens} tokens) -> workhorse")
-        return Tier.FAST, reasons
+        reasons.append(f"tier: long instruction ({f.task_tokens} tokens) -> gx-code")
+        return Tier.CODE, reasons
     if f.requested_output and f.requested_output > LONG_OUTPUT_TOKENS and not f.has_tools:
-        reasons.append(f"tier: long-form answer requested ({f.requested_output} tokens) -> workhorse")
-        return Tier.FAST, reasons
+        reasons.append(f"tier: long-form answer requested ({f.requested_output} tokens) -> gx-code")
+        return Tier.CODE, reasons
     if f.coding_toolset and f.intent == INTENT_SIMPLE and f.task_tokens > _CONVERSATIONAL_MAX_TOKENS:
-        reasons.append("tier: non-trivial question inside a coding agent -> workhorse")
-        return Tier.FAST, reasons
+        reasons.append("tier: non-trivial question inside a coding agent -> gx-code")
+        return Tier.CODE, reasons
     reasons.append("tier: short simple task")
     reasons.extend(_tool_note(f))
     return Tier.MINI, reasons
@@ -716,8 +717,8 @@ def route(
             if cheaper and _fit(f, cheaper[0])[0]:
                 reasons.append(f"latency=low: stepping down {tier.value} -> {cheaper[0].value}")
                 tier = cheaper[0]
-        elif f.latency_preference == "quality" and tier in (Tier.MINI, Tier.FAST):
-            up = Tier.FAST if tier is Tier.MINI else Tier.REASON
+        elif f.latency_preference == "quality" and tier is Tier.MINI:
+            up = Tier.CODE
             if _fit(f, up)[0]:
                 reasons.append(f"latency=quality: stepping up {tier.value} -> {up.value}")
                 tier = up
@@ -743,26 +744,34 @@ def route(
         return available.get(t, True) and not busy.get(t, False)
 
     if not _usable(tier):
-        candidates = [
-            c for c in cheaper_alternatives(tier)
-            if _usable(c) and not (f.has_images and not TIERS[c].vision)
-        ]
-        full = [c for c in candidates if _fit(f, c)[0]]
-        partial = [c for c in candidates if _fit(f, c)[1]]
-        if full:
-            chosen, tight = full[0], False
-        elif partial:
-            chosen, tight = max(partial, key=lambda t: TIERS[t].max_context), True
-        else:
-            chosen = None
-        if chosen is not None:
+        coding = f.intent in (INTENT_ACTION, INTENT_CONTINUATION) or f.coding_toolset or tier in (Tier.CODE, Tier.MAX)
+        if coding and tier in (Tier.CODE, Tier.FAST, Tier.REASON, Tier.MAX):
             reasons.append(
-                f"{tier.value} unavailable/busy: falling back to {chosen.value}"
-                + (" (tight: the engine's exact count decides)" if tight else "")
+                f"{tier.value} busy/unavailable: queue on gx-code; do not downgrade substantial coding to gx-mini"
             )
-            tier, no_fit = chosen, False
+            if tier is not Tier.MAX:
+                tier = Tier.CODE
         else:
-            reasons.append(f"{tier.value} unavailable/busy and no cheaper tier fits; staying on {tier.value}")
+            candidates = [
+                c for c in cheaper_alternatives(tier)
+                if _usable(c) and not (f.has_images and not TIERS[c].vision)
+            ]
+            full = [c for c in candidates if _fit(f, c)[0]]
+            partial = [c for c in candidates if _fit(f, c)[1]]
+            if full:
+                chosen, tight = full[0], False
+            elif partial:
+                chosen, tight = max(partial, key=lambda t: TIERS[t].max_context), True
+            else:
+                chosen = None
+            if chosen is not None:
+                reasons.append(
+                    f"{tier.value} unavailable/busy: falling back to {chosen.value}"
+                    + (" (tight: the engine's exact count decides)" if tight else "")
+                )
+                tier, no_fit = chosen, False
+            else:
+                reasons.append(f"{tier.value} unavailable/busy and no cheaper tier fits; staying on {tier.value}")
 
     return RoutingDecision(
         tier=tier,
