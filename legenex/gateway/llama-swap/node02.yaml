@@ -332,8 +332,7 @@ models:
       --ipc host
       --ulimit memlock=-1 --ulimit stack=67108864
       --security-opt seccomp=unconfined
-      -e GGML_CUDA_ENABLE_UNIFIED_MEMORY=1
-      -e 'LLAMA_ARG_CHAT_TEMPLATE_KWARGS={"enable_thinking":false}'
+      --env-file /app/env/gx-code.env
       -v ${models_root}/gguf:/models/gguf:ro
       --memory 48g
       --memory-swap 48g
