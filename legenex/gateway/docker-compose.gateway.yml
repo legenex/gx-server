@@ -207,6 +207,7 @@ services:
       # container's network namespace, so publishing 19001 here is what makes
       # http://127.0.0.1:19001/v1 work on the host exactly as it did before.
       - "${GX_MINI_BIND:-127.0.0.1}:${GX_MINI_PORT:-19001}:19001"
+      - "${GX_CODE_BIND:-127.0.0.1}:${GX_CODE_PORT:-19011}:19011"
     entrypoint:
       - /usr/bin/llama-swap
       - -config

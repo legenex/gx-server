@@ -172,8 +172,10 @@ macros:
   # containers use 100 (see docker-compose.gateway.yml). Everything we run is
   # positive, i.e. preferred for OOM-kill ahead of any unmodified host daemon.
   # gx-mini checkpoint (verified: /srv/models/gguf/<dir>/.gx-manifest.json)
-  gx_mini_model: "/models/gguf/Qwen3.5-4B-Uncensored-HauhauCS-Aggressive/Qwen3.5-4B-Uncensored-HauhauCS-Aggressive-Q4_K_M.gguf"
-  gx_mini_mmproj: "/models/gguf/Qwen3.5-4B-Uncensored-HauhauCS-Aggressive/mmproj-Qwen3.5-4B-Uncensored-HauhauCS-Aggressive-BF16.gguf"
+  gx_mini_model: "/models/gguf/Ornith-1.5-9B-uncensored-Q8_0/Ornith-1.5-9B-uncensored-Q8_0.gguf"
+  gx_mini_mmproj: "/models/gguf/Ornith-1.5-9B-uncensored-Q8_0/mmproj-Ornith-1.5-9B-uncensored-f16.gguf"
+  gx_code_model: "/models/gguf/Ornith-1.5-35B-A3B-Uncensored/Ornith-1.5-35B-Uncensored-Q5_K_M.gguf"
+  gx_code_mmproj: "/models/gguf/Ornith-1.5-35B-A3B-Uncensored/mmproj-Ornith-1.5-35B-Uncensored-BF16.gguf"
 
   gx_mini_mem_limit: "14g"
   gx_mini_oom_score_adj: "700"
@@ -198,7 +200,7 @@ models:
   # (published by the llama-swap service in docker-compose.gateway.yml).
   gx-mini:
     name: "gx-mini"
-    description: "HauhauCS Qwen3.5-4B Uncensored Aggressive Q4_K_M (llama.cpp, vision, tools). Node 1, resident."
+    description: "Ornith-1.5-9B uncensored Q8_0 (llama.cpp, vision, tools). Node 1, resident."
     proxy: "http://127.0.0.1:19001"
     checkEndpoint: "/health"
     ttl: 0
@@ -282,6 +284,40 @@ models:
       --trust-remote-code'
     cmdStop: "docker stop -t 150 ${MODEL_ID}"
 
+  gx-code:
+    name: "gx-code"
+    description: "Ornith-1.5-35B-A3B Uncensored Q5_K_M llama.cpp. Independent coding worker, node 1."
+    proxy: "http://127.0.0.1:19011"
+    checkEndpoint: "/health"
+    ttl: 0
+    unloadTimeout: 60
+    cmd: >
+      sh -c 'docker rm -f gx-code >/dev/null 2>&1;
+      exec docker run --rm --name gx-code
+      --network ${swap_netns}
+      --device nvidia.com/gpu=all
+      --ipc host
+      --ulimit memlock=-1 --ulimit stack=67108864
+      --security-opt seccomp=unconfined
+      -e GGML_CUDA_ENABLE_UNIFIED_MEMORY=1
+      -v ${models_root}/gguf:/models/gguf:ro
+      --memory 48g
+      --memory-swap 48g
+      --oom-score-adj 900
+      ${llamacpp_image}
+      -m ${gx_code_model}
+      --mmproj ${gx_code_mmproj}
+      --alias gx-code
+      --host ${host} --port 19011
+      --ctx-size 65536
+      --n-gpu-layers 99
+      --parallel 1
+      --flash-attn on
+      --jinja
+      --temp 0.7 --top-p 0.8 --top-k 20 --min-p 0
+      --timeout 600'
+    cmdStop: "docker stop -t 40 gx-code"
+
 # ==============================================================================
 # ROUTING / CONCURRENCY CONTROL
 # ==============================================================================
@@ -311,6 +347,7 @@ routing:
           exclusive: false
           members:
             - gx-fast
+            - gx-code
 
 # ==============================================================================
 # STARTUP PRELOAD (D-030, 2026-09-17)
