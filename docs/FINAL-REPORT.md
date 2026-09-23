@@ -1,7 +1,7 @@
 # GX cluster closeout — final report
 
-**Date:** 2026-09-23  
-**Project status:** CLOSED (core cluster accepted)
+**Date:** 2026-09-24 (media/playground cleanup)  
+**Project status:** CLOSED (core cluster accepted; leftover media stack removed from active operation)
 
 This report uses three labels only:
 
@@ -13,7 +13,7 @@ This report uses three labels only:
 
 ## Verdict
 
-The dual GX10 text cluster is operational: four modes on one gateway, independent Ornith workers on both nodes, encrypted cross-node restic, OpenWebUI, AgentOS Control Center, and GX-Cluster UI. Remaining items are reboot (needs sudo) and true offsite mutable backup (not configured; not a reason to keep the project open).
+The dual GX10 text cluster is operational: four modes on one gateway, independent Ornith workers on both nodes, encrypted cross-node restic, OpenWebUI, and GX-Cluster UI. GX-Playground and the media stack have been backed up and removed from active operation. Remaining items are reboot validation (needs sudo), true offsite mutable backup (not configured), and AgentOS Control Center (live tree `/home/legenex/agentos` is missing; unit was in a restart loop and was stopped).
 
 ## VERIFIED PASS
 
@@ -29,7 +29,8 @@ The dual GX10 text cluster is operational: four modes on one gateway, independen
 | gx-max | Dual-worker on real `longest_unique` bug: solver=gx-code-01, reviewer=gx-code-02, verdict fail then repair; traces for `abba`/`pwwkew`/`bbbbb` |
 | OpenWebUI | Picker gx-auto, gx-mini, gx-code, gx-max; default gx-auto; 24 chats / 116 messages preserved; restart always; live prompt each mode 200 |
 | AgentOS | Control Center `:4173`, `AGENTOS_CC_LLM_MODEL=gx-code`; `/api/ask-live` used gx-code; two concurrent asks both gx-code |
-| GX-Cluster UI | Playwright pages Dashboard/Models/Jobs/Logs/Machines/Backup/Settings against live backend; backup latest `20260923T090136Z`; Verify runs real `restic check` |
+| GX-Cluster UI | Playwright 2026-09-24: seven primary pages; no GX-Playground / Images / Video / Music / Voice / Media profile / gx-image / gx-fast / gx-reason. Overall Healthy when four-mode cluster is up. Snaps in `state/ui-snaps-20260924/` |
+| Media stack retired | Port 8090 down; `gx-playground` masked; gx10-02 call/live/music/voice masked; `gx-media` compose down; LiteLLM without gx-image/video/voice/fast/reason |
 | Backup | See recovery point below. Restic self-inclusion of the repo is now excluded |
 | Coding suite | **5/6 PASS, 1 PARTIAL, 0 FAIL** (Q5). No Q4 comparison required |
 | Concurrency | Simultaneous gx-code-01 (1.85 s, 51 t/s) and gx-code-02 (2.10 s, 52 t/s); both stable; load-balance after OK |
@@ -57,7 +58,7 @@ Earlier known-good points (`4ebe7225` / `20260923T090136Z`, `dd27fe41` / `202609
 | MVA Progress Tracker | Not present locally. Cluster endpoint ready. Intended routing documented |
 | Hermes VPS reconciliation | Hermes lives elsewhere. Local yaml/gateway documented. Remote apply **DEFERRED** |
 | DeepSeek TP=2 gx-max | Optional; dual-worker is the accepted gx-max |
-| Media/image/video stack | Media router on gx10-02 is unhealthy (HTTP 503). Out of this closeout’s text-cluster scope; UI overall=warn because of it |
+| Media/image/video stack | **Removed from active operation 2026-09-24.** Source in git + restic `24ba5393`. Weights deleted on gx10-02 (public/reproducible). |
 
 ## BLOCKED BY EXTERNAL AUTHORITY
 
