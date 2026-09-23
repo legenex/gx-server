@@ -1,10 +1,10 @@
 # AgentOS
 
-Live process: `/home/legenex/agentos` via `agentos-control-center.service`.
+Live process: `/home/legenex/agentos` via `agentos-control-center.service` (user systemd, enabled).
 
-Git checkout: `/home/legenex/Documents/Projects/AgentOS` (same GitHub `legenex/agent-os`).
+Git checkout: `/home/legenex/Documents/Projects/AgentOS` (GitHub `legenex/agent-os`). Different inode from the live tree.
 
-Gateway: `http://100.105.214.61:4000/v1` (`GX10_GATEWAY_KEY`).
+Gateway: `http://100.105.214.61:4000/v1` (`GX10_GATEWAY_KEY` / LiteLLM master key). Do not rebuild AgentOS.
 
 Policy file: `hermes/model-routing.yaml`
 
@@ -15,6 +15,15 @@ Policy file: `hermes/model-routing.yaml`
 | Classifiers | `gx-mini` |
 | Review | `gx-max` |
 
-Control Center env `AGENTOS_CC_LLM_MODEL=gx-code`.
+Control Center: `http://127.0.0.1:4173`  
+`AGENTOS_CC_LLM_URL=http://127.0.0.1:4000/v1`  
+`AGENTOS_CC_LLM_MODEL=gx-code`
 
-Do not rebuild AgentOS. Hermes VPS reconcile was not run from this session (would need the VPS). Local yaml is updated; apply on the VPS with `scripts/reconcile-model-routing.py` when that host is next touched.
+Verified 2026-09-23:
+
+- Health: llm available, model `gx-code`
+- One real job: `POST /api/ask-live` returned Python via gx-code (`llm_used: true`)
+- Two concurrent `/api/ask-live` jobs: both `gx-code`, both `llm_used: true`
+- gx-max is not a Control Center button; dual-worker gx-max is on the gateway (`gx-max` alias). Not rebuilt.
+
+Hermes VPS reconcile was not applied remotely from this session. Local yaml is the intended config. **DEFERRED.**

@@ -31,6 +31,8 @@ __pycache__/
 *.py[cod]
 .venv/
 venv/
+tests/ornith-suite/.venv/
+tests/ornith-suite/work/
 node_modules/
 .pytest_cache/
 

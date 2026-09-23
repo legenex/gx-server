@@ -99,13 +99,17 @@ cmd_backup() {
       --exclude '.cache' --exclude '.npm' --exclude '.nvm' --exclude '.vscode-server' --exclude 'node_modules' \
       --exclude '/srv/models' --exclude '.nv' --exclude '/srv/cache' \
       --exclude '/srv/projects/gx-cluster/runtime' \
+      --exclude 'Documents/Backups/restic' \
       \$HOME /srv/projects /srv/logs /srv/ai-stack" || echo "WARN: gx10-02 backup had errors"
 
-  echo "== cross-node copy =="
-  restic -r "$PEER_PULL" copy --from-repo "$NODE2_LOCAL" --from-password-file "$PASS" || echo "WARN: copy gx10-02 -> gx10-01 failed"
-  restic -r "$PEER_PUSH" copy --from-repo "$LOCAL_REPO" --from-password-file "$PASS" || echo "WARN: copy gx10-01 -> gx10-02 failed"
+  echo "== cross-node copy (this stamp only) =="
+  # Copy only this backup's tags. A prior self-inclusive snapshot is 136 GiB and
+  # must not be pushed onto a peer that is already disk-constrained.
+  restic -r "$PEER_PULL" copy --from-repo "$NODE2_LOCAL" --from-password-file "$PASS" --tag "$stamp" || echo "WARN: copy gx10-02 -> gx10-01 failed"
+  restic -r "$PEER_PUSH" copy --from-repo "$LOCAL_REPO" --from-password-file "$PASS" --tag "$stamp" || echo "WARN: copy gx10-01 -> gx10-02 failed"
 
   echo "== integrity =="
+  restic -r "$LOCAL_REPO" unlock || true
   restic -r "$LOCAL_REPO" check --read-data-subset=5%
   echo "$stamp" >"$HOME/Documents/Backups/LATEST"
   echo "snapshot $stamp"

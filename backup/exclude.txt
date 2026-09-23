@@ -46,3 +46,8 @@
 /srv/models
 /srv/cache
 /srv/projects/gx-cluster/runtime
+# Never back up restic repositories into themselves (snapshot sizes ballooned 18→137 GiB).
+/home/legenex/Documents/Backups/restic
+/home/legenex/Documents/Backups/restic/**
+**/Documents/Backups/restic/**
+**/.cache/restic/**

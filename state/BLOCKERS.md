@@ -1,8 +1,15 @@
 # BLOCKERS
 
-## B-001 — Passwordless sudo unavailable
+## B-001 — Passwordless sudo unavailable (reboot)
 
-`sudo -n` fails. Cannot install distro packages, write `/etc`, manage system systemd units, or reboot from this session. Workaround: restic/age binaries in `~/.local/bin`; user systemd; Docker (user is in `docker` group).
+`sudo -n true` → `sudo: a password is required`. Reboot validation is the only remaining human-authority blocker for cluster closeout.
+
+Could not run:
+
+```
+sudo -n true
+sudo reboot    # gx10-02 first, then gx10-01
+```
 
 ## B-002 — Independent offsite mutable-data backup
 

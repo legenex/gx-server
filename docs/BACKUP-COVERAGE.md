@@ -23,6 +23,33 @@ Projects, Documents, AgentOS (both checkouts), gx-cluster source, systemd user u
 | `/srv/projects/gx-cluster/runtime` | REPRODUCIBLE CACHE | vLLM compile cache | cold start | excluded after first snapshot permission errors |
 | Chrome/VS Code `.deb` in Downloads | DUPLICATE | re-download | vendor URLs | n/a |
 
-## Offsite
+## Three different things (do not conflate)
 
-Private GitHub holds the recipe only. No paid offsite mutable-data destination was present. Fully independent offsite backup of chats/databases is **absent**.
+| Layer | What it is | Offsite? |
+|---|---|---|
+| GitHub `legenex/gx-backup` | Rebuild **recipe** (scripts, pins, docs) | GitHub, not your chats/DBs |
+| Cross-node encrypted restic | Mutable data copied GX10-01 ↔ GX10-02 | **No** — still in the same house |
+| Independent offsite mutable backup | A restic copy that survives losing **both** GX10s | **OFFSITE MUTABLE DATA: NOT CONFIGURED** |
+
+Cross-node restic is not offsite. That is a recommended future improvement, not a reason to keep this project open.
+
+## Recovery secret
+
+See `docs/RECOVERY-SECRET.md`. Total dual-machine loss also needs an independent copy of `restic-password` stored by the operator.
+
+## Latest verified point
+
+Stamp `20260923T091634Z` (`~/Documents/Backups/LATEST`).
+
+| Copy | ID |
+|---|---|
+| GX10-01 local | `24ba5393` |
+| GX10-02 local | `fa6b8856` |
+| GX10-01 on GX10-02 | `f5588ad0` |
+| GX10-02 on GX10-01 | `bbee85a2` |
+
+Earlier snapshots are kept.
+
+## Also excluded
+
+Restic repositories themselves (`Documents/Backups/restic/**`). Backing them up into themselves ballooned snapshots 18→137 GiB; that is fixed.

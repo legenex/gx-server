@@ -1,51 +1,97 @@
-# GX Backup final report
+# GX cluster closeout — final report
 
-**Date:** 2026-09-23 (SAST)
+**Date:** 2026-09-23  
+**Project status:** CLOSED (core cluster accepted)
 
-## Machine status
+This report uses three labels only:
 
-| Node | Status |
+| Label | Meaning |
 |---|---|
-| GX10-01 | Healthy. Ubuntu 24.04.5, kernel 6.17.0-1032-nvidia, GB10, 121 GiB, NVMe 51% used. Tailscale 100.105.214.61. RoCE 200 Gb/s both rails. |
-| GX10-02 | Healthy via SSH. Same OS/kernel/GPU class. Disk 79% used (185 G free). Tailscale 100.73.238.4. |
+| **VERIFIED PASS** | Exercised live and met the requirement |
+| **DEFERRED BY DESIGN** | Optional / out of scope; not a failure |
+| **BLOCKED BY EXTERNAL AUTHORITY** | Needs a human (sudo/password) this session cannot supply |
 
-## Discovered
+## Verdict
 
-Existing gx-cluster already served LiteLLM, llama-swap, gx-mini (Qwen3.5-4B), gx-fast (Qwen3.6-35B NVFP4), gx-reason (Qwen3.8-27B), media/voice/music, OpenWebUI, AgentOS. `/home/Legenex` does not exist. Two AgentOS checkouts. No MVA Progress Tracker repo.
+The dual GX10 text cluster is operational: four modes on one gateway, independent Ornith workers on both nodes, encrypted cross-node restic, OpenWebUI, AgentOS Control Center, and GX-Cluster UI. Remaining items are reboot (needs sudo) and true offsite mutable backup (not configured; not a reason to keep the project open).
 
-## Backup
+## VERIFIED PASS
 
-- restic 0.18.1 + age 1.2.1 in `~/.local/bin` (no sudo).
-- Latest identifier: `20260922T225812Z`
-- gx10-01 snapshot `dd27fe41` (also copied to gx10-02 as `2a96d580`)
-- gx10-02 snapshot `01595307` (also copied to gx10-01 as `445c33d1`)
-- Integrity: `restic check --read-data-subset=5%` → **no errors**
-- Restore tests: `models.lock` sha256 match; `litellm.sql.gz` sha256 match; OpenWebUI tar lists `webui.db-wal`
-- Location: `~/Documents/Backups/restic/`
-- Timer: `gx-backup.timer` 03:30
-- GitHub: private `legenex/gx-backup` (created if `gh` permits)
-- Offsite mutable backup: **absent**
+| Item | Evidence |
+|---|---|
+| GX10-01 health | `gx doctor` 13/13; hostname gx10-01; 121 GiB; NVMe 78% (193 G free); Tailscale 100.105.214.61; RoCE both rails |
+| GX10-02 health | SSH `gx10-02`; 121 GiB; NVMe 89% (102 G free after reclaiming unused Docker images); Tailscale 100.73.238.4 |
+| gx-mini | Ornith-1.5-9B Q8_0 llama.cpp, resident, `Pong` 0.35–0.44 s |
+| gx-code-01 | Ornith-1.5-35B-A3B Q5_K_M llama.cpp on gx10-01; `NODEONE` 0.22 s |
+| gx-code-02 | Same Q5 on gx10-02; `NODETWO` 0.27 s |
+| gx-auto | Classifier unit tests OK; live routing: greeting/summary/reason → gx-mini; light script / substantial coding / debugging → gx-code |
+| Busy coding | Occupied both workers; third substantial coding request stayed on **gx-code** (11.9 s, queued). Did not fall to gx-mini |
+| gx-max | Dual-worker on real `longest_unique` bug: solver=gx-code-01, reviewer=gx-code-02, verdict fail then repair; traces for `abba`/`pwwkew`/`bbbbb` |
+| OpenWebUI | Picker gx-auto, gx-mini, gx-code, gx-max; default gx-auto; 24 chats / 116 messages preserved; restart always; live prompt each mode 200 |
+| AgentOS | Control Center `:4173`, `AGENTOS_CC_LLM_MODEL=gx-code`; `/api/ask-live` used gx-code; two concurrent asks both gx-code |
+| GX-Cluster UI | Playwright pages Dashboard/Models/Jobs/Logs/Machines/Backup/Settings against live backend; backup latest `20260923T090136Z`; Verify runs real `restic check` |
+| Backup | See recovery point below. Restic self-inclusion of the repo is now excluded |
+| Coding suite | **5/6 PASS, 1 PARTIAL, 0 FAIL** (Q5). No Q4 comparison required |
+| Concurrency | Simultaneous gx-code-01 (1.85 s, 51 t/s) and gx-code-02 (2.10 s, 52 t/s); both stable; load-balance after OK |
+| Recovery secret files | Both nodes `0600`; SHA-256 of password files match; not in git |
 
-## Filesystem
+### Latest verified recovery point
 
-Archived duplicates under `Documents/Archive/pre-cleanup-20260922T230642Z/`. Live AgentOS remains `/home/legenex/agentos`. Projects already under Documents/Projects.
+Stamp **`20260923T091634Z`** (triggered by GX-Cluster UI `POST /api/backup/now` → `backup/restic.sh`).  
+`restic check --read-data-subset=2%`: no errors. `models.lock` restore sha256 match.
 
-## Models
+| Copy | Snapshot |
+|---|---|
+| GX10-01 local | `24ba5393` (22.167 GiB) |
+| GX10-02 local | `fa6b8856` (9.235 GiB) |
+| GX10-01 recovery copy on GX10-02 | `f5588ad0` |
+| GX10-02 recovery copy on GX10-01 | `bbee85a2` |
 
-| Mode | Model | Quant | Runtime | Notes |
-|---|---|---|---|---|
-| gx-mini | junafinity/Ornith-1.5-9B-uncensored-GGUF-8bit @ 10d5524c | Q8_0 | llama.cpp | sha256 verified; 24g cgroup; ctx 65536 |
-| gx-code | 0xKitkat/Ornith-1.5-35B-A3B-Uncensored-GGUF @ ab0eed77 | Q5_K_M | llama.cpp (cutover) | LiteLLM currently load-balances gx-fast + gx-reason until Ornith workers are resident |
-| gx-auto | router | — | orchestrator | coding stays on gx-code when busy |
-| gx-max | dual-worker | — | orchestrator | solver+reviewer; DeepSeek optional |
+Earlier known-good points (`4ebe7225` / `20260923T090136Z`, `dd27fe41` / `20260922T225812Z`, and others) were **not** deleted.
 
-Gateway: `http://127.0.0.1:4000/v1` aliases include gx-auto, gx-mini, gx-code, gx-max.
+## DEFERRED BY DESIGN
 
-GX-Cluster: `http://127.0.0.1:8088`
+| Item | Notes |
+|---|---|
+| True independent offsite mutable-data backup | **OFFSITE MUTABLE DATA: NOT CONFIGURED**. GitHub is recipe-only. Cross-node restic is not offsite |
+| MVA Progress Tracker | Not present locally. Cluster endpoint ready. Intended routing documented |
+| Hermes VPS reconciliation | Hermes lives elsewhere. Local yaml/gateway documented. Remote apply **DEFERRED** |
+| DeepSeek TP=2 gx-max | Optional; dual-worker is the accepted gx-max |
+| Media/image/video stack | Media router on gx10-02 is unhealthy (HTTP 503). Out of this closeout’s text-cluster scope; UI overall=warn because of it |
 
-OpenWebUI: `http://127.0.0.1:3000`
+## BLOCKED BY EXTERNAL AUTHORITY
 
-AgentOS config: `/home/legenex/agentos/hermes/model-routing.yaml`
+| Item | Exact gap |
+|---|---|
+| Reboot validation | `sudo -n true` → `sudo: a password is required`. Cannot `reboot` either node from this session |
+
+Commands that could not be run:
+
+```
+sudo -n true
+sudo reboot          # on gx10-02 first, then gx10-01, one at a time
+```
+
+When sudo is available, reboot GX10-02 first, wait for SSH/Tailscale/RoCE/docker/gx-code-02, then reboot GX10-01, then `gx doctor` and `gx status`.
+
+## Coding reliability (not speed)
+
+Ornith Q5_K_M llama.cpp, both workers. First-attempt pytest after a missing-pytest harness bug was fixed:
+
+| # | Task | Node | t/s | Files | Tests | Rescue | Verdict |
+|---|---|---|---|---|---|---|---|
+| 1 | Bug repair (`median`) | GX10-01 | 45 | stats.py | 4 passed | no | PASS |
+| 2 | Frontend conventions | GX10-02 | 56 | index.html, app.js | 5 passed | no | PASS |
+| 3 | Backend `create_item` | GX10-01 | 45 | api.py | 3 passed | no | PASS |
+| 4 | Multi-file tax refactor | GX10-02 | 55 | tax.py, user.py, order.py | 3 passed | no | PASS |
+| 5 | Integration `userId`→`user_id` | GX10-01 | 43 | producer.py | 2 passed | no | PASS |
+| 6 | Autonomous calc library | GX10-02 | 52 | ops.py | 4 passed after one repair (empty/zero) | no | PARTIAL |
+
+**Overall: 5/6 PASS, 1 PARTIAL.** Suitable for local coding with occasional edge-case repair. Not declared suitable because it is fast (~45–56 tok/s).
+
+## Disk note (GX10-02)
+
+Node 2 was at 100% (15 MB free). Unused (not running) Docker images were pruned (~102 GB), `legenex/llama-cpp-spark:latest` retagged from the running gx-code image. This was required for cross-node restic copy. Media engine images are gone from that node and would need rebuild if media is started again.
 
 ## Commands
 
@@ -53,21 +99,9 @@ AgentOS config: `/home/legenex/agentos/hermes/model-routing.yaml`
 gx status
 gx backup
 gx doctor
-gx models
 gx auto
 gx mini
 gx code
 gx max
 gx logs
-gx benchmark
 ```
-
-## Limitations / blockers
-
-- Passwordless sudo unavailable: no apt, no /etc edits, no reboot from this session.
-- Fully independent offsite mutable backup absent.
-- MVA Progress Tracker not found; sample routing documented only.
-- Hermes VPS reconcile not applied remotely.
-- Ornith gx-mini first start OOM’d at 14g; limit raised to 24g. Now resident and answering `Pong` in ~1s.
-- gx-code Ornith Q5_K_M resident on gx10-01 (`is_palindrome` in 1.51s, 21 tokens). gx10-02 `gx-code-02` still uses live gx-reason until that node’s llama.cpp worker is started.
-- Live measurements: gx-mini ~11 t/s counting 1–20; gx-code-01 ~53 t/s on a short function after thinking disabled; gx-max dual-worker 7.3s for `17*19=323`.

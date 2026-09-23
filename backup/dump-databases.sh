@@ -30,9 +30,10 @@ if docker ps --format '{{.Names}}' | grep -qx open-webui; then
 fi
 
 # SQLite trees that applications keep outside Docker
-find /srv/projects /home/legenex/Documents /home/legenex/agentos \
-  -name '*.db' -o -name '*.sqlite' -o -name '*.sqlite3' 2>/dev/null \
-  | grep -v node_modules | grep -v '.git/' | head -200 \
+find /srv/projects /home/legenex/Documents/Projects /home/legenex/agentos \
+  \( -name '*.db' -o -name '*.sqlite' -o -name '*.sqlite3' \) 2>/dev/null \
+  | grep -v node_modules | grep -v '.git/' | grep -v '/Backups/' | grep -v mypy_cache \
+  | head -80 \
   | while read -r db; do
       rel=$(echo "$db" | sed 's#^/##; s#/#_#g')
       sqlite3 "$db" ".backup '$OUT/sqlite-$rel'" 2>/dev/null || cp -a "$db" "$OUT/sqlite-$rel.copy"
