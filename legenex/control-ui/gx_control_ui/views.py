@@ -34,7 +34,7 @@ NODES = {
     "node2": {"name": "gx10-02", "role": "gx-reason / media (gx-image, gx-video) / gx-max rank 1",
               "tailscale_ip": "100.73.238.4", "user": "legenex-02"},
 }
-MODEL_CONTAINERS = ("gx-mini", "gx-fast", "gx-reason", "gx-max-rank0", "gx-max-rank1", "gx-comfyui")
+MODEL_CONTAINERS = ("gx-mini", "gx-code", "gx-fast", "gx-reason", "gx-max-rank0", "gx-max-rank1", "gx-comfyui")
 
 _ORDER = {"ok": 0, "unknown": 1, "warn": 2, "crit": 3}
 

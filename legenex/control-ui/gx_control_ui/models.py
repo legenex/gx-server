@@ -38,9 +38,15 @@ ALIAS_ROLE: dict[str, dict[str, Any]] = {
         "controls": ["load", "unload", "restart"],
         "kind": LLM,
     },
+    "gx-code": {
+        "purpose": "Independent Ornith coding workers, one per GX10 node. Load-balanced as gx-code.",
+        "endpoint": "LiteLLM gx-code -> llama-swap gx-code on gx10-01 and 192.168.100.11:28080",
+        "controls": ["load", "unload", "restart"],
+        "kind": LLM,
+    },
     "gx-fast": {
-        "purpose": "Primary interactive coding / tools / agent tier (Kilo Code). Kept warm.",
-        "endpoint": "LiteLLM gx-fast -> gx-llama-swap-node01 -> vLLM",
+        "purpose": "Alias of gx-code (Ornith llama.cpp). Historical vLLM gx-fast is retired.",
+        "endpoint": "LiteLLM gx-fast -> gx-code workers",
         "controls": ["load", "unload", "restart"],
         "kind": LLM,
     },
@@ -435,9 +441,18 @@ def live_state(cluster: Cluster, results: ResultLog) -> list[dict]:
         engine_state: str | None = None
         extra: dict[str, Any] = {}
 
-        if alias in ("gx-mini", "gx-fast", "gx-reason"):
+        if alias in ("gx-mini", "gx-fast", "gx-reason", "gx-code"):
             node = "node1" if alias != "gx-reason" else "node2"
-            raw, reachable = _swap_entry(svc, f"swap_{node}", alias)
+            swap_alias = "gx-code" if alias in ("gx-fast", "gx-reason", "gx-code") else alias
+            if alias == "gx-code":
+                raw1, r1ok = _swap_entry(svc, "swap_node1", "gx-code")
+                raw2, r2ok = _swap_entry(svc, "swap_node2", "gx-code")
+                reachable = r1ok or r2ok
+                raw = raw1 or raw2
+                extra["gx-code-01"] = raw1
+                extra["gx-code-02"] = raw2
+            else:
+                raw, reachable = _swap_entry(svc, f"swap_{node}", swap_alias)
             if gxmax_state in ("ready", "acquiring", "releasing"):
                 state, detail = "unavailable", f"drained: gx-max is {gxmax_state}"
                 service_state = engine_state = "BLOCKED"
@@ -455,7 +470,9 @@ def live_state(cluster: Cluster, results: ResultLog) -> list[dict]:
                 state, detail = "error", raw
             tier = tiers.get(alias) or {}
             extra["orchestrator_view"] = tier
-            extra["container"] = (c1 if node == "node1" else c2).get(alias)
+            extra["container"] = (c1 if node == "node1" else c2).get(swap_alias)
+            if alias == "gx-code":
+                extra["container"] = {"node1": c1.get("gx-code"), "node2": c2.get("gx-code")}
             extra["admission"] = None
         elif alias == "gx-max":
             mapping = {"down": "unloaded", "acquiring": "loading", "ready": "loaded",
