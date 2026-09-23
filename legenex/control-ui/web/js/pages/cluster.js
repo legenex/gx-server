@@ -35,7 +35,7 @@ function topology(d, rates) {
       n.reachable ? `swap ${num(n.swap_used_gib)} / ${num(n.swap_total_gib)} GiB` : ''));
     g.append(s('text', { x: x + 110, y: 172, 'text-anchor': 'middle', class: 'topo-sub' }, n.kernel || ''));
     g.append(s('text', { x: x + 110, y: 196, 'text-anchor': 'middle', class: 'topo-sub' },
-      n.key === 'node1' ? 'control · gx-mini · gx-fast · rank 0' : 'gx-reason · media · rank 1'));
+      n.key === 'node1' ? 'control · gx-mini · gx-code-01' : 'gx-code-02 · gx-max reviewer'));
     return g;
   };
   svg.append(box(20, n1), box(520, n2));

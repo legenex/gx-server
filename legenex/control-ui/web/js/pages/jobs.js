@@ -63,14 +63,6 @@ function render(d) {
         j.error ? h('span', { class: 'text-crit small' }, j.error.slice(0, 300)) : '',
       ]), { caption: 'gx-max job history', empty: 'No gx-max job recorded since the orchestrator history was introduced.' }));
 
-  const media = d.media || {};
-  const mediaCard = card('Media queue (gx10-02)',
-    media.status ? kv([
-      ['Generation slot', media.busy ? stateBadge('running', `busy: ${media.held_by} (${media.held_for_seconds} s)`) : stateBadge('idle', 'free')],
-      ['Videos waiting', String(media.video_queue_depth ?? 0)],
-      ['ComfyUI queue', String((media.comfyui || {}).queue_depth ?? '—')],
-    ]) : h('p', { class: 'muted' }, 'Media router not reachable.'));
-
   const uiJobs = card('Control-UI operations',
     table(['Operation', 'User', 'Started', 'Elapsed', 'State', ''], (d.ui_jobs || []).map((j) => {
       const btn = h('button', { class: 'btn btn-ghost btn-sm', type: 'button' }, 'Output');
@@ -87,7 +79,7 @@ function render(d) {
   if (follow) eventsEl.scrollTop = eventsEl.scrollHeight;
 
   const top = root.querySelector('.jobs-top');
-  clear(top).append(h('div', { class: 'grid grid-2' }, lifecycle, mediaCard), history, uiJobs);
+  clear(top).append(h('div', { class: 'grid grid-2' }, lifecycle, uiJobs), history);
 }
 
 export default {
@@ -100,7 +92,7 @@ export default {
     followBox.addEventListener('change', () => { follow = followBox.checked; });
     eventsEl = h('pre', { class: 'log-view', tabindex: '0', 'aria-label': 'gx-max lifecycle output' });
     root.append(
-      h('p', { class: 'lead' }, 'Real lifecycle data from the orchestrator (read-only /lifecycle/gx-max/events), the media router queue and this UI\'s own operations. Nothing here is simulated.'),
+      h('p', { class: 'lead' }, 'Jobs for gx-mini, gx-code, gx-auto, gx-max, the gateway, OpenWebUI, AgentOS and backup. Orchestrator events are live, not simulated.'),
       h('div', { class: 'jobs-top' }),
       card('gx-max lifecycle output (live)',
         h('label', { class: 'inline' }, followBox, ' follow new lines'), eventsEl),

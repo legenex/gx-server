@@ -8,21 +8,10 @@ let root;
 
 const HEALTH = { ok: 'ok', watch: 'warn', warn: 'warn', crit: 'crit' };
 
-function quickCards(res, storage) {
-  const pg = `${location.protocol}//${location.hostname}:8090/`;
-  const rows = (res && res.rows) || [];
+function quickCards(storage) {
   const disks = storage ? Object.values(storage.overview || {}) : [];
-  return h('section', { class: 'card hero quick', 'aria-label': 'Creative, resources and storage' },
+  return h('section', { class: 'card hero quick', 'aria-label': 'Storage' },
     h('div', { class: 'quick-grid' },
-      h('div', {},
-        h('h2', { class: 'card-title' }, 'GX-Playground'),
-        h('p', { class: 'muted small' }, 'Images, video, music and the Library.'),
-        h('a', { class: 'btn btn-primary', href: pg, target: '_blank', rel: 'noopener', id: 'dash-playground' }, 'Open GX-Playground ↗')),
-      h('div', {},
-        h('h2', { class: 'card-title' }, 'Resource profile: ', res ? res.profile_label : '—'),
-        h('p', { class: 'small' }, rows.map((r) => h('span', { class: 'chip' }, `${r.label}: ${r.status}`))),
-        h('p', { class: 'small muted' }, res ? `${res.queued} creative job(s) queued` : ''),
-        h('a', { class: 'btn btn-ghost btn-sm', href: '#/resources' }, 'Resource Control →')),
       h('div', {},
         h('h2', { class: 'card-title' }, 'Storage'),
         disks.map((d) => h('p', { class: 'small' }, `${d.name}: `, levelBadge(HEALTH[(d.health || {}).level] || 'unknown',
@@ -30,12 +19,12 @@ function quickCards(res, storage) {
         h('a', { class: 'btn btn-ghost btn-sm', href: '#/storage' }, 'Storage & Cleanup →'))));
 }
 
-let extra = { res: null, storage: null };
+let extra = { storage: null };
 
 function render(ov) {
   const gx = ov.gxmax || {};
   const grid = h('div', { class: 'grid grid-dash' });
-  grid.append(quickCards(extra.res, extra.storage));
+  grid.append(quickCards(extra.storage));
 
   grid.append(h('section', { class: 'card hero', 'aria-label': 'Logical modes' },
     h('h2', { class: 'card-title' }, 'Modes'),
@@ -52,14 +41,14 @@ function render(ov) {
       ['RDMA (both rails)', ov.rdma_ok ? stateBadge('ok', 'ACTIVE') : stateBadge('error', 'DEGRADED')],
       ['Tailscale (management)', levelBadge(ov.tailscale.level, ov.tailscale.level === 'ok' ? 'connected' : 'degraded')],
       ['Git sync', levelBadge(ov.git.level, ov.git.match ? 'all HEADs match' : 'out of sync')],
-      ['Queue', `gx-max waiters ${ov.queue.gxmax_waiters ?? 0} · media ${ov.queue.media_busy ? 'busy' : 'idle'} (${ov.queue.media_video_queue ?? 0} queued) · UI operations running ${ov.queue.ui_running.length}`],
+      ['Queue', `gx-max waiters ${ov.queue.gxmax_waiters ?? 0} · UI operations running ${(ov.queue.ui_running || []).length}`],
     ])));
 
   for (const n of ov.nodes) grid.append(nodeCard(n));
 
   grid.append(card('Models',
     h('div', { class: 'model-grid' }, ov.models.map(modelTile)),
-    h('p', { class: 'muted small' }, 'State comes from llama-swap, the orchestrator lifecycle and the media router — never from container existence alone.')));
+    h('p', { class: 'muted small' }, 'State comes from llama-swap and the orchestrator — never from container existence alone.')));
 
   grid.append(card('gx-max lifecycle',
     kv([
@@ -113,12 +102,11 @@ export default {
   },
   async refresh({ signal }) {
     try {
-      const [ov, res, storage] = await Promise.all([
+      const [ov, storage] = await Promise.all([
         api.get('/api/overview', { signal }),
-        api.get('/api/resources/summary', { signal }).catch(() => null),
         api.get('/api/storage', { signal }).catch(() => null),
       ]);
-      extra = { res, storage };
+      extra = { storage };
       render(ov);
     } catch (err) {
       if (err.name === 'AbortError') throw err;

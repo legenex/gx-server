@@ -29,12 +29,12 @@ RAILS = (
      "netdev": "enP2p1s0f0np0", "rdma": "roceP2p1s0f0"},
 )
 NODES = {
-    "node1": {"name": "gx10-01", "role": "control / gateway / lifecycle / gx-mini / gx-fast / gx-max rank 0",
+    "node1": {"name": "gx10-01", "role": "control / gateway / gx-mini / gx-code-01 / orchestrator",
               "tailscale_ip": "100.105.214.61", "user": "legenex"},
-    "node2": {"name": "gx10-02", "role": "gx-reason / media (gx-image, gx-video) / gx-max rank 1",
+    "node2": {"name": "gx10-02", "role": "gx-code-02 / gx-max reviewer",
               "tailscale_ip": "100.73.238.4", "user": "legenex-02"},
 }
-MODEL_CONTAINERS = ("gx-mini", "gx-code", "gx-fast", "gx-reason", "gx-max-rank0", "gx-max-rank1", "gx-comfyui")
+MODEL_CONTAINERS = ("gx-mini", "gx-code")
 
 _ORDER = {"ok": 0, "unknown": 1, "warn": 2, "crit": 3}
 
@@ -186,24 +186,8 @@ def _service_levels(svc: dict, gxmax_state: str) -> list[dict]:
         row("gx-orchestrator", "orchestrator"),
         row("llama-swap gx10-01", "swap_node1", "crit", drained),
         row("llama-swap gx10-02", "swap_node2", "warn", drained),
-        row("media router (gx10-02)", "media", "warn", drained),
+        row("OpenWebUI", "openwebui", "warn"),
     ]
-    media = (svc.get("media") or {}).get("body") or {}
-    comfy = media.get("comfyui") if isinstance(media, dict) else None
-    if isinstance(comfy, dict):
-        rows.append({"name": "ComfyUI (via router)", "ok": bool(comfy.get("reachable")),
-                     "level": "ok" if comfy.get("reachable") else "warn", "status": None,
-                     "ms": None, "error": None, "note": comfy.get("comfyui_version") or ""})
-    elif drained:
-        rows.append({"name": "ComfyUI (via router)", "ok": False, "level": "ok", "status": None,
-                     "ms": None, "error": None, "note": "stopped on purpose while gx-max owns the cluster"})
-    sg = svc.get("sglang") or {}
-    sg_level = "ok"
-    if gxmax_state == "ready" and not sg.get("ok"):
-        sg_level = "crit"
-    rows.append({"name": "SGLang gx-max :30000", "ok": bool(sg.get("ok")), "level": sg_level,
-                 "status": sg.get("status"), "ms": sg.get("ms"),
-                 "error": None, "note": "serving" if sg.get("ok") else "not running (normal unless gx-max is loaded)"})
     return rows
 
 
@@ -293,9 +277,20 @@ def overview(app: App) -> dict:
     ts_level = "ok" if ts1.get("ok") and (ts2.get("ok") or n2.get("reachable")) else "warn"
     git = git_view(app, n1, n2)
     models = live_state(app.cluster, app.results)
-    loaded = [m["alias"] for m in models if m["state"] in ("loaded",)]
+    loaded = [m["alias"] for m in models if m["state"] in ("loaded", "ready")]
     guard = app.cluster.guard.get() or {}
-    media = (svc.get("media") or {}).get("body") or {}
+    gx_card = next((m for m in models if m["alias"] == "gx-max"), None)
+    if gx_card and (gx_card.get("live") or {}).get("mode") == "dual-worker":
+        gx = {
+            "state": gx_card["state"],
+            "phase": "dual-worker",
+            "detail": gx_card.get("state_detail") or "solver gx-code-01 + reviewer gx-code-02",
+            "waiters": 0,
+            "last_error": None,
+            "mode": "dual-worker",
+            "solver": (gx_card.get("live") or {}).get("solver"),
+            "reviewer": (gx_card.get("live") or {}).get("reviewer"),
+        }
     overall = worst(*(n["level"] for n in nodes), *(s["level"] for s in services),
                     *(r["level"] for r in rails), ts_level, git["level"],
                     "warn" if gx.get("last_error") else "ok")
@@ -316,8 +311,6 @@ def overview(app: App) -> dict:
         "queue": {
             "gxmax_waiters": gx.get("waiters"),
             "gxmax_phase": gx.get("phase"),
-            "media_busy": media.get("busy") if isinstance(media, dict) else None,
-            "media_video_queue": media.get("video_queue_depth") if isinstance(media, dict) else None,
             "ui_running": app.actions.running(),
         },
         "problems": _recent_problems(app, nodes, services, gx),
@@ -354,7 +347,6 @@ def nodes(app: App) -> dict:
             "node1": ((svc.get("swap_node1_running") or {}).get("body") or {}).get("running"),
             "node2": ((svc.get("swap_node2_running") or {}).get("body") or {}).get("running"),
         },
-        "media": (svc.get("media") or {}).get("body"),
         "orchestrator": (svc.get("orchestrator") or {}).get("body"),
         "gxmax": gx,
         "ledger": app.cluster.guard.get(),
@@ -398,7 +390,6 @@ def jobs(app: App) -> dict:
     gx = _gxmax(app)
     ev = _orchestrator_events(app)
     svc = app.cluster.services.get() or {}
-    media = (svc.get("media") or {}).get("body") or {}
     return {
         "generated_at": time.time(),
         "gxmax": gx,
@@ -408,7 +399,6 @@ def jobs(app: App) -> dict:
         "phases": ["queued", "preflight", "draining", "admission", "loading_rank1", "loading_rank0",
                    "warming", "ready", "serving", "draining_requests", "stopping_ranks",
                    "memory_recovery", "restoring", "released", "unwinding", "failed", "idle"],
-        "media": media if isinstance(media, dict) else {},
         "ui_jobs": app.actions.jobs(),
     }
 
@@ -422,7 +412,14 @@ def system(app: App) -> dict:
         version = (cfg.repo_root / "VERSION").read_text().strip()
     except OSError:
         pass
-    units = {"gx10-01": n1.get("units") or [], "gx10-02": n2.get("units") or []}
+    hide_units = ("gx-playground", "gx-call", "gx-live", "gx-music", "gx-voice", "gx-comfyui")
+    def _keep_unit(u: dict) -> bool:
+        name = u.get("unit") or ""
+        return not any(h in name for h in hide_units)
+    units = {
+        "gx10-01": [u for u in (n1.get("units") or []) if _keep_unit(u)],
+        "gx10-02": [u for u in (n2.get("units") or []) if _keep_unit(u)],
+    }
     timers = run(["systemctl", "--user", "list-timers", "--all", "--no-pager", "--output=json"], timeout=5)
     try:
         timer_rows = [t for t in json.loads(timers.out) if "gx" in (t.get("unit") or "")] if timers.ok else []
@@ -442,10 +439,10 @@ def system(app: App) -> dict:
             {"name": "gx-orchestrator", "url": cfg.orchestrator_base, "scope": "loopback + docker bridge"},
             {"name": "llama-swap gx10-01", "url": cfg.node1_swap_base, "scope": "loopback"},
             {"name": "llama-swap gx10-02", "url": cfg.node2_swap_base, "scope": "RoCE fabric"},
-            {"name": "media router", "url": cfg.media_base, "scope": "RoCE fabric"},
-            {"name": "SGLang gx-max (rank 0)", "url": cfg.gxmax_base, "scope": "host network, node 1"},
             {"name": "Control UI", "url": f"http://{NODES['node1']['tailscale_ip']}:{cfg.port}/",
              "scope": "Tailscale + loopback"},
+            {"name": "OpenWebUI", "url": "http://127.0.0.1:3000", "scope": "loopback + Tailscale"},
+            {"name": "AgentOS Control Center", "url": "http://127.0.0.1:4173", "scope": "loopback"},
         ],
         "units": units,
         "timers": timer_rows,

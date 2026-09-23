@@ -35,11 +35,6 @@ function partBadge(state) {
   return stateBadge(STATE_BADGE[state] || 'unknown', state);
 }
 
-// GX-Playground runs on port 8090 next to the Control Center (as on the dashboard).
-function playgroundHref(page) {
-  return `${location.protocol}//${location.hostname}:8090/${page}`;
-}
-
 function allowed(op, state, alias) {
   if (alias === 'gx-music') {
     if (op === 'load') return ['ready', 'unloaded', 'error', 'degraded'].includes(state);
@@ -72,7 +67,7 @@ function controls(m) {
     return wrap;
   }
   for (const [op, spec] of ops) {
-    const enabled = allowed(op, m.state, m.alias) || (m.alias.startsWith('gx-image') || m.alias.startsWith('gx-video'));
+    const enabled = allowed(op, m.state, m.alias);
     const cls = op === 'force_release' ? 'btn btn-danger btn-sm' : (op === 'load' ? 'btn btn-primary btn-sm' : 'btn btn-sm');
     const btn = h('button', {
       class: cls, type: 'button', disabled: busy || !enabled,
@@ -89,20 +84,7 @@ function controls(m) {
     });
     wrap.append(btn);
   }
-  if (m.alias === 'gx-image' || m.alias === 'gx-video' || m.alias === 'gx-music') {
-    wrap.append(h('span', { class: 'muted small' }, 'Loads automatically on the first generation. '),
-      h('a', { class: 'small', href: '#/resources' }, 'Resource Control →'));
-  }
   return wrap;
-}
-
-function playgroundLink(m) {
-  if (!m.playground) return null;
-  return h('div', { class: 'btn-row' },
-    h('a', {
-      class: 'btn btn-ghost btn-sm', href: playgroundHref(m.playground),
-      target: '_blank', rel: 'noopener noreferrer', id: `pg-${m.alias}`,
-    }, 'Open in Playground ↗'));
 }
 
 function renderBusy() {
@@ -115,55 +97,25 @@ function rankRow(label, c) {
 
 function gxmaxPanel(m) {
   const lv = m.live || {};
-  const lc = lv.lifecycle || {};
-  const info = lv.sglang_info || {};
-  const served = (lv.sglang_models || []).map((x) => x.id).join(', ');
-  const swap = lv.swap || {};
-  const rdma = lv.rdma || {};
-  const rdmaRows = [];
-  for (const node of ['node1', 'node2']) {
-    for (const r of rdma[node] || []) {
-      if ((r.state || '').includes('ACTIVE')) {
-        rdmaRows.push([node === 'node1' ? 'gx10-01' : 'gx10-02', r.device, r.netdev, r.rate,
-          `${num((r.xmit_bytes || 0) / 2 ** 30, 2)} / ${num((r.rcv_bytes || 0) / 2 ** 30, 2)} GiB`]);
-      }
-    }
-  }
+  const solver = lv.solver || {};
+  const reviewer = lv.reviewer || {};
   return h('div', { class: 'gxmax-panel' },
-    h('h3', {}, 'Two-node engine'),
+    h('h3', {}, 'Dual-worker workflow'),
     kv([
-      ['Model', m.model],
-      ['Revision', m.revision || '—'],
-      ['Engine', 'SGLang · lmsysorg/sglang:dev-v4f-2dgx-v2'],
-      ['Topology', 'TP=2 · nnodes=2 · rank 0 on gx10-01 · rank 1 on gx10-02'],
-      ['Bootstrap', '192.168.100.10:5000 (RoCE rail 1)'],
-      ['Lifecycle state', h('span', {}, stateBadge(lc.state), lc.phase ? ` · phase ${lc.phase}` : '')],
-      ['In state for', duration(lc.seconds_in_state)],
-      ['Waiting requests', String(lc.waiters ?? 0)],
-      ['Readiness (SGLang /health)', lv.sglang_health && lv.sglang_health.ok ? stateBadge('ready', 'healthy') : stateBadge('idle', 'not serving')],
-      ['Served model id', served || '—'],
-      ['Live tp_size / nnodes', info.tp_size ? `${info.tp_size} / ${info.nnodes ?? '—'}` : '—'],
-      ['Last measured startup', lc.last_startup_seconds ? `${lc.last_startup_seconds} s` : 'not recorded yet (reference: 508–559 s cold)'],
-      ['Idle auto-release (keep-warm)', lc.idle_ttl ? `${duration(lc.idle_ttl)}${lc.ttl_remaining_seconds !== null && lc.ttl_remaining_seconds !== undefined ? ` · ${duration(lc.ttl_remaining_seconds)} left` : ''}` : '—'],
+      ['Mode', lv.mode || 'dual-worker'],
+      ['Solver', `${solver.alias || 'gx-code-01'} on ${solver.node || 'gx10-01'} · ${solver.state || '—'}`],
+      ['Reviewer', `${reviewer.alias || 'gx-code-02'} on ${reviewer.node || 'gx10-02'} · ${reviewer.state || '—'}`],
+      ['Workflow', m.state_detail || 'solver drafts, reviewer inspects, repair if needed'],
     ]),
-    table(['Rank', 'Container'], [rankRow('rank 0 (gx10-01)', lv.rank0), rankRow('rank 1 (gx10-02)', lv.rank1)], { caption: 'Ranks' }),
-    kv([
-      ['rank 0 watcher', lv.rank0_watcher && lv.rank0_watcher.alive ? stateBadge('running', `pid ${lv.rank0_watcher.pid}`) : stateBadge('idle', 'not running')],
-      ['rank 1 deadman', lv.rank1_deadman && lv.rank1_deadman.alive ? stateBadge('running', `pid ${lv.rank1_deadman.pid}`) : stateBadge('idle', 'not running')],
-      ['gx10-01 admission lock', stateBadge(lv.node1_lock || 'unknown')],
-      ['gx10-02 admission lock', stateBadge(lv.node2_lock || 'unknown')],
-      ['Swap gx10-01', swap.node1 ? `${gib(swap.node1.used)} / ${gib(swap.node1.total)}` : '—'],
-      ['Swap gx10-02', swap.node2 ? `${gib(swap.node2.used)} / ${gib(swap.node2.total)}` : '—'],
-    ]),
-    h('aside', { class: 'callout callout-warning' },
-      h('strong', {}, 'Startup transient: '),
-      'while the weights stage, gx10-01 drops to ~2.5–3.3 GiB MemAvailable and swap can briefly reach the full ~64 GiB; ',
-      'gx10-02 peaks at ~51–55 GiB swap. This is expected and policed live by gx-max-safety.sh on both nodes. ',
-      'It settles to ~15–18 GiB MemAvailable per node once serving.'),
-    h('h3', {}, 'RDMA proof'),
-    table(['Node', 'Device', 'Netdev', 'Rate', 'Cumulative tx / rx'], rdmaRows, { caption: 'RDMA counters', empty: 'No active RDMA ports reported.' }),
-    h('p', { class: 'muted small' }, 'Counters are cumulative since boot. During a gx-max load and generation both rails move by gigabytes.'),
   );
+}
+
+function codeWorkers(m) {
+  const lv = m.live || {};
+  return kv([
+    ['Worker 01 (gx10-01)', lv['gx-code-01'] || (lv.container && lv.container.node1 && lv.container.node1.state) || '—'],
+    ['Worker 02 (gx10-02)', lv['gx-code-02'] || (lv.container && lv.container.node2 && lv.container.node2.state) || '—'],
+  ]);
 }
 
 function tokens(n) {
@@ -335,8 +287,8 @@ function modelCard(m) {
   h('p', { class: 'muted small' }, m.state_detail || ''),
   interim,
   controls(m),
-  playgroundLink(m),
   facts,
+  m.alias === 'gx-code' ? codeWorkers(m) : null,
   componentsTable(m),
   textPanel(m),
   m.alias === 'gx-max' ? gxmaxPanel(m) : null);
@@ -352,13 +304,11 @@ export default {
     focusAlias = params && params[0] ? params[0] : null;
     clear(root);
     root.append(
-      h('p', { class: 'lead' }, 'The eleven public aliases. Controls call the sanctioned lifecycle only: llama-swap for gx-mini / gx-fast / gx-reason, ',
-        'the orchestrator for gx-max, the media router for gx-image / gx-video, and the gx10-02 supervisors for gx-music, ',
-        'gx-voice, gx-call and gx-live. Those four keep their engine unloaded until a request or a session needs it: ',
-        'an idle engine is READY, not offline. There is no direct docker start for gx-max. ',
-        'Profiles, pins and Maintenance live in ', h('a', { href: '#/resources' }, 'Resource Control'), '.'),
+      h('p', { class: 'lead' }, 'Four logical modes: gx-mini, gx-code, gx-auto and gx-max. ',
+        'gx-code is two independent Ornith Q5_K_M workers (01 on gx10-01, 02 on gx10-02). ',
+        'gx-auto routes light work to mini and coding to gx-code. ',
+        'gx-max is dual-worker solver + reviewer on those two workers.'),
       h('div', { class: 'btn-row' },
-        h('a', { class: 'btn btn-ghost btn-sm', href: '#/playground' }, 'Try a model in the playground →'),
         h('a', { class: 'btn btn-ghost btn-sm', href: '#/docs/models' }, 'Which model should I use? →')),
     );
     outputEl = h('pre', { class: 'job-output', hidden: true, 'aria-live': 'polite', tabindex: '0' });

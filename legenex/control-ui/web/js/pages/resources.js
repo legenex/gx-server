@@ -169,7 +169,7 @@ function nodeColumn(snap, key) {
 
 function profileCard(snap) {
   const cur = snap.profile.profile;
-  const buttons = snap.profiles.filter((p) => p.id !== 'maintenance').map((p) => h('button', {
+  const buttons = snap.profiles.filter((p) => p.user_selectable !== false && p.id !== 'maintenance' && p.id !== 'media' && p.id !== 'music').map((p) => h('button', {
     type: 'button', class: `profile-btn${p.id === cur ? ' active' : ''}`, 'aria-pressed': String(p.id === cur),
     disabled: busy, 'data-profile': p.id, onclick: () => (p.id === cur ? null : changeProfile(p.id)),
   }, h('strong', {}, p.label), h('span', { class: 'small' }, p.summary)));
@@ -201,10 +201,7 @@ function waitingCard(snap) {
   return card('Queues and waiting reasons',
     table(['Runtime', 'State', 'Queued', 'Why'], rows, { caption: 'Waiting work', empty: 'Nothing is waiting.' }),
     kv([
-      ['Creative queue (gx10-01)', Object.entries(snap.queue.creative || {}).map(([k, v]) => `${k} ${v}`).join(', ') || 'empty'],
-      ['Music queue (gx10-02)', String(snap.queue.music || 0)],
-      ['Media router', mr.version ? `v${mr.version} · ${mr.busy ? `busy (${mr.held_by})` : 'idle'} · resident: ${(mr.resident_models || []).length ? mr.resident_alias : 'nothing'}` : 'unreachable'],
-      ['Last memory refusal', mr.last_refusal ? `${mr.last_refusal.kind}: needed ${mr.last_refusal.need_gib} GiB, had ${mr.last_refusal.available_gib} GiB (${ago(mr.last_refusal.at)})` : 'none'],
+      ['Waiting work', rows.length ? `${rows.length} runtime(s)` : 'none'],
     ]));
 }
 

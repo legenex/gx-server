@@ -21,11 +21,16 @@ from .config import PLACEHOLDER_SECRETS, UIConfig
 from .redact import redact
 from .util import HTTPError, TTLCache, bearer, http, http_json, run, ssh_args, tcp_state
 
-TEXT_ALIASES = ("gx-mini", "gx-fast", "gx-reason", "gx-max", "gx-auto")
-MEDIA_ALIASES = ("gx-image", "gx-video")
-#: The eight permanent aliases (L-10 as amended by D-036).
-ALL_ALIASES = ("gx-mini", "gx-fast", "gx-reason", "gx-max", "gx-auto", "gx-image", "gx-video", "gx-music")
-SWAP_MODELS = {"gx-mini": "node1", "gx-fast": "node1", "gx-reason": "node2"}
+TEXT_ALIASES = ("gx-mini", "gx-code", "gx-max", "gx-auto")
+MEDIA_ALIASES = ()
+#: Operator-facing logical modes. Retired media aliases are not probed.
+ALL_ALIASES = ("gx-mini", "gx-code", "gx-auto", "gx-max")
+SWAP_MODELS = {"gx-mini": "node1", "gx-code": "node1"}
+
+
+def _http_status(url: str, timeout: float = 4.0):
+    res = http("GET", url, timeout=timeout)
+    return res.status, {"status": res.status}
 
 
 def _probe(fn, *a, **kw) -> dict:
@@ -114,8 +119,7 @@ class Cluster:
             "swap_node1_running": _probe(http_json, "GET", f"{c.node1_swap_base}/running", headers=swap_h, timeout=4),
             "swap_node2": _probe(http_json, "GET", f"{c.node2_swap_base}/v1/models", headers=swap_h, timeout=3),
             "swap_node2_running": _probe(http_json, "GET", f"{c.node2_swap_base}/running", headers=swap_h, timeout=3),
-            "media": _probe(http_json, "GET", f"{c.media_base}/health", timeout=4),
-            "music": _probe(http_json, "GET", f"{c.music_base}/health", timeout=4),
+            "openwebui": _probe(_http_status, "http://127.0.0.1:3000/", timeout=4),
             "sglang": _probe(http_json, "GET", f"{c.gxmax_base}/health", timeout=3),
             # D-039: per-alias budget, routing and last-request facts.
             "text_status": _probe(http_json, "GET", f"{c.orchestrator_base}/text/status", timeout=4),
@@ -198,7 +202,7 @@ class Cluster:
 
     def secret_hygiene(self) -> list[dict]:
         rows = []
-        for name in ("LITELLM_MASTER_KEY", "GX_SWAP_API_KEY", "GX_MEDIA_API_KEY", "GX_ORCHESTRATOR_API_KEY"):
+        for name in ("LITELLM_MASTER_KEY", "GX_SWAP_API_KEY", "GX_ORCHESTRATOR_API_KEY"):
             value = os.environ.get(name, "")
             if not value:
                 state = "unset"

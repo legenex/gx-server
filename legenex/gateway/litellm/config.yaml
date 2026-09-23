@@ -2,13 +2,19 @@
 # LiteLLM — the single OpenAI-compatible gateway for the gx cluster
 # ==============================================================================
 # Runs on NODE 1 (gx10-01), container port 4000.
-# This file is the gateway for seven of the eight public aliases (gx-music is
-# served by GX-Playground's /v1/music API, D-036):
+# Public logical modes (the only aliases operators and apps should pick):
 #
-#   gx-mini    gx-fast    gx-reason    gx-max    gx-auto    gx-image    gx-video
+#   gx-mini    gx-code    gx-auto    gx-max
 #
-# There is deliberately NO gx-vision alias: vision is a capability of the
-# underlying model (gx-mini is multimodal), not a separate product.
+# gx-code-01 and gx-code-02 are internal workers required by gx-code load-
+# balancing and by gx-max dual-worker (solver + reviewer). They stay in this
+# file so the orchestrator can address a specific node. They are not primary
+# user-facing modes.
+#
+# Retired from the gateway (source remains in git): gx-fast, gx-reason,
+# gx-image, gx-video, gx-voice, gx-music. llama-swap on node 2 still accepts
+# the historical upstream id "gx-reason" as an alias of gx-code; do not
+# rename that llama-swap alias without updating the gx-code-02 block below.
 #
 # ------------------------------------------------------------------------------
 # SECRETS
@@ -20,13 +26,12 @@
 # ------------------------------------------------------------------------------
 # WHERE EACH ALIAS ACTUALLY GOES
 # ------------------------------------------------------------------------------
-#   gx-mini   -> node 1 llama-swap  http://gx-llama-swap-node01:8080/v1   (compose DNS)
-#   gx-fast   -> node 1 llama-swap  http://gx-llama-swap-node01:8080/v1   (compose DNS)
-#   gx-reason -> node 2 llama-swap  http://192.168.100.11:28080/v1        (RoCE fabric A)
-#   gx-max    -> lead's orchestrator http://host.docker.internal:18900/v1 (host loopback)
-#   gx-auto   -> lead's orchestrator http://host.docker.internal:18900/v1 (host loopback)
-#   gx-image  -> node 2 media router http://192.168.100.11:18800/v1       (live, verified 2026-09-15)
-#   gx-video  -> node 2 media router http://192.168.100.11:18800/v1       (live, verified 2026-09-15)
+#   gx-mini     -> node 1 llama-swap  http://gx-llama-swap-node01:8080/v1   (compose DNS)
+#   gx-code     -> node 1 llama-swap gx-code + node 2 llama-swap (fabric)
+#   gx-code-01  -> node 1 llama-swap  http://gx-llama-swap-node01:8080/v1
+#   gx-code-02  -> node 2 llama-swap  http://192.168.100.11:28080/v1        (RoCE fabric A)
+#   gx-max      -> orchestrator http://host.docker.internal:18900/v1 (dual-worker)
+#   gx-auto     -> orchestrator http://host.docker.internal:18900/v1
 #
 # host.docker.internal resolves to the host gateway (docker-compose.gateway.yml
 # sets extra_hosts: host-gateway). From the HOST's point of view the orchestrator
@@ -39,10 +44,9 @@
 # ------------------------------------------------------------------------------
 # gx-max SAFETY
 # ------------------------------------------------------------------------------
-# gx-max is DeepSeek V4 Flash on SGLang TP=2 across BOTH nodes. It is served by
-# the lead's orchestrator, NOT directly at :30000, so acquisition/drain is
-# enforced before any token is generated. Pointing gx-max at :30000 would bypass
-# that and is forbidden.
+# gx-max default is dual-worker (solver gx-code-01 + reviewer gx-code-02) via
+# the orchestrator. Optional DeepSeek SGLang TP=2 remains on disk as
+# GX_MAX_MODE=deepseek and must still never be pointed at :30000 from here.
 # gx-max has NO fallbacks. If the cluster cannot serve it, the request must FAIL
 # — silently answering from a different model would be worse than an error.
 # Enforced globally below: num_retries 0, fallbacks [], context_window_fallbacks
@@ -82,8 +86,6 @@ general_settings:
   # Single shared semaphore across the whole proxy. Excess requests are rejected
   # with 429 rather than queued into a cold-start stampede.
   global_max_parallel_requests: 32
-  # Media uploads (image/video edits, image-to-video) go through the gateway
-  # as multipart bodies; the node-2 router caps its own uploads at 150 MB.
   max_request_size_mb: 160
   max_response_size_mb: 160
 
@@ -115,33 +117,12 @@ model_list:
       supports_function_calling: true
 
   # ===========================================================================
-  # gx-fast — primary coding / tools / agent tier. Node 1, vLLM, resident.
-  # ===========================================================================
-  # kyaky/Qwen3.6-35B-A3B-Uncensored-NVFP4 @ 33d5cf837389 (D-030), bound in
-  # llama-swap/node01.yaml. Verified 2026-09-17: ~55 tok/s, tools, vision,
-  # 0.08 s warm TTFT. Thinking is off by default for interactive turns; a
-  # request may send chat_template_kwargs {"enable_thinking": true}.
-  - model_name: gx-fast
-    litellm_params:
-      model: openai/gx-fast
-      api_base: "http://gx-llama-swap-node01:8080/v1"
-      api_key: os.environ/GX_SWAP_API_KEY
-      drop_params: true
-      extra_body:
-        chat_template_kwargs: {"enable_thinking": false}
-    model_info:
-      # vLLM --max-model-len 131072.
-      max_input_tokens: 98304
-      max_output_tokens: 32768
-      supports_function_calling: true
-      supports_vision: true
-
-  # ===========================================================================
   # gx-code — primary coding workers (independent, one per node)
   # ===========================================================================
-  # During the Ornith cutover this alias load-balances the existing node-1
-  # gx-fast and node-2 gx-reason engines. llama-swap then swaps the underlying
-  # checkpoints to Ornith-1.5-35B without changing this gateway contract.
+  # Ornith-1.5-35B-A3B Q5_K_M llama.cpp on both nodes. LiteLLM load-balances
+  # the gx-code alias across gx-code-01 (gx10-01) and gx-code-02 (gx10-02).
+  # gx-code-01 / gx-code-02 exist so gx-max dual-worker can pin solver and
+  # reviewer. They are not primary operator modes.
   - model_name: gx-code
     litellm_params:
       model: openai/gx-code
@@ -186,54 +167,13 @@ model_list:
       max_output_tokens: 16384
 
   # ===========================================================================
-  # gx-reason — deep reasoning. Node 2, heavy tier, over the RoCE fabric.
+  # gx-max — dual-worker solver + reviewer (default GX_MAX_MODE=dual-worker).
   # ===========================================================================
-  # Checkpoint: nvidia/Qwen3.6-27B-NVFP4 on vLLM (dense 27B, hybrid attention),
-  # bound in legenex/gateway/llama-swap/node02.yaml. It replaces the
-  # Qwen3.5-122B-A10B GGUF/llama.cpp tier, which is confirmed broken on this
-  # hardware (coordination/BLOCKERS.md B-011, coordination/DECISIONS.md D-021).
-  # As with gx-fast, the stable upstream ID stays "gx-reason", so this block
-  # does not change when the checkpoint does — only node02.yaml does.
-  #
-  # api_base uses the fabric IP on purpose. Node 2's Tailscale address
-  # (100.73.238.4) must NEVER be used here — management plane only.
-  - model_name: gx-reason
-    litellm_params:
-      model: openai/gx-reason
-      api_base: "http://192.168.100.11:28080/v1"
-      api_key: os.environ/GX_SWAP_API_KEY
-      drop_params: true
-      include_reasoning: true
-      supports_reasoning: true
-      merge_reasoning_content_in_choices: true
-      # Cold start on unified memory is minutes, not seconds. The 27B NVFP4
-      # checkpoint is far smaller than the 122B GGUF this replaced, so this
-      # is now a generous ceiling rather than a tight one.
-      timeout: 2400
-    model_info:
-      # Matches node02.yaml --max-model-len 65536. Split differently from
-      # gx-fast (57344/8192) on purpose: this is the REASONING tier and its
-      # <think> content is emitted as output tokens, so the output budget is
-      # doubled at the expense of input. Revisit with real traces.
-      max_input_tokens: 49152
-      max_output_tokens: 16384
-      supports_function_calling: true
-      supports_vision: true
-
-  # ===========================================================================
-  # gx-max — DeepSeek V4 Flash 0731 (uncensored), SGLang TP=2 across BOTH nodes.
-  # ===========================================================================
-  # dealignai/DeepSeek-V4-Flash-0731-CRACK-NVFP4 @ c66fe3848cb8 (D-032).
-  # MUST go through the lead's orchestrator on :18900, NEVER directly to the
-  # SGLang server on :30000. The orchestrator enforces cluster acquisition and
-  # drain; bypassing it can collide with a live distributed job.
+  # MUST go through the orchestrator on :18900. Dual-worker uses gx-code-01
+  # as solver and gx-code-02 as reviewer. Optional DeepSeek SGLang TP=2 is
+  # GX_MAX_MODE=deepseek and still must never be pointed at :30000 from here.
   #
   # NO FALLBACKS. Ever. A failed gx-max request returns an error.
-  #
-  # PENDING: the model ID the orchestrator expects. The SGLang server itself
-  # reports its model literally as "/model". If the orchestrator passes the
-  # model field straight through, change `model:` below to `openai//model`.
-  # If it maps aliases itself, "openai/gx-max" is correct. Lead to confirm.
   - model_name: gx-max
     litellm_params:
       model: openai/gx-max
@@ -243,13 +183,11 @@ model_list:
       include_reasoning: true
       supports_reasoning: true
       merge_reasoning_content_in_choices: true
-      # The orchestrator may have to acquire both nodes and cold-start SGLang.
       timeout: 3600
       num_retries: 0
     model_info:
-      # SGLang --context-length 327680 (gx-max.conf).
-      max_input_tokens: 262144
-      max_output_tokens: 65536
+      max_input_tokens: 49152
+      max_output_tokens: 16384
       supports_function_calling: true
 
   # ===========================================================================
@@ -267,90 +205,20 @@ model_list:
       drop_params: true
       timeout: 3600
     model_info:
-      # D-039: gx-fast is gx-auto's default workhorse, so gx-auto advertises
-      # gx-fast's limits (clients such as Kilo condense context from these).
-      # The orchestrator routes each request to a tier that HOLDS it and
-      # clamps max_tokens so input + output + margin fits that tier's window;
-      # an input nothing running can hold is refused at once (400
-      # context_length_exceeded, never retried).
-      max_input_tokens: 98304
-      max_output_tokens: 32768
+      # gx-auto advertises gx-code's window. The orchestrator routes each
+      # request to a tier that HOLDS it and clamps max_tokens so input +
+      # output + margin fits that tier's window.
+      max_input_tokens: 49152
+      max_output_tokens: 16384
       supports_function_calling: true
       supports_vision: true
-
-  # ===========================================================================
-  # gx-image — ComfyUI-backed image generation AND editing. Node 2.
-  # ===========================================================================
-  # /v1/images/generations (text-to-image, uncensored template by default),
-  # /v1/images/edits (Qwen-Image-Edit-2511; multipart image + prompt) and
-  # /v1/images/variations are forwarded to the router (D-031).
-  # Live and verified 2026-09-15: a real request through this exact api_base
-  # (router on the RoCE fabric -> ComfyUI GPU -> output) produced a genuine
-  # 1024x1024 image matching the prompt in 28s via the Lightning workflow.
-  # This comment previously said "UPSTREAM PENDING" -- stale; the router has
-  # existed and been tested (43 unit/integration tests) since 2026-09-14.
-  - model_name: gx-image
-    litellm_params:
-      model: openai/gx-image
-      api_base: "http://192.168.100.11:18800/v1"
-      api_key: os.environ/GX_MEDIA_API_KEY
-      drop_params: true
-      timeout: 1800
-    model_info:
-      mode: image_generation
-      # Token limits are not meaningful for image generation; values kept small
-      # and present only so clients that read model_info get a sane answer.
-      max_input_tokens: 4096
-      max_output_tokens: 4096
-
-  # ===========================================================================
-  # gx-video — ComfyUI-backed video generation and editing. Node 2.
-  # ===========================================================================
-  # OpenAI video API (D-031): POST /v1/videos (text-to-video, or image-to-video
-  # with input_reference), GET /v1/videos/{id}, GET /v1/videos/{id}/content,
-  # POST /v1/videos/{id}/remix and POST /v1/videos/edits (video-to-video).
-  # Live and verified 2026-09-15: a real async request against this router
-  # (POST /v1/videos -> poll -> GET .../content) produced a genuine playable
-  # MP4 via the wan22-t2v-a14b-lightning workflow in 58s. This comment
-  # previously said "UPSTREAM PENDING" -- stale; the router has existed and
-  # been tested (43 unit/integration tests) since 2026-09-14. There is still
-  # no OpenAI-standard video-generation endpoint, so this remains a
-  # deliberate pass-through to the router's own /v1/videos contract rather
-  # than a LiteLLM-native video mode.
-  - model_name: gx-video
-    litellm_params:
-      model: openai/gx-video
-      api_base: "http://192.168.100.11:18800/v1"
-      api_key: os.environ/GX_MEDIA_API_KEY
-      drop_params: true
-      timeout: 3600
-    model_info:
-      mode: video_generation
-      max_input_tokens: 4096
-      max_output_tokens: 4096
-
-  # ===========================================================================
-  # gx-voice — Qwen3-TTS 12Hz 1.7B text-to-speech. Node 2 (Build V3 VOI, D-040).
-  # ===========================================================================
-  # OpenAI POST /v1/audio/speech, forwarded to the gx-voice supervisor on the
-  # RoCE fabric (legenex/voice). `voice` is a preset speaker, a saved voice
-  # name or a voice id. GX_VOICE_API_KEY holds the value of
-  # /srv/projects/gx-cluster/secrets/gx-voice/api-key (gateway .env).
-  - model_name: gx-voice
-    litellm_params:
-      model: openai/gx-voice
-      api_base: "http://192.168.100.11:18830/v1"
-      api_key: os.environ/GX_VOICE_API_KEY
-      timeout: 900
-    model_info:
-      mode: audio_speech
 
 litellm_settings:
   drop_params: true
   set_verbose: false
 
   # --- D-039: context budgeting + text latency metrics ----------------------
-  # gx-mini / gx-fast / gx-reason: max_tokens is clamped so input + output +
+  # gx-mini / gx-code: max_tokens is clamped so input + output +
   # margin fits the served window, and an input that cannot fit is refused
   # at once (400 context_length_exceeded, x-should-retry: false). Uses the
   # orchestrator's budget module (mounted read-only). Also appends one

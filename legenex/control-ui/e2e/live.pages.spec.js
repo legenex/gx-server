@@ -39,10 +39,9 @@ test('dashboard and runtime reflect both real nodes', async ({ page }) => {
   }
   expect(ov.rails.every((r) => r.ok)).toBe(true);
   expect(ov.tailscale.level).toBe('ok');
-  // D-036/D-040 (2026-09-17): the Models page lists all eleven canonical
-  // aliases, not just the seven served by the LiteLLM gateway.
-  expect(ov.models.map((m) => m.alias)).toEqual(['gx-mini', 'gx-fast', 'gx-reason', 'gx-max', 'gx-auto', 'gx-image', 'gx-video',
-    'gx-music', 'gx-voice', 'gx-call', 'gx-live']);
+  expect(ov.models.map((m) => m.alias)).toEqual(['gx-mini', 'gx-code', 'gx-auto', 'gx-max']);
+  expect(ov.models.map((m) => m.alias)).not.toContain('gx-image');
+  expect(ov.models.map((m) => m.alias)).not.toContain('gx-fast');
   expect(ov.git.node2_push_disabled).toBe(true);
   expect(ov.git.node1_head).toMatch(/^[0-9a-f]{40}$/);
   expect(ov.git.node2_head).toMatch(/^[0-9a-f]{40}$/);
@@ -53,7 +52,7 @@ test('dashboard and runtime reflect both real nodes', async ({ page }) => {
   await expect(page.locator('#page-dashboard').getByRole('heading', { name: 'gx10-02' })).toBeVisible();
   await gotoPage(page, 'runtime', 'Runtime');
   await expect(page.locator('#page-runtime')).toContainText('/swapfile-sglang');
-  await expect(page.locator('#page-runtime')).toContainText('gx-media-router');
+  await expect(page.locator('#page-runtime')).toContainText('gx-code');
   await gotoPage(page, 'cluster', 'Cluster');
   await expect(page.locator('#page-cluster')).toContainText('rocep1s0f0');
   await expect(page.locator('#page-cluster')).toContainText('roceP2p1s0f0');
@@ -62,9 +61,9 @@ test('dashboard and runtime reflect both real nodes', async ({ page }) => {
 
 test('logs load safely from both nodes', async ({ page }) => {
   await login(page, livePassword());
-  for (const id of ['orchestrator', 'litellm', 'swap-node1', 'swap-node2', 'media-router', 'comfyui',
+  for (const id of ['orchestrator', 'litellm', 'swap-node1', 'swap-node2', 'gx-mini', 'gx-code-01',
     'git-autosync', 'git-reconcile', 'audit-node1', 'audit-node2', 'hostwatch-node1', 'hostwatch-node2',
-    'rank1-deadman', 'rank0-watch']) {
+    'open-webui', 'backup']) {
     const data = await apiGet(page, `/api/logs/${id}?lines=50`);
     expect(data.error, id).toBe('');
     expect(data.count, id).toBeGreaterThan(0);

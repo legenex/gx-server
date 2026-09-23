@@ -203,8 +203,6 @@ function pageContext() {
 }
 
 function initShell() {
-  // Same host, Playground port: works on the Tailscale address and on loopback.
-  $('nav-playground').href = `${location.protocol}//${location.hostname}:8090/`;
   window.addEventListener('hashchange', () => {
     // Only '#/page' hashes are routes; anything else is an in-page anchor.
     if (location.hash.startsWith('#/') || !location.hash) route();

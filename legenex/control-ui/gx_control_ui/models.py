@@ -1,17 +1,9 @@
-"""The eleven public aliases: static facts plus live state.
+"""Operator-facing modes plus retired alias facts.
 
-`legenex/models/registry.json` is the single source of truth for WHICH aliases
-exist (L-10 as amended by D-036 and D-040) and for the model bound to each one;
-`ALIAS_ROLE` below only adds what is a property of the alias rather than of the
-model. The rest of the static facts come from the reviewed configuration files
-(`legenex/gateway/litellm/config.yaml`, `llama-swap/node0{1,2}.yaml`,
-`legenex/lifecycle/gx-max.conf`) and the measured values in TEST_RESULTS.md.
-Live state is derived only from real probes -- a container existing is never
-reported as "healthy".
-
-Two live states, not one: for the node-2 services (gx-music, gx-voice, gx-call,
-gx-live) the supervisor is a resident process and the engine is weights it
-loads on demand. An idle engine is READY, never offline.
+The active cluster presents four logical modes: gx-mini, gx-code, gx-auto,
+gx-max. Retired media/playground aliases remain in ALIAS_ROLE so source and
+tests can still name them, but `/api/models` and the Models page only emit
+PRIMARY_ALIASES.
 """
 
 from __future__ import annotations
@@ -30,17 +22,79 @@ from .util import HTTPError, TTLCache, http_json
 #: on-demand engine; the LLM aliases are llama-swap / lifecycle managed.
 LLM, MEDIA, AUDIO = "llm", "media", "audio-realtime"
 
+#: The only aliases shown on the Models page and in cluster overview.
+PRIMARY_ALIASES = ("gx-mini", "gx-code", "gx-auto", "gx-max")
+
+#: Live facts for the four-mode cluster (registry.json still names older binds).
+PRIMARY_FACTS: dict[str, dict[str, Any]] = {
+    "gx-mini": {
+        "model": "Ornith-1.5-9B-uncensored",
+        "repository": "junafinity/Ornith-1.5-9B-uncensored-GGUF-8bit",
+        "revision": "10d5524ca2258decffa044ddf233b17fb239e838",
+        "engine": "llama.cpp (legenex/llama-cpp-spark) via llama-swap",
+        "quantization": "GGUF Q8_0 + f16 vision projector",
+        "parameters": "9B dense",
+        "family": "Ornith 1.5 / Qwen3.5-family hybrid",
+        "path": "/srv/models/gguf/Ornith-1.5-9B-uncensored-Q8_0",
+        "nodes": ["gx10-01"],
+        "context": 65536,
+        "max_output": 8192,
+        "startup": "resident on gx10-01 (ttl 0, preloaded with llama-swap)",
+        "resource": "about 10 GiB on gx10-01",
+        "licence": "apache-2.0",
+        "uncensored": "yes",
+        "vision": True,
+        "tools": True,
+    },
+    "gx-code": {
+        "model": "Ornith-1.5-35B-A3B Uncensored",
+        "repository": "0xKitkat/Ornith-1.5-35B-A3B-Uncensored-GGUF",
+        "revision": "ab0eed77c73880afda789a3914003db2273fd64a",
+        "engine": "llama.cpp (legenex/llama-cpp-spark) via llama-swap, one worker per node",
+        "quantization": "GGUF Q5_K_M + BF16 vision projector",
+        "parameters": "~35B total, ~3B active (MoE)",
+        "family": "Ornith 1.5-35B-A3B",
+        "path": "/srv/models/gguf/Ornith-1.5-35B-A3B-Uncensored",
+        "nodes": ["gx10-01", "gx10-02"],
+        "context": 65536,
+        "max_output": 16384,
+        "startup": "resident on both nodes (ttl 0, preloaded with llama-swap)",
+        "resource": "about 48 GiB cgroup cap per worker",
+        "licence": "apache-2.0",
+        "uncensored": "yes",
+        "vision": True,
+        "tools": True,
+    },
+    "gx-auto": {
+        "model": "orchestrator router",
+        "engine": "gx-orchestrator :18900",
+        "nodes": ["gx10-01"],
+        "startup": "always on; picks gx-mini or gx-code per request",
+        "resource": "none of its own — uses the chosen worker",
+        "measured": "greeting/summary -> gx-mini; coding/debug -> gx-code (queued, never silent-downgraded to mini)",
+        "notes": None,
+    },
+    "gx-max": {
+        "model": "dual-worker solver + reviewer",
+        "engine": "gx-orchestrator dual-worker (gx-code-01 solver, gx-code-02 reviewer)",
+        "nodes": ["gx10-01", "gx10-02"],
+        "startup": "uses the two gx-code workers; no SGLang acquire in the default mode",
+        "resource": "the two gx-code workers already resident",
+        "quantization": "GGUF Q5_K_M (same Ornith 35B workers)",
+    },
+}
+
 #: Behaviour that is a property of the alias, not of the model bound to it.
 ALIAS_ROLE: dict[str, dict[str, Any]] = {
     "gx-mini": {
-        "purpose": "Fastest tier: chat, extraction, classification, simple vision, lightweight tools. Always hot.",
+        "purpose": "Always-on small uncensored helper on gx10-01.",
         "endpoint": "LiteLLM gx-mini -> gx-llama-swap-node01 -> 127.0.0.1:19001",
         "controls": ["load", "unload", "restart"],
         "kind": LLM,
     },
     "gx-code": {
-        "purpose": "Independent Ornith coding workers, one per GX10 node. Load-balanced as gx-code.",
-        "endpoint": "LiteLLM gx-code -> llama-swap gx-code on gx10-01 and 192.168.100.11:28080",
+        "purpose": "Serious coding/reasoning. Independent Ornith Q5_K_M workers on both nodes, load-balanced as gx-code.",
+        "endpoint": "LiteLLM gx-code -> llama-swap gx-code on gx10-01 and gx10-02 (RoCE)",
         "controls": ["load", "unload", "restart"],
         "kind": LLM,
     },
@@ -57,16 +111,15 @@ ALIAS_ROLE: dict[str, dict[str, Any]] = {
         "kind": LLM,
     },
     "gx-max": {
-        "purpose": "The largest model: explicit hardest work. Takes over BOTH nodes.",
-        "endpoint": "LiteLLM gx-max -> gx-orchestrator :18900 -> SGLang :30000 (rank 0)",
-        "controls": ["load", "unload", "restart", "force_release"],
+        "purpose": "Hardest work: solver on gx-code-01, independent reviewer on gx-code-02.",
+        "endpoint": "LiteLLM gx-max -> gx-orchestrator :18900 (GX_MAX_MODE=dual-worker)",
+        "controls": [],
         "kind": LLM,
-        "topology": {"tp": 2, "nnodes": 2, "rank0": "gx10-01", "rank1": "gx10-02",
-                     "dist_init_addr": "192.168.100.10:5000", "image": "lmsysorg/sglang:dev-v4f-2dgx-v2"},
+        "topology": {"mode": "dual-worker", "solver": "gx-code-01", "reviewer": "gx-code-02",
+                     "solver_node": "gx10-01", "reviewer_node": "gx10-02"},
     },
     "gx-auto": {
-        "purpose": "Let the orchestrator pick mini / fast / reason per request (Kilo-aware). Uses gx-max only if it "
-                   "is already running.",
+        "purpose": "Router: gx-mini for light work, gx-code for coding (queued, never silent-downgraded).",
         "endpoint": "LiteLLM gx-auto -> gx-orchestrator :18900",
         "controls": [],
         "kind": LLM,
@@ -193,6 +246,8 @@ def catalog(path: Path | None = None) -> dict[str, dict[str, Any]]:
             "measured_footprint": spec.get("measured_footprint"),
             "notes": spec.get("notes"),
         }
+        if alias in PRIMARY_FACTS:
+            out[alias].update({k: v for k, v in PRIMARY_FACTS[alias].items() if v is not None})
     return out
 
 
@@ -432,9 +487,12 @@ def live_state(cluster: Cluster, results: ResultLog) -> list[dict]:
     media_body: dict = raw_media if media.get("ok") and isinstance(raw_media, dict) else {}
 
     cards = catalog()
-    tenants = tenant_probes(cluster, svc)
+    tenants = {}
     out = []
-    for alias, card in cards.items():
+    for alias in PRIMARY_ALIASES:
+        card = cards.get(alias)
+        if not card:
+            continue
         info = dict(card)
         state, detail = "unavailable", ""
         service_state: str | None = None
@@ -475,35 +533,24 @@ def live_state(cluster: Cluster, results: ResultLog) -> list[dict]:
                 extra["container"] = {"node1": c1.get("gx-code"), "node2": c2.get("gx-code")}
             extra["admission"] = None
         elif alias == "gx-max":
-            mapping = {"down": "unloaded", "acquiring": "loading", "ready": "loaded",
-                       "releasing": "unloading"}
-            state = mapping.get(gxmax_state, "unavailable")
-            detail = lc_status.get("last_error") or lc_status.get("detail") or ""
-            tier = tiers.get("gx-max") or {}
-            if gxmax_state == "down" and tier.get("state") == "unavailable":
-                state, detail = "unavailable", tier.get("reason", "")
-            sglang = svc.get("sglang") or {}
+            raw1, r1ok = _swap_entry(svc, "swap_node1", "gx-code")
+            raw2, r2ok = _swap_entry(svc, "swap_node2", "gx-code")
+            solver_ok = r1ok and raw1 in ("loaded", "ready")
+            reviewer_ok = r2ok and raw2 in ("loaded", "ready")
+            if solver_ok and reviewer_ok:
+                state, detail = "loaded", "dual-worker ready: solver gx-code-01 + reviewer gx-code-02"
+            elif r1ok or r2ok:
+                state, detail = "ready", "dual-worker: waiting for both gx-code workers"
+            else:
+                state, detail = "unavailable", "gx-code workers unreachable"
             extra.update({
+                "mode": "dual-worker",
+                "solver": {"alias": "gx-code-01", "node": "gx10-01", "state": raw1, "reachable": r1ok},
+                "reviewer": {"alias": "gx-code-02", "node": "gx10-02", "state": raw2, "reachable": r2ok},
                 "lifecycle": lc_status,
-                "orchestrator_view": tier,
-                "rank0": c1.get("gx-max-rank0"),
-                "rank1": c2.get("gx-max-rank1"),
-                "rank0_watcher": n1.get("gxmax_watcher"),
-                "rank1_deadman": n2.get("gxmax_watcher"),
-                "node1_lock": n1.get("guard_lock"),
-                "node2_lock": n2.get("guard_lock"),
-                "sglang_health": {"ok": sglang.get("ok"), "status": sglang.get("status"),
-                                  "checked_at": sglang.get("checked_at")},
-                "sglang_models": ((svc.get("sglang_models") or {}).get("body") or {}).get("data"),
-                "sglang_info": (svc.get("sglang_info") or {}).get("body"),
-                "ledger": cluster.guard.get(),
-                "swap": {
-                    "node1": _swap_summary(n1), "node2": _swap_summary(n2),
-                },
-                "rdma": {"node1": n1.get("rdma"), "node2": n2.get("rdma")},
+                "orchestrator_view": tiers.get("gx-max") or {},
+                "container": {"node1": c1.get("gx-code"), "node2": c2.get("gx-code")},
             })
-            if gxmax_state == "ready" and not sglang.get("ok"):
-                state, detail = "error", "orchestrator READY but SGLang /health failing"
         elif alias == "gx-auto":
             if orch.get("ok"):
                 usable = [t for t, v in tiers.items() if v.get("usable") and t != "gx-max"]
@@ -545,7 +592,7 @@ def live_state(cluster: Cluster, results: ResultLog) -> list[dict]:
             # A registry binding with no probe wired up yet: say so, never guess.
             state, detail = "unavailable", "no live probe for this alias yet"
 
-        if alias in ("gx-mini", "gx-fast", "gx-reason", "gx-max", "gx-auto"):
+        if alias in ("gx-mini", "gx-code", "gx-max", "gx-auto"):
             text = text_live(alias, svc)
             extra["text"] = text
             if text["degraded"] and state in ("loaded", "ready"):

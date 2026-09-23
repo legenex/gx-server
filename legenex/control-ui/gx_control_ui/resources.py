@@ -53,19 +53,16 @@ IDLE_CAPACITY_GIB = {"node1": 113.0, "node2": 113.0}
 NODE2_MAX_AVAILABLE_GIB = 117.0
 
 PROFILES: dict[str, dict[str, Any]] = {
-    "auto": {"label": "Auto", "summary": "Default. The scheduler keeps text tiers resident, loads media and music "
-             "on demand, frees idle work when something else needs the memory, and queues what cannot run yet.",
-             "priority": [], "user_selectable": True},
-    "text": {"label": "Text / Agent", "summary": "gx-mini, gx-fast and gx-reason come first. Image, video and "
-             "music stay available but wait instead of unloading gx-reason.",
-             "priority": ["gx-mini", "gx-fast", "gx-reason"], "user_selectable": True},
-    "media": {"label": "Media", "summary": "gx-image and gx-video come first. An idle gx-reason or music engine "
-              "on gx10-02 is unloaded when a media job needs the memory. gx10-01 is not touched.",
-              "priority": ["gx-image", "gx-video"], "user_selectable": True},
-    "music": {"label": "Music", "summary": "gx-music comes first. Idle ComfyUI weights are handed over through "
-              "the media router, and an idle gx-reason is unloaded only if music still does not fit. Video "
-              "waits while music is working.",
-              "priority": ["gx-music"], "user_selectable": True},
+    "auto": {"label": "Auto", "summary": "Default. gx-mini stays resident; gx-code workers stay resident; "
+             "gx-auto routes; gx-max dual-worker uses both coding workers.",
+             "priority": ["gx-mini", "gx-code"], "user_selectable": True},
+    "text": {"label": "Text / Agent", "summary": "gx-mini, gx-code, gx-auto and gx-max. The active cluster is "
+             "text/coding/agent only.",
+             "priority": ["gx-mini", "gx-code"], "user_selectable": True},
+    "media": {"label": "Media (retired)", "summary": "Retired. Image/video generation is not part of the active cluster.",
+              "priority": [], "user_selectable": False},
+    "music": {"label": "Music (retired)", "summary": "Retired. Music generation is not part of the active cluster.",
+              "priority": [], "user_selectable": False},
     "max": {"label": "Max", "summary": "Prepares the whole cluster for gx-max through its existing takeover "
             "lifecycle: drain both nodes, verify memory, start rank 1, then rank 0. Everything else waits.",
             "priority": ["gx-max"], "user_selectable": True},

@@ -403,7 +403,7 @@ def build_registry(r: ActionRunner) -> dict[str, ActionSpec]:
             return None
         return inner
 
-    for alias in ("gx-mini", "gx-fast", "gx-reason"):
+    for alias in ("gx-mini", "gx-code"):
         node = "gx10-01" if SWAP_MODELS[alias] == "node1" else "gx10-02"
         specs += [
             ActionSpec(f"model.{alias}.load", f"Load {alias}",
@@ -599,27 +599,22 @@ def build_registry(r: ActionRunner) -> dict[str, ActionSpec]:
                    docker_restart_local("gx-litellm", f"{cfg.litellm_base}/health/liveliness"),
                    r.require_no_transition),
         ActionSpec("infra.restart_swap_node1", "Restart llama-swap (gx10-01)",
-                   "docker restart gx-llama-swap-node01. Stops gx-mini/gx-fast; they reload on demand.",
+                   "docker restart gx-llama-swap-node01. Stops gx-mini/gx-code-01; they reload on demand.",
                    "caution", "cluster",
                    docker_restart_local("gx-llama-swap-node01", f"{cfg.node1_swap_base}/health"),
                    r.require_gxmax_quiet),
         ActionSpec("infra.restart_swap_node2", "Restart llama-swap (gx10-02)",
-                   "docker restart gx-llama-swap-node02 on gx10-02. Stops gx-reason.",
+                   "docker restart gx-llama-swap-node02 on gx10-02. Stops gx-code-02; it reloads on demand.",
                    "caution", "cluster",
                    docker_restart_node2("gx-llama-swap-node02", f"{cfg.node2_swap_base}/health"),
                    _all_checks(r.require_gxmax_quiet, r.require_node2)),
-        ActionSpec("infra.restart_media_router", "Restart media router (gx10-02)",
-                   "docker restart gx-media-router. Refused while a generation is running.",
-                   "caution", "media",
-                   docker_restart_node2("gx-media-router", f"{cfg.media_base}/health"),
-                   _all_checks(r.require_gxmax_quiet, r.require_node2, r.media_busy)),
         ActionSpec("infra.restart_orchestrator", "Restart gx-orchestrator",
                    "systemctl --user restart gx-orchestrator.service. Refused while gx-max is "
                    "loading or releasing; a serving gx-max is re-adopted on start.",
                    "caution", "cluster", restart_orchestrator, r.require_no_transition),
         ActionSpec("infra.restore_normal", "Restore normal workloads",
-                   "Runs lifecycle/restore-normal.sh: brings the gateway, orchestrator, node 2 "
-                   "llama-swap and media control planes back up. Loads no model.",
+                   "Runs lifecycle/restore-normal.sh: brings the gateway, orchestrator and "
+                   "node 2 llama-swap back up. Loads no model.",
                    "caution", "cluster", restore_normal, r.require_gxmax_quiet),
     ]
     return {s.name: s for s in specs}

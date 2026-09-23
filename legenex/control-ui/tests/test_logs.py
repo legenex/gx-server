@@ -45,8 +45,8 @@ class TestStreams(unittest.TestCase):
             self.assertNotIn(".env", s.target)
             self.assertNotIn("secrets", s.target)
             self.assertNotIn("..", s.target)
-        required = {"orchestrator", "litellm", "swap-node1", "swap-node2", "rank0", "rank1",
-                    "gxmax-safety", "rank0-watch", "rank1-deadman", "media-router", "comfyui",
+        required = {"orchestrator", "litellm", "swap-node1", "swap-node2", "gx-mini",
+                    "gx-code-01", "gx-code-02", "gx-auto", "open-webui", "backup",
                     "git-autosync", "git-reconcile", "audit-node1", "audit-node2", "hostwatch-node1"}
         self.assertTrue(required <= set(ids), required - set(ids))
 
@@ -107,12 +107,12 @@ class TestStreams(unittest.TestCase):
         env = TempEnv(offline=False)
         try:
             with mock.patch.object(logs, "run", fake_run):
-                data = read_stream(env.cfg, "media-router", "25; rm -rf /")
+                data = read_stream(env.cfg, "gx-code-02", "25; rm -rf /")
         finally:
             env.cleanup()
         self.assertEqual(data["lines"], ["l1", "l2"])
         remote = captured["args"][-1]
-        self.assertEqual(remote, f"docker logs --tail {logs.DEFAULT_LINES} --timestamps gx-media-router 2>&1")
+        self.assertEqual(remote, f"docker logs --tail {logs.DEFAULT_LINES} --timestamps gx-code 2>&1")
 
 
 if __name__ == "__main__":
