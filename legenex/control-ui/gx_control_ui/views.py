@@ -292,7 +292,7 @@ def overview(app: App) -> dict:
             "reviewer": (gx_card.get("live") or {}).get("reviewer"),
         }
     overall = worst(*(n["level"] for n in nodes), *(s["level"] for s in services),
-                    *(r["level"] for r in rails), ts_level, git["level"],
+                    *(r["level"] for r in rails), ts_level,
                     "warn" if gx.get("last_error") else "ok")
     return {
         "generated_at": time.time(),
