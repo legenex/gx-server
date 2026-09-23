@@ -36,6 +36,21 @@ REPAIR_SYSTEM = (
 )
 
 
+def _with_system(system: str, messages: list[dict[str, str]]) -> list[dict[str, str]]:
+    """Single leading system message. Qwen/Ornith templates reject a second system turn."""
+    extras: list[str] = []
+    rest: list[dict[str, str]] = []
+    for msg in messages:
+        if msg.get("role") == "system":
+            extras.append(str(msg.get("content") or ""))
+        else:
+            rest.append(msg)
+    combined = system
+    if extras:
+        combined = system + "\n\n" + "\n\n".join(x for x in extras if x.strip())
+    return [{"role": "system", "content": combined}, *rest]
+
+
 def _content(resp: Mapping[str, Any]) -> str:
     choices = resp.get("choices") or []
     if not choices:
@@ -72,7 +87,7 @@ def run_workflow(
         gateway_chat_url,
         api_key,
         solver_model,
-        [{"role": "system", "content": SOLVER_SYSTEM}, *user_messages],
+        _with_system(SOLVER_SYSTEM, user_messages),
         timeout,
     )
     solver_text = _content(solver)
@@ -80,12 +95,14 @@ def run_workflow(
         gateway_chat_url,
         api_key,
         reviewer_model,
-        [
-            {"role": "system", "content": REVIEWER_SYSTEM},
-            *user_messages,
-            {"role": "assistant", "content": solver_text[:12000]},
-            {"role": "user", "content": "Review the solver output independently."},
-        ],
+        _with_system(
+            REVIEWER_SYSTEM,
+            [
+                *user_messages,
+                {"role": "assistant", "content": solver_text[:12000]},
+                {"role": "user", "content": "Review the solver output independently."},
+            ],
+        ),
         timeout,
     )
     review_text = _content(review)
@@ -102,12 +119,14 @@ def run_workflow(
             gateway_chat_url,
             api_key,
             solver_model,
-            [
-                {"role": "system", "content": REPAIR_SYSTEM},
-                *user_messages,
-                {"role": "assistant", "content": solver_text[:8000]},
-                {"role": "user", "content": "Defects from independent review:\n" + json.dumps(parsed)[:4000]},
-            ],
+            _with_system(
+                REPAIR_SYSTEM,
+                [
+                    *user_messages,
+                    {"role": "assistant", "content": solver_text[:8000]},
+                    {"role": "user", "content": "Defects from independent review:\n" + json.dumps(parsed)[:4000]},
+                ],
+            ),
             timeout,
         )
         final_text = _content(repair)
