@@ -76,8 +76,8 @@ def api_backup_status(h: Handler) -> None:
         "coverage": (
             "GX Cluster source, four-mode gateway/LiteLLM, Postgres dumps, OpenWebUI volume, "
             "AgentOS, systemd user units, secrets, scripts, docs, model manifests. "
-            "Public weights are recreated from models.lock. GX-Playground/media are in history, "
-            "not in the normal production recovery recipe."
+            "Public weights are recreated from models.lock. Retired experimental stacks remain "
+            "in archive snapshots; the production recovery recipe does not restore them."
         ),
         "guide_md": "/docs/DISASTER-RECOVERY.md",
         "guide_pdf": str(ROOT / "docs/GX-BACKUP-RESTORE-GUIDE.pdf"),
