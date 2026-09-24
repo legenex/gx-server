@@ -1,0 +1,15 @@
+[Unit]
+Description=GX LiteLLM Tailscale :4000 proxy (loopback gateway remains the boot-safe bind)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/home/legenex/Documents/Projects/Server/gx-cluster/legenex/gateway/gx-gateway-ts-proxy.sh
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target
