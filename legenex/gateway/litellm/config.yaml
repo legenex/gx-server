@@ -153,9 +153,6 @@ model_list:
       api_key: os.environ/GX_SWAP_API_KEY
       drop_params: true
     model_info:
-      # Hidden from GET /v1/models. Still callable by gx-code load-balancing
-      # internals and by gx-max dual-worker (solver).
-      blocked: true
       max_input_tokens: 49152
       max_output_tokens: 16384
   - model_name: gx-code-02
@@ -166,9 +163,6 @@ model_list:
       drop_params: true
       timeout: 2400
     model_info:
-      # Hidden from GET /v1/models. Still callable by gx-code load-balancing
-      # internals and by gx-max dual-worker (reviewer).
-      blocked: true
       max_input_tokens: 49152
       max_output_tokens: 16384
 

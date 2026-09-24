@@ -5,7 +5,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/home/legenex/Documents/Projects/Server/gx-cluster/legenex/gateway/gx-gateway-ts-proxy.sh
+ExecStart=/usr/bin/python3 /home/legenex/Documents/Projects/Server/gx-cluster/legenex/gateway/gx-gateway-ts-proxy.py
 Restart=always
 RestartSec=3
 NoNewPrivileges=true
