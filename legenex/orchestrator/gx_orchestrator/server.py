@@ -282,6 +282,44 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _send_completed_chat(self, payload: dict[str, Any], headers: dict[str, str] | None, *, stream: bool) -> None:
+        """Dual-worker is computed non-streaming; emit SSE when the client asked to stream."""
+        if not stream:
+            self._send_json(200, payload, headers)
+            return
+        content = ""
+        try:
+            content = str(((payload.get("choices") or [{}])[0].get("message") or {}).get("content") or "")
+        except (TypeError, AttributeError, IndexError):
+            content = ""
+        cid = str(payload.get("id") or f"chatcmpl-{uuid.uuid4()}")
+        created = int(payload.get("created") or time.time())
+        model = str(payload.get("model") or "gx-max")
+
+        def chunk(delta: dict[str, Any], finish: str | None = None) -> dict[str, Any]:
+            return {
+                "id": cid,
+                "object": "chat.completion.chunk",
+                "created": created,
+                "model": model,
+                "choices": [{"index": 0, "delta": delta, "finish_reason": finish}],
+            }
+
+        frames = [chunk({"role": "assistant", "content": ""})]
+        if content:
+            frames.append(chunk({"content": content}))
+        frames.append(chunk({}, finish="stop"))
+        body = "".join(f"data: {json.dumps(frame)}\n\n" for frame in frames) + "data: [DONE]\n\n"
+        data = body.encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Content-Length", str(len(data)))
+        for k, v in (headers or {}).items():
+            self.send_header(k, v)
+        self.end_headers()
+        self.wfile.write(data)
+
     def _send_error_json(
         self,
         status: int,
@@ -674,13 +712,14 @@ class Handler(BaseHTTPRequestHandler):
                     gateway_chat_url=url,
                     api_key=key,
                     original=payload,
-                    solver_model="gx-code",
-                    reviewer_model="gx-fast",
+                    solver_model="gx-code-01",
+                    reviewer_model="gx-code-02",
                     timeout=240,
                 )
-            self._send_json(200, body, {"X-GX-Request-Id": request_id, "X-GX-Max-Mode": "dual-worker"})
+            headers = {"X-GX-Request-Id": request_id, "X-GX-Max-Mode": "dual-worker"}
+            self._send_completed_chat(body, headers, stream=bool(payload.get("stream")))
             elapsed = (time.monotonic() - started) * 1000
-            return RelayOutcome(status=200, elapsed_ms=elapsed, streamed=False)
+            return RelayOutcome(status=200, elapsed_ms=elapsed, streamed=bool(payload.get("stream")))
         except UpstreamError as exc:
             code = self._send_upstream_error(exc, request_id)
             return RelayOutcome(status=exc.status, error_code=code, error=str(exc)[:300], streamed=False)
