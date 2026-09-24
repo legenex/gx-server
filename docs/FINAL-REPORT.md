@@ -1,7 +1,7 @@
 # GX cluster closeout — final report
 
 **Date:** 2026-09-24 (daily-use closeout)  
-**Project status:** READY FOR DAILY USE except reboot persistence (needs sudo)
+**Project status:** Usable now. Reboot persistence after closeout is unproven (`who -b` still 2026-09-23 23:56/23:57).
 
 This report uses three labels only:
 

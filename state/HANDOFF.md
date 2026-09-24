@@ -1,13 +1,13 @@
 # HANDOFF
 
-**Current state:** Dual GX10 text/coding/agent cluster is ready for daily use except a full reboot proof (needs sudo).
+**Current state:** Dual GX10 text/coding/agent cluster is usable. OpenWebUI four-mode chats, Connections, AgentOS, gateway, and backup drill all pass on the current boot.
 
-**Last verified action:** OpenWebUI chats work on the four modes. Connections page shows live gateway settings. AgentOS Control Center `:4173` answers with gx-code. Public model list is four modes. Restore drill of snapshot `eaf40302` passed.
+**Last verified action:** Live check 2026-09-24 21:55 SAST. Last recorded boots remain 2026-09-23 23:56/23:57. Reboot after closeout was not observed.
 
 **Human-only:**
 
 1. Store `restic-password` (and `age.key`) somewhere that is not only these two machines — `docs/RECOVERY-SECRET.md`
-2. When you can type a sudo password: reboot gx10-02, then gx10-01, one at a time; `gx doctor`. Confirm 8090 stays down and media units stay masked. Confirm OpenWebUI still chats and `gx-gateway-ts-proxy` binds Tailscale `:4000`.
+2. Reboot gx10-02, then gx10-01, one at a time (sudo). After each node returns: `who -b` should show a new timestamp, then `gx doctor` and one chat per mode.
 3. Optional later: true offsite restic, Hermes VPS reconcile
 
 **Do not:** delete UNKNOWN files, commit secrets, reboot both nodes at once, restore GX-Playground / media compose unless you intend to bring media back.

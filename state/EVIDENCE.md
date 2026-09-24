@@ -1,5 +1,34 @@
 # EVIDENCE
 
+## Post-closeout live check (2026-09-24 21:55 SAST)
+
+`who -b` / `last reboot` / `journalctl --list-boots`:
+
+- GX10-01 last boot: **2026-09-23 23:57:50 SAST** (still running)
+- GX10-02 last boot: **2026-09-23 23:56 SAST** (still running)
+
+These boots predate the closeout changes. A reboot after the closeout was not observed on either node.
+
+Live acceptance on this boot (kernel `6.17.0-1032-nvidia` both nodes):
+
+| Check | Result |
+|---|---|
+| Tailscale | gx10-01 100.105.214.61, gx10-02 100.73.238.4 active |
+| RoCE | both 200 Gb/s ACTIVE; ping 192.168.100.11 and 192.168.101.11 ok |
+| MemAvailable | gx10-01 61.7 GiB; gx10-02 87.5 GiB |
+| Gateway / Postgres / OpenWebUI / GX-Cluster / AgentOS | healthy |
+| AgentOS | running since 2026-09-24 11:41 (fix); ask-live AGENTOS_OK via gx-code |
+| gx-backup.timer | active; next Fri 03:32 |
+| Playground | masked; :8090/:8443 closed both nodes |
+| Media units gx10-02 | call/live/music/voice masked; no media containers |
+| Public models | gx-mini gx-code gx-auto gx-max |
+| Inference | mini MINI_OK; code CODE_OK; code-01/02 OK; auto routed coding; max dual-worker |
+| OpenWebUI browser | MINI_OK, CODE_OK, Hello, 2+2=4 solver=gx-code-01 reviewer=gx-code-02; no Server Connection Error |
+| Connections | public Tailscale :4000/v1, OWUI 127.0.0.1:4000/v1, Kilo gx-code, key masked |
+| Backup page | Recovery tested; latest 20260924T102220Z; offsite Not configured |
+| gx status / gx doctor | PASS / 13/13 |
+| Git | 275b12a == origin/main == gx10-02; working trees clean |
+
 ## Daily-use closeout (2026-09-24)
 
 ### OpenWebUI

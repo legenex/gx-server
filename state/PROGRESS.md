@@ -14,6 +14,6 @@ Updated: 2026-09-24T10:20:00Z
 
 ## Remaining (not project failures)
 
-- Reboot persistence: **BLOCKED BY EXTERNAL AUTHORITY** (`sudo` password required)
+- Reboot persistence: **UNPROVEN**. Live `who -b` is 2026-09-23 23:57 (gx10-01) and 23:56 (gx10-02). Those boots predate the closeout. All live services/chats on this boot still pass.
 - Offsite mutable restic: **NOT CONFIGURED**
 - Hermes VPS apply: **DEFERRED**
