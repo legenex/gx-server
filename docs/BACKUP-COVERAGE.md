@@ -4,7 +4,7 @@ Engine: restic 0.18.1, encrypted, deduplicating. Password: `~/.config/gx-backup/
 
 ## Included
 
-Projects, Documents, AgentOS (both checkouts), gx-cluster source, systemd user units, SSH metadata, dumps of LiteLLM/PageFlo/FinancialOS Postgres, OpenWebUI volume tarball, `/srv/logs`, `/srv/projects` (minus runtime caches), `/opt/open-webui` compose.
+Projects, Documents, AgentOS (`Documents/Projects/AgentOS`; the old `/home/legenex/agentos` path is gone), gx-cluster source, systemd user units, SSH metadata, dumps of LiteLLM/PageFlo/FinancialOS Postgres, OpenWebUI volume tarball, `/srv/logs`, `/srv/projects` (minus runtime caches), `/opt/open-webui` compose.
 
 ## Cross-node
 

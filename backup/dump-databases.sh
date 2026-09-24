@@ -29,15 +29,24 @@ if docker ps --format '{{.Names}}' | grep -qx open-webui; then
     tar -C /data -czf /out/open-webui-data.tar.gz .
 fi
 
-# SQLite trees that applications keep outside Docker
-find /srv/projects /home/legenex/Documents/Projects /home/legenex/agentos \
-  \( -name '*.db' -o -name '*.sqlite' -o -name '*.sqlite3' \) 2>/dev/null \
-  | grep -v node_modules | grep -v '.git/' | grep -v '/Backups/' | grep -v mypy_cache \
-  | head -80 \
-  | while read -r db; do
-      rel=$(echo "$db" | sed 's#^/##; s#/#_#g')
-      sqlite3 "$db" ".backup '$OUT/sqlite-$rel'" 2>/dev/null || cp -a "$db" "$OUT/sqlite-$rel.copy"
-    done
+# SQLite trees that applications keep outside Docker.
+# Search only directories that exist: a missing root makes `find` exit 1, and
+# with pipefail that aborted the dump after Postgres/OpenWebUI succeeded
+# (stale /home/legenex/agentos; AgentOS lives under Documents/Projects).
+sqlite_roots=()
+for d in /srv/projects /home/legenex/Documents/Projects; do
+  [[ -d "$d" ]] && sqlite_roots+=("$d")
+done
+if ((${#sqlite_roots[@]})); then
+  find "${sqlite_roots[@]}" \
+    \( -name '*.db' -o -name '*.sqlite' -o -name '*.sqlite3' \) 2>/dev/null \
+    | grep -v node_modules | grep -v '.git/' | grep -v '/Backups/' | grep -v mypy_cache \
+    | head -80 \
+    | while read -r db; do
+        rel=$(echo "$db" | sed 's#^/##; s#/#_#g')
+        sqlite3 "$db" ".backup '$OUT/sqlite-$rel'" 2>/dev/null || cp -a "$db" "$OUT/sqlite-$rel.copy"
+      done
+fi
 
 echo "$OUT" >"$OUT/DUMP-PATH.txt"
 echo "dumps written to $OUT"

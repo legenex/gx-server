@@ -1,6 +1,6 @@
 # PROGRESS
 
-Updated: 2026-09-24T10:20:00Z
+Updated: 2026-09-24T21:25:00Z
 
 ## Complete — daily-use closeout
 
@@ -14,6 +14,11 @@ Updated: 2026-09-24T10:20:00Z
 
 ## Remaining (not project failures)
 
-- Reboot persistence: **UNPROVEN**. Live `who -b` is 2026-09-23 23:57 (gx10-01) and 23:56 (gx10-02). Those boots predate the closeout. All live services/chats on this boot still pass.
 - Offsite mutable restic: **NOT CONFIGURED**
 - Hermes VPS apply: **DEFERRED**
+- OpenWebUI gx-auto card still *describes* gx-fast/gx-reason; picker/API expose only the four public modes
+- OpenWebUI offers v0.11.4 in a toast; **do not update** unless asked
+
+## Post-reboot (2026-09-24 22:31/22:36)
+
+Proven: new `who -b` timestamps, authenticated four-model list, worker inference, four OpenWebUI browser chats with assistant rows in `webui.db`, Connections, AgentOS, playground/media still gone. Dump warning was stale `/home/legenex/agentos` find root; removed; dump replay exit 0.

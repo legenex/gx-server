@@ -1,0 +1,42 @@
+{
+  "boots": {
+    "gx10-01": "2026-09-24 22:36 SAST",
+    "gx10-02": "2026-09-24 22:31 SAST",
+    "kernel": "6.17.0-1032-nvidia"
+  },
+  "public_models": [
+    "gx-mini",
+    "gx-code",
+    "gx-auto",
+    "gx-max"
+  ],
+  "owui_chats": {
+    "gx-mini": {
+      "id": "e111c7b1-c26d-4ff3-95d2-1c808381980c",
+      "assistant": "OWUI_MINI_REBOOT_OK"
+    },
+    "gx-code": {
+      "id": "9a788689-dbb9-48b3-aa11-7a4304b9c734",
+      "assistant": "OWUI_CODE_REBOOT_OK"
+    },
+    "gx-auto": {
+      "id": "b51b22dd-dd02-4a95-b785-53fdf5c0eeaf",
+      "assistant": "OWUI_AUTO_REBOOT_OK"
+    },
+    "gx-max": {
+      "id": "4c5e1361-b721-42f8-b98a-0e7a420a4591",
+      "assistant": "a + b; solver=gx-code-01 reviewer=gx-code-02"
+    }
+  },
+  "server_connection_error": false,
+  "agentos": "AGENTOS_REBOOT_OK",
+  "restic": {
+    "gx10-01": "7101853e",
+    "gx10-02": "602f2bfa",
+    "stamp": "20260924T203135Z",
+    "check": "no errors"
+  },
+  "dump_warn": "stale find root /home/legenex/agentos; required DBs dumped; replay exit 0",
+  "gx_status": "PASS",
+  "gx_doctor": "13/13"
+}

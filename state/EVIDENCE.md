@@ -1,5 +1,29 @@
 # EVIDENCE
 
+## Post-reboot acceptance (2026-09-24 22:31/22:36 SAST boots)
+
+Genuine new boots (`who -b` / `last reboot`):
+
+- GX10-01: **2026-09-24 22:36 SAST** (previous 2026-09-23 23:57)
+- GX10-02: **2026-09-24 22:31 SAST** (previous 2026-09-23 23:56)
+- Kernel both nodes: `6.17.0-1032-nvidia`
+
+| Check | Result |
+|---|---|
+| Public `GET /v1/models` (Tailscale, authenticated) | gx-mini, gx-code, gx-auto, gx-max |
+| Unauthenticated `/v1/models` | HTTP 401 (auth left enabled) |
+| gx-code-01 / gx-code-02 | `CODE01_REBOOT_OK` / `CODE02_REBOOT_OK`; llama-swap direct `SWAP01/02_REBOOT_OK` |
+| gx-mini / gx-code / gx-auto / gx-max | `MINI_REBOOT_OK`; `reboot_pool_marker`→`CODE_REBOOT_OK`; `AUTO_REBOOT_OK`; `MAX_REBOOT_OK` + `solver=gx-code-01 reviewer=gx-code-02` |
+| gx-code worker pool | six `gx-code` calls hit both `gx-llama-swap-node01:8080` and `192.168.100.11:28080` |
+| OpenWebUI browser | new chats: assistant `OWUI_MINI_REBOOT_OK`, `OWUI_CODE_REBOOT_OK`, `OWUI_AUTO_REBOOT_OK`, gx-max `a + b` + dual-worker banner. No Server Connection Error. Picker/API ids: gx-auto, gx-mini, gx-code, gx-max. Shots `state/post-reboot-20260924/` |
+| Connections | public `http://100.105.214.61:4000/v1`, OWUI `http://127.0.0.1:4000/v1`, key masked, Reveal/Copy, Kilo 7.7.9 gx-code, Test Gateway PASS |
+| AgentOS | running since 22:36, NRestarts=0, `/api/ask-live` `AGENTOS_REBOOT_OK` via gx-code |
+| Playground / media | masked; :8090/:8443 closed both nodes; no media containers |
+| dump-databases WARN | stale `find` root `/home/legenex/agentos` (missing). Required dumps (LiteLLM, PageFlo, FinancialOS, OpenWebUI) already succeeded. Path removed; dump replay exit 0 with `DUMP-PATH.txt` |
+| Restic | latest `7101853e` / `602f2bfa` stamp `20260924T203135Z`; `restic check --read-data-subset=2%` no errors |
+| gx status / gx doctor | PASS / 13/13 |
+| Git gx-cluster | `275b12a` == origin/main == gx10-02; working trees clean |
+
 ## Post-closeout live check (2026-09-24 21:55 SAST)
 
 `who -b` / `last reboot` / `journalctl --list-boots`:

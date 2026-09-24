@@ -1,7 +1,7 @@
 # GX cluster closeout — final report
 
-**Date:** 2026-09-24 (daily-use closeout)  
-**Project status:** Usable now. Reboot persistence after closeout is unproven (`who -b` still 2026-09-23 23:56/23:57).
+**Date:** 2026-09-24 (daily-use closeout + post-reboot acceptance)  
+**Project status:** Ready for daily use. Reboot persistence proven (`who -b` GX10-01 2026-09-24 22:36, GX10-02 22:31).
 
 This report uses three labels only:
 
@@ -13,7 +13,7 @@ This report uses three labels only:
 
 ## Verdict
 
-The dual GX10 text cluster is operational for daily use: four modes on one gateway, independent Ornith workers on both nodes, encrypted cross-node restic, OpenWebUI browser chats, GX-Cluster Connections page, and AgentOS Control Center on the canonical checkout. GX-Playground and the media stack remain retired. Remaining items are reboot validation (needs sudo) and true offsite mutable backup (not configured).
+The dual GX10 text cluster is operational for daily use: four modes on one gateway, independent Ornith workers on both nodes, encrypted cross-node restic, OpenWebUI browser chats, GX-Cluster Connections page, and AgentOS Control Center on the canonical checkout. GX-Playground and the media stack remain retired. Remaining items are true offsite mutable backup (not configured) and Hermes VPS apply (deferred).
 
 ## VERIFIED PASS
 
@@ -62,18 +62,9 @@ Earlier known-good points (`4ebe7225` / `20260923T090136Z`, `dd27fe41` / `202609
 
 ## BLOCKED BY EXTERNAL AUTHORITY
 
-| Item | Exact gap |
-|---|---|
-| Reboot validation | `sudo -n true` → `sudo: a password is required`. Cannot `reboot` either node from this session |
+None for daily use. The operator rebooted both nodes; post-reboot acceptance passed on 2026-09-24.
 
-Commands that could not be run:
-
-```
-sudo -n true
-sudo reboot          # on gx10-02 first, then gx10-01, one at a time
-```
-
-When sudo is available, reboot GX10-02 first, wait for SSH/Tailscale/RoCE/docker/gx-code-02, then reboot GX10-01, then `gx doctor` and `gx status`.
+Previously blocked reboot validation is closed: GX10-02 `who -b` 22:31, GX10-01 22:36, kernel `6.17.0-1032-nvidia`, `gx doctor` 13/13, four OpenWebUI chats, Connections, AgentOS.
 
 ## Coding reliability (not speed)
 
