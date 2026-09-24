@@ -1,25 +1,19 @@
 # PROGRESS
 
-Updated: 2026-09-24T00:40:00Z
+Updated: 2026-09-24T10:20:00Z
 
-## Complete — cluster CLOSED + media retired
+## Complete — daily-use closeout
 
-- Dual-node audit, restic+age, cross-node encrypted snapshots, restore tests
-- Private GitHub `legenex/gx-backup`
-- `gx` CLI
-- Ornith gx-mini Q8_0 resident; Ornith gx-code Q5_K_M independent workers on **both** nodes
-- gx-auto never silent-downgrades coding to mini
-- gx-max dual-worker solver+reviewer
-- OpenWebUI four-mode picker; chats preserved
-- GX-Cluster UI pages validated; overall Healthy for the four-mode cluster
-- Six-task coding suite: 5 PASS, 1 PARTIAL
-- Recovery secret doc; offsite status documented
-- **2026-09-24:** GX-Playground and media stack removed from active operation after restic coverage check
+- OpenWebUI Server Connection Error: host-network OWUI could not reach Tailscale `:4000` because LiteLLM is loopback-only (boot-safe). Connection persisted as `http://127.0.0.1:4000/v1`. Browser chats: gx-mini MINI_OK, gx-code CODE_OK, gx-auto Hello, gx-max MAX_OK + dual-worker banner.
+- Public Tailscale `/v1/models` filtered to four modes via `gx-gateway-ts-proxy`. Internal gx-code-01/02 still callable.
+- Connections page in GX Cluster primary nav (live URL, masked/reveal key, Kilo 7.7.9, OpenWebUI, curl/Python, Test Gateway).
+- AgentOS Control Center + supervisor pointed at `Documents/Projects/AgentOS`, model `gx-code`. `/api/ask-live` returned AGENTOS_OK via gx-code.
+- gx-max streaming for OpenWebUI: orchestrator emits SSE of the completed dual-worker answer.
+- Restore drill of `eaf40302` passed; LiteLLM dump restored in throwaway Postgres; OpenWebUI db integrity ok.
+- Secret scan PASS. `gx status` / `gx doctor` 13/13.
 
 ## Remaining (not project failures)
 
-- Reboot persistence: **BLOCKED BY EXTERNAL AUTHORITY** (`sudo` password)
-- Offsite mutable restic: **NOT CONFIGURED** (deferred)
-- MVA Progress Tracker: not present (deferred sample routing)
+- Reboot persistence: **BLOCKED BY EXTERNAL AUTHORITY** (`sudo` password required)
+- Offsite mutable restic: **NOT CONFIGURED**
 - Hermes VPS apply: **DEFERRED**
-- AgentOS Control Center live tree `/home/legenex/agentos` missing; unit stopped (restart loop). Git checkout still at `Documents/Projects/AgentOS`

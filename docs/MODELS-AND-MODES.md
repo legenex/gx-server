@@ -36,16 +36,14 @@ Hermes lives on the VPS, not on these GX10s. Local AgentOS `hermes/model-routing
 
 ## Gateway list
 
-`GET /v1/models` (authenticated) returns:
+Public `GET /v1/models` on Tailscale (`http://100.105.214.61:4000/v1`) returns only:
 
 - `gx-mini`
 - `gx-code` (load-balanced)
-- `gx-code-01` (internal worker, gx10-01)
-- `gx-code-02` (internal worker, gx10-02)
 - `gx-auto`
 - `gx-max`
 
-`gx-code-01` / `gx-code-02` stay in LiteLLM because gx-max dual-worker pins solver and reviewer. They are not primary operator modes. OpenWebUI `openai.api_configs` already restricts the picker to `gx-auto`, `gx-mini`, `gx-code`, `gx-max`.
+Loopback LiteLLM still lists `gx-code-01` / `gx-code-02` so gx-max dual-worker can pin solver and reviewer. They are not primary operator modes. OpenWebUI `openai.api_configs` restricts the picker to `gx-auto`, `gx-mini`, `gx-code`, `gx-max`.
 
 llama-swap on node 2 still accepts the historical upstream id `gx-reason` as an **alias of gx-code**. That alias is internal to llama-swap, not a LiteLLM public model.
 

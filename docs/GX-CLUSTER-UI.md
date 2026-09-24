@@ -4,14 +4,15 @@ URL: `http://127.0.0.1:8088` (Tailscale `100.105.214.61:8088`). User systemd `gx
 
 The active cluster is text / coding / agent only. GX-Playground (`:8090`) and the media stack are retired from active operation (source remains in `legenex/gx-server` and restic).
 
-Primary nav (Playwright 2026-09-24, user `acceptance`):
+Primary nav (Playwright 2026-09-24 closeout, user `acceptance`):
 
-- Dashboard — GX10-01 / GX10-02, AUTO/MINI/CODE/MAX, gateway, Tailscale, RoCE, memory, disk, temperature. Overall **Healthy** when the four-mode cluster is up.
+- Dashboard — GX10-01 / GX10-02, AUTO/MINI/CODE/MAX, gateway, Tailscale, RoCE, memory, disk, temperature, AgentOS. Overall **Healthy** when the four-mode cluster is up.
 - Models — **gx-mini**, **gx-code**, **gx-auto**, **gx-max** only. gx-code shows Ornith 35B Q5_K_M and workers 01/02. gx-max shows dual-worker solver/reviewer.
 - Jobs — orchestrator / gx-max dual-worker and Control-UI operations
 - Logs — Gateway, nodes, gx-mini, gx-code-01/02, gx-auto, AgentOS-adjacent control plane, OpenWebUI, Backup, GX-Cluster
 - Machines (`#/cluster`) — two 121 GiB nodes, RoCE rails
-- Backup & Recovery (`#/backup`) — last snapshot in `~/Documents/Backups/LATEST`
+- Backup & Recovery (`#/backup`) — last snapshot, Restic integrity, restore drill, offsite **Not configured**
+- Connections (`#/connections`) — live gateway URL, masked/reveal API key, Kilo Code, OpenWebUI, curl/Python, Test Gateway
 - Settings — nodes, gateway, four modes, backup, OpenWebUI, logging, health. No playground/media endpoints.
 
 Playwright text snapshots: `state/ui-snaps-20260924/`. Forbidden strings (GX-Playground, Images/Video/Music/Voice, gx-image, gx-fast, gx-reason, Media profile) were absent on all seven primary pages.

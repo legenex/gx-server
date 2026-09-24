@@ -4,7 +4,7 @@ Container `open-webui`, host network port **3000**, volume `open-webui`. Compose
 
 Chats live in the Docker volume (`webui.db`). Backed up as `open-webui-data.tar.gz` inside restic dumps.
 
-Connect the UI to `http://100.105.214.61:4000/v1` (LiteLLM). The GX connection’s API key must be the live LiteLLM master key from `legenex/gateway/.env` (never committed). A stale 25-character key hid `gx-code` from the picker until it was replaced.
+OpenWebUI uses host networking, so the production OpenAI connection is **`http://127.0.0.1:4000/v1`**. The GX connection’s API key must be the live LiteLLM master key from `legenex/gateway/.env` (never committed). External clients use the Tailscale URL via `gx-gateway-ts-proxy`.
 
 ## Picker (normal choices)
 

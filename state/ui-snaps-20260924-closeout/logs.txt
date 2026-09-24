@@ -1,0 +1,251 @@
+Logs
+
+Predefined streams only — no file browsing. Every line is passed through the credential redactor before it reaches the browser.
+
+CONTROL PLANE
+gx-orchestrator · gx10-01
+LiteLLM gateway · gx10-01
+control UI service · gx10-01
+control UI audit trail · gx10-01
+GX-MAX
+gx-max lifecycle (acquire/release output) · gx10-01
+gx-max rank 0 (node 1) · gx10-01
+gx-max rank 1 (node 2) · gx10-02
+gx-max safety samples (node 1, latest run) · gx10-01
+gx-max node 2 memory samples (latest run) · gx10-02
+rank 0 watcher · gx10-01
+rank 1 deadman · gx10-02
+MODELS
+llama-swap node 1 · gx10-01
+llama-swap node 2 · gx10-02
+gx-mini · gx10-01
+gx-code-01 · gx10-01
+gx-code-02 · gx10-02
+gx-auto routing decisions · gx10-01
+APPS
+OpenWebUI · gx10-01
+BACKUP
+GX backup · gx10-01
+GIT
+Git autosync (node 1) · gx10-01
+Git push failures (node 1) · gx10-01
+Git reconcile (node 2) · gx10-02
+Daily integrity audit (node 1) · gx10-01
+Daily integrity audit (node 2) · gx10-02
+HOST
+hostwatch (node 1) · gx10-01
+hostwatch (node 2) · gx10-02
+Lines
+50 lines
+100 lines
+200 lines
+500 lines
+1000 lines
+2000 lines
+Filter
+Refresh
+auto-refresh (5 s)
+Download excerpt
+
+gx-orchestrator · gx10-01 · /srv/logs/gx-orchestrator.log · 200 line(s) · 13 ms · credentials redacted
+
+2026-09-24 11:39:47,022 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/status HTTP/1.1" 200 -
+2026-09-24 11:39:47,023 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/events?limit=400 HTTP/1.1" 200 -
+2026-09-24 11:39:47,025 INFO    gx.server 127.0.0.1 - "GET /health/detailed HTTP/1.1" 200 -
+2026-09-24 11:39:47,034 INFO    gx.server 127.0.0.1 - "GET /text/status HTTP/1.1" 200 -
+2026-09-24 11:40:07,029 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/status HTTP/1.1" 200 -
+2026-09-24 11:40:07,030 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/events?limit=400 HTTP/1.1" 200 -
+2026-09-24 11:40:07,032 INFO    gx.server 127.0.0.1 - "GET /health/detailed HTTP/1.1" 200 -
+2026-09-24 11:40:07,045 INFO    gx.server 127.0.0.1 - "GET /text/status HTTP/1.1" 200 -
+2026-09-24 11:40:27,035 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/status HTTP/1.1" 200 -
+2026-09-24 11:40:27,036 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/events?limit=400 HTTP/1.1" 200 -
+2026-09-24 11:40:27,038 INFO    gx.server 127.0.0.1 - "GET /health/detailed HTTP/1.1" 200 -
+2026-09-24 11:40:27,049 INFO    gx.server 127.0.0.1 - "GET /text/status HTTP/1.1" 200 -
+2026-09-24 11:40:47,041 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/status HTTP/1.1" 200 -
+2026-09-24 11:40:47,043 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/events?limit=400 HTTP/1.1" 200 -
+2026-09-24 11:40:47,045 INFO    gx.server 127.0.0.1 - "GET /health/detailed HTTP/1.1" 200 -
+2026-09-24 11:40:47,054 INFO    gx.server 127.0.0.1 - "GET /text/status HTTP/1.1" 200 -
+2026-09-24 11:41:07,050 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/status HTTP/1.1" 200 -
+2026-09-24 11:41:07,051 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/events?limit=400 HTTP/1.1" 200 -
+2026-09-24 11:41:07,055 INFO    gx.server 127.0.0.1 - "GET /health/detailed HTTP/1.1" 200 -
+2026-09-24 11:41:07,067 INFO    gx.server 127.0.0.1 - "GET /text/status HTTP/1.1" 200 -
+2026-09-24 11:41:27,059 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/status HTTP/1.1" 200 -
+2026-09-24 11:41:27,060 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/events?limit=400 HTTP/1.1" 200 -
+2026-09-24 11:41:27,062 INFO    gx.server 127.0.0.1 - "GET /health/detailed HTTP/1.1" 200 -
+2026-09-24 11:41:27,072 INFO    gx.server 127.0.0.1 - "GET /text/status HTTP/1.1" 200 -
+2026-09-24 11:41:47,066 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/status HTTP/1.1" 200 -
+2026-09-24 11:41:47,068 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/events?limit=400 HTTP/1.1" 200 -
+2026-09-24 11:41:47,069 INFO    gx.server 127.0.0.1 - "GET /health/detailed HTTP/1.1" 200 -
+2026-09-24 11:41:47,079 INFO    gx.server 127.0.0.1 - "GET /text/status HTTP/1.1" 200 -
+2026-09-24 11:42:07,076 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/status HTTP/1.1" 200 -
+2026-09-24 11:42:07,077 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/events?limit=400 HTTP/1.1" 200 -
+2026-09-24 11:42:07,078 INFO    gx.server 127.0.0.1 - "GET /health/detailed HTTP/1.1" 200 -
+2026-09-24 11:42:07,089 INFO    gx.server 127.0.0.1 - "GET /text/status HTTP/1.1" 200 -
+2026-09-24 11:42:27,081 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/status HTTP/1.1" 200 -
+2026-09-24 11:42:27,082 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/events?limit=400 HTTP/1.1" 200 -
+2026-09-24 11:42:27,085 INFO    gx.server 127.0.0.1 - "GET /health/detailed HTTP/1.1" 200 -
+2026-09-24 11:42:27,096 INFO    gx.server 127.0.0.1 - "GET /text/status HTTP/1.1" 200 -
+2026-09-24 11:42:47,089 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/status HTTP/1.1" 200 -
+2026-09-24 11:42:47,091 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/events?limit=400 HTTP/1.1" 200 -
+2026-09-24 11:42:47,091 INFO    gx.server 127.0.0.1 - "GET /health/detailed HTTP/1.1" 200 -
+2026-09-24 11:42:47,102 INFO    gx.server 127.0.0.1 - "GET /text/status HTTP/1.1" 200 -
+2026-09-24 11:43:07,094 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/status HTTP/1.1" 200 -
+2026-09-24 11:43:07,096 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/events?limit=400 HTTP/1.1" 200 -
+2026-09-24 11:43:07,097 INFO    gx.server 127.0.0.1 - "GET /health/detailed HTTP/1.1" 200 -
+2026-09-24 11:43:07,109 INFO    gx.server 127.0.0.1 - "GET /text/status HTTP/1.1" 200 -
+2026-09-24 11:43:27,100 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/status HTTP/1.1" 200 -
+2026-09-24 11:43:27,101 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/events?limit=400 HTTP/1.1" 200 -
+2026-09-24 11:43:27,103 INFO    gx.server 127.0.0.1 - "GET /health/detailed HTTP/1.1" 200 -
+2026-09-24 11:43:27,113 INFO    gx.server 127.0.0.1 - "GET /text/status HTTP/1.1" 200 -
+2026-09-24 11:43:47,107 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/status HTTP/1.1" 200 -
+2026-09-24 11:43:47,109 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/events?limit=400 HTTP/1.1" 200 -
+2026-09-24 11:43:47,111 INFO    gx.server 127.0.0.1 - "GET /health/detailed HTTP/1.1" 200 -
+2026-09-24 11:43:47,125 INFO    gx.server 127.0.0.1 - "GET /text/status HTTP/1.1" 200 -
+2026-09-24 11:44:07,115 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/status HTTP/1.1" 200 -
+2026-09-24 11:44:07,116 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/events?limit=400 HTTP/1.1" 200 -
+2026-09-24 11:44:07,118 INFO    gx.server 127.0.0.1 - "GET /health/detailed HTTP/1.1" 200 -
+2026-09-24 11:44:07,131 INFO    gx.server 127.0.0.1 - "GET /text/status HTTP/1.1" 200 -
+2026-09-24 11:44:27,120 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/status HTTP/1.1" 200 -
+2026-09-24 11:44:27,121 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/events?limit=400 HTTP/1.1" 200 -
+2026-09-24 11:44:27,125 INFO    gx.server 127.0.0.1 - "GET /health/detailed HTTP/1.1" 200 -
+2026-09-24 11:44:27,138 INFO    gx.server 127.0.0.1 - "GET /text/status HTTP/1.1" 200 -
+2026-09-24 11:44:47,128 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/status HTTP/1.1" 200 -
+2026-09-24 11:44:47,129 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/events?limit=400 HTTP/1.1" 200 -
+2026-09-24 11:44:47,130 INFO    gx.server 127.0.0.1 - "GET /health/detailed HTTP/1.1" 200 -
+2026-09-24 11:44:47,143 INFO    gx.server 127.0.0.1 - "GET /text/status HTTP/1.1" 200 -
+2026-09-24 11:45:07,139 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/status HTTP/1.1" 200 -
+2026-09-24 11:45:07,140 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/events?limit=400 HTTP/1.1" 200 -
+2026-09-24 11:45:07,142 INFO    gx.server 127.0.0.1 - "GET /health/detailed HTTP/1.1" 200 -
+2026-09-24 11:45:07,153 INFO    gx.server 127.0.0.1 - "GET /text/status HTTP/1.1" 200 -
+2026-09-24 11:45:27,146 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/status HTTP/1.1" 200 -
+2026-09-24 11:45:27,148 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/events?limit=400 HTTP/1.1" 200 -
+2026-09-24 11:45:27,148 INFO    gx.server 127.0.0.1 - "GET /health/detailed HTTP/1.1" 200 -
+2026-09-24 11:45:27,165 INFO    gx.server 127.0.0.1 - "GET /text/status HTTP/1.1" 200 -
+2026-09-24 11:45:47,155 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/status HTTP/1.1" 200 -
+2026-09-24 11:45:47,156 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/events?limit=400 HTTP/1.1" 200 -
+2026-09-24 11:45:47,157 INFO    gx.server 127.0.0.1 - "GET /health/detailed HTTP/1.1" 200 -
+2026-09-24 11:45:47,169 INFO    gx.server 127.0.0.1 - "GET /text/status HTTP/1.1" 200 -
+2026-09-24 11:46:07,161 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/status HTTP/1.1" 200 -
+2026-09-24 11:46:07,161 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/events?limit=400 HTTP/1.1" 200 -
+2026-09-24 11:46:07,163 INFO    gx.server 127.0.0.1 - "GET /health/detailed HTTP/1.1" 200 -
+2026-09-24 11:46:07,176 INFO    gx.server 127.0.0.1 - "GET /text/status HTTP/1.1" 200 -
+2026-09-24 11:46:27,166 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/status HTTP/1.1" 200 -
+2026-09-24 11:46:27,168 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/events?limit=400 HTTP/1.1" 200 -
+2026-09-24 11:46:27,169 INFO    gx.server 127.0.0.1 - "GET /health/detailed HTTP/1.1" 200 -
+2026-09-24 11:46:27,183 INFO    gx.server 127.0.0.1 - "GET /text/status HTTP/1.1" 200 -
+2026-09-24 11:46:47,175 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/status HTTP/1.1" 200 -
+2026-09-24 11:46:47,177 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/events?limit=400 HTTP/1.1" 200 -
+2026-09-24 11:46:47,178 INFO    gx.server 127.0.0.1 - "GET /health/detailed HTTP/1.1" 200 -
+2026-09-24 11:46:47,188 INFO    gx.server 127.0.0.1 - "GET /text/status HTTP/1.1" 200 -
+2026-09-24 11:47:07,181 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/status HTTP/1.1" 200 -
+2026-09-24 11:47:07,182 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/events?limit=400 HTTP/1.1" 200 -
+2026-09-24 11:47:07,183 INFO    gx.server 127.0.0.1 - "GET /health/detailed HTTP/1.1" 200 -
+2026-09-24 11:47:07,196 INFO    gx.server 127.0.0.1 - "GET /text/status HTTP/1.1" 200 -
+2026-09-24 11:47:27,189 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/status HTTP/1.1" 200 -
+2026-09-24 11:47:27,190 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/events?limit=400 HTTP/1.1" 200 -
+2026-09-24 11:47:27,192 INFO    gx.server 127.0.0.1 - "GET /health/detailed HTTP/1.1" 200 -
+2026-09-24 11:47:27,204 INFO    gx.server 127.0.0.1 - "GET /text/status HTTP/1.1" 200 -
+2026-09-24 11:47:47,195 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/status HTTP/1.1" 200 -
+2026-09-24 11:47:47,196 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/events?limit=400 HTTP/1.1" 200 -
+2026-09-24 11:47:47,199 INFO    gx.server 127.0.0.1 - "GET /health/detailed HTTP/1.1" 200 -
+2026-09-24 11:47:47,211 INFO    gx.server 127.0.0.1 - "GET /text/status HTTP/1.1" 200 -
+2026-09-24 11:48:07,202 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/status HTTP/1.1" 200 -
+2026-09-24 11:48:07,203 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/events?limit=400 HTTP/1.1" 200 -
+2026-09-24 11:48:07,203 INFO    gx.server 127.0.0.1 - "GET /health/detailed HTTP/1.1" 200 -
+2026-09-24 11:48:07,215 INFO    gx.server 127.0.0.1 - "GET /text/status HTTP/1.1" 200 -
+2026-09-24 11:48:27,207 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/status HTTP/1.1" 200 -
+2026-09-24 11:48:27,208 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/events?limit=400 HTTP/1.1" 200 -
+2026-09-24 11:48:27,210 INFO    gx.server 127.0.0.1 - "GET /health/detailed HTTP/1.1" 200 -
+2026-09-24 11:48:27,221 INFO    gx.server 127.0.0.1 - "GET /text/status HTTP/1.1" 200 -
+2026-09-24 11:48:47,213 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/status HTTP/1.1" 200 -
+2026-09-24 11:48:47,214 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/events?limit=400 HTTP/1.1" 200 -
+2026-09-24 11:48:47,217 INFO    gx.server 127.0.0.1 - "GET /health/detailed HTTP/1.1" 200 -
+2026-09-24 11:48:47,227 INFO    gx.server 127.0.0.1 - "GET /text/status HTTP/1.1" 200 -
+2026-09-24 11:49:07,221 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/status HTTP/1.1" 200 -
+2026-09-24 11:49:07,222 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/events?limit=400 HTTP/1.1" 200 -
+2026-09-24 11:49:07,223 INFO    gx.server 127.0.0.1 - "GET /health/detailed HTTP/1.1" 200 -
+2026-09-24 11:49:07,236 INFO    gx.server 127.0.0.1 - "GET /text/status HTTP/1.1" 200 -
+2026-09-24 11:49:27,227 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/status HTTP/1.1" 200 -
+2026-09-24 11:49:27,228 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/events?limit=400 HTTP/1.1" 200 -
+2026-09-24 11:49:27,229 INFO    gx.server 127.0.0.1 - "GET /health/detailed HTTP/1.1" 200 -
+2026-09-24 11:49:27,241 INFO    gx.server 127.0.0.1 - "GET /text/status HTTP/1.1" 200 -
+2026-09-24 11:49:47,238 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/status HTTP/1.1" 200 -
+2026-09-24 11:49:47,239 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/events?limit=400 HTTP/1.1" 200 -
+2026-09-24 11:49:47,240 INFO    gx.server 127.0.0.1 - "GET /health/detailed HTTP/1.1" 200 -
+2026-09-24 11:49:47,255 INFO    gx.server 127.0.0.1 - "GET /text/status HTTP/1.1" 200 -
+2026-09-24 11:50:07,244 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/status HTTP/1.1" 200 -
+2026-09-24 11:50:07,246 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/events?limit=400 HTTP/1.1" 200 -
+2026-09-24 11:50:07,247 INFO    gx.server 127.0.0.1 - "GET /health/detailed HTTP/1.1" 200 -
+2026-09-24 11:50:07,260 INFO    gx.server 127.0.0.1 - "GET /text/status HTTP/1.1" 200 -
+2026-09-24 11:50:27,251 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/status HTTP/1.1" 200 -
+2026-09-24 11:50:27,252 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/events?limit=400 HTTP/1.1" 200 -
+2026-09-24 11:50:27,254 INFO    gx.server 127.0.0.1 - "GET /health/detailed HTTP/1.1" 200 -
+2026-09-24 11:50:27,265 INFO    gx.server 127.0.0.1 - "GET /text/status HTTP/1.1" 200 -
+2026-09-24 11:50:47,257 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/status HTTP/1.1" 200 -
+2026-09-24 11:50:47,258 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/events?limit=400 HTTP/1.1" 200 -
+2026-09-24 11:50:47,259 INFO    gx.server 127.0.0.1 - "GET /health/detailed HTTP/1.1" 200 -
+2026-09-24 11:50:47,270 INFO    gx.server 127.0.0.1 - "GET /text/status HTTP/1.1" 200 -
+2026-09-24 11:51:07,262 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/status HTTP/1.1" 200 -
+2026-09-24 11:51:07,263 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/events?limit=400 HTTP/1.1" 200 -
+2026-09-24 11:51:07,265 INFO    gx.server 127.0.0.1 - "GET /health/detailed HTTP/1.1" 200 -
+2026-09-24 11:51:07,280 INFO    gx.server 127.0.0.1 - "GET /text/status HTTP/1.1" 200 -
+2026-09-24 11:51:27,269 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/status HTTP/1.1" 200 -
+2026-09-24 11:51:27,270 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/events?limit=400 HTTP/1.1" 200 -
+2026-09-24 11:51:27,273 INFO    gx.server 127.0.0.1 - "GET /health/detailed HTTP/1.1" 200 -
+2026-09-24 11:51:27,286 INFO    gx.server 127.0.0.1 - "GET /text/status HTTP/1.1" 200 -
+2026-09-24 11:51:47,276 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/status HTTP/1.1" 200 -
+2026-09-24 11:51:47,277 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/events?limit=400 HTTP/1.1" 200 -
+2026-09-24 11:51:47,279 INFO    gx.server 127.0.0.1 - "GET /health/detailed HTTP/1.1" 200 -
+2026-09-24 11:51:47,292 INFO    gx.server 127.0.0.1 - "GET /text/status HTTP/1.1" 200 -
+2026-09-24 11:52:00,917 INFO    gx.server 127.0.0.1 - "GET /health/detailed HTTP/1.1" 200 -
+2026-09-24 11:52:00,931 INFO    gx.server 127.0.0.1 - "GET /text/status HTTP/1.1" 200 -
+2026-09-24 11:52:00,934 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/status HTTP/1.1" 200 -
+2026-09-24 11:52:00,934 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/events?limit=400 HTTP/1.1" 200 -
+2026-09-24 11:52:20,939 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/status HTTP/1.1" 200 -
+2026-09-24 11:52:20,940 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/events?limit=400 HTTP/1.1" 200 -
+2026-09-24 11:52:20,942 INFO    gx.server 127.0.0.1 - "GET /health/detailed HTTP/1.1" 200 -
+2026-09-24 11:52:20,962 INFO    gx.server 127.0.0.1 - "GET /text/status HTTP/1.1" 200 -
+2026-09-24 11:52:40,946 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/status HTTP/1.1" 200 -
+2026-09-24 11:52:40,947 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/events?limit=400 HTTP/1.1" 200 -
+2026-09-24 11:52:40,948 INFO    gx.server 127.0.0.1 - "GET /health/detailed HTTP/1.1" 200 -
+2026-09-24 11:52:40,968 INFO    gx.server 127.0.0.1 - "GET /text/status HTTP/1.1" 200 -
+2026-09-24 11:53:00,953 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/status HTTP/1.1" 200 -
+2026-09-24 11:53:00,954 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/events?limit=400 HTTP/1.1" 200 -
+2026-09-24 11:53:00,956 INFO    gx.server 127.0.0.1 - "GET /health/detailed HTTP/1.1" 200 -
+2026-09-24 11:53:00,971 INFO    gx.server 127.0.0.1 - "GET /text/status HTTP/1.1" 200 -
+2026-09-24 11:53:20,960 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/status HTTP/1.1" 200 -
+2026-09-24 11:53:20,961 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/events?limit=400 HTTP/1.1" 200 -
+2026-09-24 11:53:20,963 INFO    gx.server 127.0.0.1 - "GET /health/detailed HTTP/1.1" 200 -
+2026-09-24 11:53:20,981 INFO    gx.server 127.0.0.1 - "GET /text/status HTTP/1.1" 200 -
+2026-09-24 11:53:40,966 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/status HTTP/1.1" 200 -
+2026-09-24 11:53:40,967 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/events?limit=400 HTTP/1.1" 200 -
+2026-09-24 11:53:40,968 INFO    gx.server 127.0.0.1 - "GET /health/detailed HTTP/1.1" 200 -
+2026-09-24 11:53:40,984 INFO    gx.server 127.0.0.1 - "GET /text/status HTTP/1.1" 200 -
+2026-09-24 11:54:00,971 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/status HTTP/1.1" 200 -
+2026-09-24 11:54:00,972 INFO    gx.server 127.0.0.1 - "GET /health/detailed HTTP/1.1" 200 -
+2026-09-24 11:54:00,973 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/events?limit=400 HTTP/1.1" 200 -
+2026-09-24 11:54:00,986 INFO    gx.server 127.0.0.1 - "GET /text/status HTTP/1.1" 200 -
+2026-09-24 11:54:11,464 INFO    gx.routing {"event": "decision", "ts": 1790243651.4646602, "request_id": "a8ad6d8ef0fd48b8b45ca3188364e99d", "fingerprint": "b20707da52fdc16a", "stream": false, "tier": "gx-mini", "downgraded_from": null, "intent": "simple", "explicit_tier": null, "prompt_tokens": 352, "input_lower_bound": 161, "system_tokens": 262, "history_tokens": 10, "task_tokens": 10, "tool_schema_tokens": 0, "tool_count": 0, "coding_toolset": false, "max_tokens": 128, "context_needed": 480, "has_images": false, "has_tools": false, "complexity": 0, "reasoning_score": 0, "reasoning_raw": 0, "hard_score": 0, "density": 1.0, "indicators": [], "latency_preference": "balanced", "tight_fit": false, "no_fit": false, "signals": ["intent:simple", "task_tokens:10", "density:1.00"], "reasons": ["intent=simple", "tier: short simple task"], "summary": "gx-mini: short simple task (intent simple, task ~10 tok, input ~352 tok incl. 0 tool-schema)", "budget": {"model": "gx-mini", "context_limit": 65536, "max_output_limit": 8192, "estimated_input_tokens": 352, "input_lower_bound": 161, "tool_schema_tokens": 0, "tool_count": 0, "requested_output_tokens": 128, "safety_margin": 1310, "safe_output_tokens": 8192, "output_tokens": 128, "clamped": false, "remaining_context": 63874, "status": "ok", "error_code": null, "fits": true}}
+2026-09-24 11:54:11,873 INFO    gx.server 172.21.0.4 - "POST /v1/chat/completions HTTP/1.1" 200 -
+2026-09-24 11:54:15,218 INFO    gx.server 172.21.0.4 - "POST /v1/chat/completions HTTP/1.1" 200 -
+2026-09-24 11:54:20,977 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/status HTTP/1.1" 200 -
+2026-09-24 11:54:20,978 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/events?limit=400 HTTP/1.1" 200 -
+2026-09-24 11:54:20,979 INFO    gx.server 127.0.0.1 - "GET /health/detailed HTTP/1.1" 200 -
+2026-09-24 11:54:21,000 INFO    gx.server 127.0.0.1 - "GET /text/status HTTP/1.1" 200 -
+2026-09-24 11:54:40,984 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/status HTTP/1.1" 200 -
+2026-09-24 11:54:40,985 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/events?limit=400 HTTP/1.1" 200 -
+2026-09-24 11:54:40,987 INFO    gx.server 127.0.0.1 - "GET /health/detailed HTTP/1.1" 200 -
+2026-09-24 11:54:41,004 INFO    gx.server 127.0.0.1 - "GET /text/status HTTP/1.1" 200 -
+2026-09-24 11:55:00,990 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/status HTTP/1.1" 200 -
+2026-09-24 11:55:00,992 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/events?limit=400 HTTP/1.1" 200 -
+2026-09-24 11:55:00,993 INFO    gx.server 127.0.0.1 - "GET /health/detailed HTTP/1.1" 200 -
+2026-09-24 11:55:01,012 INFO    gx.server 127.0.0.1 - "GET /text/status HTTP/1.1" 200 -
+2026-09-24 11:55:01,802 INFO    gx.routing {"event": "decision", "ts": 1790243701.8026586, "request_id": "83584ddc0aa8420b860977726a0379f1", "fingerprint": "909185726f402439", "stream": false, "tier": "gx-code", "downgraded_from": null, "intent": "action", "explicit_tier": null, "prompt_tokens": 90, "input_lower_bound": 18, "system_tokens": 0, "history_tokens": 18, "task_tokens": 18, "tool_schema_tokens": 0, "tool_count": 0, "coding_toolset": false, "max_tokens": 80, "context_needed": 170, "has_images": false, "has_tools": false, "complexity": 0, "reasoning_score": 0, "reasoning_raw": 0, "hard_score": 0, "density": 1.0, "indicators": [], "latency_preference": "balanced", "tight_fit": false, "no_fit": false, "signals": ["intent:action", "task_tokens:18", "density:1.00"], "reasons": ["intent=action", "tier: coding/agentic work (action) -> gx-code"], "summary": "gx-code: coding/agentic work (action) -> gx-code (intent action, task ~18 tok, input ~90 tok incl. 0 tool-schema)", "budget": {"model": "gx-code", "context_limit": 65536, "max_output_limit": 16384, "estimated_input_tokens": 90, "input_lower_bound": 18, "tool_schema_tokens": 0, "tool_count": 0, "requested_output_tokens": 80, "safety_margin": 1310, "safe_output_tokens": 16384, "output_tokens": 80, "clamped": false, "remaining_context": 64136, "status": "ok", "error_code": null, "fits": true}}
+2026-09-24 11:55:03,380 INFO    gx.server 172.21.0.4 - "POST /v1/chat/completions HTTP/1.1" 200 -
+2026-09-24 11:55:04,000 INFO    gx.server 127.0.0.1 - "GET / HTTP/1.1" 200 -
+2026-09-24 11:55:15,738 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/status HTTP/1.1" 200 -
+2026-09-24 11:55:15,738 INFO    gx.server 127.0.0.1 - "GET /health/detailed HTTP/1.1" 200 -
+2026-09-24 11:55:15,739 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/events?limit=400 HTTP/1.1" 200 -
+2026-09-24 11:55:15,761 INFO    gx.server 127.0.0.1 - "GET /text/status HTTP/1.1" 200 -
+2026-09-24 11:55:17,910 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/status HTTP/1.1" 200 -
+2026-09-24 11:55:17,911 INFO    gx.server 127.0.0.1 - "GET /lifecycle/gx-max/events?limit=400 HTTP/1.1" 200 -

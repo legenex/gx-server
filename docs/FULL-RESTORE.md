@@ -23,7 +23,11 @@ Then restore gx-cluster source from restic (`/home/legenex/Documents/Projects/Se
 ```
 cd ~/Documents/Projects/Server/gx-cluster/legenex/gateway
 docker compose -f docker-compose.gateway.yml up -d
-systemctl --user enable --now gx-orchestrator gx-control-ui gx-backup.timer
+systemctl --user enable --now gx-orchestrator gx-control-ui gx-backup.timer gx-gateway-ts-proxy
+systemctl --user enable --now agentos-control-center agentos-supervisor
+# OpenWebUI: docker compose in /opt/open-webui (host network :3000)
 ```
 
-Verify with `gx doctor`.
+Do not enable `gx-playground` (it is masked to `/dev/null`). Do not start media compose.
+
+Verify with `gx doctor`. Public models: gx-mini, gx-code, gx-auto, gx-max.

@@ -1,10 +1,10 @@
 # AgentOS
 
-Live process: `/home/legenex/agentos` via `agentos-control-center.service` (user systemd, enabled).
+Canonical checkout and serving tree: `/home/legenex/Documents/Projects/AgentOS` via `agentos-control-center.service` and `agentos-supervisor.service` (user systemd, enabled).
 
-Git checkout: `/home/legenex/Documents/Projects/AgentOS` (GitHub `legenex/agent-os`). Different inode from the live tree.
+`AGENTOS_CC_REPO` / `AGENTOS_CC_PROD_REPO` point at that checkout. Do not recreate `/home/legenex/agentos` unless you want a separate mirror.
 
-Gateway: `http://100.105.214.61:4000/v1` (`GX10_GATEWAY_KEY` / LiteLLM master key). Do not rebuild AgentOS.
+Gateway: `http://127.0.0.1:4000/v1` (`AGENTOS_CC_LLM_MODEL=gx-code`). Do not rebuild AgentOS.
 
 Policy file: `hermes/model-routing.yaml`
 

@@ -1,5 +1,37 @@
 # EVIDENCE
 
+## Daily-use closeout (2026-09-24)
+
+### OpenWebUI
+
+- Failure: Settings connection `http://100.105.214.61:4000/v1` connection-refused. LiteLLM published only `127.0.0.1:4000` and dummy `127.0.0.2:4000` (`GX_LITELLM_TS_BIND`). OpenWebUI is host-network; loopback TCP succeeded, Tailscale TCP failed.
+- Fix: persisted `openai.api_base_urls[1]=http://127.0.0.1:4000/v1` with live master key. Users/chats preserved.
+- Browser (admin session): chats stored assistant `MINI_OK`, `CODE_OK`, `Hello`, `MAX_OK` + `solver=gx-code-01 reviewer=gx-code-02`. Screenshot `owui-browser/gx-max.png`. No Server Connection Error. Picker ids: gx-auto, gx-mini, gx-code, gx-max.
+
+### Public models
+
+- Tailscale `GET /v1/models` (via `gx-gateway-ts-proxy`): gx-mini, gx-code, gx-auto, gx-max.
+- Loopback still lists gx-code-01/02. Direct calls `CODE01_OK` / `CODE02_OK`.
+
+### Connections
+
+- Primary nav `#/connections`. Playwright: Healthy gateway, Reveal present, key masked (`sk-••••52cd` suffix only), no full secret in snapshot. Kilo 7.7.9, recommended gx-code.
+- Kilo-shaped request to Tailscale `gx-code`: `KILO_OK`.
+
+### AgentOS
+
+- Units now `ExecStart` `Documents/Projects/AgentOS/...`. Health `llm.available true model gx-code`. `POST /api/ask-live {"question":"Reply exactly AGENTOS_OK"}` → `ok true llm_used true`.
+
+### Backup drill
+
+- `restic check --read-data-subset=2%` no errors.
+- Restore `eaf40302` 21.612 GiB / 155785 files. OpenWebUI db integrity ok (4 users, 24+ chats). LiteLLM dump → throwaway Postgres 16, 86 tables.
+- Temporary restore tree deleted.
+
+### gx-max streaming
+
+- Dual-worker is non-streaming internally. Orchestrator now emits SSE of the finished answer when `stream=true` so OpenWebUI shows the reply.
+
 ## Media / Playground retirement (2026-09-24)
 
 ### Backup before removal

@@ -1,0 +1,191 @@
+Dashboard
+Storage
+
+gx10-01: 
+HEALTHY 184.8 GiB free (79 % used)
+
+gx10-02: 
+HEALTHY 377.2 GiB free (57 % used)
+
+Storage & Cleanup →
+Modes
+
+Four operator choices. Downstream apps call the LiteLLM gateway.
+
+AUTOMINICODEMAX
+
+Cluster
+Healthy
+
+Two independent 128 GB unified-memory nodes joined by two ConnectX-7 RoCE rails. Memory is budgeted per node — there is no shared 256 GB pool.
+
+Loaded aliases
+gx-mini, gx-code, gx-auto, gx-max
+gx-max
+loaded phase: dual-worker
+RDMA (both rails)
+ACTIVE
+Tailscale (management)
+connected
+Git sync
+all HEADs match
+Queue
+gx-max waiters 0 · UI operations running 0
+gx10-01
+Healthy
+
+control / gateway / gx-mini / gx-code-01 / orchestrator
+
+MemAvailable
+68.6 / 121.6 GiB
+Swap used
+0.0 / 64.0 GiB
+Kernel
+6.17.0-1032-nvidia 
+pinned
+Memory PSI (avg10)
+some 0.00% · full 0.00%
+Load (1 min)
+0.92 on 20 CPUs
+GPU
+NVIDIA GB10 · 47 °C · 5% · 12.1 W
+Hottest thermal zone
+49.8 °C
+Uptime
+11h 57m
+Hostwatch
+ok (ok=5 warn=0 crit=0) · 48s ago
+Admission lock
+free
+Tailscale
+running
+Model workloads
+gx-mini
+gx-code
+gx10-02
+Healthy
+
+gx-code-02 / gx-max reviewer
+
+MemAvailable
+90.5 / 121.6 GiB
+Swap used
+0.0 / 64.0 GiB
+Kernel
+6.17.0-1032-nvidia 
+pinned
+Memory PSI (avg10)
+some 0.00% · full 0.00%
+Load (1 min)
+0.04 on 20 CPUs
+GPU
+NVIDIA GB10 · 46 °C · 0% · 9.8 W
+Hottest thermal zone
+48.8 °C
+Uptime
+11h 58m
+Hostwatch
+ok (ok=5 warn=0 crit=0) · 40s ago
+Admission lock
+free
+Tailscale
+running
+Model workloads
+gx-code
+Models
+gx-mini
+loaded
+loaded
+gx-code
+loaded
+loaded
+gx-auto
+loaded
+routable now: gx-code, gx-mini
+gx-max
+loaded
+dual-worker ready: solver gx-code-01 + reviewer gx-code-02
+
+State comes from llama-swap and the orchestrator — never from container existence alone.
+
+gx-max lifecycle
+State
+loaded
+Phase
+dual-worker
+In state for
+—
+Waiting requests
+0
+Last measured startup
+not recorded yet
+Idle release after
+—
+Detail
+dual-worker ready: solver gx-code-01 + reviewer gx-code-02
+Last error
+none
+Lifecycle events →
+Locks & residency ledger
+Locks and ledger
+Node	Admission lock	Residency ledger
+gx10-01	
+free	empty
+gx10-02	
+free	empty
+ConnectX / RoCE rails
+RoCE rails
+Rail	gx10-01	gx10-02	Peer TCP	State
+Rail 1 (192.168.100.0/24)	4: ACTIVE 200 Gb/sec (2X NDR)	4: ACTIVE 200 Gb/sec (2X NDR)	open	
+up
+Rail 2 (192.168.101.0/24)	4: ACTIVE 200 Gb/sec (2X NDR)	4: ACTIVE 200 Gb/sec (2X NDR)	open	
+up
+Rail 1 RDMA bytes (tx/rx, node 1)
+0 B / 0 B
+Rail 2 RDMA bytes (tx/rx, node 1)
+0 B / 0 B
+Git sync
+All three HEADs match
+in sync
+gx10-01 HEAD
+f95adaf266ea
+GitHub origin/main
+f95adaf266ea
+gx10-02 HEAD
+f95adaf266ea
+Last commit
+autosync(gx10-01): 2026-09-24 11:53:53 (2026-09-24T11:53:53+02:00)
+gx10-02 push
+disabled (pull-only)
+Uncommitted on gx10-01
+0
+gx10-01 watcher
+active / running
+gx10-01 1-min fallback
+active / waiting
+gx10-01 daily audit
+active / waiting
+gx10-02 reconcile
+active / waiting
+gx10-02 daily audit
+active / waiting
+Services
+Services
+Service	State	Latency	Note
+LiteLLM gateway	
+up	2 ms	
+LiteLLM readiness (DB)	
+up	5 ms	
+gx-orchestrator	
+up	4 ms	
+llama-swap gx10-01	
+up	1 ms	
+llama-swap gx10-02	
+up	1 ms	
+OpenWebUI	
+up	2 ms	
+AgentOS	
+up	7 ms	
+Recent errors & warnings
+
+No current warnings.

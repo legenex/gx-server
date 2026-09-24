@@ -54,6 +54,14 @@ Media **weights** under `/srv/models/{image,video,music,voice,live,voicechat,...
 
 Git history `legenex/gx-server` is the recipe copy of the same source.
 
+## Restore drill (2026-09-24 closeout)
+
+Non-destructive restore of latest snapshot **`eaf40302` / `20260924T013517Z`** into `/tmp/gx-restore-drill-20260924T094224Z` (removed after inspection). 155785 files, 21.612 GiB. `restic check --read-data-subset=2%`: no errors.
+
+Validated in the restored copy: gx-cluster source, gateway `.env` + LiteLLM config, AgentOS checkout, systemd user units (playground remains masked to `/dev/null`), secrets, `models.lock`, backup scripts, OpenWebUI `webui.db` (integrity ok; users/chats/settings present), LiteLLM `pg_dumpall` restored into a throwaway Postgres 16 after stripping `\\restrict` tokens (86 public tables).
+
+Recorded in `~/Documents/Backups/last-restore-drill.json` and `last-restic-check.json`. Backup & Recovery shows **Recovery tested**.
+
 ## Latest verified point
 
 Post-cleanup stamp **`20260923T223525Z`** (`~/Documents/Backups/LATEST`). `restic check --read-data-subset=5%`: no errors.

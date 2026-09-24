@@ -1,0 +1,74 @@
+{
+  "overall": "ok",
+  "pages": [
+    {
+      "name": "dashboard",
+      "title": "Dashboard",
+      "hits": [],
+      "snippet": "Dashboard\nStorage\n\ngx10-01: \nHEALTHY 184.8 GiB free (79 % used)\n\ngx10-02: \nHEALTHY 377.2 GiB free (57 % used)\n\nStorage & Cleanup →\nModes\n\nFour operator choices. Downstream apps call the LiteLLM gateway.\n\nAUTOMINICODEMAX\n\nCluster\nHealthy\n\nTwo independent 128 GB unified-memory nodes joined by two ConnectX-7 RoCE rails. Memory is budgeted per node — there is no shared 256 GB pool.\n\nLoaded aliases\ngx-"
+    },
+    {
+      "name": "models",
+      "title": "Models",
+      "hits": [],
+      "snippet": "Models\n\nFour logical modes: gx-mini, gx-code, gx-auto and gx-max. gx-code is two independent Ornith Q5_K_M workers (01 on gx10-01, 02 on gx10-02). gx-auto routes light work to mini and coding to gx-code. gx-max is dual-worker solver + reviewer on those two workers.\n\nWhich model should I use? →\ngx-mini\nloaded\n\nloaded\n\nLoad\nUnload\nRestart\nPurpose\nAlways-on small uncensored helper on gx10-01.\nType\nTe"
+    },
+    {
+      "name": "jobs",
+      "title": "Jobs / Queue",
+      "hits": [],
+      "snippet": "Jobs / Queue\n\nJobs for gx-mini, gx-code, gx-auto, gx-max, the gateway, OpenWebUI, AgentOS and backup. Orchestrator events are live, not simulated.\n\ngx-max lifecycle\nState\ndown\nPhase\nidle\nWaiting requests (queue)\n0\nLast error\nnone\nRelease\nDraining requests\nStopping ranks\nMemory recovery\nRestoring workloads\nReleased\n\nNo gx-max job is running.\n\nControl-UI operations\nControl UI operations\nOperation\tUs"
+    },
+    {
+      "name": "logs",
+      "title": "Logs",
+      "hits": [],
+      "snippet": "Logs\n\nPredefined streams only — no file browsing. Every line is passed through the credential redactor before it reaches the browser.\n\nCONTROL PLANE\ngx-orchestrator · gx10-01\nLiteLLM gateway · gx10-01\ncontrol UI service · gx10-01\ncontrol UI audit trail · gx10-01\nGX-MAX\ngx-max lifecycle (acquire/release output) · gx10-01\ngx-max rank 0 (node 1) · gx10-01\ngx-max rank 1 (node 2) · gx10-02\ngx-max safet"
+    },
+    {
+      "name": "cluster",
+      "title": "Cluster",
+      "hits": [],
+      "snippet": "Cluster\nTwo separate computers. Two independent 128 GB unified-memory systems (about 121 GiB usable each). They do NOT share memory: there is no 256 GB pool. Each node runs its own models inside its own memory. Only gx-max spans both, as two tensor-parallel ranks that exchange activations over the ConnectX-7 RoCE rails.\nTopology\ngx10-01\n128 GB unified memory\n68.1 GiB available\nswap 0.0 / 64.0 GiB\n"
+    },
+    {
+      "name": "backup",
+      "title": "Backup & Recovery",
+      "hits": [
+        "GX-Playground"
+      ],
+      "snippet": "Backup & Recovery\nBackup health\nLast backup\n20260924T013517Z\nLatest snapshot\neaf40302\nSnapshot count\n8\nBackup age\n2026-09-24 03:35:52\nJob\nidle\nLocal repository\n/home/legenex/Documents/Backups/restic/local\nLocal repo health\nhealthy\nLast Restic integrity verification\n2026-09-24T09:42:24Z\nCross-node copy\n/home/legenex/Documents/Backups/restic/peer-gx10-02\nGitHub recovery recipe\nhttps://github.com/leg"
+    },
+    {
+      "name": "connections",
+      "title": "Connections",
+      "hits": [],
+      "snippet": "Connections\n\nHow to connect Kilo Code, OpenWebUI, Claude Code, curl and any OpenAI-compatible client. Values come from the live gateway.\n\nGateway\nStatus\nHealthy\nOpenAI compatible base URL\nhttp://100.105.214.61:4000/v1\nCopy\nInternal service URL (OpenWebUI on gx10-01)\nhttp://127.0.0.1:4000/v1\nCopy\nAPI path\n/v1\nAuthentication\nenabled\nPublic logical models\ngx-mini\nCopy\ngx-code\nCopy\ngx-auto\nCopy\ngx-max"
+    },
+    {
+      "name": "settings",
+      "title": "Settings / System",
+      "hits": [],
+      "snippet": "Settings / System\nProject\nProject version\n0.19.0\nControl UI version\n1.0.0\nRepository\nhttps://github.com/legenex/gx-server.git\nCheckout (gx10-01)\n/home/legenex/Documents/Projects/Server/gx-cluster\nBranch\nmain\nKernel pin\n6.17.0-1032-nvidia\nRunning kernels\ngx10-01: 6.17.0-1032-nvidia ✓ · gx10-02: 6.17.0-1032-nvidia ✓\nActive UI sessions\n1\nGitHub sync\nAll three HEADs match\nin sync\ngx10-01 HEAD\nf95adaf2"
+    }
+  ],
+  "forbidden_hits": [],
+  "connections": {
+    "has_gateway": true,
+    "has_kilo": true,
+    "has_reveal": true,
+    "has_gx_code": true,
+    "has_secret_full": false
+  },
+  "backup": {
+    "has_offsite": true,
+    "has_drill": true
+  },
+  "model_aliases": [
+    "gx-mini",
+    "gx-code",
+    "gx-auto",
+    "gx-max"
+  ],
+  "nav": "◉\nDashboard\n◆\nModels\n☰\nJobs\n▤\nLogs\n⇆\nMachines\n▣\nBackup & Recovery\n⚛\nConnections\n⚙\nSettings\nResource Control\nStorage\nDocs\n\nTwo independent 128 GB nodes.\nText / coding / agent cluster."
+}

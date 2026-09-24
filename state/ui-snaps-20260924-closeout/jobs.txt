@@ -1,0 +1,60 @@
+Jobs / Queue
+
+Jobs for gx-mini, gx-code, gx-auto, gx-max, the gateway, OpenWebUI, AgentOS and backup. Orchestrator events are live, not simulated.
+
+gx-max lifecycle
+State
+down
+Phase
+idle
+Waiting requests (queue)
+0
+Last error
+none
+Release
+Draining requests
+Stopping ranks
+Memory recovery
+Restoring workloads
+Released
+
+No gx-max job is running.
+
+Control-UI operations
+Control UI operations
+Operation	User	Started	Elapsed	State	
+No operations since the UI started.
+gx-max job history
+gx-max job history
+Job	Started	Elapsed	Startup	Outcome	Phases	Error
+release	9/20/2026, 1:39:29 PM	34s	—	
+released	draining_requests → stopping_ranks → memory_recovery → restoring → released → idle	
+acquire	9/20/2026, 1:28:02 PM	11m 23s	594 s	
+ready	preflight → draining → admission → loading_rank1 → loading_rank0 → warming → ready → serving	
+release	9/18/2026, 2:59:57 PM	34s	—	
+released	draining_requests → stopping_ranks → memory_recovery → restoring → released → idle	
+acquire	9/18/2026, 2:12:40 PM	10m 57s	604 s	
+ready	preflight → draining → admission → loading_rank1 → loading_rank0 → warming → ready → serving	
+release	9/18/2026, 8:31:04 AM	33s	—	
+released	draining_requests → stopping_ranks → memory_recovery → restoring → released → idle	
+acquire	9/18/2026, 8:20:00 AM	10m 36s	585 s	
+ready	preflight → draining → admission → loading_rank1 → loading_rank0 → warming → ready → serving	
+release	9/17/2026, 5:57:50 PM	37s	—	
+released	draining_requests → stopping_ranks → memory_recovery → restoring → released → idle	
+acquire	9/17/2026, 5:16:50 PM	10m 48s	595 s	
+ready	preflight → draining → admission → loading_rank1 → loading_rank0 → warming → ready → serving	
+release	9/17/2026, 10:03:34 AM	48s	—	
+released	draining_requests → stopping_ranks → memory_recovery → restoring → released → idle	
+acquire	9/17/2026, 9:52:19 AM	11m 7s	545 s	
+ready	preflight → draining → admission → loading_rank1 → loading_rank0 → warming → ready → serving	
+release	9/17/2026, 2:15:19 AM	51s	—	
+released	draining_requests → stopping_ranks → memory_recovery → restoring → released → idle	
+acquire	9/17/2026, 1:58:33 AM	11m 49s	595 s	
+ready	preflight → draining → admission → loading_rank1 → loading_rank0 → warming → ready → serving	
+release	9/16/2026, 8:06:08 PM	28s	—	
+released	draining_requests → stopping_ranks → memory_recovery → restoring → released → idle	
+acquire	9/16/2026, 7:53:35 PM	10m 47s	537 s	
+ready	preflight → draining → admission → loading_rank1 → loading_rank0 → warming → ready → serving	
+gx-max lifecycle output (live)
+follow new lines
+(no lifecycle output yet — it appears here live during acquire/release)

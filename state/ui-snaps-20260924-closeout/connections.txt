@@ -1,0 +1,190 @@
+Connections
+
+How to connect Kilo Code, OpenWebUI, Claude Code, curl and any OpenAI-compatible client. Values come from the live gateway.
+
+Gateway
+Status
+Healthy
+OpenAI compatible base URL
+http://100.105.214.61:4000/v1
+Copy
+Internal service URL (OpenWebUI on gx10-01)
+http://127.0.0.1:4000/v1
+Copy
+API path
+/v1
+Authentication
+enabled
+Public logical models
+gx-mini
+Copy
+gx-code
+Copy
+gx-auto
+Copy
+gx-max
+Copy
+API key
+
+Gateway master key — use this in Kilo Code, OpenWebUI and OpenAI-compatible clients
+
+legenex/gateway/.env (LITELLM_MASTER_KEY)
+
+sk-••••••••••••52cd
+Reveal
+Copy
+
+Masked until you click Reveal. Never committed, never in static HTML.
+
+Connection test
+
+Uses the live gateway key on the server. Does not start gx-max.
+
+Test Gateway
+Test gx-mini
+Test gx-code
+Test gx-auto
+Kilo Code
+Open WebUI
+OpenAI-compatible clients
+Kilo Code
+
+Recommended coding model: gx-code.
+
+simple / trivial requests → gx-mini
+coding, tools, debugging and substantial work → gx-code
+
+gx-auto never starts gx-max. Choose gx-max explicitly for the solver/reviewer workflow.
+
+Kilo Code 7.7.9 installed on gx10-01 (CLI 7.5.14); steps verified against 7.7.9.
+
+Connection settings
+Provider
+OpenAI Compatible
+Base URL
+http://100.105.214.61:4000/v1
+Copy
+API key
+Reveal on this page, then paste into Kilo
+Recommended model
+gx-code
+Copy
+
+Available alternatives:
+
+gx-mini
+Copy
+gx-auto
+Copy
+gx-max
+Copy
+Manual setup (Kilo Code settings)
+Open Kilo Code, then Settings (gear icon) > Providers.
+On the Custom provider card ("Add a custom provider by base URL.") click Connect.
+Provider ID: gx-cluster
+Display name: GX Cluster
+Provider API: OpenAI Compatible
+Base URL: http://100.105.214.61:4000/v1
+API key: the gateway key from this page (Reveal, then Copy).
+Headers (optional): leave empty.
+Models: Add gx-code (recommended), then gx-mini, gx-auto, gx-max if you want them. Tick Image for all except gx-max; tick Reasoning for gx-max.
+Click Submit, then choose gx-cluster / gx-code as the coding model.
+Config file
+
+Kilo Code reads ~/.config/kilo/kilo.jsonc (global) or .kilo/kilo.jsonc in a project. Schema matches the installed extension. The snippet uses GX_API_KEY or replace {env:GX_API_KEY} after Reveal.
+
+Copy
+{
+  "$schema": "https://app.kilo.ai/config.json",
+  "model": "gx-cluster/gx-code",
+  "provider": {
+    "gx-cluster": {
+      "name": "GX Cluster",
+      "npm": "@ai-sdk/openai-compatible",
+      "options": {
+        "baseURL": "http://100.105.214.61:4000/v1",
+        "apiKey": "{env:GX_API_KEY}",
+        "timeout": 900000,
+        "chunkTimeout": 30000
+      },
+      "models": {
+        "gx-mini": {
+          "name": "gx-mini",
+          "tool_call": true,
+          "attachment": true,
+          "reasoning": false,
+          "modalities": {
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 57344,
+            "output": 8192
+          }
+        },
+        "gx-code": {
+          "name": "gx-code",
+          "tool_call": true,
+          "attachment": true,
+          "reasoning": false,
+          "modalities": {
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 49152,
+            "output": 16384
+          }
+        },
+        "gx-auto": {
+          "name": "gx-auto",
+          "tool_call": true,
+          "attachment": true,
+          "reasoning": false,
+          "modalities": {
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 49152,
+            "output": 16384
+          }
+        },
+        "gx-max": {
+          "name": "gx-max",
+          "tool_call": true,
+          "attachment": false,
+          "reasoning": true,
+          "modalities": {
+            "input": [
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 49152,
+            "output": 16384
+          }
+        }
+      }
+    }
+  }
+}
+Copy config

@@ -27,10 +27,49 @@ restic -r $HOME/Documents/Backups/restic/local restore latest --target /tmp/rest
 
 SQL dumps are in each snapshot under `Documents/Backups/dumps/<stamp>/`. Restore into a throwaway postgres container first, never onto a live DB without a typed confirmation.
 
-## OpenWebUI
-
-`open-webui-data.tar.gz` in the dump directory. Stop the container, replace the volume contents, start it.
-
 ## AgentOS
 
-Live path: `/home/legenex/agentos`. Git copy: `/home/legenex/Documents/Projects/AgentOS`. Restore either tree from restic; systemd unit `agentos-control-center.service` points at the live path.
+Canonical checkout: `/home/legenex/Documents/Projects/AgentOS`.
+
+User systemd units `agentos-control-center.service` and `agentos-supervisor.service` must set:
+
+```
+AGENTOS_CC_REPO=/home/legenex/Documents/Projects/AgentOS
+AGENTOS_CC_DEV_REPO=/home/legenex/Documents/Projects/AgentOS
+AGENTOS_CC_PROD_REPO=/home/legenex/Documents/Projects/AgentOS
+AGENTOS_CC_LLM_URL=http://127.0.0.1:4000/v1
+AGENTOS_CC_LLM_MODEL=gx-code
+```
+
+Do not recreate `/home/legenex/agentos` unless you intend a separate serving mirror. The obsolete path is not required.
+
+Control Center: `http://127.0.0.1:4173` (also Tailscale).
+
+## OpenWebUI
+
+Container `open-webui`, host network port 3000, volume `open-webui`. Restore `open-webui-data.tar.gz` into that volume. Do not wipe chats.
+
+Production OpenAI connection (host-network OpenWebUI):
+
+- URL: `http://127.0.0.1:4000/v1`
+- Auth: Bearer
+- Key: `LITELLM_MASTER_KEY` from `legenex/gateway/.env`
+- Model IDs: `gx-auto`, `gx-mini`, `gx-code`, `gx-max`
+
+External clients use `http://100.105.214.61:4000/v1` via `gx-gateway-ts-proxy.service` (Docker stays loopback-only so compose can boot before Tailscale exists).
+
+## Four modes only
+
+Public logical models: `gx-mini`, `gx-code`, `gx-auto`, `gx-max`.
+
+Internal workers `gx-code-01` and `gx-code-02` stay addressable on loopback for gx-code load-balancing and gx-max dual-worker. They are filtered from the Tailscale `/v1/models` listing.
+
+Do **not** restore GX-Playground, media routers, gx-fast/gx-reason as primary user models, or ports 8090/8443 as part of normal recovery. Source remains in git history and older restic snapshots.
+
+## Gateway boot
+
+Keep `GX_LITELLM_BIND=127.0.0.1` and `GX_LITELLM_TS_BIND=127.0.0.2`. Enable `gx-gateway-ts-proxy.service` so Tailscale `:4000` appears after Tailscale is up.
+
+## Postgres dumps
+
+`litellm.sql.gz` is `pg_dumpall` from Postgres 16.15. It includes `\\restrict` / `\\unrestrict` tokens. Restore into a throwaway cluster as superuser after stripping those lines, never onto production without a typed confirmation.

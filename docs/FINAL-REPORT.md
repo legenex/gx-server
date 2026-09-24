@@ -1,7 +1,7 @@
 # GX cluster closeout — final report
 
-**Date:** 2026-09-24 (media/playground cleanup)  
-**Project status:** CLOSED (core cluster accepted; leftover media stack removed from active operation)
+**Date:** 2026-09-24 (daily-use closeout)  
+**Project status:** READY FOR DAILY USE except reboot persistence (needs sudo)
 
 This report uses three labels only:
 
@@ -13,7 +13,7 @@ This report uses three labels only:
 
 ## Verdict
 
-The dual GX10 text cluster is operational: four modes on one gateway, independent Ornith workers on both nodes, encrypted cross-node restic, OpenWebUI, and GX-Cluster UI. GX-Playground and the media stack have been backed up and removed from active operation. Remaining items are reboot validation (needs sudo), true offsite mutable backup (not configured), and AgentOS Control Center (live tree `/home/legenex/agentos` is missing; unit was in a restart loop and was stopped).
+The dual GX10 text cluster is operational for daily use: four modes on one gateway, independent Ornith workers on both nodes, encrypted cross-node restic, OpenWebUI browser chats, GX-Cluster Connections page, and AgentOS Control Center on the canonical checkout. GX-Playground and the media stack remain retired. Remaining items are reboot validation (needs sudo) and true offsite mutable backup (not configured).
 
 ## VERIFIED PASS
 
