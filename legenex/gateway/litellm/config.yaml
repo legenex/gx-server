@@ -185,6 +185,8 @@ model_list:
       merge_reasoning_content_in_choices: true
       timeout: 3600
       num_retries: 0
+      # Dual-worker is non-streaming; fake_stream lets OpenWebUI show the finished answer.
+      fake_stream: true
     model_info:
       max_input_tokens: 49152
       max_output_tokens: 16384
