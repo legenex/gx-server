@@ -12,14 +12,24 @@ function render(d) {
     (s.paths || []).slice(0, 2).join(', '),
   ]);
   const grid = h('div', { class: 'grid' });
+  const drill = d.restore_drill || {};
+  const integ = d.integrity || {};
+  const snap = d.latest_snapshot || {};
   grid.append(card('Backup health',
     kv([
-      ['Last snapshot', d.latest || 'none yet'],
+      ['Last backup', d.latest || 'none yet'],
+      ['Latest snapshot', snap.short_id || (snap.id || '').slice(0, 8) || '—'],
+      ['Snapshot count', String(d.snapshot_count ?? (d.snapshots || []).length)],
+      ['Backup age', d.latest_time ? (d.latest_time.replace('T', ' ').slice(0, 19)) : '—'],
       ['Job', d.running ? 'running' : 'idle'],
-      ['Local repo', d.repo],
+      ['Local repository', d.repo],
+      ['Local repo health', integ.ok ? 'healthy' : (integ.ok === false ? 'failed' : 'not verified this session')],
+      ['Last Restic integrity verification', integ.at || 'never recorded'],
       ['Cross-node copy', d.peer],
-      ['GitHub recipe', h('a', { href: d.github, target: '_blank', rel: 'noopener' }, d.github)],
-      ['Offsite', d.offsite],
+      ['GitHub recovery recipe', h('a', { href: d.github, target: '_blank', rel: 'noopener' }, d.github)],
+      ['Last successful restore drill', drill.at || 'never recorded'],
+      ['Recovery tested', d.recovery_tested ? 'yes' : 'no — run a restore drill'],
+      ['Offsite backup', 'Not configured'],
     ]),
     h('div', { class: 'btn-row' },
       h('button', { class: 'btn btn-primary', id: 'bak-now' }, 'Back Up Now'),
@@ -30,7 +40,8 @@ function render(d) {
   ));
   grid.append(card('Restore points', table(['ID', 'Host', 'Time', 'Paths'], rows.length ? rows : [['—', '', '', 'no snapshots']])));
   grid.append(card('What is covered',
-    h('p', {}, 'Encrypted restic snapshots hold projects, configs, databases, OpenWebUI data, AgentOS, and secrets. Public model weights are recreated from models.lock.'),
+    h('p', {}, d.coverage || 'Encrypted restic snapshots hold projects, configs, databases, OpenWebUI data, AgentOS, and secrets. Public model weights are recreated from models.lock.'),
+    h('p', { class: 'callout callout-warning' }, d.offsite_note || 'Offsite backup is not configured. Cross-node copies live in the same house.'),
     h('p', {}, 'Destructive restore from this page requires typing RESTORE on the command line; the UI only starts backup and verify.'),
     h('p', {}, 'Guides: docs/DISASTER-RECOVERY.md and docs/GX-BACKUP-RESTORE-GUIDE.pdf in the gx-backup repository.'),
   ));

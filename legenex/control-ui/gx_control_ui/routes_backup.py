@@ -44,16 +44,44 @@ def api_backup_status(h: Handler) -> None:
         parsed = json.loads(snaps) if snaps.startswith("[") else []
     except json.JSONDecodeError:
         parsed = []
+    check_path = Path.home() / "Documents/Backups/last-restic-check.json"
+    drill_path = Path.home() / "Documents/Backups/last-restore-drill.json"
+    check = {}
+    drill = {}
+    try:
+        check = json.loads(check_path.read_text()) if check_path.exists() else {}
+    except (OSError, json.JSONDecodeError):
+        check = {}
+    try:
+        drill = json.loads(drill_path.read_text()) if drill_path.exists() else {}
+    except (OSError, json.JSONDecodeError):
+        drill = {}
+    latest_time = None
+    if parsed:
+        latest_time = parsed[-1].get("time")
     h._json(200, {
         "latest": ident,
+        "latest_snapshot": (parsed[-1] if parsed else None),
+        "snapshot_count": len(parsed),
         "running": _job["running"],
         "repo": str(Path.home() / "Documents/Backups/restic/local"),
         "peer": str(Path.home() / "Documents/Backups/restic/peer-gx10-02"),
         "github": "https://github.com/legenex/gx-backup",
-        "offsite": "absent — cross-node encrypted restic + private Git recipe only",
+        "offsite": "Not configured",
+        "offsite_note": "Cross-node encrypted restic is not geographic/offsite disaster recovery. Losing both GX10s loses mutable data.",
         "snapshots": parsed[-8:],
+        "integrity": check,
+        "restore_drill": drill,
+        "recovery_tested": bool(drill.get("ok")),
+        "coverage": (
+            "GX Cluster source, four-mode gateway/LiteLLM, Postgres dumps, OpenWebUI volume, "
+            "AgentOS, systemd user units, secrets, scripts, docs, model manifests. "
+            "Public weights are recreated from models.lock. GX-Playground/media are in history, "
+            "not in the normal production recovery recipe."
+        ),
         "guide_md": "/docs/DISASTER-RECOVERY.md",
         "guide_pdf": str(ROOT / "docs/GX-BACKUP-RESTORE-GUIDE.pdf"),
+        "latest_time": latest_time,
     })
 
 
@@ -91,4 +119,14 @@ def api_backup_now(h: Handler) -> None:
 @route("POST", r"/api/backup/verify")
 def api_backup_verify(h: Handler) -> None:
     r = _restic(["check", "--read-data-subset=2%"], timeout=600)
-    h._json(200 if r.returncode == 0 else 500, {"ok": r.returncode == 0, "output": (r.stdout or r.stderr)[-4000:]})
+    ok = r.returncode == 0
+    record = {
+        "ok": ok,
+        "at": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "subset": "2%",
+    }
+    try:
+        (Path.home() / "Documents/Backups/last-restic-check.json").write_text(json.dumps(record) + "\n")
+    except OSError:
+        pass
+    h._json(200 if ok else 500, {"ok": ok, "output": (r.stdout or r.stderr)[-4000:], **record})

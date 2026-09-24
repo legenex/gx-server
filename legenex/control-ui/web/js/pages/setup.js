@@ -1,14 +1,13 @@
-// SETUP (D-037): Kilo Code, Open WebUI and OpenAI-compatible clients.
-// Live values come from the server; the connection test uses a key the user
-// pastes, which is sent once to this server and never stored or logged.
+// Connections / API Setup: live gateway URL, key reveal, Kilo, OpenWebUI, curl, tests.
 import { api } from '../api.js';
 import {
-  h, clear, card, kv, toast, errorBox, copyButton, codeBlock, table,
+  h, clear, card, kv, toast, errorBox, copyButton, codeBlock, table, levelBadge,
 } from '../dom.js';
 
 let root;
 let info = null;
 let tab = 'kilo';
+let revealed = null;
 
 const TABS = [['kilo', 'Kilo Code'], ['openwebui', 'Open WebUI'], ['generic', 'OpenAI-compatible clients']];
 
@@ -20,48 +19,90 @@ function aliasChips(list) {
   return h('div', { class: 'checks' }, list.map((a) => h('span', { class: 'chip' }, h('code', {}, a), copyButton(() => a, 'Copy'))));
 }
 
-function keyWorkflow(client) {
-  return card('API key',
-    h('p', {}, 'Use a key created in this Control Center. The gateway master key is never shown and must not be used in clients.'),
-    h('div', { class: 'btn-row' },
-      h('a', { class: 'btn btn-primary', href: `#/keys/${client}`, id: `create-key-${client}` }, 'Create API key'),
-      h('a', { class: 'btn', href: '#/keys' }, 'Select an existing key')),
-    h('p', { class: 'small muted' }, 'A key\'s secret is shown once when it is created. If you no longer have it, use Replace on the API Keys page: the new key keeps the same aliases and expiry.'));
-}
-
-function testCard(client) {
-  const input = h('input', { type: 'password', id: `test-key-${client}`, autocomplete: 'off', spellcheck: 'false',
-    placeholder: 'sk-…', 'aria-describedby': `test-hint-${client}` });
-  const out = h('div', { class: 'test-result', 'aria-live': 'polite', id: `test-result-${client}` });
-  const btn = h('button', { type: 'button', class: 'btn btn-primary', id: `test-${client}` }, 'Test connection');
-  btn.addEventListener('click', async () => {
-    const secret = input.value.trim();
-    if (!secret) { input.focus(); toast('Paste the key first.', 'warn'); return; }
-    btn.disabled = true;
-    clear(out).append(h('p', { class: 'loading' }, h('span', { class: 'spin', 'aria-hidden': 'true' }),
-      client === 'kilo' ? 'Listing models, sending a Kilo-shaped request to gx-auto and reading the routing decision…'
-        : 'Listing models and sending a short request…'));
+function keyCard() {
+  const ak = info.api_key || {};
+  const shown = revealed || ak.masked;
+  const valueEl = h('code', { id: 'gw-key', class: 'secret' }, shown);
+  const revealBtn = h('button', { type: 'button', class: 'btn btn-sm', id: 'gw-key-reveal' },
+    revealed ? 'Hide' : 'Reveal');
+  revealBtn.addEventListener('click', async () => {
+    if (revealed) {
+      revealed = null;
+      render();
+      return;
+    }
+    revealBtn.disabled = true;
     try {
-      const r = await api.post('/api/setup/test', { client, secret });
-      clear(out).append(
-        h('p', {}, h('span', { class: `badge badge-${r.connected ? 'ok' : 'crit'}`, id: `test-verdict-${client}` },
-          r.connected ? 'CONNECTED' : 'FAILED'), ' ', r.connected ? '' : r.summary),
-        table(['Check', 'Result', 'Detail'], r.checks.map((c) => [c.check,
-          h('span', { class: `badge badge-${c.ok ? 'ok' : 'crit'}` }, c.ok ? 'PASS' : 'FAIL'),
-          `${c.status ? `HTTP ${c.status} · ` : ''}${c.detail || ''}${c.ms !== undefined ? ` · ${c.ms} ms` : ''}`]),
-        { caption: 'Connection test' }));
+      const r = await api.post('/api/connections/key/reveal', {});
+      revealed = (r.api_key && r.api_key.key) || null;
+      if (!revealed) toast('Key is not available in this session.', 'warn');
+      render();
     } catch (e) {
-      clear(out).append(errorBox(e));
+      toast(e.message, 'crit');
     } finally {
-      btn.disabled = false;
-      input.value = '';
+      revealBtn.disabled = false;
     }
   });
-  return card('Test connection',
-    h('label', { for: `test-key-${client}` }, 'Gateway key to test'),
-    h('div', { class: 'btn-row' }, input, btn),
-    h('p', { class: 'small muted', id: `test-hint-${client}` }, 'The key is sent to this server for the test only. It is not stored, logged or shown again.'),
+  const copyBtn = copyButton(() => revealed || '', 'Copy');
+  if (!revealed) copyBtn.disabled = true;
+  return card('API key',
+    h('p', {}, ak.label || 'Gateway key for normal API clients.'),
+    h('p', { class: 'small muted' }, ak.source || ''),
+    h('div', { class: 'btn-row' }, valueEl, revealBtn, copyBtn),
+    h('p', { class: 'small muted' }, 'Masked until you click Reveal. Never committed, never in static HTML.'));
+}
+
+function testResults(out, r) {
+  clear(out).append(
+    h('p', {}, h('span', { class: `badge badge-${r.ok ? 'ok' : 'crit'}`, id: 'conn-test-verdict' },
+      r.ok ? 'PASS' : 'FAIL'), ' ', r.summary || ''),
+    table(['Check', 'Result', 'Detail'], (r.checks || []).map((c) => [c.check,
+      h('span', { class: `badge badge-${c.ok ? 'ok' : 'crit'}` }, c.ok ? 'PASS' : 'FAIL'),
+      `${c.status ? `HTTP ${c.status} · ` : ''}${c.detail || ''}${c.ms !== undefined ? ` · ${c.ms} ms` : ''}`]),
+    { caption: 'Connection test' }));
+}
+
+function liveTests() {
+  const out = h('div', { class: 'test-result', 'aria-live': 'polite', id: 'conn-test-result' });
+  function run(target, label) {
+    return h('button', {
+      type: 'button', class: 'btn', id: `test-${target}`,
+      onclick: async (ev) => {
+        const btn = ev.currentTarget;
+        btn.disabled = true;
+        clear(out).append(h('p', { class: 'loading' }, h('span', { class: 'spin', 'aria-hidden': 'true' }), `Testing ${target}…`));
+        try {
+          testResults(out, await api.post('/api/connections/test', { target }));
+        } catch (e) {
+          clear(out).append(errorBox(e));
+        } finally {
+          btn.disabled = false;
+        }
+      },
+    }, label);
+  }
+  return card('Connection test',
+    h('p', {}, 'Uses the live gateway key on the server. Does not start gx-max.'),
+    h('div', { class: 'btn-row' },
+      run('gateway', 'Test Gateway'),
+      run('gx-mini', 'Test gx-mini'),
+      run('gx-code', 'Test gx-code'),
+      run('gx-auto', 'Test gx-auto')),
     out);
+}
+
+function gatewayCard() {
+  const g = info.gateway || {};
+  const status = g.healthy ? 'Healthy' : (g.status || 'Unhealthy');
+  return card('Gateway',
+    kv([
+      ['Status', levelBadge(g.healthy ? 'ok' : 'crit', status)],
+      copyRow('OpenAI compatible base URL', g.public_url || info.gateway_url, 'conn-public-url'),
+      copyRow('Internal service URL (OpenWebUI on gx10-01)', g.internal_url || info.local_gateway_url, 'conn-internal-url'),
+      ['API path', h('code', {}, g.api_path || '/v1')],
+      ['Authentication', g.auth || 'enabled'],
+      ['Public logical models', aliasChips(g.models || info.text_aliases || [])],
+    ]));
 }
 
 function kiloPanel() {
@@ -71,35 +112,26 @@ function kiloPanel() {
     : `Steps verified against Kilo Code ${k.verified_against || k.verified_version}.`;
   return [
     card('Kilo Code',
-      h('p', { class: 'lead' }, 'Recommended model: ', h('strong', {}, 'gx-auto'), '. It picks the right tier for every Kilo request:'),
+      h('p', { class: 'lead' }, 'Recommended coding model: ', h('strong', {}, 'gx-code'), '.'),
       h('ul', {}, info.gx_auto.routes.map((r) => h('li', {}, `${r.when} → `, h('code', {}, r.to)))),
       h('p', {}, info.gx_auto.gx_max),
       h('p', { class: 'small muted' }, version)),
     card('Connection settings',
       kv([
-        ['Provider API', h('strong', {}, k.provider_api)],
+        ['Provider', h('strong', {}, k.provider_api)],
         copyRow('Base URL', info.gateway_url, 'kilo-base-url'),
-        ['API key', h('span', {}, 'a key from ', h('a', { href: '#/keys' }, 'API Keys'), ' (never the master key)')],
-        copyRow('Model', 'gx-auto', 'kilo-model'),
+        ['API key', 'Reveal on this page, then paste into Kilo'],
+        copyRow('Recommended model', k.recommended_model || 'gx-code', 'kilo-model'),
       ]),
-      h('p', {}, 'Explicit aliases, if you want to skip routing:'),
-      aliasChips(['gx-mini', 'gx-fast', 'gx-reason', 'gx-max']),
-      h('p', { class: 'small muted' }, 'gx-image, gx-video and gx-music are not chat models; Kilo Code cannot use them. Use GX-Playground.')),
-    keyWorkflow('kilo'),
+      h('p', {}, 'Available alternatives:'),
+      aliasChips(k.alternatives || ['gx-mini', 'gx-auto', 'gx-max'])),
     card('Manual setup (Kilo Code settings)',
       h('ol', { class: 'steps' }, k.manual_steps.map((s) => h('li', {}, s)))),
     card('Config file',
-      h('p', {}, 'Kilo Code reads ', h('code', {}, k.config_file), '. This complete configuration uses the environment variable ',
-        h('code', {}, k.key_env), ' for the key (set it to your key before starting VS Code or kilo), or replace ',
-        h('code', {}, '{env:GX_API_KEY}'), ' with the key in a file that is never committed.'),
+      h('p', {}, 'Kilo Code reads ', h('code', {}, k.config_file), '. Schema matches the installed extension. The snippet uses ',
+        h('code', {}, k.key_env), ' or replace ', h('code', {}, '{env:GX_API_KEY}'), ' after Reveal.'),
       codeBlock(k.config_example, 'json'),
       h('div', { class: 'btn-row' }, copyButton(() => k.config_example, 'Copy config'))),
-    testCard('kilo'),
-    card('Troubleshooting', h('ul', {},
-      h('li', {}, '401 / "invalid key": the key was revoked, expired or mistyped. Create or replace it on the API Keys page.'),
-      h('li', {}, 'gx-auto missing from the model list: the key does not allow gx-auto. Replace it with a key that does.'),
-      h('li', {}, 'Slow first answer: gx-reason loads on demand (about 6-7 minutes cold). See Resource Control.'),
-      h('li', {}, 'Timeouts in long agent turns: keep "timeout" at 900000 in the config.'))),
   ];
 }
 
@@ -145,9 +177,7 @@ function identityCard() {
   });
   api.get('/api/setup/openwebui/identity').then((r) => identityTable(out, r)).catch((e) => clear(out).append(errorBox(e)));
   return card('Model identity (this cluster\'s Open WebUI)',
-    h('p', {}, 'Each alias gets an Open WebUI model entry with a short, factual system prompt from the model registry, '
-      + 'so a model answers "which model are you?" with its alias and its real underlying model. '
-      + 'Model Manager updates these entries after an assignment or a rollback.'),
+    h('p', {}, 'Each alias gets an Open WebUI model entry with a short, factual system prompt from the model registry.'),
     out, h('div', { class: 'btn-row' }, btn));
 }
 
@@ -158,31 +188,23 @@ function openwebuiPanel() {
     : `Steps verified against Open WebUI ${o.verified_against}.`;
   return [
     card('Open WebUI',
-      h('p', { class: 'lead' }, 'Connect Open WebUI to the cluster through the LiteLLM gateway with a key from API Keys.'),
+      h('p', { class: 'lead' }, 'Production connection (already applied on this host):'),
       h('p', { class: 'small muted' }, version),
       h('p', {}, o.note)),
     card('Connection settings',
       kv([
-        ['Connection Type', 'External'],
-        copyRow('URL', info.gateway_url, 'owui-url'),
-        o.version ? copyRow('URL (Open WebUI on gx10-01 itself)', o.base_url_same_host, 'owui-local-url')
-          : ['URL (Open WebUI on gx10-01 itself)', undefined],
-        ['Auth', 'Bearer'],
-        ['API Key', h('span', {}, 'a key from ', h('a', { href: '#/keys' }, 'API Keys'), ' (never the master key)')],
-        ['API Type', 'Chat Completions'],
-        ['Advanced › Provider', 'Default'],
+        ['Connection type', o.connection_type || 'External'],
+        copyRow('Base URL', o.base_url || 'http://127.0.0.1:4000/v1', 'owui-url'),
+        ['Auth', o.auth || 'Bearer'],
+        ['API key', 'same gateway key as Reveal on this page'],
+        ['API Type', o.api_type || 'Chat Completions'],
+        ['OpenAI API', o.enable_openai ? 'on' : 'off'],
+        ['Ollama', o.enable_ollama ? 'on' : 'off'],
       ]),
-      h('p', {}, 'Model IDs:'),
-      aliasChips(['gx-auto', 'gx-mini', 'gx-fast', 'gx-reason', 'gx-max'])),
-    keyWorkflow('openwebui'),
+      h('p', {}, 'Expected model list:'),
+      aliasChips(o.model_ids || info.text_aliases)),
     card('Manual setup (Open WebUI)', h('ol', { class: 'steps' }, o.manual_steps.map((s) => h('li', {}, s)))),
     identityCard(),
-    testCard('openwebui'),
-    card('Troubleshooting', h('ul', {},
-      h('li', {}, 'Verify Connection fails: check the URL ends in /v1 and Auth is Bearer.'),
-      h('li', {}, 'No models listed: the key allows none of the Model IDs you entered.'),
-      h('li', {}, 'A model names the wrong model when asked: check Model identity above; the answer comes from its entry, the routing from the gateway.'),
-      h('li', {}, 'Images, video and music: use GX-Playground; Open WebUI is set up for chat here.'))),
   ];
 }
 
@@ -191,20 +213,16 @@ function genericPanel() {
   return [
     card('OpenAI-compatible clients',
       kv([copyRow('Base URL', info.gateway_url, 'generic-base-url'),
-        ['Authentication', 'Authorization: Bearer <key from API Keys>']]),
-      h('p', {}, 'Chat aliases:'), aliasChips(info.text_aliases),
-      h('p', {}, 'Creative models are not chat models: ',
-        Object.entries(info.creative_aliases).map(([a, where]) => h('span', { class: 'chip' }, h('code', {}, a), ` ${where}`)))),
-    card('Shell', h('p', {}, 'Set your key once:'), codeBlock(ex.env, 'bash'),
+        ['Authentication', 'Authorization: Bearer <gateway key>']]),
+      h('p', {}, 'Public models:'), aliasChips(info.text_aliases)),
+    card('curl', h('p', {}, 'Set your key once:'), codeBlock(ex.env, 'bash'),
       h('p', {}, 'List models:'), codeBlock(ex.curl_models, 'bash'),
-      h('p', {}, 'A gx-mini completion:'), codeBlock(ex.curl_chat, 'bash')),
+      h('p', {}, 'A gx-code completion:'), codeBlock(ex.curl_chat, 'bash')),
     card('Python (openai package)', codeBlock(ex.python, 'python')),
     card('JavaScript (openai package)', codeBlock(ex.javascript, 'js')),
-    card('gx-max (heavy)', h('p', { class: 'callout callout-warning' }, 'gx-max takes over both nodes. The first request drains every other model and waits while it loads.'),
+    card('gx-max (solver + reviewer)', h('p', { class: 'callout callout-warning' },
+      'gx-max uses gx-code-01 as solver and gx-code-02 as reviewer. Do not fire it from a casual health test.'),
       codeBlock(ex.gx_max, 'bash')),
-    card('Music API (GX-Playground)', kv([copyRow('Music API base', info.music_api_url, 'music-api-url')]),
-      codeBlock(ex.music, 'bash'), h('p', { class: 'small' }, 'The key must allow gx-music. Full reference: Docs › GX-Playground and music.')),
-    testCard('generic'),
   ];
 }
 
@@ -212,7 +230,7 @@ function render() {
   const tabs = h('div', { class: 'tabs', role: 'tablist', 'aria-label': 'Client' }, TABS.map(([id, label]) => h('button', {
     type: 'button', role: 'tab', id: `tab-${id}`, 'aria-selected': String(tab === id), 'aria-controls': 'setup-panel',
     class: `tab${tab === id ? ' active' : ''}`, tabindex: tab === id ? '0' : '-1',
-    onclick: () => { tab = id; history.replaceState(null, '', `#/setup/${id}`); render(); document.getElementById(`tab-${id}`).focus(); },
+    onclick: () => { tab = id; history.replaceState(null, '', `#/connections/${id}`); render(); document.getElementById(`tab-${id}`).focus(); },
     onkeydown: (ev) => {
       const idx = TABS.findIndex(([t]) => t === tab);
       if (ev.key === 'ArrowRight' || ev.key === 'ArrowLeft') {
@@ -225,20 +243,22 @@ function render() {
   }, label)));
   const panelContent = tab === 'kilo' ? kiloPanel() : tab === 'openwebui' ? openwebuiPanel() : genericPanel();
   clear(root).append(
-    h('p', { class: 'lead' }, 'Everything a client needs, with live values from this cluster. No SSH needed. ',
-      h('a', { href: '#/keys' }, 'API Keys'), ' · ', h('a', { href: '#/models' }, 'Models'), ' · ',
-      h('a', { href: '#/docs/clients' }, 'API docs')),
+    h('p', { class: 'lead' }, 'How to connect Kilo Code, OpenWebUI, Claude Code, curl and any OpenAI-compatible client. Values come from the live gateway.'),
+    gatewayCard(),
+    keyCard(),
+    liveTests(),
     tabs,
     h('div', { id: 'setup-panel', role: 'tabpanel', 'aria-labelledby': `tab-${tab}`, class: 'stack' }, panelContent));
 }
 
 export default {
-  title: 'Setup',
+  title: 'Connections',
   interval: 0,
   async mount(el, { params }) {
     root = el;
+    revealed = null;
     if (params && TABS.some(([t]) => t === params[0])) tab = params[0];
-    info = await api.get('/api/setup');
+    info = await api.get('/api/connections');
     render();
   },
 };

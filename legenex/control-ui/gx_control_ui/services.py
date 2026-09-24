@@ -120,6 +120,7 @@ class Cluster:
             "swap_node2": _probe(http_json, "GET", f"{c.node2_swap_base}/v1/models", headers=swap_h, timeout=3),
             "swap_node2_running": _probe(http_json, "GET", f"{c.node2_swap_base}/running", headers=swap_h, timeout=3),
             "openwebui": _probe(_http_status, "http://127.0.0.1:3000/", timeout=4),
+            "agentos": _probe(_http_status, "http://127.0.0.1:4173/api/health", timeout=4),
             "sglang": _probe(http_json, "GET", f"{c.gxmax_base}/health", timeout=3),
             # D-039: per-alias budget, routing and last-request facts.
             "text_status": _probe(http_json, "GET", f"{c.orchestrator_base}/text/status", timeout=4),

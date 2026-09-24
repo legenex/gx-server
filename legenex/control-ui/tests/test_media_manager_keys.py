@@ -263,9 +263,9 @@ class KeyTests(unittest.TestCase):
         self.httpd.shutdown()
 
     def test_create_list_replace_revoke(self):
-        created = self.km.create({"name": "kilo", "models": ["gx-fast", "gx-mini"]}, user="admin")
+        created = self.km.create({"name": "kilo", "models": ["gx-code", "gx-mini"]}, user="admin")
         self.assertTrue(created["secret"].startswith("sk-"))
-        self.assertEqual(created["models"], ["gx-mini", "gx-fast"])
+        self.assertEqual(created["models"], ["gx-mini", "gx-code"])
         listing = self.km.list()
         self.assertEqual(len(listing), 1)
         self.assertNotIn(created["secret"], json.dumps(listing))
@@ -277,7 +277,7 @@ class KeyTests(unittest.TestCase):
         # same name and policy under the unique-alias rule (live bug 2026-09-17)
         self.assertEqual(after[0]["name"], "kilo")
         self.assertEqual(new["name"], "kilo")
-        self.assertEqual(after[0]["models"], ["gx-mini", "gx-fast"])
+        self.assertEqual(after[0]["models"], ["gx-mini", "gx-code"])
         self.assertNotEqual(after[0]["id"], listing[0]["id"])
         self.km.revoke(self.km.list()[0]["id"])
         self.assertEqual(self.km.list(), [])

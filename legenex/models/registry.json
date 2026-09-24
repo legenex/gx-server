@@ -55,6 +55,40 @@
         "base_parameters": "about 4 billion (4B dense)"
       }
     },
+    "gx-code": {
+      "repository": "0xKitkat/Ornith-1.5-35B-A3B-Uncensored-GGUF",
+      "revision": "ab0eed77c73880afda789a3914003db2273fd64a",
+      "files": [],
+      "node": "gx10-01 + gx10-02",
+      "path": "/srv/models/gguf/Ornith-1.5-35B-A3B-Uncensored",
+      "runtime": "llama.cpp (legenex/llama-cpp-spark) via llama-swap, one worker per node",
+      "binding": {
+        "file": "legenex/gateway/llama-swap/node01.yaml",
+        "macros": ["gx_code"]
+      },
+      "family": "Ornith 1.5-35B-A3B",
+      "parameters": "~35B total, ~3B active (MoE)",
+      "quantization": "GGUF Q5_K_M + BF16 vision projector",
+      "context": 65536,
+      "max_output": 16384,
+      "vision": true,
+      "tools": true,
+      "uncensored": "yes",
+      "licence": "apache-2.0",
+      "startup": "resident on both nodes (ttl 0)",
+      "memory": "about 48 GiB cgroup cap per worker",
+      "identity": {
+        "repository": "0xKitkat/Ornith-1.5-35B-A3B-Uncensored-GGUF",
+        "revision": "ab0eed77c73880afda789a3914003db2273fd64a",
+        "base_model": "Ornith-1.5-35B-A3B",
+        "derivation": "GGUF Q5_K_M quantization of Ornith-1.5-35B-A3B Uncensored",
+        "parameters": "~35B total, ~3B active (mixture of experts)",
+        "weights": "GGUF Q5_K_M plus BF16 vision projector; not full precision",
+        "modalities": "text and image input, text output, tool calls",
+        "verified": "2026-09-23: live gx-code-01 and gx-code-02 llama.cpp workers",
+        "base_parameters": "35B total, about 3B active per token"
+      }
+    },
     "gx-fast": {
       "repository": "kyaky/Qwen3.6-35B-A3B-Uncensored-NVFP4",
       "revision": "33d5cf837389a8f972913090d81da47886e08877",
@@ -144,12 +178,12 @@
       }
     },
     "gx-max": {
-      "repository": "dealignai/DeepSeek-V4-Flash-0731-CRACK-NVFP4",
-      "revision": "c66fe3848cb85ba90613743319286eb70576db39",
+      "repository": "0xKitkat/Ornith-1.5-35B-A3B-Uncensored-GGUF",
+      "revision": "ab0eed77c73880afda789a3914003db2273fd64a",
       "files": [],
       "node": "gx10-01 + gx10-02",
-      "path": "/srv/models/deepseek/DeepSeek-V4-Flash-0731-CRACK",
-      "runtime": "SGLang (lmsysorg/sglang:dev-v4f-2dgx-v2), TP=2, nnodes=2, cookbook cell dgx-spark/flash-official/fp4",
+      "path": "/srv/models/gguf/Ornith-1.5-35B-A3B-Uncensored",
+      "runtime": "gx-orchestrator dual-worker (solver gx-code-01, reviewer gx-code-02)",
       "binding": {
         "file": "legenex/lifecycle/gx-max.conf",
         "macros": [
@@ -179,15 +213,15 @@
         "on_disk": false
       },
       "identity": {
-        "repository": "dealignai/DeepSeek-V4-Flash-0731-CRACK-NVFP4",
-        "revision": "c66fe3848cb85ba90613743319286eb70576db39",
-        "base_model": "deepseek-ai/DeepSeek-V4-Flash-0731",
-        "derivation": "a community abliterated ('CRACK') release by dealignai of deepseek-ai/DeepSeek-V4-Flash-0731",
-        "parameters": "284B total, mixture of experts",
-        "weights": "DeepSeek's FP8 attention and shared experts with FP4 routed experts; not full precision",
-        "modalities": "text input and output, tool calls, thinking",
-        "verified": "2026-09-17: repository, revision and base_model read from the live Hugging Face API (cardData.base_model)",
-        "base_parameters": "284B total, mixture of experts"
+        "repository": "0xKitkat/Ornith-1.5-35B-A3B-Uncensored-GGUF",
+        "revision": "ab0eed77c73880afda789a3914003db2273fd64a",
+        "base_model": "Ornith-1.5-35B-A3B",
+        "derivation": "dual-worker workflow: solver gx-code-01 on gx10-01, reviewer gx-code-02 on gx10-02, same Ornith Q5_K_M workers as gx-code",
+        "parameters": "~35B total, ~3B active (mixture of experts) on each worker",
+        "weights": "GGUF Q5_K_M plus BF16 vision projector; not full precision",
+        "modalities": "text input and output, tool calls",
+        "verified": "2026-09-23: live dual-worker gx-max via gx-orchestrator",
+        "base_parameters": "35B total, about 3B active per token"
       }
     },
     "gx-auto": {

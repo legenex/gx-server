@@ -17,7 +17,7 @@ from gx_control_ui.setup import test_connection as check_connection
 
 SECRET_SHAPE = re.compile(r"sk-[A-Za-z0-9]{20,}")
 BASE = "http://gateway.example:4000/v1"
-EXAMPLE_KEYS = {"curl_models", "curl_chat", "python", "javascript", "gx_max", "music"}
+EXAMPLE_KEYS = {"curl_models", "curl_chat", "python", "javascript", "gx_max"}
 
 
 class KiloConfigTests(unittest.TestCase):
@@ -40,9 +40,11 @@ class KiloConfigTests(unittest.TestCase):
             self.assertGreater(m["limit"]["context"], m["limit"]["output"])
         self.assertFalse(models["gx-max"]["attachment"])
         self.assertEqual(models["gx-max"]["modalities"]["input"], ["text"])
-        self.assertTrue(models["gx-reason"]["reasoning"])
+        self.assertTrue(models["gx-max"]["reasoning"])
         self.assertFalse(models["gx-auto"]["reasoning"])
+        self.assertFalse(models["gx-code"]["reasoning"])
         self.assertIn("image", models["gx-auto"]["modalities"]["input"])
+        self.assertEqual(doc["model"], "gx-cluster/gx-code")
 
     def test_custom_placeholder_and_no_secret(self):
         text = kilo_config(BASE, key_placeholder="YOUR_GX_API_KEY")
@@ -68,13 +70,9 @@ class ExamplesTests(unittest.TestCase):
         self.assertTrue(placeholders)
         self.assertIn("process.env.GX_API_KEY", ex["javascript"])
         self.assertIn(f"{BASE}/models", ex["curl_models"])
-        self.assertIn("http://playground.example:8090/v1/music/generations", ex["music"])
         self.assertIn('"model": "gx-max"', ex["gx_max"])
-        # the embedded JSON bodies are valid
         body = re.search(r"-d '(\{.*\})'", ex["curl_chat"]).group(1)
-        self.assertEqual(json.loads(body)["model"], "gx-mini")
-        body = re.search(r"-d '(\{.*\})'", ex["music"]).group(1)
-        self.assertTrue(json.loads(body)["instrumental"])
+        self.assertEqual(json.loads(body)["model"], "gx-code")
 
     def test_setup_info_offline(self):
         env = TempEnv(public_gateway_url=BASE)
@@ -84,7 +82,11 @@ class ExamplesTests(unittest.TestCase):
             env.cleanup()
         self.assertEqual(info["gateway_url"], BASE)
         self.assertEqual(info["local_gateway_url"], "http://127.0.0.1:9/v1")
-        self.assertEqual(info["music_api_url"], "http://127.0.0.1:8090/v1/music")
+        self.assertNotIn("music_api_url", info)
+        self.assertEqual(info["text_aliases"], ["gx-mini", "gx-code", "gx-auto", "gx-max"])
+        self.assertEqual(info["kilo"]["recommended_model"], "gx-code")
+        self.assertEqual(info["api_key"]["key"], None)
+        self.assertTrue(info["api_key"]["masked"].startswith("sk-") or "••••" in info["api_key"]["masked"])
         self.assertEqual(info["kilo"]["verified_version"], client_setup.KILO_VERIFIED)
         self.assertEqual(json.loads(info["kilo"]["config_example"])["provider"]["gx-cluster"]["options"]["baseURL"],
                          BASE)
@@ -104,9 +106,9 @@ class ConnectionTests(unittest.TestCase):
         def models(handler, body):
             auth = handler.headers.get("Authorization")
             if auth == f"Bearer {cls.good}":
-                return 200, {"data": [{"id": a} for a in ("gx-auto", "gx-mini", "gx-fast")]}
+                return 200, {"data": [{"id": a} for a in ("gx-auto", "gx-mini", "gx-code", "gx-max")]}
             if auth == f"Bearer {cls.narrow}":
-                return 200, {"data": [{"id": "gx-fast"}]}
+                return 200, {"data": [{"id": "gx-mini"}]}
             return 401, {"error": {"message": "Authentication Error, invalid key", "type": "auth_error"}}
 
         def chat(handler, body):
@@ -146,7 +148,8 @@ class ConnectionTests(unittest.TestCase):
         self.assertEqual(out["summary"], "CONNECTED")
         self.assertEqual(out["routing"], {"tier": "gx-mini", "intent": "trivial", "signals": ["short"]})
         self.assertEqual([c["check"] for c in out["checks"]],
-                         ["GET /v1/models", "gx-auto visible to this key", "real completion on gx-auto",
+                         ["GET /v1/models", "gx-code / gx-mini / gx-auto / gx-max visible to this key",
+                          "real completion on gx-auto",
                           "gx-auto routing decision (orchestrator journal)"])
         method, path, headers, body = self.litellm.calls[-1]
         self.assertEqual((method, path), ("POST", "/v1/chat/completions"))

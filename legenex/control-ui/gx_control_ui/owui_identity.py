@@ -46,13 +46,12 @@ log = logging.getLogger("gx.ui.owui_identity")
 CONTAINER = "open-webui"
 VERIFIED_OWUI = "0.11.3"
 #: text aliases whose Open WebUI entries carry an identity prompt
-ALIASES = ("gx-mini", "gx-fast", "gx-reason", "gx-max", "gx-auto")
+ALIASES = ("gx-mini", "gx-code", "gx-auto", "gx-max")
 MARKER = "gx_identity"
 ROLE = {
     "gx-mini": "the fast local model",
-    "gx-fast": "the capable everyday model for code, longer answers and tools",
-    "gx-reason": "the reasoning model for hard problems",
-    "gx-max": "the largest model, which takes over both cluster nodes while it is loaded",
+    "gx-code": "the coding model (Ornith workers on both nodes)",
+    "gx-max": "the dual-worker solver and reviewer workflow",
 }
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_REGISTRY = REPO_ROOT / "legenex" / "models" / "registry.json"
@@ -134,9 +133,8 @@ def router_prompt(registry: dict) -> str:
     return "\n".join(x for x in [
         "You are answering through gx-auto, the automatic router of the GX-Cluster, a private two-node AI "
         "cluster. \"gx-auto\" is a user-facing alias, not a model.",
-        "Each request is sent to one of gx-mini, gx-fast or gx-reason (gx-max only if an administrator has "
-        "already loaded it), chosen by a deterministic classifier. You cannot see which one was chosen for "
-        "this reply.",
+        "Each request is sent to gx-mini or gx-code, chosen by a deterministic classifier. You cannot see which "
+        "one was chosen for this reply. gx-max is a separate explicit mode.",
         "When asked what model you are, say that you are answering through gx-auto and that the model that "
         "wrote the reply is recorded in the cluster's routing journal; do not guess a model name.",
         (f"Configured context: up to {ctx} tokens per request" + (f"; replies up to {out} tokens." if out else "."))
@@ -148,7 +146,7 @@ def router_prompt(registry: dict) -> str:
 
 def description(alias: str, entry: dict) -> str:
     if alias == "gx-auto":
-        return "Automatic router: sends each request to gx-mini, gx-fast or gx-reason."
+        return "Automatic router: sends each request to gx-mini or gx-code."
     ident = entry.get("identity") or {}
     base = f" (from {ident['base_model']})" if facts_match(entry) and ident.get("base_model") else ""
     return f"{ROLE.get(alias, alias).capitalize()}. Underlying model: {entry.get('repository')}{base}."

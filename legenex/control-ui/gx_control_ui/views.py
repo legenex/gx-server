@@ -187,6 +187,7 @@ def _service_levels(svc: dict, gxmax_state: str) -> list[dict]:
         row("llama-swap gx10-01", "swap_node1", "crit", drained),
         row("llama-swap gx10-02", "swap_node2", "warn", drained),
         row("OpenWebUI", "openwebui", "warn"),
+        row("AgentOS", "agentos", "warn"),
     ]
     return rows
 

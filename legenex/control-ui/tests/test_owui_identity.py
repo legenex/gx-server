@@ -79,7 +79,7 @@ class PromptTests(unittest.TestCase):
         self.assertLess(len(p), 2000)
 
     def test_every_direct_alias_has_bound_verified_facts(self):
-        for alias in ("gx-mini", "gx-fast", "gx-reason", "gx-max"):
+        for alias in ("gx-mini", "gx-code", "gx-max"):
             entry = REGISTRY["aliases"][alias]
             with self.subTest(alias=alias):
                 self.assertTrue(oi.facts_match(entry), f"{alias} identity block does not match its binding")
@@ -167,15 +167,15 @@ class SyncTests(unittest.TestCase):
         sync, reg_path, _ = sync_with(self.fake, env=self.env)
         sync.apply()
         reg = json.loads(reg_path.read_text())
-        reg["aliases"]["gx-fast"]["repository"] = "someone/New-Fast"
+        reg["aliases"]["gx-code"]["repository"] = "someone/New-Code"
         reg_path.write_text(json.dumps(reg))
         states = {i["id"]: i["state"] for i in sync.plan()["items"]}
-        self.assertEqual(states["gx-fast"], "drift")
+        self.assertEqual(states["gx-code"], "drift")
         self.assertEqual(states["gx-mini"], "ok")
         out = sync.apply()
-        self.assertEqual(out["written"], ["gx-fast"])
-        self.assertIn("someone/New-Fast", self.fake.rows["gx-fast"]["params"]["system"])
-        self.assertIn("have not been verified", self.fake.rows["gx-fast"]["params"]["system"])
+        self.assertEqual(out["written"], ["gx-code"])
+        self.assertIn("someone/New-Code", self.fake.rows["gx-code"]["params"]["system"])
+        self.assertIn("have not been verified", self.fake.rows["gx-code"]["params"]["system"])
 
     def test_rows_created_by_someone_else_are_never_overwritten_without_adopt(self):
         self.fake.rows["gx-mini"] = {"id": "gx-mini", "name": "My mini", "base_model_id": None, "is_active": True,
