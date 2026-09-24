@@ -184,6 +184,32 @@ def api_setup(h: Handler) -> None:
     h._json(200, client_setup.setup_info(h.app.cfg))
 
 
+@route("GET", r"/api/connections")
+def api_connections(h: Handler) -> None:
+    h._json(200, client_setup.connections_info(h.app.cfg, reveal=False))
+
+
+@route("POST", r"/api/connections/key/reveal")
+def api_connections_reveal(h: Handler) -> None:
+    assert h.session is not None  # noqa: S101
+    h._body(256)
+    info = client_setup.connections_info(h.app.cfg, reveal=True)
+    h.app.actions.audit(user=h.session.username, ip=h._client_ip(), action="connections.key.reveal",
+                        outcome="ok" if info.get("api_key", {}).get("revealed") else "failed")
+    h._json(200, {"api_key": info["api_key"]})
+
+
+@route("POST", r"/api/connections/test")
+def api_connections_test(h: Handler) -> None:
+    assert h.session is not None  # noqa: S101
+    body = h._body(4096)
+    target = str(body.get("target") or "gateway")
+    result = client_setup.test_live(h.app.cfg, target)
+    h.app.actions.audit(user=h.session.username, ip=h._client_ip(), action=f"connections.test.{target}",
+                        outcome="ok" if result.get("ok") else "failed")
+    h._json(200, result)
+
+
 @route("POST", r"/api/setup/test")
 def api_setup_test(h: Handler) -> None:
     assert h.session is not None  # noqa: S101

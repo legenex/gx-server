@@ -1,14 +1,12 @@
-"""Client setup (D-037): Kilo Code, Open WebUI and generic OpenAI clients.
+"""Client setup and Connections page: Kilo Code, Open WebUI, OpenAI clients.
 
-Every label below was read from the installed clients on gx10-01
-(2026-09-17): the Kilo Code 7.7.2 VS Code extension (`dist/webview.js`,
-config schema in the bundled binary; the npm CLI 7.5.14 agrees) and Open
-WebUI 0.11.3 (`AddConnectionModal.svelte`, `admin/Settings/Connections.svelte`).
-The versions are re-detected live so the page says when the installed client
-differs from the version the steps were verified against.
+Labels were read from the installed clients on gx10-01. Kilo Code version is
+re-detected from ~/.vscode/extensions; Open WebUI from the running container.
 
-The connection tests use the key the user pastes (never the master key) and
-never store it.
+The Connections page retrieves the live gateway key server-side from
+legenex/gateway/.env (LITELLM_MASTER_KEY). It is masked by default, revealed
+only to an authenticated admin session, never written to Git, static HTML,
+frontend bundles, logs, or screenshots.
 """
 
 from __future__ import annotations
@@ -17,26 +15,27 @@ import hashlib
 import json
 import os
 import re
+import socket
 import time
 from pathlib import Path
 from typing import Any
+from urllib.error import URLError
 
 from .util import HTTPError, bearer, http, http_json, run
 
-TEXT_ALIASES = ("gx-auto", "gx-mini", "gx-fast", "gx-reason", "gx-max")
-KILO_VERIFIED = "7.7.2"
+TEXT_ALIASES = ("gx-mini", "gx-code", "gx-auto", "gx-max")
+PUBLIC_MODELS = TEXT_ALIASES
+KILO_VERIFIED = "7.7.9"
 OPENWEBUI_VERIFIED = "0.11.3"
 KEY_RE = re.compile(r"^sk-[A-Za-z0-9_\-]{8,200}$")
+INTERNAL_GATEWAY = "http://127.0.0.1:4000/v1"
 
 #: Model capabilities for the Kilo config (context/output limits as LiteLLM serves them).
 KILO_MODELS = {
-    "gx-auto": {"reasoning": False, "attachment": True, "input": ["text", "image"], "context": 57344, "output": 8192},
     "gx-mini": {"reasoning": False, "attachment": True, "input": ["text", "image"], "context": 57344, "output": 8192},
-    "gx-fast": {"reasoning": False, "attachment": True, "input": ["text", "image"], "context": 98304,
-                "output": 32768},
-    "gx-reason": {"reasoning": True, "attachment": True, "input": ["text", "image"], "context": 49152,
-                  "output": 16384},
-    "gx-max": {"reasoning": True, "attachment": False, "input": ["text"], "context": 262144, "output": 65536},
+    "gx-code": {"reasoning": False, "attachment": True, "input": ["text", "image"], "context": 49152, "output": 16384},
+    "gx-auto": {"reasoning": False, "attachment": True, "input": ["text", "image"], "context": 49152, "output": 16384},
+    "gx-max": {"reasoning": True, "attachment": False, "input": ["text"], "context": 49152, "output": 16384},
 }
 
 
@@ -47,12 +46,31 @@ def kilo_config(base_url: str, key_placeholder: str = "{env:GX_API_KEY}") -> str
                          "reasoning": m["reasoning"],
                          "modalities": {"input": m["input"], "output": ["text"]},
                          "limit": {"context": m["context"], "output": m["output"]}}
-    doc = {"$schema": "https://app.kilo.ai/config.json", "model": "gx-cluster/gx-auto",
+    doc = {"$schema": "https://app.kilo.ai/config.json", "model": "gx-cluster/gx-code",
            "provider": {"gx-cluster": {"name": "GX Cluster", "npm": "@ai-sdk/openai-compatible",
                                        "options": {"baseURL": base_url, "apiKey": key_placeholder,
-                                                   "timeout": 900000},
+                                                   "timeout": 900000, "chunkTimeout": 30000},
                                        "models": models}}}
     return json.dumps(doc, indent=2)
+
+
+def mask_key(secret: str) -> str:
+    if not secret or len(secret) < 8:
+        return "sk-••••"
+    prefix = secret[:3] if secret.startswith("sk-") else secret[:2]
+    return f"{prefix}••••••••••••{secret[-4:]}"
+
+
+def _tcp_ok(host: str, port: int, timeout: float = 2.0) -> bool:
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def _master_key(cfg) -> str:
+    return (cfg.secret("LITELLM_MASTER_KEY") or "").strip()
 
 
 def _kilo_versions() -> dict:
@@ -100,31 +118,53 @@ def _cached(name: str, fn) -> dict:
 
 
 def setup_info(cfg) -> dict:
-    base = cfg.public_gateway_url
+    return connections_info(cfg, reveal=False)
+
+
+def connections_info(cfg, *, reveal: bool = False) -> dict:
+    base = cfg.public_gateway_url.rstrip("/")
+    if not base.endswith("/v1"):
+        base = base + "/v1"
+    internal = cfg.litellm_base.rstrip("/") + "/v1"
     offline = cfg.offline
     kilo = {"verified_version": KILO_VERIFIED} if offline else _cached("kilo", _kilo_versions)
     owui = {"verified_against": OPENWEBUI_VERIFIED} if offline else _cached("owui", _openwebui_version)
-    return {
+    secret = "" if offline else _master_key(cfg)
+    masked = mask_key(secret) if secret else "sk-•••• (not loaded)"
+    healthy = False if offline else _tcp_ok("127.0.0.1", 4000)
+    payload = {
+        "gateway": {
+            "status": "healthy" if healthy else ("unknown" if offline else "unhealthy"),
+            "healthy": healthy,
+            "public_url": base,
+            "internal_url": internal,
+            "api_path": "/v1",
+            "auth": "enabled",
+            "models": list(PUBLIC_MODELS),
+        },
+        "api_key": {
+            "label": "Gateway master key — use this in Kilo Code, OpenWebUI and OpenAI-compatible clients",
+            "source": "legenex/gateway/.env (LITELLM_MASTER_KEY)",
+            "masked": masked,
+            "revealed": bool(reveal and secret),
+            "key": secret if (reveal and secret) else None,
+        },
         "gateway_url": base,
-        "local_gateway_url": cfg.litellm_base.rstrip("/") + "/v1",
-        "playground_url": cfg.public_playground_url,
-        "music_api_url": cfg.public_playground_url.rstrip("/") + "/v1/music",
+        "local_gateway_url": internal,
         "text_aliases": list(TEXT_ALIASES),
-        "creative_aliases": {"gx-image": "GX-Playground or /v1/images/* on the gateway",
-                             "gx-video": "GX-Playground or /v1/videos/* on the gateway",
-                             "gx-music": "GX-Playground or the music API on GX-Playground (not a chat model)"},
         "gx_auto": {
-            "recommended_for_kilo": True,
+            "recommended_for_kilo": False,
             "routes": [
                 {"when": "simple / trivial requests", "to": "gx-mini"},
-                {"when": "coding, actions and tool work", "to": "gx-fast"},
-                {"when": "hard reasoning and difficult debugging", "to": "gx-reason"},
+                {"when": "coding, tools, debugging and substantial work", "to": "gx-code"},
             ],
-            "gx_max": "gx-auto never starts gx-max. It only uses gx-max if gx-max is already running.",
+            "gx_max": "gx-auto never starts gx-max. Choose gx-max explicitly for the solver/reviewer workflow.",
         },
         "kilo": {
             **kilo,
             "provider_api": "OpenAI Compatible",
+            "recommended_model": "gx-code",
+            "alternatives": ["gx-mini", "gx-auto", "gx-max"],
             "config_file": "~/.config/kilo/kilo.jsonc (global) or .kilo/kilo.jsonc in a project",
             "config_example": kilo_config(base),
             "key_env": "GX_API_KEY",
@@ -135,14 +175,11 @@ def setup_info(cfg) -> dict:
                 "Display name: GX Cluster",
                 "Provider API: OpenAI Compatible",
                 f"Base URL: {base}",
-                "API key: paste the key you created on the API Keys page (or {env:GX_API_KEY}).",
+                "API key: the gateway key from this page (Reveal, then Copy).",
                 "Headers (optional): leave empty.",
-                "Models: click Add model for each alias. ID and Name: gx-auto (then gx-mini, gx-fast, "
-                "gx-reason, and gx-max if you want it). Tick Image for all except gx-max; tick Reasoning for "
-                "gx-reason and gx-max.",
-                "Click Submit, then choose gx-cluster / gx-auto as the model.",
-                "Tool calling and context limits are not in this form: use \"Edit advanced settings in the "
-                "JSON config file\" or copy the full config below.",
+                "Models: Add gx-code (recommended), then gx-mini, gx-auto, gx-max if you want them. "
+                "Tick Image for all except gx-max; tick Reasoning for gx-max.",
+                "Click Submit, then choose gx-cluster / gx-code as the coding model.",
             ],
             "labels": ["Providers", "Custom provider", "Connect", "Provider ID", "Display name", "Provider API",
                        "OpenAI Compatible", "Base URL", "API key", "Headers (optional)", "Models", "Add model",
@@ -150,40 +187,44 @@ def setup_info(cfg) -> dict:
         },
         "openwebui": {
             **owui,
+            "connection_type": "External",
+            "auth": "Bearer",
+            "api_type": "Chat Completions",
+            "base_url": INTERNAL_GATEWAY,
+            "public_url": base,
+            "model_ids": list(PUBLIC_MODELS),
+            "enable_openai": True,
+            "enable_ollama": False,
             "manual_steps": [
-                "Open Open WebUI and sign in as an administrator.",
-                "User menu > Admin Panel > Settings (or user menu > Settings). A settings window opens.",
-                "In the left sidebar choose Admin > AI > Connections.",
-                "Switch on OpenAI API. Under Manage OpenAI API Connections click + (Add Connection).",
-                "Connection Type: External",
-                f"URL: {base}   (Open WebUI on gx10-01 itself can use http://127.0.0.1:4000/v1)",
-                "Auth: Bearer, then paste your key into the API Key field.",
-                "API Type: Chat Completions",
-                "Advanced > Provider: leave on Default.",
-                "Model IDs: gx-auto, gx-mini, gx-fast, gx-reason (add gx-max only if users may start it).",
-                "Click Verify Connection, then Save.",
+                "OpenWebUI on gx10-01 uses host networking. The production connection is already "
+                f"{INTERNAL_GATEWAY} with the gateway master key.",
+                "User menu > Admin Panel > Settings > Connections.",
+                "OpenAI API: on. Ollama: off.",
+                f"URL: {INTERNAL_GATEWAY}",
+                "Auth: Bearer. API key: the gateway key from this page.",
+                "API Type: Chat Completions. Provider: Default.",
+                "Model IDs: gx-auto, gx-mini, gx-code, gx-max.",
             ],
-            "labels": ["Admin Panel", "Settings", "Admin", "AI", "Connections", "OpenAI API",
-                       "Manage OpenAI API Connections", "Add Connection", "Connection Type", "External", "URL",
-                       "Auth", "Bearer", "API Key", "API Type", "Chat Completions", "Advanced", "Provider",
-                       "Default", "Model IDs", "Verify Connection", "Save"],
-            "note": "Open WebUI is a chat client. Image, video and music creation live in GX-Playground.",
+            "labels": ["Admin Panel", "Settings", "Connections", "OpenAI API", "URL", "Auth", "Bearer",
+                       "API Key", "API Type", "Chat Completions", "Model IDs"],
+            "note": "OpenWebUI talks to loopback :4000. External clients use the Tailscale URL.",
         },
-        "generic": {"examples": examples(base, cfg.public_playground_url.rstrip("/"))},
+        "generic": {"examples": examples(base)},
     }
+    return payload
 
 
-def examples(base: str, playground: str) -> dict:
+def examples(base: str, playground: str | None = None) -> dict:
     return {
-        "env": "export GX_API_KEY=YOUR_GX_API_KEY   # the key from Control Center > API Keys",
+        "env": "export GX_API_KEY=YOUR_GX_API_KEY   # gateway key from Connections (Reveal)",
         "curl_models": f'curl {base}/models \\\n  -H "Authorization: Bearer $GX_API_KEY"',
         "curl_chat": (f'curl {base}/chat/completions \\\n  -H "Authorization: Bearer $GX_API_KEY" \\\n'
                       '  -H "Content-Type: application/json" \\\n'
-                      '  -d \'{"model": "gx-mini", "messages": [{"role": "user", "content": "Say hello"}]}\''),
+                      '  -d \'{"model": "gx-code", "messages": [{"role": "user", "content": "Reply exactly CODE_OK"}]}\''),
         "python": (
             "from openai import OpenAI  # pip install openai\n\n"
             f'client = OpenAI(base_url="{base}", api_key="YOUR_GX_API_KEY")\n\n'
-            "for model in (\"gx-mini\", \"gx-fast\", \"gx-reason\", \"gx-auto\"):\n"
+            "for model in (\"gx-mini\", \"gx-code\", \"gx-auto\"):\n"
             "    reply = client.chat.completions.create(\n"
             "        model=model,\n"
             "        messages=[{\"role\": \"user\", \"content\": \"Say hello in five words.\"}],\n"
@@ -194,7 +235,7 @@ def examples(base: str, playground: str) -> dict:
             "import OpenAI from 'openai'; // npm install openai\n\n"
             f"const client = new OpenAI({{ baseURL: '{base}', apiKey: process.env.GX_API_KEY }});\n\n"
             "const reply = await client.chat.completions.create({\n"
-            "  model: 'gx-auto',\n"
+            "  model: 'gx-code',\n"
             "  messages: [{ role: 'user', content: 'Say hello in five words.' }],\n"
             "  max_tokens: 64,\n"
             "});\n"
@@ -202,15 +243,9 @@ def examples(base: str, playground: str) -> dict:
         "gx_max": (
             f'curl {base}/chat/completions \\\n  -H "Authorization: Bearer $GX_API_KEY" \\\n'
             '  -H "Content-Type: application/json" --max-time 1200 \\\n'
-            '  -d \'{"model": "gx-max", "messages": [{"role": "user", "content": "Hard question..."}]}\'\n'
-            "# gx-max takes over BOTH nodes: the first request drains every other model and waits ~9 minutes\n"
-            "# while it loads. The key must allow gx-max. Prefer starting it from Resource Control."),
-        "music": (
-            f'curl {playground}/v1/music/generations \\\n  -H "Authorization: Bearer $GX_API_KEY" \\\n'
-            '  -H "Content-Type: application/json" \\\n'
-            '  -d \'{"prompt": "warm lo-fi beat", "style_tags": ["lo-fi", "chill"], "instrumental": true, '
-            '"duration": 30}\'\n'
-            "# The key must allow gx-music. Poll GET /v1/music/{id}; download GET /v1/music/{id}/content?format=mp3"),
+            '  -d \'{"model": "gx-max", "messages": [{"role": "user", "content": '
+            '"Fix this Python: def add(a,b): return a-b"}]}\'\n'
+            "# gx-max runs the dual-worker solver (gx-code-01) + reviewer (gx-code-02) workflow."),
     }
 
 
@@ -247,7 +282,7 @@ def test_connection(cfg, client: str, secret: Any) -> dict:
             out["connected"] = False
             out["summary"] = "The gateway refused the key." if status in (401, 403) else f"HTTP {status}"
             return out
-        wanted = ["gx-auto"] if client == "kilo" else ["gx-mini", "gx-auto"]
+        wanted = ["gx-code", "gx-mini", "gx-auto", "gx-max"]
         visible = [w for w in wanted if w in ids]
         checks.append({"check": f"{' / '.join(wanted)} visible to this key", "ok": bool(visible),
                        "detail": "yes" if visible else "the key does not allow these aliases"})
@@ -289,6 +324,66 @@ def test_connection(cfg, client: str, secret: Any) -> dict:
     out["connected"] = all(c["ok"] for c in checks)
     out["summary"] = "CONNECTED" if out["connected"] else next(
         (f"{c['check']}: {c.get('detail')}" for c in checks if not c["ok"]), "FAILED")
+    return out
+
+
+def test_live(cfg, target: str) -> dict:
+    """Server-side connection test using the live gateway key. Never logs the key."""
+    target = (target or "gateway").strip()
+    allowed = ("gateway", "gx-mini", "gx-code", "gx-auto")
+    if target not in allowed:
+        raise ValueError("target must be gateway, gx-mini, gx-code or gx-auto")
+    checks: list[dict] = []
+    out: dict[str, Any] = {"target": target, "checks": checks}
+    if cfg.offline:
+        out["ok"] = False
+        out["summary"] = "offline"
+        return out
+    secret = _master_key(cfg)
+    if not secret:
+        checks.append({"check": "gateway key loaded", "ok": False, "detail": "LITELLM_MASTER_KEY missing"})
+        out["ok"] = False
+        out["summary"] = "no gateway key"
+        return out
+    base = cfg.litellm_base.rstrip("/")
+    headers = bearer(secret)
+    try:
+        t0 = time.time()
+        reachable = _tcp_ok("127.0.0.1", 4000)
+        checks.append({"check": "gateway reachable", "ok": reachable,
+                       "detail": "127.0.0.1:4000" if reachable else "connection refused",
+                       "ms": round((time.time() - t0) * 1000)})
+        t0 = time.time()
+        status, data = http_json("GET", f"{base}/v1/models", headers=headers, timeout=15)
+        ids = [m.get("id") for m in (data.get("data") or [])] if isinstance(data, dict) else []
+        public = [i for i in ids if i in PUBLIC_MODELS]
+        checks.append({"check": "auth valid", "ok": status == 200, "status": status,
+                       "detail": f"HTTP {status}" if status != 200 else f"{len(ids)} models from loopback",
+                       "ms": round((time.time() - t0) * 1000)})
+        missing = [m for m in PUBLIC_MODELS if m not in ids]
+        checks.append({"check": "models reachable", "ok": not missing,
+                       "detail": "gx-mini gx-code gx-auto gx-max" if not missing else f"missing {missing}"})
+        if target != "gateway":
+            t0 = time.time()
+            res = http("POST", f"{base}/v1/chat/completions", headers=headers, timeout=180,
+                       body={"model": target, "messages": [{"role": "user", "content": "Reply with the single word: pong"}],
+                             "max_tokens": 16, "temperature": 0})
+            try:
+                body = res.json()
+            except ValueError:
+                body = {}
+            answer = ""
+            if isinstance(body, dict) and body.get("choices"):
+                answer = ((body["choices"][0].get("message") or {}).get("content") or "").strip()[:80]
+            checks.append({"check": f"completion {target}", "ok": res.status == 200 and bool(answer),
+                           "status": res.status, "detail": answer or _err(body),
+                           "ms": round((time.time() - t0) * 1000)})
+    except HTTPError as exc:
+        checks.append({"check": "gateway", "ok": False, "detail": exc.message})
+    except URLError as exc:
+        checks.append({"check": "gateway", "ok": False, "detail": str(exc.reason or exc)})
+    out["ok"] = all(c.get("ok") for c in checks) if checks else False
+    out["summary"] = "PASS" if out["ok"] else next((f"{c['check']}: {c.get('detail')}" for c in checks if not c.get("ok")), "FAILED")
     return out
 
 
