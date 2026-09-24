@@ -24,7 +24,7 @@ class KiloConfigTests(unittest.TestCase):
     def test_valid_json_with_the_expected_fields(self):
         doc = json.loads(kilo_config(BASE))
         self.assertEqual(doc["$schema"], "https://app.kilo.ai/config.json")
-        self.assertEqual(doc["model"], "gx-cluster/gx-auto")
+        self.assertEqual(doc["model"], "gx-cluster/gx-code")
         provider = doc["provider"]["gx-cluster"]
         self.assertEqual(provider["npm"], "@ai-sdk/openai-compatible")
         self.assertEqual(provider["options"]["baseURL"], BASE)
@@ -148,7 +148,7 @@ class ConnectionTests(unittest.TestCase):
         self.assertEqual(out["summary"], "CONNECTED")
         self.assertEqual(out["routing"], {"tier": "gx-mini", "intent": "trivial", "signals": ["short"]})
         self.assertEqual([c["check"] for c in out["checks"]],
-                         ["GET /v1/models", "gx-code / gx-mini / gx-auto / gx-max visible to this key",
+                         ["GET /v1/models", "gx-mini / gx-code / gx-auto / gx-max visible to this key",
                           "real completion on gx-auto",
                           "gx-auto routing decision (orchestrator journal)"])
         method, path, headers, body = self.litellm.calls[-1]

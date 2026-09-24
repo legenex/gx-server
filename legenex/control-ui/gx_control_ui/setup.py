@@ -282,11 +282,11 @@ def test_connection(cfg, client: str, secret: Any) -> dict:
             out["connected"] = False
             out["summary"] = "The gateway refused the key." if status in (401, 403) else f"HTTP {status}"
             return out
-        wanted = ["gx-code", "gx-mini", "gx-auto", "gx-max"]
+        wanted = list(PUBLIC_MODELS)
         visible = [w for w in wanted if w in ids]
-        checks.append({"check": f"{' / '.join(wanted)} visible to this key", "ok": bool(visible),
-                       "detail": "yes" if visible else "the key does not allow these aliases"})
-        model = "gx-auto" if client == "kilo" else (visible[0] if visible else "gx-mini")
+        checks.append({"check": f"{' / '.join(wanted)} visible to this key", "ok": len(visible) == len(wanted),
+                       "detail": "yes" if len(visible) == len(wanted) else "the key does not allow these aliases"})
+        model = "gx-auto" if client == "kilo" else "gx-mini"
         if client == "kilo":
             messages = _kilo_shaped("Reply with the single word: pong")
         else:
