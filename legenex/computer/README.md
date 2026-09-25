@@ -18,7 +18,13 @@ Official Open WebUI Computer on gx10-01. Workspaces are the real host tree
 | Restart | `unless-stopped` |
 
 Binds: Tailscale `100.105.214.61:8000` and loopback only. Not on `0.0.0.0`,
-not on ConnectX, not privileged, no Docker socket.
+not on ConnectX, not privileged, no Docker socket. The real project tree is
+mounted read/write; `legenex/gateway/.env` is overlaid read-only with
+`env.hidden` so Computer cannot read or rewrite gateway secrets.
+
+When adding the LiteLLM connection, set Models to
+`gx-auto,gx-mini,gx-code,gx-max` (do not auto-discover; loopback LiteLLM
+also lists internal workers `gx-code-01` and `gx-code-02`).
 
 ## Architecture
 

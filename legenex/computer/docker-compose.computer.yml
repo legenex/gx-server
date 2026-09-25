@@ -39,6 +39,9 @@ services:
     volumes:
       - gx_computer_data:/data
       - ${GX_COMPUTER_PROJECTS:-/home/legenex/Documents/Projects/Server}:/projects
+      # Hide the gateway .env so Computer can work on the real tree without
+      # reading or rewriting production secrets.
+      - ${GX_COMPUTER_HIDDEN_ENV:-./env.hidden}:/projects/gx-cluster/legenex/gateway/.env:ro
       # Host Grok Build CLI binary only (statically linked). Auth is NOT
       # mounted; log in from Computer (Settings → Admin → Agents, or a
       # Computer terminal) so credentials stay in the Computer data volume.

@@ -31,7 +31,7 @@ volume only):
 | `memories.context_char_limit` | 12000 |
 | `folders.enable` | true |
 | `notes.enable` | true |
-| `user.permissions.features.memories` | true |
+| `user.permissions` → `features.memories` | true |
 
 User permission: Admin Panel → Users → Permissions → Features → Memories.
 
