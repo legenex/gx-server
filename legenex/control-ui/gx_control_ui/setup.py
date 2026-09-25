@@ -26,7 +26,7 @@ from .util import HTTPError, bearer, http, http_json, run
 TEXT_ALIASES = ("gx-mini", "gx-code", "gx-auto", "gx-max")
 PUBLIC_MODELS = TEXT_ALIASES
 KILO_VERIFIED = "7.7.9"
-OPENWEBUI_VERIFIED = "0.11.3"
+OPENWEBUI_VERIFIED = "0.11.4"
 KEY_RE = re.compile(r"^sk-[A-Za-z0-9_\-]{8,200}$")
 INTERNAL_GATEWAY = "http://127.0.0.1:4000/v1"
 

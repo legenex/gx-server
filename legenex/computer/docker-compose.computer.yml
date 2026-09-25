@@ -1,0 +1,70 @@
+# ==============================================================================
+# gx cluster — OPEN WEBUI COMPUTER (NODE 1 / gx10-01 only)
+# ==============================================================================
+# Official Open WebUI Computer, pinned to a stable release tag.
+# Workspaces are the real host tree:
+#   /home/legenex/Documents/Projects/Server  ->  /projects
+# so gx-cluster is /projects/gx-cluster.
+#
+# Networking:
+#   * Joins the existing gx_gateway bridge so Computer can reach gx-litellm
+#     at http://gx-litellm:4000/v1. LiteLLM stays loopback-published on the host.
+#   * Web UI is bound to Tailscale (management) and loopback only.
+#   * Not published on 0.0.0.0, not on ConnectX, no Docker socket, not privileged.
+#
+# First start prints a one-time setup URL with a token in `docker logs gx-computer`.
+# ==============================================================================
+
+name: gx-computer
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+
+services:
+  computer:
+    image: ${GX_COMPUTER_IMAGE:-ghcr.io/open-webui/computer:0.9.21}
+    container_name: gx-computer
+    restart: unless-stopped
+    ports:
+      - "${GX_COMPUTER_TS_BIND:-100.105.214.61}:${GX_COMPUTER_PORT:-8000}:8000"
+      - "127.0.0.1:${GX_COMPUTER_PORT:-8000}:8000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      CPTR_DATA_DIR: /data
+      CPTR_LOG_LEVEL: ${GX_COMPUTER_LOG_LEVEL:-INFO}
+    volumes:
+      - gx_computer_data:/data
+      - ${GX_COMPUTER_PROJECTS:-/home/legenex/Documents/Projects/Server}:/projects
+      # Host Grok Build CLI binary only (statically linked). Auth is NOT
+      # mounted; log in from Computer (Settings → Admin → Agents, or a
+      # Computer terminal) so credentials stay in the Computer data volume.
+      - ${GX_GROK_BIN:-/home/legenex/.local/bin/grok}:/usr/local/bin/grok:ro
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: ${GX_COMPUTER_MEM_LIMIT:-2g}
+    oom_score_adj: ${GX_COMPUTER_OOM_SCORE_ADJ:-100}
+    healthcheck:
+      test:
+        - "CMD"
+        - "python"
+        - "-c"
+        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=5).status==200 else 1)"
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    logging: *default-logging
+    networks: [gx_gateway]
+
+networks:
+  gx_gateway:
+    name: ${GX_NET_NAME:-gx_gateway}
+    external: true
+
+volumes:
+  gx_computer_data:
+    name: gx_computer_data

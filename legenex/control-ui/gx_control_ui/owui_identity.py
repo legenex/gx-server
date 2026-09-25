@@ -44,7 +44,7 @@ from .util import run
 log = logging.getLogger("gx.ui.owui_identity")
 
 CONTAINER = "open-webui"
-VERIFIED_OWUI = "0.11.3"
+VERIFIED_OWUI = "0.11.4"
 #: text aliases whose Open WebUI entries carry an identity prompt
 ALIASES = ("gx-mini", "gx-code", "gx-auto", "gx-max")
 MARKER = "gx_identity"
@@ -152,9 +152,10 @@ def description(alias: str, entry: dict) -> str:
     return f"{ROLE.get(alias, alias).capitalize()}. Underlying model: {entry.get('repository')}{base}."
 
 
-# Open WebUI 0.11.3: native function calling + scoped builtin tools.
-# Defaults in OWUI are True for chats/memory/knowledge; pin them off for
-# ordinary chat. ask_user lives under builtinTools.user_input.
+# Open WebUI 0.11.4: native function calling + scoped builtin tools.
+# Memory tools are on so personal memory works through the model. Other
+# system tools stay off for ordinary chat. ask_user lives under
+# builtinTools.user_input.
 BUILTIN_TOOLS = {
     "user_input": True,
     "time": False,
@@ -162,7 +163,7 @@ BUILTIN_TOOLS = {
     "knowledge": False,
     "chats": False,
     "subagents": False,
-    "memory": False,
+    "memory": True,
     "web_search": False,
     "image_generation": False,
     "code_interpreter": False,
@@ -201,7 +202,7 @@ def desired_rows(registry: dict, *, synced_at: str | None = None) -> list[dict]:
                      "capabilities": {
                          "vision": vision, "builtin_tools": True, "file_upload": vision,
                          "web_search": False, "image_generation": False,
-                         "code_interpreter": False, "memory": False,
+                         "code_interpreter": False, "memory": True,
                      },
                      "builtinTools": dict(BUILTIN_TOOLS),
                      MARKER: {"source": "legenex/models/registry.json", "alias": alias,

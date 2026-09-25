@@ -132,7 +132,8 @@ class PromptTests(unittest.TestCase):
             self.assertEqual(r["params"]["function_calling"], "native")
             self.assertTrue(r["meta"]["builtinTools"]["user_input"])
             self.assertFalse(r["meta"]["builtinTools"]["chats"])
-            self.assertFalse(r["meta"]["builtinTools"]["memory"])
+            self.assertTrue(r["meta"]["builtinTools"]["memory"])
+            self.assertTrue(r["meta"]["capabilities"]["memory"])
             self.assertFalse(r["meta"]["builtinTools"]["knowledge"])
             self.assertTrue(r["meta"]["capabilities"]["builtin_tools"])
         by_id = {r["id"]: r for r in rows}

@@ -1,0 +1,41 @@
+# Production Open WebUI on gx10-01.
+# Persistent data lives in the external Docker volume `open-webui`.
+# Do not change the volume name. Do not wipe it.
+#
+# Live path on gx10-01: /opt/open-webui/compose.yaml
+# Keep this file and that path in sync.
+name: open-webui
+
+services:
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:v0.11.4
+    container_name: open-webui
+    network_mode: host
+    environment:
+      OLLAMA_BASE_URL: http://127.0.0.1:11434
+      PORT: "3000"
+      # ConfigVar defaults for a fresh volume. On this already-initialised
+      # instance the persisted SQLite values win; they are set via Config.upsert.
+      ENABLE_MEMORIES: "True"
+      ENABLE_MEMORY_SYSTEM_CONTEXT: "True"
+      ENABLE_MEMORY_BACKGROUND_REVIEW: "True"
+      MEMORIES_REVIEW_INTERVAL_TURNS: "10"
+      MEMORIES_USER_CHAR_LIMIT: "8000"
+      MEMORIES_CONTEXT_CHAR_LIMIT: "12000"
+      ENABLE_FOLDERS: "True"
+      ENABLE_NOTES: "True"
+      USER_PERMISSIONS_FEATURES_MEMORIES: "True"
+    volumes:
+      - open-webui:/app/backend/data
+    restart: always
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+volumes:
+  open-webui:
+    name: open-webui
+    external: true
