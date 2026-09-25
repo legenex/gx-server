@@ -108,6 +108,26 @@ Then in Open WebUI:
 
 Add `/projects` (or `/projects/gx-cluster`) as a workspace in Computer after first login.
 
+## Verified 2026-09-25 (from inside `gx-computer`, no UI login needed)
+
+| Check | Result |
+|---|---|
+| `/projects/gx-cluster` is the real checkout | `git rev-parse --show-toplevel` = `/projects/gx-cluster`, HEAD equals the host HEAD |
+| create / edit / rename / delete via `/projects/gx-cluster/...` | each step seen on the host immediately; temp file removed |
+| `git status`, `git log` from the workspace | work |
+| `legenex/gateway/.env` inside Computer | 148-byte placeholder (`env.hidden`), read-only overlay; real 866-byte file not visible |
+| Gateway | `GET http://gx-litellm:4000/v1/models` → `gx-mini, gx-code, gx-code-01, gx-code-02, gx-max, gx-auto` |
+| Open WebUI → Computer | from inside `open-webui` (host network): `http://127.0.0.1:8000/api/health` and `http://100.105.214.61:8000/api/health` → 200 |
+| Ports | only `100.105.214.61:8000` and `127.0.0.1:8000`; no docker.sock, not privileged |
+
+Computer has **no users yet** (`users` table empty). The first admin login,
+the LiteLLM connection, the gateway key and the Open WebUI connection above
+are interactive authenticated steps and have not been performed; the
+workspace-in-Open WebUI integration is therefore unverified end to end.
+Read-only overlays (verified: `touch` fails with EROFS, normal source writes and `git status` work) also cover `gx-cluster/.git/hooks`, `.githooks` and `ops/git-sync`, so Computer cannot plant code that the host would run. Scope note: the whole `Server/` tree is mounted, so any other secret-bearing
+file under it is visible to Computer agents (only the gateway `.env` is
+overlaid).
+
 ## Backup
 
 Copy the named volume `gx_computer_data` (`app.db`, `config.toml`, `uploads/`)

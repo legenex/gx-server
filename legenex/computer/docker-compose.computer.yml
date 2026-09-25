@@ -42,6 +42,11 @@ services:
       # Hide the gateway .env so Computer can work on the real tree without
       # reading or rewriting production secrets.
       - ${GX_COMPUTER_HIDDEN_ENV:-./env.hidden}:/projects/gx-cluster/legenex/gateway/.env:ro
+      # Read-only overlays: code Computer could plant here would run on the
+      # host (git hooks, gx10-01 autosync). Normal git add/commit still works.
+      - ${GX_COMPUTER_PROJECTS:-/home/legenex/Documents/Projects/Server}/gx-cluster/.git/hooks:/projects/gx-cluster/.git/hooks:ro
+      - ${GX_COMPUTER_PROJECTS:-/home/legenex/Documents/Projects/Server}/gx-cluster/.githooks:/projects/gx-cluster/.githooks:ro
+      - ${GX_COMPUTER_PROJECTS:-/home/legenex/Documents/Projects/Server}/gx-cluster/ops/git-sync:/projects/gx-cluster/ops/git-sync:ro
       # Host Grok Build CLI binary only (statically linked). Auth is NOT
       # mounted; log in from Computer (Settings → Admin → Agents, or a
       # Computer terminal) so credentials stay in the Computer data volume.

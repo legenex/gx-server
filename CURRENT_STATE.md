@@ -3,6 +3,18 @@
 **This file must always reflect reality.** If you are a new agent resuming this
 work, read this first, then ARCHITECTURE.md (what is locked), then BLOCKERS.md.
 
+## UPDATE — 2026-09-25 (verification pass, Open WebUI + Computer)
+
+Verified live: memory CRUD (in-process, throwaway test user, cleaned up, legit
+memory byte-identical); Computer workspace create/edit/rename/delete visible on
+the host; gateway models reachable from inside `gx-computer`; Open WebUI →
+Computer `:8000/api/health` 200. Added read-only overlays for `.git/hooks`,
+`.githooks`, `ops/git-sync` in Computer. **Not done (need an admin in the UI):**
+Computer first-admin claim (users=0, setup token still in `docker logs`),
+Computer gateway key + Open WebUI connection, and enabling Open WebUI context
+compaction (`chat.context_compaction.*`, still off; see
+`legenex/open-webui/README.md`).
+
 ## LATEST UPDATE — 2026-09-25 (Open WebUI 0.11.4 + Computer 0.9.21)
 
 Open WebUI on gx10-01 is pinned to **0.11.4** (`open-webui`, host `:3000`,
