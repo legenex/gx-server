@@ -3,6 +3,26 @@
 **This file must always reflect reality.** If you are a new agent resuming this
 work, read this first, then ARCHITECTURE.md (what is locked), then BLOCKERS.md.
 
+## LATEST UPDATE — 2026-09-25 (Open WebUI 0.11.4 + Computer 0.9.21)
+
+Open WebUI on gx10-01 is pinned to **0.11.4** (`open-webui`, host `:3000`,
+volume `open-webui`). Personal memory, system-context injection, background
+review (10 turns, 8000/12000 char budgets), folders and notes are enabled.
+Identity entries (`gx-mini`, `gx-code`, `gx-auto`, `gx-max`) use native
+function calling and Memory builtin tools. Backup:
+`/srv/projects/gx-cluster/backups/open-webui/20260925T062453Z/`.
+
+Open WebUI Computer is **0.9.21** as `gx-computer`, Tailscale
+`http://100.105.214.61:8000` + loopback `:8000`, volume `gx_computer_data`,
+host `/home/legenex/Documents/Projects/Server` → `/projects`. It joins
+`gx_gateway` and reaches LiteLLM at `http://gx-litellm:4000/v1`. First admin
+login, LiteLLM connection, Grok login, and Computer gateway key are UI steps
+(`legenex/computer/README.md`).
+
+Live public aliases are unchanged: **gx-mini, gx-code, gx-auto, gx-max**.
+Loopback also lists internal workers **gx-code-01, gx-code-02**. gx-max was
+not started.
+
 ## LATEST UPDATE — 2026-09-17 21:35 SAST (Build V3 integration: the complete creative + realtime product is deployed) — read this first
 
 Eleven public aliases (L-10 as amended by D-040). This pass took the Build V3

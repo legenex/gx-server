@@ -198,7 +198,7 @@ def _checks(args, report: dict, check, email: str, password: str, models: list[s
     if not token:
         return
     status, ver, _ = http("GET", f"{PUBLIC}/api/version")
-    check("chat.legenex.co serves Open WebUI 0.11.3", status == 200 and ver.get("version") == "0.11.3",
+    check("chat.legenex.co serves Open WebUI 0.11.4", status == 200 and ver.get("version") == "0.11.4",
           version=ver.get("version"))
     status, listing, _ = http("GET", f"{PUBLIC}/api/models", token=token)
     data = listing.get("data", []) if isinstance(listing, dict) else []

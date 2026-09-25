@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Open WebUI Computer `0.9.21` on gx10-01 (`gx-computer`). Projects mount
+  `/home/legenex/Documents/Projects/Server` → `/projects`. LiteLLM over
+  `gx_gateway`. Management UI on Tailscale `:8000` and loopback only.
+- Open WebUI personal memory (background review, 8000/12000 budgets),
+  folders/projects and notes. Identity entries enable native Memory tools.
+
+### Changed
+
+- Open WebUI pinned to `v0.11.4` (`ghcr.io/open-webui/open-webui:v0.11.4`)
+  instead of tracking `:main`. Persistent volume `open-webui` kept.
+
 ## [0.19.0] - 2026-09-18
 
 ### Changed

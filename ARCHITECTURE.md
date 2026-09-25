@@ -595,8 +595,9 @@ script) sorts candidates into SAFE, REVIEW and PROTECTED.
 ## 16. Open WebUI identity (D-038)
 
 The production Open WebUI (`open-webui` on gx10-01, https://chat.legenex.co
-through the cloudflared tunnel) talks to LiteLLM
-(`http://100.105.214.61:4000/v1`) and lists the aliases from it. Identity
+through the cloudflared tunnel) talks to LiteLLM on **loopback**
+(`http://127.0.0.1:4000/v1`; host networking) and lists the aliases from it.
+Pinned image: `ghcr.io/open-webui/open-webui:v0.11.4`. Identity
 metadata lives in Open WebUI model entries, one per text alias:
 
 * **Name and id:** the alias.
@@ -618,4 +619,17 @@ Identity is not routing. Routing is proven by:
 * llama-swap's request log;
 * the llama.cpp slot log and `/props` (`model_path`), plus the sha256 of
   the mounted GGUF and mmproj.
+
+## 17. Open WebUI Computer (2026-09-25)
+
+Container `gx-computer` on gx10-01 (`ghcr.io/open-webui/computer:0.9.21`).
+Compose: `legenex/computer/docker-compose.computer.yml`. Persistent volume
+`gx_computer_data` at `/data`. Host projects
+`/home/legenex/Documents/Projects/Server` mount at `/projects`. Management
+UI: Tailscale `100.105.214.61:8000` and loopback `:8000` only. Computer
+reaches LiteLLM over Docker network `gx_gateway` at
+`http://gx-litellm:4000/v1`. Open WebUI (host network) reaches Computer's
+OpenAI gateway at `http://127.0.0.1:8000/v1`. Workspace models are
+`cptr/<folder-name>`. Grok CLI is the `/usr/local/bin/grok` binary only;
+host auth is not mounted. Operator docs: `legenex/computer/README.md`.
 
