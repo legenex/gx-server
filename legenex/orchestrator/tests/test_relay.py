@@ -132,9 +132,17 @@ class Cfg:
         self.gxmax_base = mx
         self.gxmax_model_id = "/model"
         self.upstream_timeout = 10
+        self.gxmax_mode = "deepseek"   # these tests exercise the SGLang path
 
     def gateway_key(self):
         return None
+
+    def orchestrator_key(self):
+        return ORCH_KEY
+
+
+ORCH_KEY = "test-orchestrator-key"
+AUTH = {"Authorization": f"Bearer {ORCH_KEY}"}
 
 
 class RelayCase(unittest.TestCase):
@@ -159,7 +167,7 @@ class RelayCase(unittest.TestCase):
 
     def post(self, payload, path="/v1/chat/completions", timeout=10):
         req = urllib.request.Request(self.base + path, data=json.dumps(payload).encode(),
-                                     headers={"Content-Type": "application/json", "X-GX-Request-Id": "rid-1"})
+                                     headers={"Content-Type": "application/json", "X-GX-Request-Id": "rid-1", **AUTH})
         t0 = time.monotonic()
         try:
             with urllib.request.urlopen(req, timeout=timeout) as r:
@@ -329,7 +337,7 @@ class TestTextStatus(RelayCase):
     def test_status_exposes_limits_and_last_request(self):
         self.serve()
         self.post({"model": "gx-auto", "messages": [{"role": "user", "content": "fix app.py"}]})
-        with urllib.request.urlopen(self.base + "/text/status", timeout=5) as r:
+        with urllib.request.urlopen(urllib.request.Request(self.base + "/text/status", headers=AUTH), timeout=5) as r:
             data = json.load(r)["aliases"]
         self.assertEqual(data["gx-fast"]["context_limit"], 131_072)
         self.assertEqual(data["gx-fast"]["last_request"]["outcome"], "ok")

@@ -207,6 +207,7 @@ class TestEventsEndpoint(LifecycleTestBase):
         import http.server
 
         cfg = Config(hosts=("127.0.0.1",), port=0)
+        cfg.orchestrator_key = lambda: "test-orchestrator-key"
         handler = type("H", (Handler,), {"cfg": cfg, "lifecycle": lc, "health": TierHealth(cfg)})
         srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
         threading.Thread(target=srv.serve_forever, daemon=True).start()
@@ -215,7 +216,7 @@ class TestEventsEndpoint(LifecycleTestBase):
 
     def _get(self, port, path):
         conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
-        conn.request("GET", path)
+        conn.request("GET", path, headers={"Authorization": "Bearer test-orchestrator-key"})
         resp = conn.getresponse()
         return resp.status, json.loads(resp.read() or b"{}")
 
