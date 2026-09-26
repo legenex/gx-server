@@ -130,6 +130,65 @@ services:
         target: /projects/gx-cluster/legenex/common
         read_only: true
         bind: {create_host_path: false}
+      # D-044: code the host or node 2 runs unattended as a docker-group user, or builds into an image.
+      #   legenex/control-ui (gx-control-ui.service, Restart=always, python -m from this dir), legenex/playground,
+      #   legenex/music|voice|call|live (the gx10-02 tenant services run from the autosynced checkout),
+      #   llama-swap (image build context), scripts, setup, coordination/node2/{scripts,configs}
+      - type: bind
+        source: ${GX_COMPUTER_PROJECTS:-/home/legenex/Documents/Projects/Server}/gx-cluster/legenex/control-ui
+        target: /projects/gx-cluster/legenex/control-ui
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${GX_COMPUTER_PROJECTS:-/home/legenex/Documents/Projects/Server}/gx-cluster/legenex/playground
+        target: /projects/gx-cluster/legenex/playground
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${GX_COMPUTER_PROJECTS:-/home/legenex/Documents/Projects/Server}/gx-cluster/legenex/music
+        target: /projects/gx-cluster/legenex/music
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${GX_COMPUTER_PROJECTS:-/home/legenex/Documents/Projects/Server}/gx-cluster/legenex/voice
+        target: /projects/gx-cluster/legenex/voice
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${GX_COMPUTER_PROJECTS:-/home/legenex/Documents/Projects/Server}/gx-cluster/legenex/call
+        target: /projects/gx-cluster/legenex/call
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${GX_COMPUTER_PROJECTS:-/home/legenex/Documents/Projects/Server}/gx-cluster/legenex/live
+        target: /projects/gx-cluster/legenex/live
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${GX_COMPUTER_PROJECTS:-/home/legenex/Documents/Projects/Server}/gx-cluster/llama-swap
+        target: /projects/gx-cluster/llama-swap
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${GX_COMPUTER_PROJECTS:-/home/legenex/Documents/Projects/Server}/gx-cluster/scripts
+        target: /projects/gx-cluster/scripts
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${GX_COMPUTER_PROJECTS:-/home/legenex/Documents/Projects/Server}/gx-cluster/setup
+        target: /projects/gx-cluster/setup
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${GX_COMPUTER_PROJECTS:-/home/legenex/Documents/Projects/Server}/gx-cluster/coordination/node2/scripts
+        target: /projects/gx-cluster/coordination/node2/scripts
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${GX_COMPUTER_PROJECTS:-/home/legenex/Documents/Projects/Server}/gx-cluster/coordination/node2/configs
+        target: /projects/gx-cluster/coordination/node2/configs
+        read_only: true
+        bind: {create_host_path: false}
       # Single file (no directory to hang it on): the ignore rules that keep
       # .cptr transcripts out of the public repo. A host rewrite of .gitignore
       # detaches it; the autosync forbidden-path guard for .cptr/** is the

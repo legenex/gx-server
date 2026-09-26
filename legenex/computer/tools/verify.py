@@ -28,7 +28,11 @@ from gxtools import (CPTR_CONTAINER, CPTR_PY, HOST_WORKSPACE, WORKSPACE, Compute
 
 results: list[tuple[str, str, str]] = []
 RO_DIRS = [".git", ".githooks", "ops/git-sync", ".kilo", "legenex/host", "legenex/gateway", "legenex/lifecycle",
-           "legenex/scripts", "legenex/media", "legenex/computer", "legenex/orchestrator", "legenex/common"]
+           "legenex/scripts", "legenex/media", "legenex/computer", "legenex/orchestrator", "legenex/common",
+           # D-044
+           "legenex/control-ui", "legenex/playground", "legenex/music", "legenex/voice", "legenex/call",
+           "legenex/live", "llama-swap", "scripts", "setup", "coordination/node2/scripts",
+           "coordination/node2/configs"]
 RO_FILES = [".gitignore", "CLAUDE.md", ".cptr/system.md", ".cptr/model"]
 
 
@@ -161,6 +165,12 @@ def verify_computer(c: Computer, nonce: str) -> None:
     check("overlays: every read-only overlay is mounted (recreate gx-computer if not)", not missing, " ".join(missing))
     bad = [l for l in out if l.startswith(("WRITABLE", "READABLE"))]
     check("overlays: protected paths read-only; gateway .env unreadable inside Computer", not bad, " ".join(bad))
+    # ordinary source and docs stay editable (D-044 keeps the overlays targeted)
+    ok_dirs = ["docs", "coordination", "legenex/tests", "legenex/models", "legenex/open-webui"]
+    out2 = run(["docker", "exec", "-w", WORKSPACE, CPTR_CONTAINER, "sh", "-c",
+                "for d in " + " ".join(ok_dirs) + "; do if touch $d/.rw-probe 2>/dev/null; then rm -f $d/.rw-probe; "
+                "else echo READONLY $d; fi; done"]).splitlines()
+    check("overlays: ordinary source directories stay writable", not out2, " ".join(out2))
 
 
 def verify_owui(email: str | None, agent: bool, c: Computer) -> None:
