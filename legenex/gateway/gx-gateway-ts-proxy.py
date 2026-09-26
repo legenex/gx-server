@@ -9,6 +9,7 @@ modes. Internal worker aliases remain callable (gx-max dual-worker).
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import select
@@ -78,6 +79,31 @@ def _filter_models_body(body: bytes) -> bytes:
     return json.dumps(data, separators=(",", ":")).encode("utf-8")
 
 
+def _log_access(client: socket.socket, head: bytes) -> None:
+    """One journal line per connection: peer, request line, user-agent, key fingerprint (D-044).
+
+    Identifies which tailnet device and client library use which credential. Never logs a
+    credential: only the first 8 hex digits of its SHA-256, which map to a known key by
+    comparison but cannot be reversed.
+    """
+    try:
+        peer = client.getpeername()[0]
+        lines = head.split(b"\r\n\r\n", 1)[0].decode("latin1", "replace").split("\r\n")
+        ua, fp = "-", "-"
+        for line in lines[1:]:
+            name, _, value = line.partition(":")
+            low = name.strip().lower()
+            if low == "user-agent":
+                ua = value.strip()[:80] or "-"
+            elif low == "authorization":
+                token = value.strip().split(" ", 1)[-1].strip()
+                fp = hashlib.sha256(token.encode()).hexdigest()[:8] if token else "-"
+        req = " ".join(lines[0].split(" ")[:2])[:100]
+        print(f"access peer={peer} req={req!r} ua={ua!r} key_sha8={fp}", flush=True)
+    except Exception:  # noqa: BLE001 - logging must never break forwarding
+        pass
+
+
 def _splice(a: socket.socket, b: socket.socket) -> None:
     a.setblocking(False)
     b.setblocking(False)
@@ -116,6 +142,7 @@ def _handle(client: socket.socket) -> None:
         head = _recv_headers(client)
         if not head:
             return
+        _log_access(client, head)
         up = socket.create_connection(UPSTREAM, timeout=10)
         up.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         if not _is_models_get(head):
