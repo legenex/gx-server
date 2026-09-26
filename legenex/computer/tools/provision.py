@@ -51,8 +51,8 @@ COMPUTER_CONN = {"enable": True, "tags": ["computer"], "prefix_id": "", "model_i
 report: list[dict] = []
 
 
-def step(name: str, **kw) -> None:
-    report.append({"step": name, **kw})
+def step(label: str, **kw) -> None:
+    report.append({"step": label, **kw})
 
 
 def expect(ok: bool, what: str) -> None:
@@ -179,7 +179,8 @@ def provision_owui(ident: dict, owui_key: str, gateway_key: str | None) -> None:
     note = next((n for n in notes if n.get("title") == NOTE_TITLE), None)
     md = note_markdown()
     if note:
-        r = owui([{"call": ["POST", f"/api/v1/notes/{note['id']}/update", {"data": {"content": {"md": md}}}]}], ident["email"])[1]
+        r = owui([{"call": ["POST", f"/api/v1/notes/{note['id']}/update",   # validated as NoteForm: title required
+                            {"title": NOTE_TITLE, "data": {"content": {"md": md}}}]}], ident["email"])[1]
     else:
         r = owui([{"call": ["POST", "/api/v1/notes/create",
                             {"title": NOTE_TITLE, "data": {"content": {"md": md}}, "access_grants": []}]}], ident["email"])[1]
@@ -195,7 +196,7 @@ def provision_owui(ident: dict, owui_key: str, gateway_key: str | None) -> None:
         r = owui([{"call": ["POST", "/api/v1/folders/", {"name": FOLDER_NAME, "data": data}]}], ident["email"])[1]
         folder = r["body"]
     expect(r["status"] == 200, f"folder upsert failed: {r['status']}")
-    step("owui.folder", id=folder["id"], name=FOLDER_NAME, action="updated" if r["op"].endswith("/update") else "created")
+    step("owui.folder", id=folder["id"], folder=FOLDER_NAME, action="updated" if r["op"].endswith("/update") else "created")
 
     # context compaction (full-form endpoint: read, change, write back)
     cur = owui([{"call": ["GET", "/api/v1/chats/config"]}], ident["email"])[1]["body"]
