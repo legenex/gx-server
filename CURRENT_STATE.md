@@ -39,12 +39,16 @@ done" or "UI step" is now done, through the apps' own APIs.
   second rotation followed a 14-minute overlay gap (B-033).
   `LITELLM_MASTER_KEY` and `GX_SWAP_API_KEY` await a decision (B-033).
   Security follow-ups needing sign-off: B-034.
-* **Proof:**
-  * `python3 legenex/computer/tools/verify.py --compaction`: live end to end.
-    Every Computer file operation is checked on the host, plus git, terminal,
-    the gateway, agent inference and the long-chat compaction.
-  * `ops/git-sync/integrity-audit.sh`: all PASS.
-  * `ops/git-sync/tests/sync-regression.sh`: 19/19 PASS.
+* **Proof (final run, 2026-09-26 ~22:10 SAST):**
+  * `python3 legenex/computer/tools/verify.py --compaction`: **37/37**, live
+    end to end. Every Computer file operation is checked on the host, plus
+    git, terminal, overlays, the gateway, agent inference and the long-chat
+    compaction.
+  * `ops/git-sync/integrity-audit.sh`: 19 PASS / 0 WARN / 0 FAIL.
+  * `ops/git-sync/tests/sync-regression.sh`: 19/19.
+  * `legenex/computer/tools/test_tools.py`: 14/14.
+  * Independent security re-review: C-1, H-1b, H-2 and M-2 closed. Open items
+    are B-033, B-034 and B-035.
 * **Re-apply anything:** `python3 legenex/computer/tools/provision.py`
   (idempotent).
 * **Backups:** `/srv/projects/gx-cluster/backups/computer-repair-20260925T225949Z/`
