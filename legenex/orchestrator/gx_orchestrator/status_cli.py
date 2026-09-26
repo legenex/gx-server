@@ -188,11 +188,25 @@ class OrchestratorSnapshot:
     error: str = ""
 
 
+def _orchestrator_key() -> str:
+    """The orchestrator's bearer key (D-044): the environment, else the protected secrets store."""
+    key = os.environ.get("GX_ORCHESTRATOR_API_KEY", "").strip()
+    if not key or key == "not-required":
+        try:
+            with open(os.environ.get("GX_SECRETS_ENV", "/srv/projects/gx-cluster/secrets/gateway.env")) as fh:
+                for line in fh:
+                    if line.startswith("GX_ORCHESTRATOR_API_KEY="):
+                        key = line.split("=", 1)[1].strip()
+        except OSError:
+            return ""
+    return "" if key == "not-required" else key
+
+
 def fetch_orchestrator_snapshot(base_url: str, *, timeout: float = 5.0) -> OrchestratorSnapshot:
     """GET `<base_url>/health/detailed` once. Never raises."""
     try:
-        key = os.environ.get("GX_ORCHESTRATOR_API_KEY", "").strip()   # D-044
-        headers = {"Authorization": f"Bearer {key}"} if key and key != "not-required" else None
+        key = _orchestrator_key()
+        headers = {"Authorization": f"Bearer {key}"} if key else None
         resp = get_json(f"{base_url.rstrip('/')}/health/detailed", headers=headers, timeout=timeout)
         body = resp.json()
     except Exception as exc:  # noqa: BLE001
