@@ -3,6 +3,7 @@
 Run: cd legenex/computer/tools && python3 -m unittest -v test_tools
 """
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -99,6 +100,47 @@ class PublicRepoGuards(unittest.TestCase):
     def test_instruction_files_stay_tracked(self):
         for p in (".cptr/system.md", ".cptr/model"):
             self.assertFalse(self.ignored(p), p)
+
+
+GITLEAKS = Path.home() / ".local" / "bin" / "gitleaks"
+
+
+@unittest.skipUnless(GITLEAKS.exists(), "gitleaks not installed on this node")
+class SecretGate(unittest.TestCase):
+    """ops/git-sync gxs_scan_staged must not be switchable off from the working tree."""
+
+    TOKEN = "ghp_" + "Zx8" * 12   # fake, secret-shaped
+
+    def gate(self, setup):
+        with tempfile.TemporaryDirectory() as t:
+            git = lambda *a: subprocess.run(["git", "-C", t, *a], check=True, capture_output=True)
+            git("init", "-q"); git("config", "user.email", "t@t"); git("config", "user.name", "t")
+            setup(Path(t), git)
+            env = {"GX_SYNC_REPO": t, "GX_SYNC_LOG_DIR": f"{t}/.l", "GX_SYNC_STATE_DIR": f"{t}/.s",
+                   "PATH": "/usr/bin:/bin", "HOME": str(Path.home())}
+            return subprocess.run(["bash", "-c", 'source "$0"; cd "$GX_SYNC_REPO"; gxs_scan_staged >/dev/null; echo $?',
+                                   str(REPO / "ops" / "git-sync" / "common.sh")],
+                                  capture_output=True, text=True, env=env).stdout.strip()
+
+    def leak(self, t, git, suffix=""):
+        (t / "a.txt").write_text(f'x = "{self.TOKEN}"{suffix}\n'); git("add", "a.txt")
+
+    def test_blocks_plain_leak(self):
+        self.assertEqual(self.gate(lambda t, g: self.leak(t, g)), "1")
+
+    def test_planted_overrides_do_not_disable_it(self):
+        def ignore_file(t, g):
+            self.leak(t, g); (t / ".gitleaksignore").write_text("*\n")
+        def config_file(t, g):
+            (t / ".gitleaks.toml").write_text('[allowlist]\npaths = [".*"]\n'); self.leak(t, g)
+        self.assertEqual(self.gate(ignore_file), "1")
+        self.assertEqual(self.gate(config_file), "1")
+        self.assertEqual(self.gate(lambda t, g: self.leak(t, g, "  # gitleaks:allow")), "1")
+
+    def test_clean_change_passes(self):
+        def clean(t, g):
+            (t / "a.txt").write_text("hello\n"); g("add", "a.txt")
+        self.assertEqual(self.gate(clean), "0")
 
 
 class Templates(unittest.TestCase):

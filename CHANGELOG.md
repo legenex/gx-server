@@ -61,8 +61,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Computer: git is read-only (whole `.git`). Read-only directory overlays for
   `legenex/{host,gateway,lifecycle,scripts,media,computer}`, `.kilo`,
   `.githooks` and `ops/git-sync`, with `create_host_path: false`.
-- Autosync refuses `.cptr/*` and `.gitleaks*` files, and runs gitleaks with a
-  pinned config and ignore path; a planted `.gitleaks.toml` could disable it.
+- Autosync refuses `.cptr/*` and `.gitleaks*` files. Its secret gate uses a
+  pinned gitleaks config with `--ignore-gitleaks-allow`, fails while any
+  `.gitleaksignore` exists, and always runs the regex scan too. Before this, a
+  planted `.gitleaks.toml`, a `.gitleaksignore` or an inline `gitleaks:allow`
+  could each disable it.
+- Computer: `legenex/orchestrator` and `legenex/common` are read-only too (the
+  gx-max lifecycle imports them), and so are the instruction files
+  `CLAUDE.md`, `.cptr/system.md` and `.cptr/model`.
 - `.gitignore` ignores Computer workspace state (`**/.cptr/*` except
   `system.md`/`model`, generated images). The repo is public and autosynced.
 

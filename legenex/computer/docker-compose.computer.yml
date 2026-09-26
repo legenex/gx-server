@@ -66,6 +66,8 @@ services:
       #   legenex/lifecycle run by the orchestrator on gx-max acquire/release
       #   legenex/scripts, legenex/media   run by Control Center actions
       #   legenex/computer  this compose file, .env and the host-run tools
+      #   legenex/orchestrator, legenex/common   imported by the lifecycle scripts
+      #                     (gx-max acquire) and the Control Center at runtime
       # create_host_path: false — a missing source fails the start instead of
       # Docker creating a root-owned path in the tree (no sudo on this node).
       - type: bind
@@ -118,6 +120,16 @@ services:
         target: /projects/gx-cluster/legenex/computer
         read_only: true
         bind: {create_host_path: false}
+      - type: bind
+        source: ${GX_COMPUTER_PROJECTS:-/home/legenex/Documents/Projects/Server}/gx-cluster/legenex/orchestrator
+        target: /projects/gx-cluster/legenex/orchestrator
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${GX_COMPUTER_PROJECTS:-/home/legenex/Documents/Projects/Server}/gx-cluster/legenex/common
+        target: /projects/gx-cluster/legenex/common
+        read_only: true
+        bind: {create_host_path: false}
       # Single file (no directory to hang it on): the ignore rules that keep
       # .cptr transcripts out of the public repo. A host rewrite of .gitignore
       # detaches it; the autosync forbidden-path guard for .cptr/** is the
@@ -125,6 +137,23 @@ services:
       - type: bind
         source: ${GX_COMPUTER_PROJECTS:-/home/legenex/Documents/Projects/Server}/gx-cluster/.gitignore
         target: /projects/gx-cluster/.gitignore
+        read_only: true
+        bind: {create_host_path: false}
+      # Agent instruction files (single-file, no secrets): an injected agent must
+      # not plant persistent instructions for Computer or for Claude Code on the host.
+      - type: bind
+        source: ${GX_COMPUTER_PROJECTS:-/home/legenex/Documents/Projects/Server}/gx-cluster/CLAUDE.md
+        target: /projects/gx-cluster/CLAUDE.md
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${GX_COMPUTER_PROJECTS:-/home/legenex/Documents/Projects/Server}/gx-cluster/.cptr/system.md
+        target: /projects/gx-cluster/.cptr/system.md
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${GX_COMPUTER_PROJECTS:-/home/legenex/Documents/Projects/Server}/gx-cluster/.cptr/model
+        target: /projects/gx-cluster/.cptr/model
         read_only: true
         bind: {create_host_path: false}
       # Host Grok Build CLI binary only (statically linked). Host auth is NOT

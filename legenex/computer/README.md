@@ -67,8 +67,11 @@ Why not single sign-on (checked against the installed source, 2026-09-26):
   stops Computer rewriting `.gitignore`. `tools/test_tools.py` guards these rules.
 * **Git is read-only inside Computer.** `status`, `log`, `diff` and `show`
   work; `commit`, `stash` and `checkout` fail. gx10-01 autosync commits
-  Computer's file edits, and it independently refuses `.cptr/*` and planted
-  `.gitleaks*` files (`ops/git-sync/common.sh`).
+  Computer's file edits. Independently of `.gitignore`, autosync refuses
+  `.cptr/*` and `.gitleaks*` files. Its secret gate uses a pinned gitleaks
+  config with `--ignore-gitleaks-allow`, fails while any `.gitleaksignore`
+  exists in the tree, and always runs its regex scan as well
+  (`ops/git-sync/common.sh`).
 * **Read-only directory overlays** (`read_only`, `create_host_path: false`)
   cover everything the host runs without a human deciding to restart
   something, or that controls publishing:
@@ -78,9 +81,14 @@ Why not single sign-on (checked against the installed source, 2026-09-26):
   * `legenex/gateway` (LiteLLM config and hooks, llama-swap yaml);
   * `legenex/lifecycle` (run on gx-max acquire);
   * `legenex/scripts` and `legenex/media` (Control Center actions);
+  * `legenex/orchestrator` and `legenex/common` (imported by the lifecycle
+    scripts and at runtime by the Control Center);
   * `legenex/computer`.
 
-  `.gitignore` is the only single-file overlay. `tools/verify.py` checks through
+  Single-file overlays, none of them secret: `.gitignore` and the agent
+  instruction files `CLAUDE.md`, `.cptr/system.md` and `.cptr/model`. An
+  injected agent must not plant persistent instructions for Computer or for
+  Claude Code on the host. `tools/verify.py` checks through
   `/proc/self/mountinfo` that every overlay is mounted.
 * **Secrets are outside the tree.** The real gateway `.env` is
   `/srv/projects/gx-cluster/secrets/gateway.env`. `legenex/gateway/.env` is a
@@ -88,8 +96,8 @@ Why not single sign-on (checked against the installed source, 2026-09-26):
   single-file overlay: when the host replaces the file (atomic write, `git
   checkout`), Linux silently detaches the mount. That happened once on
   2026-09-26 (B-033), and the affected values were rotated.
-* **Residual risk (B-034):** `legenex/control-ui`, `legenex/orchestrator`,
-  `legenex/playground` and the rest of the source stay editable, because
+* **Residual risk (B-034):** `legenex/control-ui`, `legenex/playground` and
+  the rest of the source stay editable, because
   Computer is meant to work on the real project. The host runs that code on its
   next service restart, on both nodes. The strict alternative is a separate
   Computer clone with reviewed promotion.

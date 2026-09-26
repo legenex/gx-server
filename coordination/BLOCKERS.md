@@ -1557,7 +1557,9 @@ afterwards; there is no evidence the file was read. Remediation:
 * `legenex/gateway` became a read-only directory overlay.
 * The four values were **rotated again** at 19:56 UTC.
 
-Lesson: never hide a secret with a single-file bind mount. The new LiteLLM UI password is in
+Lesson: never hide a secret with a single-file bind mount. The two unrotated
+credentials below (`LITELLM_MASTER_KEY`, `GX_SWAP_API_KEY`) were also readable
+in that window. That adds urgency to rotating them. The new LiteLLM UI password is in
 `/srv/projects/gx-cluster/secrets/litellm/ui-password` (0600). Two were **not**
 rotated:
 
@@ -1597,11 +1599,20 @@ that provider's console.
   the host runs unattended or that controls publishing: all of `.git` (no
   planted hooks, config or forged commits), `.githooks`, `ops/git-sync`,
   `.kilo`, `legenex/host`, `legenex/gateway`, `legenex/lifecycle`,
-  `legenex/scripts`, `legenex/media` and `legenex/computer`.
+  `legenex/scripts`, `legenex/media`, `legenex/computer`,
+  `legenex/orchestrator` and `legenex/common`. Single-file binds cover the
+  agent instruction files `CLAUDE.md`, `.cptr/system.md` and `.cptr/model`.
 * **Gateway secrets moved out of the tree** (see B-033).
-* **Autosync hardening:** it refuses `.cptr/*` and `.gitleaks*` files whatever
-  `.gitignore` says, and gitleaks runs with a pinned config and ignore path
-  from `ops/git-sync`. A planted `.gitleaks.toml` used to disable the gate.
+* **Autosync hardening:**
+  * It refuses `.cptr/*` and `.gitleaks*` files, whatever `.gitignore` says.
+  * gitleaks runs with a pinned config, ignore path and
+    `--ignore-gitleaks-allow`.
+  * The gate fails while any `.gitleaksignore` exists in the tree.
+  * The regex scan always runs as well.
+
+  A planted `.gitleaks.toml`, a `.gitleaksignore` or an inline
+  `gitleaks:allow` each used to disable the gate. All three were tested and
+  are now blocked.
 * **Container and app settings:** CORS pinning, `cap_drop: ALL`,
   `pids_limit`, `gx-computer` concurrency limit, community sharing off, Arena
   off.
@@ -1609,10 +1620,12 @@ that provider's console.
 Remaining:
 
 1. **Computer edits code that host services run on their next restart.**
-   `legenex/control-ui`, `legenex/orchestrator` and `legenex/playground` run
-   as `legenex` (docker group, so root-equivalent) on both nodes, and autosync
-   ships them to gx10-02. The control UI also lazily imports modules during
-   admin actions. The user asked for Computer to work on the
+   `legenex/control-ui` (`Restart=always`) and `legenex/playground` run as
+   `legenex` (docker group, so root-equivalent) on both nodes, and autosync
+   ships them to gx10-02. The control UI also lazily imports its own modules
+   during admin actions. `legenex/orchestrator` and `legenex/common` are
+   read-only in Computer since the final re-review, because the gx-max
+   lifecycle imports them. The user asked for Computer to work on the
    real checkout, so these stay writable. The strict alternative is a separate
    Computer clone or worktree that autosync does not push, with human-reviewed
    promotion.

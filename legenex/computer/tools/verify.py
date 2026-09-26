@@ -28,7 +28,8 @@ from gxtools import (CPTR_CONTAINER, CPTR_PY, HOST_WORKSPACE, WORKSPACE, Compute
 
 results: list[tuple[str, str, str]] = []
 RO_DIRS = [".git", ".githooks", "ops/git-sync", ".kilo", "legenex/host", "legenex/gateway", "legenex/lifecycle",
-           "legenex/scripts", "legenex/media", "legenex/computer"]
+           "legenex/scripts", "legenex/media", "legenex/computer", "legenex/orchestrator", "legenex/common"]
+RO_FILES = [".gitignore", "CLAUDE.md", ".cptr/system.md", ".cptr/model"]
 
 
 def check(name: str, ok: bool, detail: str = "") -> bool:
@@ -152,11 +153,11 @@ def verify_computer(c: Computer, nonce: str) -> None:
     # read-only overlays (docker-compose.computer.yml): mounted, enforced, and the gateway secret unreadable
     probe = ("cut -d' ' -f5 /proc/self/mountinfo; "
              "for d in " + " ".join(RO_DIRS) + "; do if touch $d/.ro-probe 2>/dev/null; then rm -f $d/.ro-probe; echo WRITABLE $d; fi; done; "
-             "if [ -w .gitignore ]; then echo WRITABLE .gitignore; fi; "
+             "for f in " + " ".join(RO_FILES) + "; do if [ -w $f ]; then echo WRITABLE $f; fi; done; "
              "if cat legenex/gateway/.env >/dev/null 2>&1; then echo READABLE legenex/gateway/.env; fi")
     out = run(["docker", "exec", "-w", WORKSPACE, CPTR_CONTAINER, "sh", "-c", probe]).splitlines()
     mounted = set(out)
-    missing = [p for p in RO_DIRS + [".gitignore"] if f"{WORKSPACE}/{p}" not in mounted]
+    missing = [p for p in RO_DIRS + RO_FILES if f"{WORKSPACE}/{p}" not in mounted]
     check("overlays: every read-only overlay is mounted (recreate gx-computer if not)", not missing, " ".join(missing))
     bad = [l for l in out if l.startswith(("WRITABLE", "READABLE"))]
     check("overlays: protected paths read-only; gateway .env unreadable inside Computer", not bad, " ".join(bad))
