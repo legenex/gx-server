@@ -11,6 +11,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Open WebUI ↔ Computer integration, fully provisioned (D-043).** No UI setup steps.
+  * Computer's single admin is the Open WebUI admin: same login name, synced
+    display name and avatar.
+  * Workspace **GX-Cluster** = `/projects/gx-cluster`; the empty default
+    workspace was retired.
+  * LiteLLM connection with its own key `gx-computer` (4 public aliases,
+    default `gx-auto`).
+  * Gateway key stored only in Open WebUI. The workspace appears in Open WebUI
+    as **GX-Cluster - /projects/gx-cluster** (`cptr/gx-cluster`), admin-only.
+  * Open WebUI **GX-Cluster** folder with the project prompt and the
+    *GX-Cluster — project instructions* note.
+- `legenex/computer/tools/`: `provision.py` (idempotent integration),
+  `verify.py` (32 live end-to-end checks incl. `--compaction`) and
+  `test_tools.py` (offline guards).
+- Open WebUI context compaction **on**: `gx-mini` summariser, threshold/cap
+  20000 sized to gx-mini's real 32 768-token window, and a data-framed summary
+  prompt.
+
 - Open WebUI Computer `0.9.21` on gx10-01 (`gx-computer`). Projects mount
   `/home/legenex/Documents/Projects/Server` → `/projects`. LiteLLM over
   `gx_gateway`. Management UI on Tailscale `:8000` and loopback only.
@@ -18,6 +36,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   folders/projects and notes. Identity entries enable native Memory tools.
 
 ### Changed
+
+- Open WebUI uses its own LiteLLM virtual key `open-webui`. It had been using
+  the **master key** (B-029 resolved).
+- Computer: `.cptr/system.md` keeps cptr's template placeholders, so
+  `CLAUDE.md`, memory, skills and the file tree are injected.
+- Computer: CORS pinned to its own origins, `cap_drop: ALL`, `pids_limit`,
+  `CPTR_AUTO_GITIGNORE_DOT_CPTR=false`. New read-only overlays: `.git/config`,
+  `.git/worktrees`, `.kilo`, `legenex/host`, `.gitignore`, `legenex/computer`.
+- Open WebUI: community sharing and the (already hidden) Arena model disabled.
+
+### Security
+
+- `.gitignore` ignores Computer workspace state (`**/.cptr/*` except
+  `system.md`/`model`, generated images). The repo is public and autosynced.
 
 - Open WebUI pinned to `v0.11.4` (`ghcr.io/open-webui/open-webui:v0.11.4`)
   instead of tracking `:main`. Persistent volume `open-webui` kept.
