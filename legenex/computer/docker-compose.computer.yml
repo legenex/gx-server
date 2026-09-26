@@ -36,6 +36,15 @@ services:
     environment:
       CPTR_DATA_DIR: /data
       CPTR_LOG_LEVEL: ${GX_COMPUTER_LOG_LEVEL:-INFO}
+      # The repo .gitignore already ignores **/.cptr/* (except system.md and
+      # model). Stop Computer appending its own `.cptr` line to .gitignore.
+      CPTR_AUTO_GITIGNORE_DOT_CPTR: "false"
+      # Default is "*" with credentials, which lets any same-host origin
+      # (other apps on 100.105.214.61) drive this API. Pin it to Computer's
+      # own origins. Socket.IO (chat streaming) uses the same list, so every
+      # hostname used to open Computer must be here; add the MagicDNS FQDN via
+      # GX_COMPUTER_CORS_ORIGINS in .env.
+      CPTR_CORS_ALLOWED_ORIGINS: ${GX_COMPUTER_CORS_ORIGINS:-http://100.105.214.61:8000,http://127.0.0.1:8000,http://localhost:8000,http://gx10-01:8000}
     volumes:
       - gx_computer_data:/data
       - ${GX_COMPUTER_PROJECTS:-/home/legenex/Documents/Projects/Server}:/projects
