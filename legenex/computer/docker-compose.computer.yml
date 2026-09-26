@@ -48,32 +48,39 @@ services:
     volumes:
       - gx_computer_data:/data
       - ${GX_COMPUTER_PROJECTS:-/home/legenex/Documents/Projects/Server}:/projects
-      # Hide the gateway .env so Computer can work on the real tree without
-      # reading or rewriting production secrets.
-      - ${GX_COMPUTER_HIDDEN_ENV:-./env.hidden}:/projects/gx-cluster/legenex/gateway/.env:ro
-      # Read-only overlays: code Computer could plant here would run on the
-      # host (git hooks, gx10-01 autosync). Normal git add/commit still works.
-      - ${GX_COMPUTER_PROJECTS:-/home/legenex/Documents/Projects/Server}/gx-cluster/.git/hooks:/projects/gx-cluster/.git/hooks:ro
+      # SECRETS: the real gateway .env lives in /srv/projects/gx-cluster/secrets/
+      # (not mounted); legenex/gateway/.env is a symlink that dangles in here.
+      # Never hide a secret with a single-file overlay: replacing the host file
+      # (atomic write, git checkout) silently detaches such a mount.
+      #
+      # READ-ONLY directory overlays: everything the host executes without a
+      # human deciding to restart something, or that controls what gets
+      # committed and published. Directory mounts survive host file rewrites.
+      #   .git              config (fsmonitor/hooksPath/filters), hooks, refs,
+      #                     index, worktrees: no planted hooks, no forged
+      #                     commits. gx10-01 autosync commits Computer's edits.
+      #   .githooks, ops/git-sync   the publishing pipeline
+      #   .kilo             Kilo's linked worktree (own relative hooksPath)
+      #   legenex/host      gx-hostwatch.sh, run every 60 s on BOTH nodes
+      #   legenex/gateway   LiteLLM config + hooks (hold the master key), llama-swap yaml
+      #   legenex/lifecycle run by the orchestrator on gx-max acquire/release
+      #   legenex/scripts, legenex/media   run by Control Center actions
+      #   legenex/computer  this compose file, .env and the host-run tools
+      - ${GX_COMPUTER_PROJECTS:-/home/legenex/Documents/Projects/Server}/gx-cluster/.git:/projects/gx-cluster/.git:ro
       - ${GX_COMPUTER_PROJECTS:-/home/legenex/Documents/Projects/Server}/gx-cluster/.githooks:/projects/gx-cluster/.githooks:ro
       - ${GX_COMPUTER_PROJECTS:-/home/legenex/Documents/Projects/Server}/gx-cluster/ops/git-sync:/projects/gx-cluster/ops/git-sync:ro
-      # .git/config: a planted core.fsmonitor / core.hooksPath / filter driver
-      # would run as the host user on the autosync watcher's next `git status`.
-      # Commits do not write config; only `git config`/`push -u` fail here.
-      - ${GX_COMPUTER_PROJECTS:-/home/legenex/Documents/Projects/Server}/gx-cluster/.git/config:/projects/gx-cluster/.git/config:ro
-      # Linked worktrees (Kilo's .kilo/worktrees/*) have their own relative
-      # hooksPath and admin files that host-side git sessions trust.
-      - ${GX_COMPUTER_PROJECTS:-/home/legenex/Documents/Projects/Server}/gx-cluster/.git/worktrees:/projects/gx-cluster/.git/worktrees:ro
       - ${GX_COMPUTER_PROJECTS:-/home/legenex/Documents/Projects/Server}/gx-cluster/.kilo:/projects/gx-cluster/.kilo:ro
-      # gx-hostwatch.sh runs every 60 s on BOTH nodes (node 2 after autosync).
       - ${GX_COMPUTER_PROJECTS:-/home/legenex/Documents/Projects/Server}/gx-cluster/legenex/host:/projects/gx-cluster/legenex/host:ro
-      # The ignore rules that keep .cptr transcripts out of the public repo.
-      - ${GX_COMPUTER_PROJECTS:-/home/legenex/Documents/Projects/Server}/gx-cluster/.gitignore:/projects/gx-cluster/.gitignore:ro
-      # Computer's own compose/.env (a socket mount would apply on the next
-      # `up`) and the provisioning tools the host runs.
+      - ${GX_COMPUTER_PROJECTS:-/home/legenex/Documents/Projects/Server}/gx-cluster/legenex/gateway:/projects/gx-cluster/legenex/gateway:ro
+      - ${GX_COMPUTER_PROJECTS:-/home/legenex/Documents/Projects/Server}/gx-cluster/legenex/lifecycle:/projects/gx-cluster/legenex/lifecycle:ro
+      - ${GX_COMPUTER_PROJECTS:-/home/legenex/Documents/Projects/Server}/gx-cluster/legenex/scripts:/projects/gx-cluster/legenex/scripts:ro
+      - ${GX_COMPUTER_PROJECTS:-/home/legenex/Documents/Projects/Server}/gx-cluster/legenex/media:/projects/gx-cluster/legenex/media:ro
       - ${GX_COMPUTER_PROJECTS:-/home/legenex/Documents/Projects/Server}/gx-cluster/legenex/computer:/projects/gx-cluster/legenex/computer:ro
-      # Single-file overlays pin the inode: after the host rewrites .gitignore
-      # or .git/config (checkout, reset, `git config`), recreate this container.
-      # tools/verify.py checks that the container view still matches the host.
+      # Single file (no directory to hang it on): the ignore rules that keep
+      # .cptr transcripts out of the public repo. A host rewrite of .gitignore
+      # detaches it; the autosync forbidden-path guard for .cptr/** is the
+      # backstop and tools/verify.py checks the mount is present.
+      - ${GX_COMPUTER_PROJECTS:-/home/legenex/Documents/Projects/Server}/gx-cluster/.gitignore:/projects/gx-cluster/.gitignore:ro
       # Host Grok Build CLI binary only (statically linked). Host auth is NOT
       # mounted. A `grok login` inside Computer is stored in /home/cptr/.grok
       # in the container layer (lost on recreate), not in the data volume.
