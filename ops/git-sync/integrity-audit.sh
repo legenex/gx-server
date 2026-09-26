@@ -146,7 +146,7 @@ bin_models="$(g ls-files | grep -E '\.(gguf|safetensors|ckpt|pt|pth|onnx)$' || t
 if [ -x "${GX_SYNC_GITLEAKS}" ]; then
   tree="$(mktemp -d)"
   g archive HEAD | tar -x -C "${tree}"
-  if "${GX_SYNC_GITLEAKS}" dir "${tree}" --redact --no-banner --log-level error --exit-code 1 >/dev/null 2>&1; then
+  if "${GX_SYNC_GITLEAKS}" dir "${tree}" "${GX_SYNC_GITLEAKS_ARGS[@]}" --redact --no-banner --log-level error --exit-code 1 >/dev/null 2>&1; then
     r PASS "gitleaks: no secrets in the tracked tree at HEAD"
   else
     r FAIL "gitleaks: possible secrets in the tracked tree at HEAD (run gitleaks dir on a git archive to inspect; values are not logged here)"

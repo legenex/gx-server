@@ -1,0 +1,8 @@
+# gitleaks config for the gx10-01 autosync gate and the integrity audit.
+# Passed explicitly (--config) from ops/git-sync, which is read-only to Open
+# WebUI Computer, so a .gitleaks.toml or .gitleaksignore planted in the working
+# tree cannot weaken the scan of a PUBLIC repository.
+title = "gx-cluster autosync"
+
+[extend]
+useDefault = true

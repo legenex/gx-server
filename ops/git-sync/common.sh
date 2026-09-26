@@ -25,6 +25,11 @@ GX_SYNC_QUIET_S="${GX_SYNC_QUIET_S:-45}"
 GX_SYNC_NODE2_SSH="${GX_SYNC_NODE2_SSH:-legenex-02@gx10-02}"
 GX_SYNC_NET_TIMEOUT="${GX_SYNC_NET_TIMEOUT:-60}"
 GX_SYNC_GITLEAKS="${GX_SYNC_GITLEAKS:-$(command -v gitleaks 2>/dev/null || echo "${HOME}/.local/bin/gitleaks")}"
+# Explicit scanner config and ignore path, both inside ops/git-sync (read-only to
+# Open WebUI Computer): a .gitleaks.toml or .gitleaksignore planted in the
+# working tree must not be able to switch the scan off.
+GX_SYNC_GITLEAKS_DIR="${GX_SYNC_GITLEAKS_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
+GX_SYNC_GITLEAKS_ARGS=(--config "${GX_SYNC_GITLEAKS_DIR}/gitleaks.toml" --gitleaks-ignore-path "${GX_SYNC_GITLEAKS_DIR}")
 # Tracked files larger than this are refused at staging time.
 GX_SYNC_MAX_FILE_BYTES="${GX_SYNC_MAX_FILE_BYTES:-5242880}"
 # Pre-existing large tracked files that are known and accepted.
@@ -82,6 +87,18 @@ gxs_forbidden_path() {
   case "/${p}/" in
     */.state/*|*/secrets/*|*/.secrets/*|*/node_modules/*|*/__pycache__/*) return 0 ;;
   esac
+  # Open WebUI Computer workspace state: chat transcripts with tool output,
+  # attachments, task logs, memory, audio, generated images (D-043). Only the
+  # two instruction files are tracked. This does not rely on .gitignore, which
+  # a nested .cptr/.gitignore could override.
+  case "${p}" in
+    .cptr/system.md|.cptr/model) ;;
+    .cptr/*|*/.cptr/*|generated-image-*|edited-image-*) return 0 ;;
+  esac
+  # Scanner overrides that would switch the secret gate off.
+  case "${base}" in
+    .gitleaks.toml|.gitleaksignore) return 0 ;;
+  esac
   return 1
 }
 
@@ -99,7 +116,7 @@ gxs_scan_staged() {
   local report rc
   if [ -x "${GX_SYNC_GITLEAKS}" ]; then
     report="$(mktemp)"
-    ( cd "${GX_SYNC_REPO}" && "${GX_SYNC_GITLEAKS}" git --pre-commit --staged --redact --no-banner \
+    ( cd "${GX_SYNC_REPO}" && "${GX_SYNC_GITLEAKS}" git --pre-commit --staged "${GX_SYNC_GITLEAKS_ARGS[@]}" --redact --no-banner \
         --log-level error --exit-code 1 --report-format json --report-path "${report}" . ) >/dev/null 2>&1
     rc=$?
     if [ "${rc}" -eq 1 ]; then
