@@ -143,6 +143,19 @@ def verify_computer(c: Computer, nonce: str) -> None:
     st, _ = c.call("GET", "/v1/models", cookie=False)
     check("gateway: unauthenticated request refused", st == 401, f"HTTP {st}")
 
+    # read-only overlays (docker-compose.computer.yml): enforced, and single-file binds not stale
+    probe = ("for p in .git/config .gitignore; do sha256sum $p; done; "
+             "for d in legenex/host legenex/computer .git/hooks .git/worktrees .kilo; do "
+             "if touch $d/.ro-probe 2>/dev/null; then rm -f $d/.ro-probe; echo WRITABLE $d; fi; done; "
+             "git config --local gx.ro-probe 1 2>/dev/null && git config --local --unset gx.ro-probe && echo WRITABLE .git/config; true")
+    out = run(["docker", "exec", "-w", WORKSPACE, CPTR_CONTAINER, "sh", "-c", probe])
+    check("overlays: hooks, host scripts, git config, worktrees, .gitignore, Computer config are read-only",
+          "WRITABLE" not in out, " ".join(l for l in out.splitlines() if "WRITABLE" in l))
+    hostsums = run(["sh", "-c", f"cd {HOST_WORKSPACE} && sha256sum .git/config .gitignore"])
+    check("overlays: container view of .gitignore and .git/config matches the host (recreate if not)",
+          sorted(l.split()[0] for l in out.splitlines() if len(l.split()) == 2 and len(l.split()[0]) == 64)
+          == sorted(l.split()[0] for l in hostsums.splitlines()))
+
 
 def verify_owui(email: str | None, agent: bool, c: Computer) -> None:
     ident = canonical_identity(email)

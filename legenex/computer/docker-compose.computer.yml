@@ -56,12 +56,34 @@ services:
       - ${GX_COMPUTER_PROJECTS:-/home/legenex/Documents/Projects/Server}/gx-cluster/.git/hooks:/projects/gx-cluster/.git/hooks:ro
       - ${GX_COMPUTER_PROJECTS:-/home/legenex/Documents/Projects/Server}/gx-cluster/.githooks:/projects/gx-cluster/.githooks:ro
       - ${GX_COMPUTER_PROJECTS:-/home/legenex/Documents/Projects/Server}/gx-cluster/ops/git-sync:/projects/gx-cluster/ops/git-sync:ro
-      # Host Grok Build CLI binary only (statically linked). Auth is NOT
-      # mounted; log in from Computer (Settings → Admin → Agents, or a
-      # Computer terminal) so credentials stay in the Computer data volume.
+      # .git/config: a planted core.fsmonitor / core.hooksPath / filter driver
+      # would run as the host user on the autosync watcher's next `git status`.
+      # Commits do not write config; only `git config`/`push -u` fail here.
+      - ${GX_COMPUTER_PROJECTS:-/home/legenex/Documents/Projects/Server}/gx-cluster/.git/config:/projects/gx-cluster/.git/config:ro
+      # Linked worktrees (Kilo's .kilo/worktrees/*) have their own relative
+      # hooksPath and admin files that host-side git sessions trust.
+      - ${GX_COMPUTER_PROJECTS:-/home/legenex/Documents/Projects/Server}/gx-cluster/.git/worktrees:/projects/gx-cluster/.git/worktrees:ro
+      - ${GX_COMPUTER_PROJECTS:-/home/legenex/Documents/Projects/Server}/gx-cluster/.kilo:/projects/gx-cluster/.kilo:ro
+      # gx-hostwatch.sh runs every 60 s on BOTH nodes (node 2 after autosync).
+      - ${GX_COMPUTER_PROJECTS:-/home/legenex/Documents/Projects/Server}/gx-cluster/legenex/host:/projects/gx-cluster/legenex/host:ro
+      # The ignore rules that keep .cptr transcripts out of the public repo.
+      - ${GX_COMPUTER_PROJECTS:-/home/legenex/Documents/Projects/Server}/gx-cluster/.gitignore:/projects/gx-cluster/.gitignore:ro
+      # Computer's own compose/.env (a socket mount would apply on the next
+      # `up`) and the provisioning tools the host runs.
+      - ${GX_COMPUTER_PROJECTS:-/home/legenex/Documents/Projects/Server}/gx-cluster/legenex/computer:/projects/gx-cluster/legenex/computer:ro
+      # Single-file overlays pin the inode: after the host rewrites .gitignore
+      # or .git/config (checkout, reset, `git config`), recreate this container.
+      # tools/verify.py checks that the container view still matches the host.
+      # Host Grok Build CLI binary only (statically linked). Host auth is NOT
+      # mounted. A `grok login` inside Computer is stored in /home/cptr/.grok
+      # in the container layer (lost on recreate), not in the data volume.
       - ${GX_GROK_BIN:-/home/legenex/.local/bin/grok}:/usr/local/bin/grok:ro
     security_opt:
       - no-new-privileges:true
+    # Runs as uid 1000 with no effective capabilities already; drop the
+    # bounding set too and cap process count.
+    cap_drop: [ALL]
+    pids_limit: ${GX_COMPUTER_PIDS_LIMIT:-1024}
     mem_limit: ${GX_COMPUTER_MEM_LIMIT:-2g}
     oom_score_adj: ${GX_COMPUTER_OOM_SCORE_ADJ:-100}
     healthcheck:
