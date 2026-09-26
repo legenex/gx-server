@@ -285,8 +285,11 @@ class OpenWebUIIdentity:
 
     def _exec(self, payload: dict) -> dict:
         # Open WebUI's start.sh loads its secret from a file; its model layer needs it
-        # to import. The key stays inside the container and is never printed.
-        wrapper = ('cd /app/backend && WEBUI_SECRET_KEY="$(cat .webui_secret_key)" '
+        # to import. Since D-045 the compose passes WEBUI_SECRET_KEY in the environment
+        # (persisted in the secrets store), and a container recreate does not carry the
+        # layer file — prefer the env, fall back to the file. The key stays inside the
+        # container and is never printed.
+        wrapper = ('cd /app/backend && WEBUI_SECRET_KEY="${WEBUI_SECRET_KEY:-$(cat .webui_secret_key 2>/dev/null)}" '
                    'GLOBAL_LOG_LEVEL=ERROR exec python3 -c "$1"')
         res = self.runner(["docker", "exec", "-i", self.container, "sh", "-c", wrapper, "gx-identity",
                            _CONTAINER_SCRIPT], timeout=120, input_text=json.dumps(payload))
