@@ -195,7 +195,7 @@ def verify_owui(email: str | None, agent: bool, c: Computer) -> None:
     if not agent:
         return
     tag = uuid.uuid4().hex[:10]
-    before = run(["git", "-C", HOST_WORKSPACE, "status", "--porcelain"])
+    t_start = time.time() - 1
     r = owui([{"call": ["POST", "/api/chat/completions", {"model": "cptr/gx-cluster", "stream": False, "messages": [{"role": "user", "content":
         f"Verification run {tag}: do not create, modify or delete any file. Run `echo VERIFY-{tag}; git rev-parse --abbrev-ref HEAD` "
         "in the workspace, then answer on two lines: 'BRANCH: <name>' and 'L-8: <what locked constraint L-8 in the project "
@@ -203,8 +203,11 @@ def verify_owui(email: str | None, agent: bool, c: Computer) -> None:
     txt = (r["body"] or {}).get("choices", [{}])[0].get("message", {}).get("content", "") if isinstance(r["body"], dict) else str(r["body"])
     check("owui -> Computer gateway -> agent -> LiteLLM (ran git, read the project instructions)",
           r["status"] == 200 and "main" in txt and "swapfile-sglang" in txt, txt.strip().replace("\n", " / ")[:160])
-    check("agent: working tree unchanged by the read-only agent run",
-          run(["git", "-C", HOST_WORKSPACE, "status", "--porcelain"]) == before)
+    # any non-ignored file written during the run (mtime), immune to autosync committing meanwhile
+    listed = run(["git", "-C", HOST_WORKSPACE, "ls-files", "-com", "--exclude-standard", "-z"]).split("\0")
+    touched = sorted({f for f in listed if f and os.path.exists(f"{HOST_WORKSPACE}/{f}")
+                      and os.path.getmtime(f"{HOST_WORKSPACE}/{f}") >= t_start})
+    check("agent: no project file written by the read-only agent run", not touched, " ".join(touched[:5]))
     # remove only this run's chat(s) and task log(s): identified by the tag, never by time
     c = Computer(c.username, ttl=900)   # fresh session: the agent call may have outlived the first one
     tagged = [row[0] for row in cptr_sql("select distinct chat_id from chat_messages where content like ?", (f"%{tag}%",))]

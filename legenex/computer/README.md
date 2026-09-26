@@ -155,7 +155,7 @@ stores it Fernet-encrypted in its DB.
 | Command (from `legenex/computer/tools`) | What it does |
 |---|---|
 | `python3 provision.py` | Idempotent: LiteLLM keys, Computer profile, connection, default model, workspace and gateway key, then Open WebUI connections, the GX-Cluster folder and note, and compaction. `--rotate-gateway-key` replaces the gateway key in both apps. |
-| `python3 verify.py [--compaction]` | Live end-to-end check (about 38 checks with `--compaction`). Every Computer file operation is checked on the host. The agent run is tagged, and only its own chat and task log are removed; test files are removed in `finally`. |
+| `python3 verify.py [--compaction]` | Live end-to-end check (37 checks with `--compaction`; one fewer if no non-admin user exists). Every Computer file operation is checked on the host. The agent run is tagged, and only its own chat and task log are removed; test files are removed in `finally`. |
 | `python3 -m unittest -v test_tools` | Offline guards: redaction, connection-list index handling, `.cptr` ignore rules and the autosync guard, template placeholders, the note snapshot. |
 
 Admin calls use short-lived sessions minted **inside** each container with

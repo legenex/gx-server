@@ -23,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   * Open WebUI **GX-Cluster** folder with the project prompt and the
     *GX-Cluster — project instructions* note.
 - `legenex/computer/tools/`: `provision.py` (idempotent integration),
-  `verify.py` (about 38 live end-to-end checks incl. `--compaction`) and
+  `verify.py` (37 live end-to-end checks incl. `--compaction`) and
   `test_tools.py` (offline guards).
 - Open WebUI context compaction **on**: `gx-mini` summariser, threshold/cap
   20000 sized to gx-mini's real 32 768-token window, and a data-framed summary
