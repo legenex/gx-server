@@ -134,3 +134,13 @@ tmp/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+# --- Open WebUI Computer workspace state ---
+# Computer writes full chat transcripts (incl. tool output), attachments,
+# task logs, screenshots, memory and audio under <workspace>/.cptr/, and
+# generated images in the workspace root. This repo is PUBLIC and autosynced:
+# never publish them. Only the two instruction files are tracked.
+**/.cptr/*
+!/.cptr/system.md
+!/.cptr/model
+/generated-image-*
+/edited-image-*
