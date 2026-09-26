@@ -13,6 +13,7 @@ stdin: {"email": <user email or null for "the only admin">, "require_admin": tru
 """
 import json
 import os
+import re
 import sqlite3
 import sys
 import time
@@ -22,16 +23,25 @@ import uuid
 
 BASE = "http://127.0.0.1:3000"
 DB = "file:/app/backend/data/webui.db?mode=ro"
-SECRET_FIELDS = {"OPENAI_API_KEYS", "API_KEYS", "KEY", "TOKEN", "API_KEY", "PASSWORD"}
+# Field names whose string values are credentials. `auth_type` and ENABLE_* flags are not.
+SECRET_NAME = re.compile(r"(KEY|TOKEN|SECRET|PASSWORD|PASSWD|AUTHORIZATION|COOKIE|CREDENTIAL)", re.I)
+SAFE_NAMES = {"auth_type"}
+SECRET_VALUE = re.compile(r"(Bearer\s+\S+|sk-[A-Za-z0-9_-]{8,}|eyJ[A-Za-z0-9_-]{10,}(\.[A-Za-z0-9_-]+){0,2}"
+                          r"|hf_[A-Za-z0-9]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xai-[A-Za-z0-9]{20,})")
 
 
-def redact(o):
+def redact(o, name=""):
+    """Recursively redact credentials by field name and by token shape. Returns a copy."""
     if isinstance(o, dict):
-        return {k: ("<redacted>" if k.upper() in SECRET_FIELDS and o[k] else redact(v)) for k, v in o.items()}
+        return {k: redact(v, k) for k, v in o.items()}
     if isinstance(o, list):
-        return [redact(v) for v in o]
-    if isinstance(o, str) and (o.startswith("sk-") or o.startswith("eyJ")):
-        return f"<redacted len={len(o)}>"
+        if name and SECRET_NAME.search(name) and name not in SAFE_NAMES and any(isinstance(v, str) and v for v in o):
+            return "<redacted>"
+        return [redact(v, name) for v in o]
+    if isinstance(o, str):
+        if o and name and SECRET_NAME.search(name) and name not in SAFE_NAMES and not name.upper().startswith("ENABLE_"):
+            return "<redacted>"
+        return SECRET_VALUE.sub("<redacted>", o)
     return o
 
 
@@ -83,9 +93,9 @@ def openai_config(tok):
 
 def openai_upsert(tok, spec):
     cfg = openai_config(tok)
-    urls, keys = list(cfg["OPENAI_API_BASE_URLS"]), list(cfg["OPENAI_API_KEYS"])
+    urls = list(cfg["OPENAI_API_BASE_URLS"])
+    keys = (list(cfg["OPENAI_API_KEYS"]) + [""] * len(urls))[:len(urls)]   # the server pairs them by index
     confs = dict(cfg["OPENAI_API_CONFIGS"])
-    keys += [""] * (len(urls) - len(keys))
     if spec["url"] in urls:
         idx, action = urls.index(spec["url"]), "updated"
         keys[idx] = spec["key"]

@@ -33,6 +33,7 @@ HOST_WORKSPACE = str(REPO)
 
 sys.path.insert(0, str(REPO / "legenex" / "control-ui"))
 from gx_control_ui.api_keys import PUBLIC_ALIASES, KeyManager  # noqa: E402
+from gx_control_ui.api_keys import KeyError_ as KeyManagerError  # noqa: E402
 
 # Open WebUI forwards these per request; Computer maps them to its own chat/message tree
 # and routes title/tag/follow-up tasks (X-OpenWebUI-Task) to the plain model.
@@ -68,7 +69,9 @@ def owui(ops: list[dict], email: str | None = None, require_admin: bool = True) 
     path = _copy_in(OWUI_CONTAINER, "owui_api.py")
     try:
         out = run(["docker", "exec", "-i", OWUI_CONTAINER, "sh", "-c",
-                   f'cd /app/backend && WEBUI_SECRET_KEY="$(cat .webui_secret_key)" exec python3 {path}'],
+                   # same precedence as the image's start.sh: env, legacy env, then the key file
+                   'cd /app/backend && WEBUI_SECRET_KEY="${WEBUI_SECRET_KEY:-${WEBUI_JWT_SECRET_KEY:-$(cat .webui_secret_key 2>/dev/null)}}" '
+                   f'exec python3 {path}'],
                   json.dumps({"email": email, "require_admin": require_admin, "ops": ops}), timeout=1800)
     finally:
         subprocess.run(["docker", "exec", OWUI_CONTAINER, "rm", "-f", path], capture_output=True)
@@ -158,20 +161,46 @@ def _master_key() -> str | None:
     return None
 
 
-def ensure_litellm_key(name: str, store: Path) -> tuple[str, str]:
+def _key_works(secret: str) -> bool:
+    req = urllib.request.Request(LITELLM_HOST + "/v1/models", headers={"Authorization": "Bearer " + secret})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:
+            return r.status == 200
+    except (urllib.error.URLError, OSError):
+        return False
+
+
+def ensure_litellm_key(name: str, store: Path, limits: dict | None = None) -> tuple[str, str]:
     """Return (action, secret) for a LiteLLM virtual key limited to the public aliases.
 
     Created once through the Control Center KeyManager (same metadata as keys made in
-    Control Center -> API Keys) and kept 0600 in the secrets store.
+    Control Center -> API Keys) and kept 0600 in the secrets store. A stored key that the
+    gateway no longer accepts (revoked in Control Center) is an error, not a silent success.
+    `limits` (e.g. max_parallel_requests) are applied on every run.
     """
     km = KeyManager(LITELLM_HOST, _master_key)
-    if store.exists():
-        return "exists", store.read_text().strip()
-    if any(k["name"] == name for k in km.list()):
-        raise ToolError(f"LiteLLM key '{name}' exists but {store} is missing; revoke it in Control Center first")
-    created = km.create({"name": name, "models": list(PUBLIC_ALIASES), "expiry": "never"}, user="gx-computer-tools")
-    store.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    fd = os.open(store, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    with os.fdopen(fd, "w") as f:
-        f.write(created["secret"])
-    return "created", created["secret"]
+    try:
+        keys = {k["name"]: k for k in km.list()}
+        if store.exists():
+            secret, action = store.read_text().strip(), "exists"
+            if not _key_works(secret):
+                raise ToolError(f"stored LiteLLM key '{name}' ({store}) is rejected by the gateway; "
+                                "revoke it in Control Center, delete the file and re-run")
+        else:
+            if name in keys:
+                raise ToolError(f"LiteLLM key '{name}' exists but {store} is missing; revoke it in Control Center first")
+            created = km.create({"name": name, "models": list(PUBLIC_ALIASES), "expiry": "never", **(limits or {})},
+                                user="gx-computer-tools")
+            store.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            fd = os.open(store, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, "w") as f:
+                f.write(created["secret"])
+            secret, action = created["secret"], "created"
+            keys = {k["name"]: k for k in km.list()}
+        entry = keys.get(name)
+        if entry and limits and any(entry.get(k) != v for k, v in limits.items()):
+            km._call("POST", "/key/update", {"key": entry["id"], **limits})
+            action += "+limits"
+    except KeyManagerError as exc:
+        raise ToolError(f"LiteLLM key management failed: {exc}") from None
+    return action, secret
