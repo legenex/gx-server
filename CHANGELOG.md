@@ -58,6 +58,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `legenex/gateway/.env` is now a symlink; `legenex/gateway` is a read-only
   directory overlay; the four values were rotated again; the integrity audit
   checks the symlink (B-033).
+- **`LITELLM_MASTER_KEY` rotated (D-045, B-036 closed).** The one remaining
+  off-box consumer — the hermes agent on the London VPS — was migrated first
+  to its own scoped key `hermes` (gx-mini/gx-code/gx-auto/gx-max, rpm 300,
+  4 parallel), updated in place on the VPS (including a stale copy the
+  dashboard inherited from the jarvis sidecar). Cutover verified: old value
+  401, new value live, orchestrator auth unchanged, gx-auto end-to-end OK,
+  zero master traffic before cutover; VPS backup copies scrubbed of the dead
+  value. `kilo-code` (broad, unused since 09-23) is blocked reversibly, and
+  two never-used unnamed unrestricted keys were revoked; the key table is
+  exactly the eight purpose-named keys.
+- **Open WebUI hardening deployed** (B-037 half): HSTS, `nosniff`, referrer
+  policy, `SAMEORIGIN` framing, CORS/Socket.IO pinned to the origins in use,
+  and the session secret persisted to `secrets/open-webui/webui-secret.env`
+  (0600, same value — nobody logged out). Data volume reused; counts
+  identical before/after; disallowed origins get no allow-origin header.
+- `rotate-swap-key.sh`: bearer keys now travel via a curl config on a pipe,
+  never argv; `--preflight` PASS; staged, NOT executed (needs the outage
+  window).
+- Orchestrator authentication live (D-044): every route except `/health`,
+  `/healthz` and `/` requires `Authorization: Bearer $GX_ORCHESTRATOR_API_KEY`
+  (constant-time, fail-closed); LiteLLM, Control Center, `status_cli` and the
+  shell helpers all send it. The disabled Nous Portal connection and its
+  stored key were removed from Open WebUI.
 - Computer: git is read-only (whole `.git`). Read-only directory overlays for
   `legenex/{host,gateway,lifecycle,scripts,media,computer}`, `.kilo`,
   `.githooks` and `ops/git-sync`, with `create_host_path: false`.

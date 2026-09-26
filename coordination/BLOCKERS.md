@@ -1503,7 +1503,15 @@ checkout.
 
 ## B-032 (S3) — gx-mini's advertised window is larger than the engine's real window
 
-**Status:** OPEN (needs sign-off: gateway/orchestrator config). **Found:**
+**Status:** RESOLVED 2026-09-26 (AgentOS provider/routing repair; the sign-off was covered by the AgentOS standing
+authority for GX configuration repair). `Tier.MINI.max_context` is now 32768, LiteLLM gx-mini `max_input_tokens` is 24576
+(24576 in + 8192 out = 32768), `models/registry.json` says 32768, and the node01.yaml comment states the real slot size;
+`gx-orchestrator` and `gx-litellm` were restarted. Live proof through the gateway: a 27.5k-token request to gx-mini is
+served; a ~45k-token request to gx-mini is refused instantly by the budget hook ("context window is 32768 tokens"); the same
+45k-token request to gx-auto is served by a tier that holds it. `tests/test_mini_real_window.py` pins tier table, LiteLLM
+metadata, registry and llama-swap flags together. Kilo's ~47k-token toolbox can no longer fit gx-mini, so its conversational
+first turns route to gx-code (fixtures updated). `legenex/control-ui` setup/docs still advertise 57344 for gx-mini: a follow-up
+for that app's owner. **Found:**
 2026-09-26, Open WebUI compaction verification.
 
 `gx-mini` runs `--ctx-size 65536 --parallel 2` (`legenex/gateway/llama-swap/node01.yaml`
@@ -1590,6 +1598,35 @@ Kilo logins) were **not examined**; the session's permission policy blocked
 reading those stores. If an earlier agent printed any of them, rotate it in
 that provider's console.
 
+### Update 2026-09-26, D-045
+
+* **The master key HAS NOW BEEN ROTATED** (see B-036/D-045): the hermes VPS client was migrated to its
+  own key first, then the master value was replaced, gx-litellm recreated and the orchestrator and
+  Control Center restarted. The old value is refused (401). The two never-used unnamed unrestricted
+  keys found in the table (created 2026-09-26 19:42/19:56, no alias, no metadata) were revoked, and
+  the broad `kilo-code` key (unused since 09-23) is blocked.
+* **Swap key still not rotated** — staged and ready (B-037); executing needs an authorized ~5-minute
+  text outage.
+* **Transcript cleanup is still deferred**, now only on the swap rotation: the old transcripts hold
+  the (now dead) master value and the (still live) swap value. The cleanup pays off after the swap
+  rotation, and that procedure ends with the value-comparison scan and the cleanup.
+
+### Update 2026-09-26, D-044
+
+* **Rotated so far:** the four earlier ones. **New credentials created** (never exposed):
+  `GX_ORCHESTRATOR_API_KEY` (was the placeholder), and the scoped LiteLLM keys `gx-orchestrator`,
+  `agentos`, `kilo-cli` (all 0600 under `secrets/`).
+* **Master key.** Every local consumer now has its own key: the orchestrator relay, AgentOS (both
+  services) and Kilo. Left on the master key: the LiteLLM container itself, the Control Center (it
+  creates and revokes keys, so it needs it) and the provisioning tools. **One legitimate off-box client
+  still uses it: see B-036.** The master key was NOT rotated.
+* **Swap key.** Not rotated: it needs a full text-model reload (see B-036's sibling, B-037). Staged:
+  `legenex/lifecycle/rotate-swap-key.sh` (`--preflight` passes; `--execute` backs up, rotates both
+  nodes, recreates llama-swap, LiteLLM, orchestrator and Control Center, and rolls back on failure).
+* **Transcript cleanup is deferred**, on purpose. The old transcripts hold the master and swap values,
+  which are still live. Deleting them only pays off after those two are rotated, and the rotation
+  procedure ends with the value-comparison scan and the cleanup.
+
 ## B-034 (S2) — Security follow-ups from the Computer integration review that need sign-off
 
 **Status:** OPEN. **Found:** 2026-09-26, independent security review
@@ -1617,37 +1654,49 @@ that provider's console.
   `pids_limit`, `gx-computer` concurrency limit, community sharing off, Arena
   off.
 
-Remaining:
+Remaining (re-audited 2026-09-26, D-045):
 
-1. **Computer edits code that host services run on their next restart.**
-   `legenex/control-ui` (`Restart=always`) and `legenex/playground` run as
-   `legenex` (docker group, so root-equivalent) on both nodes, and autosync
-   ships them to gx10-02. The control UI also lazily imports its own modules
-   during admin actions. `legenex/orchestrator` and `legenex/common` are
-   read-only in Computer since the final re-review, because the gx-max
-   lifecycle imports them. The user asked for Computer to work on the
-   real checkout, so these stay writable. The strict alternative is a separate
-   Computer clone or worktree that autosync does not push, with human-reviewed
-   promotion.
+1. ~~Computer edits code that host services run on their next restart~~
+   **CLOSED by D-044's read-only directory overlays**: `legenex/control-ui`,
+   `legenex/playground`, `legenex/music|voice|call|live`, `llama-swap`,
+   `scripts`, `setup`, `coordination/node2/{scripts,configs}` were added to
+   the gx-computer read-only overlay set (on top of `.git`, `.githooks`,
+   `ops/git-sync`, `.kilo`, `legenex/{host,gateway,lifecycle,scripts,media,
+   computer,orchestrator,common}`). Re-verified from inside the container:
+   every unit `ExecStart` path into the repo is read-only, the gateway `.env`
+   symlink dangles, ordinary source (`docs/`) stays writable, and the empty
+   untracked `.agents/` dir (the one writable instruction-shaped gap) was
+   removed. Residual, deliberate: `legenex/open-webui/` stays writable — it
+   holds compose variants that a *future manual deployment* copies, but
+   nothing executes it unattended.
 2. **The public Open WebUI admin login is the gate to (1)**, via
    `cptr/gx-cluster`, whose tools are auto-approved. Recommended: Cloudflare
    Access with MFA in front of `chat.legenex.co`, Always Use HTTPS/HSTS, and a
    shorter `auth.jwt_expiry` than `4w`. A `Secure` session cookie would break
-   plain-HTTP Tailscale access to `:3000`.
-3. **The orchestrator (`:18900`) has no inbound authentication** and is
-   reachable from containers via `host.docker.internal`. It relays with the
-   master key, and `POST /lifecycle/gx-max/acquire` can take over both nodes.
-   Fix: enforce a bearer key (LiteLLM already sends `GX_ORCHESTRATOR_API_KEY`,
-   currently `not-required`).
-4. **Unauthenticated llama-server upstreams** (`:19001`, `:19011`) on
-   `gx_gateway`. Other host services are reachable from Computer too. Fix: a
-   separate Docker network shared only with `gx-litellm`, and upstream
-   `--api-key`.
-5. **Open WebUI** listens on `0.0.0.0:3000` (plain HTTP on the LAN) and
-   reflects any CORS origin with credentials. Its session secret lives in the
-   container layer. Fix: bind and CORS settings, and persist
-   `WEBUI_SECRET_KEY`, in one planned recreate.
-6. **Tailscale ACL:** restrict `:8000` (Computer) to admin devices.
+   plain-HTTP Tailscale access to `:3000`. **Needs the Cloudflare dashboard or
+   an API token — a human decision.**
+3. ~~The orchestrator has no inbound authentication~~ **CLOSED by D-044**:
+   every route except `/health`, `/healthz` and `/` requires
+   `Authorization: Bearer $GX_ORCHESTRATOR_API_KEY` (constant-time,
+   fail-closed on the placeholder), verified live (401 no/wrong key, 200
+   correct key, `/health` open) with unit tests.
+4. ~~Unauthenticated llama-server upstreams (`:19001`, `:19011`) on
+   `gx_gateway`~~ **CLOSED in the live state, re-verified 2026-09-26**: from
+   inside `gx-computer` every llama-swap port (8080, 19001, 19011) is
+   connection-refused — llama-swap and its nested llama-servers bind
+   container-loopback only, and node 1 publishes `127.0.0.1:{8080→28080,
+   19001, 19011}` while node 2 publishes `8080→28080` on the fabric plus
+   loopback only. The only reachable llama-swap surface (node 1 loopback,
+   node 2 fabric/loopback) requires the swap key (401 without it, tested on
+   both nodes).
+5. ~~Open WebUI reflects any CORS origin; session secret in the container
+   layer~~ **CLOSED by D-045**: CORS/Socket.IO pinned to the origins in use,
+   `WEBUI_SECRET_KEY` persisted (same value — nobody logged out), security
+   headers live on loopback and `chat.legenex.co`. What remains of this item
+   is the plain-HTTP LAN/Tailscale bind of `:3000`, which is intentional
+   (users reach `http://<tailnet-ip>:3000`) and gated on decision (2).
+6. **Tailscale ACL:** restrict `:8000` (Computer) to admin devices. **Human
+   decision (tailnet administration).**
 
 ## B-035 (S3) — CLAUDE.md locked rows L-6 and L-10 no longer describe the live gateway
 
@@ -1668,3 +1717,83 @@ Remaining:
   descriptions.
 
 **Action (human):** amend L-6 and L-10 or record why the live config differs.
+
+
+## B-036 (S2) — RESOLVED 2026-09-26 (D-045) — the master gateway key is still used by one legitimate off-box client (hermes agent VPS)
+
+**Status: RESOLVED.** The hermes agent on the London VPS was migrated to its own
+scoped LiteLLM key `hermes` (models gx-mini, gx-code, gx-auto, gx-max; rpm 300;
+max_parallel 4), updated in place on the VPS (`~/.hermes/.env` plus the stale
+copy in `~/.hermes/jarvis-whatsapp-gateway/.env` that the dashboard inherited).
+hermes-gateway, hermes-dashboard and the WhatsApp bridge were restarted and
+verified on the new key. `LITELLM_MASTER_KEY` was then rotated
+(make-before-break): the old value is refused (401) and the new one was
+verified through Control Center key management, orchestrator auth, and a full
+gx-auto round trip. The dead old value was scrubbed from the VPS backup
+copies. Original finding preserved below.
+
+**Found and identified:** 2026-09-26.
+
+* **Who.** Tailnet device `srv1906439` (100.70.255.106, the London VPS you reach as `hermes-vps`,
+  running the hermes agent). The gateway proxy log shows it, by peer address, with user agent
+  `OpenAI/Python 2.24.0` (chat completions) and `python-httpx/0.28.1` (model listing), and the key
+  fingerprint equals the master key's.
+* **How often.** About 130 gx-code calls an hour around the clock (one every ~27 s; 3 113 gx-code and
+  906 gx-mini calls in the last 24 h on the master key), last seen 2026-09-26 21:18 UTC.
+* **What stops if the master key is rotated.** Every request from that VPS returns 401. The hermes
+  agent loses its inference until its key is replaced.
+* **Why it was not migrated.** It needs its own key written into the VPS's hermes configuration. That
+  is a change on a machine outside gx10-01/gx10-02, and reading its stored credentials for a hash
+  comparison was blocked by policy in this session. The gateway side is ready: a key with models
+  `gx-mini, gx-code, gx-auto, gx-max` and `rpm 300`, `max_parallel 4` can be created in one call.
+* **Decision needed:** allow me to update the hermes agent's key on the VPS (then the master key
+  can be rotated the same session), or accept cutting that client off at rotation.
+
+## B-037 (S2) — swap-key rotation staged, not executed; Open WebUI hardening DEPLOYED 2026-09-26
+
+**Swap key (`GX_SWAP_API_KEY`) — staged, ready, NOT executed.**
+`legenex/lifecycle/rotate-swap-key.sh --execute`. llama-swap reads
+the key only from its container environment and the resident models run inside its network namespace,
+so the rotation reloads them: gx-mini back in about 1 minute, gx-code (a backend on each node,
+reloading in parallel) in about 4, gx-auto follows gx-code; about 5 minutes in all, with gx-max down.
+Preflight re-run 2026-09-26 22:23 UTC after D-045's argv-hygiene fix (bearer keys now travel via a
+curl config on a pipe, never argv, on both nodes): PASS — gx-max down, no media stack on node 2, RAM
+node1=41G / node2=84G, the current key accepted by both llama-swaps, no established upstream
+connections. `--execute` backs up both `.env` files first and rolls back on failure. Consumers:
+llama-swap node 1 and node 2, gx-litellm, gx-orchestrator, gx-control-ui. Executing needs an
+authorized outage window (~5 minutes of text-model unavailability).
+
+**Open WebUI response hardening — DEPLOYED (D-045).** The staged compose replaced
+`/opt/open-webui/compose.yaml`: HSTS, `nosniff`, referrer policy, `SAMEORIGIN` framing, CORS/Socket.IO
+pinned to the origins in use, and the session secret persisted to
+`/srv/projects/gx-cluster/secrets/open-webui/webui-secret.env` (0600, same value, so nobody was
+logged out). Data volume reused; user/chat/memory counts identical before and after; a disallowed
+origin gets no allow-origin header while every origin in use works — verified on loopback and on
+`https://chat.legenex.co/`. Pre-recreate backup:
+`/srv/projects/gx-cluster/backups/open-webui/20260926T221601Z-prehardening/`.
+
+**Public ingress, what exists today** (probed read-only): `http://chat.legenex.co/` answers 200 with
+**no redirect** to HTTPS (the HTTPS response now carries the security headers above, but the zone
+does not force HTTPS); there is still no access layer in front of the login. The tunnel is
+token-managed (`cloudflared … --token-file`), so its ingress rules and any Access policy live in the
+Cloudflare account, not on this host. Prepared, not
+applied (each needs the Cloudflare dashboard or an API token):
+
+1. **Always Use HTTPS** and **HSTS** (`max-age` 6 months, no `includeSubDomains`, no preload) on the
+   zone: removes the plain-HTTP path.
+2. **Cloudflare Access application** for `chat.legenex.co` with an *allow* policy on the exact email
+   addresses of the current users (one-time PIN as the second factor, or the identity provider's MFA),
+   session 24 h, and a *bypass* only for the paths a machine client uses, if any (none is known).
+   Lock-out risk: an Access policy that does not list every current user, or one applied before the
+   users confirm their addresses, locks them out. Dry-run first with the policy in "test" audience.
+3. `auth.jwt_expiry` from `4w` to something shorter, after Access is in place.
+4. Do not enable a `Secure` session cookie while `http://<tailnet-ip>:3000` is in use.
+
+## B-038 (S3) — orchestrator test-suite drift (pre-existing, not caused by D-044)
+
+`orchestrator/tests` had 63 failing tests before this pass and has 54 now. They assert the retired
+gx-fast/gx-reason routing and the old SGLang default, and the fixtures predate
+`gxmax_mode`/`TextMetrics`. D-044 added and fixed the fixtures it needed and made the new
+authentication tests pass; the remaining failures compare identical to the baseline commit
+(`99f6b4a`) apart from tests that used to error before reaching their assertion. Control Center tests:
+21 failing, identical to the baseline.

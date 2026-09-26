@@ -127,9 +127,12 @@ alias makes the orchestrator acquire the cluster automatically, and the idle TTL
 releases it again.
 
 ```bash
-curl -s localhost:18900/lifecycle/gx-max/status | python3 -m json.tool
-curl -s -X POST localhost:18900/lifecycle/gx-max/acquire
-curl -s -X POST localhost:18900/lifecycle/gx-max/release -d '{}'
+# Every orchestrator route except /health needs its bearer key (D-044). orch_curl adds it from the
+# protected secrets store without putting it on the command line:
+. legenex/lifecycle/orch-auth.sh
+orch_curl -s localhost:18900/lifecycle/gx-max/status | python3 -m json.tool
+orch_curl -s -X POST localhost:18900/lifecycle/gx-max/acquire
+orch_curl -s -X POST localhost:18900/lifecycle/gx-max/release -d '{}'
 ```
 
 Timings measured on this hardware:
@@ -146,7 +149,7 @@ Timings measured on this hardware:
 legenex/scripts/gx-status.sh              # one-shot: both nodes + every alias, human or --json
 docker ps --format '{{.Names}}\t{{.Status}}'                       # node 1
 ssh legenex-02@gx10-02 'docker ps --format "{{.Names}}\t{{.Status}}"'  # node 2
-curl -s localhost:18900/health/detailed | python3 -m json.tool
+orch_curl -s localhost:18900/health/detailed | python3 -m json.tool   # needs the key; /health does not
 ```
 
 llama-swap loads models **on demand** and unloads them on an idle TTL, so an

@@ -9,7 +9,7 @@ What to do when something is broken. Ordered from "most likely" to "worst".
 ```bash
 cd /home/legenex/Documents/Projects/Server/gx-cluster
 ./legenex/lifecycle/gx-max-status.sh
-curl -s localhost:18900/health/detailed | python3 -m json.tool
+. legenex/lifecycle/orch-auth.sh; orch_curl -s localhost:18900/health/detailed | python3 -m json.tool   # /health needs no key, everything else does (D-044)
 docker ps --format '{{.Names}}\t{{.Status}}'
 ssh legenex-02@gx10-02 'docker ps --format "{{.Names}}\t{{.Status}}"; free -g'
 ```

@@ -224,7 +224,7 @@ Nothing below was guessed. Each placeholder is written so that a start attempt
 | 7 | `gx-reason` real context window | `litellm/config.yaml` `model_info` | provisional 24576 in / 8192 out | depends on (5) |
 | 8 | `gx-max` model id the orchestrator expects | `litellm/config.yaml` `model:` | `openai/gx-max` | **lead** — SGLang itself reports the model literally as `/model`; if the orchestrator passes the field straight through, this becomes `openai//model` |
 | 9 | `gx-max` KV pool size | `litellm/config.yaml` `model_info` | conservative 65536 in / 16384 out | **lead** — must be ≤ SGLang `--max-total-tokens`, or long prompts abort on first decode |
-| 10 | `gx-max` orchestrator auth | `.env` `GX_ORCHESTRATOR_API_KEY` | `not-required` | **lead** |
+| 10 | `gx-max` orchestrator auth | `.env` `GX_ORCHESTRATOR_API_KEY` | **DONE (D-044)**: a random key; the orchestrator refuses every route except `/health` without it | done |
 | 11 | `gx-image` / `gx-video` router address and contract | `litellm/config.yaml` api_base; `llama-swap/node02.yaml` commented `gx-media` block | `http://192.168.100.11:18800/v1` | another agent (ComfyUI router spec) |
 | 12 | node-2 llama-swap must publish on the fabric | node-2 compose (not in this directory) | — | node-2 agent: `ports: ["192.168.100.11:28080:8080"]` |
 

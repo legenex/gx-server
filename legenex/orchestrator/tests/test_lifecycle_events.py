@@ -207,7 +207,7 @@ class TestEventsEndpoint(LifecycleTestBase):
         import http.server
 
         cfg = Config(hosts=("127.0.0.1",), port=0)
-        cfg.orchestrator_key = lambda: "test-orchestrator-key"
+        cfg = type("KeyedConfig", (Config,), {"orchestrator_key": lambda self: "test-orchestrator-key"})(hosts=("127.0.0.1",), port=0)
         handler = type("H", (Handler,), {"cfg": cfg, "lifecycle": lc, "health": TierHealth(cfg)})
         srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
         threading.Thread(target=srv.serve_forever, daemon=True).start()

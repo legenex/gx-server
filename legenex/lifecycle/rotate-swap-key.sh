@@ -52,8 +52,8 @@ preflight() {
   [ "${a1:-0}" -ge 30 ] && [ "${a2:-0}" -ge 30 ] && log "ok   available RAM node1=${a1}G node2=${a2}G" || { log "FAIL available RAM node1=${a1}G node2=${a2}G (need >=30G each to reload gx-code)"; bad=1; }
   local old; old="$(getvar GX_SWAP_API_KEY)"
   local h1 h2
-  h1="$(curl -s -m5 -o /dev/null -w '%{http_code}' -H "Authorization: Bearer ${old}" http://127.0.0.1:28080/running)"
-  h2="$(ssh "$N2" 'K=$(sed -n "s/^GX_SWAP_API_KEY=//p" '"$N2_GW"'/.env); curl -s -m5 -o /dev/null -w "%{http_code}" -H "Authorization: Bearer $K" http://192.168.100.11:28080/running' 2>/dev/null || echo x)"
+  h1="$(bearer_curl "$old" -s -m5 -o /dev/null -w '%{http_code}' http://127.0.0.1:28080/running)"
+  h2="$(ssh "$N2" 'K=$(sed -n "s/^GX_SWAP_API_KEY=//p" '"$N2_GW"'/.env); printf "header = \"Authorization: Bearer %s\"\n" "$K" | curl -s -m5 -o /dev/null -w "%{http_code}" -K /dev/stdin http://192.168.100.11:28080/running' 2>/dev/null || echo x)"
   [ "$h1" = 200 ] && [ "$h2" = 200 ] && log "ok   current key accepted by both llama-swaps" || { log "FAIL current key rejected (node1=$h1 node2=$h2)"; bad=1; }
   [ "$(cd "$repo" && git status --porcelain | wc -l)" = 0 ] && log "ok   repository tree clean" || log "info repository tree has pending changes"
   return $bad
@@ -75,9 +75,14 @@ recreate_node1() {
 }
 recreate_all() { recreate_node2; recreate_node1; systemctl --user restart gx-orchestrator.service gx-control-ui.service; }
 
+bearer_curl() {    # bearer_curl <key> <curl args...> — key via a curl config on a pipe, never argv
+  local k="$1"; shift
+  curl -K <(printf 'header = "Authorization: Bearer %s"\n' "$k") "$@"
+}
+
 wait_running() {   # wait_running <name> <url> <deadline-seconds> ; needs $KEY
   local t=$((SECONDS + $3))
-  until curl -fsS -m5 -H "Authorization: Bearer ${KEY}" "$2/running" 2>/dev/null | grep -q '"state":"ready"'; do
+  until bearer_curl "$KEY" -fsS -m5 "$2/running" 2>/dev/null | grep -q '"state":"ready"'; do
     [ $SECONDS -lt $t ] || return 1; sleep 10
   done
 }
@@ -113,7 +118,7 @@ PY"
     log "waiting for the resident models"
     wait_running node1 http://127.0.0.1:28080 600 || die "node 1 models did not come back"
     wait_running node2 http://192.168.100.11:28080 600 || die "node 2 models did not come back"
-    old_rejected="$(curl -s -m5 -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $(sed -n 's/^GX_SWAP_API_KEY=//p' "${BK}/gateway.env")" http://127.0.0.1:28080/running)"
+    old_rejected="$(bearer_curl "$(sed -n 's/^GX_SWAP_API_KEY=//p' "${BK}/gateway.env")" -s -m5 -o /dev/null -w '%{http_code}' http://127.0.0.1:28080/running)"
     [ "$old_rejected" = 401 ] || die "old key still accepted on node 1 (HTTP ${old_rejected})"
     trap - ERR
     log "SWAP ROTATION complete; previous key rejected; backup at ${BK} (remove it once verified)"

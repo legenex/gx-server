@@ -73,8 +73,9 @@ only for Git sync and model downloads.
 
 ```bash
 legenex/lifecycle/gx-max-status.sh              # state of both ranks
-curl -X POST http://127.0.0.1:18900/lifecycle/gx-max/acquire   # start (preferred path)
-curl -X POST http://127.0.0.1:18900/lifecycle/gx-max/release   # graceful stop + restore
+. legenex/lifecycle/orch-auth.sh   # orch_curl = curl + the orchestrator bearer key (D-044)
+orch_curl -X POST http://127.0.0.1:18900/lifecycle/gx-max/acquire   # start (preferred path)
+orch_curl -X POST http://127.0.0.1:18900/lifecycle/gx-max/release   # graceful stop + restore
 legenex/lifecycle/gx-max-start.sh               # direct start (same checks)
 legenex/lifecycle/gx-max-stop.sh [--force]      # direct stop + restore
 legenex/tests/gx-max-inference.sh               # prove it answers correctly

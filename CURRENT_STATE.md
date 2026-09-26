@@ -3,7 +3,66 @@
 **This file must always reflect reality.** If you are a new agent resuming this
 work, read this first, then ARCHITECTURE.md (what is locked), then BLOCKERS.md.
 
-## LATEST UPDATE — 2026-09-26 (Open WebUI ↔ Computer integration repaired end to end, D-043)
+## LATEST UPDATE — 2026-09-26, security cleanup completed (D-045)
+
+Supersedes nothing below (the D-043 integration still stands, verified again
+after these changes: `verify.py --compaction` **38/38**, live, post-change).
+
+**Credentials (D-045, closes B-036):**
+
+* **`LITELLM_MASTER_KEY` rotated.** The last master-key consumer — the hermes
+  agent on the London VPS (tailnet `srv1906439`) — was first migrated to its
+  own scoped key `hermes` (gx-mini/gx-code/gx-auto/gx-max, rpm 300, 4
+  parallel), updated in place on the VPS including the stale copy its
+  dashboard inherited from the jarvis sidecar. After 7+ minutes of zero
+  master-key traffic the master was rotated with the B-024/B-027 procedure
+  (backup → new value → `env -i` recreate of gx-litellm → restart
+  gx-orchestrator + gx-control-ui). Old value refused (401), new value
+  verified through Control Center key management, orchestrator auth and a
+  full gx-auto round trip. The key table is now exactly eight purpose-named
+  scoped keys; `kilo-code` (broad, unused since 09-23) is blocked
+  (reversibly) and two never-used unnamed keys were revoked.
+* **`GX_SWAP_API_KEY` NOT yet rotated** — staged and ready: `rotate-swap-key.sh`
+  (bearer keys via a curl config on a pipe, never argv; preflight PASS
+  2026-09-26 22:23 UTC; backs up and rolls back). Executing reloads all text
+  models: ~1 min for gx-mini, ~4 min for gx-code, gx-auto follows; ~5 min
+  total with gx-max down. Needs an authorized window (B-037).
+
+**Orchestrator auth (D-044) live and verified:** every route except `/health`,
+`/healthz` and `/` needs `Authorization: Bearer $GX_ORCHESTRATOR_API_KEY`
+(constant-time, fail-closed). Tests: 4 auth unit tests, `test_lifecycle_events`
+10/10, Control Center auth tests 2/2. `tests.test_server` still has 2
+pre-existing drift failures (B-038; the baseline commit had 6 errors).
+
+**Open WebUI hardened (D-045, staged in B-037):** HSTS, `nosniff`, referrer
+policy, `SAMEORIGIN`, CORS/Socket.IO pinned, session secret persisted (same
+value, nobody logged out). Data volume reused; counts identical before/after
+(4 users, 59 chats, 1 memory, 3 files, 1 folder, 1 note). Backup
+`backups/open-webui/20260926T221601Z-prehardening/`. The disabled Nous Portal
+connection is confirmed gone (zero references in the config table).
+
+**Computer containment re-verified from inside the container:** all unit
+`ExecStart` paths into the repo read-only, `.env` symlink dangles, ordinary
+source writable, `gx-max` absent from Computer's connection (models
+gx-auto/gx-mini/gx-code, key rpm 120 / 4 parallel / 600k tpm), and llama-swap
+upstreams are unreachable from any container on `gx_gateway` (B-034 items
+1/3/4/5 closed).
+
+**Known drift the human must decide on (B-035):** the live gateway serves
+gx-mini, gx-code, gx-auto, gx-max (gx-fast/gx-reason/gx-image/gx-video/
+gx-voice/gx-music retired from the gateway) and gx-max defaults to the
+dual worker with SGLang as `GX_MAX_MODE=deepseek` — L-6/L-10 in CLAUDE.md
+still describe the old topology. No decision entry records approval, so the
+locked rows were left untouched.
+
+**Also noted:** GX-Playground was deliberately stopped 2026-09-24 (its user
+unit no longer exists) — pre-existing this pass, not resurrected. The
+remaining Cloudflare decisions (Always Use HTTPS/HSTS zone toggle, Access
+with MFA, shorter JWT expiry), the Nous provider-side revocation (interactive
+login) and the transcript cleanup (after the swap rotation) all need the
+human.
+
+## UPDATE — 2026-09-26 (Open WebUI ↔ Computer integration repaired end to end, D-043)
 
 Supersedes the two 2026-09-25 entries below: everything they list as "not
 done" or "UI step" is now done, through the apps' own APIs.

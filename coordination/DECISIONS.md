@@ -1498,3 +1498,92 @@ that sends only the dropped messages (B-032).
   `/srv/projects/gx-cluster/secrets`.
 * Single-file overlays are not used for secrets, because host-side file
   replacement detaches them (B-033 incident).
+
+
+## D-044 — Orchestrator authentication, per-consumer gateway keys, wider Computer overlays (2026-09-26)
+
+**Context.** After D-043 the open items were B-033/B-034 (master and swap keys exposed in
+transcripts; an unauthenticated orchestrator; Computer able to edit code the hosts run).
+
+**Decided (within the locked table; nothing in L-1..L-10 changed).**
+
+1. **The orchestrator (`:18900`) authenticates.** Every route except `/health`, `/healthz` and `/`
+   needs `Authorization: Bearer $GX_ORCHESTRATOR_API_KEY` (constant-time compare, checked before the
+   body is read). An unset key or the old placeholder `not-required` fails closed. Callers: LiteLLM
+   (already sent it), Control Center (`orch_headers`), `status_cli`, and the shell/acceptance helpers
+   through `legenex/lifecycle/orch-auth.sh` (key through a curl config on a pipe, never argv).
+   `/health/detailed`, `/text/status`, `/routing/decisions` and the lifecycle reads leaked topology and
+   lifecycle output, so they are gated too.
+2. **One gateway key per consumer.** New least-privilege LiteLLM keys, kept 0600 in
+   `secrets/litellm/keys/`: `gx-orchestrator` (its own relay; `GX_GATEWAY_KEY`), `agentos` (AgentOS
+   Control Center + Supervisor) and `kilo-cli` (Kilo). Each has rate and concurrency limits and only the
+   aliases it needs. Proven from the LiteLLM spend log: each shows up under its own alias.
+3. **Computer's gateway key loses gx-max** (and the internal `gx-code-01/02`): models
+   `gx-auto, gx-mini, gx-code`; `max_parallel_requests 4`, `rpm 120`, `tpm 600k`. Local models cost
+   nothing, so a spend budget would never bind. gx-max on a Computer key would let a tool-approving
+   agent take over both nodes. The Computer connection lists the same three aliases.
+4. **More read-only overlays in gx-computer** for code the host or node 2 runs unattended as a
+   docker-group user or builds into an image: `legenex/control-ui`, `playground`, `music`, `voice`,
+   `call`, `live`, `llama-swap`, `scripts`, `setup`, `coordination/node2/{scripts,configs}`. Ordinary
+   source and docs stay writable (`docs`, `coordination`, `legenex/tests`, `legenex/models`,
+   `legenex/open-webui`). The trade-off: Computer can no longer edit the Control Center or the tenant
+   services. That is deliberate: those run as `legenex` and autosync ships them to node 2.
+5. **The disabled Nous Portal connection and its stored key were removed from Open WebUI.**
+6. **The Tailscale gateway proxy logs one line per connection** (peer, request line, user-agent, and
+   the first 8 hex of the SHA-256 of the bearer key, never the key) so a client can be tied to a
+   credential without reading its config.
+
+**Not decided here.** Rotating the master key (a legitimate off-box client still uses it: B-036),
+the swap key (needs a ~5 minute text outage: B-033), and the public-ingress and Open WebUI hardening
+(B-037). The locked rows L-6/L-10 stay as written (B-035).
+
+
+## D-045 — Master-key rotation after hermes migration; Open WebUI hardening deployed (2026-09-26)
+
+**Context.** D-044 left the master key unrotated only because one legitimate
+off-box client (B-036) still used it, and the Open WebUI hardening staged in
+B-037 was permission-blocked in that session.
+
+**Decided (within the locked table; nothing in L-1..L-10 changed).**
+
+1. **hermes (London VPS, tailnet `srv1906439` = 100.70.255.106) migrated to its
+   own key** `hermes` (models gx-mini, gx-code, gx-auto, gx-max; rpm 300;
+   max_parallel 4; 0600 in `secrets/litellm/keys/hermes`). Updated on the VPS
+   itself over SSH: `~/.hermes/.env` and the stale copy in
+   `~/.hermes/jarvis-whatsapp-gateway/.env` that the dashboard inherited.
+   hermes-gateway, hermes-dashboard and the WhatsApp bridge were restarted and
+   now send the new key (verified by key fingerprint in the gateway proxy log
+   and the LiteLLM spend log). A `droid exec` session held the old value in
+   its environment but uses Factory auth, not the gateway.
+2. **LITELLM_MASTER_KEY rotated** (B-036 closed). Procedure: backup → new value
+   in `secrets/gateway.env` → recreate gx-litellm with the B-027 env-clean
+   command → restart gx-orchestrator and gx-control-ui. Verified: old value
+   401, new value works (Control Center key management), orchestrator auth
+   unchanged, gx-auto end-to-end OK, and zero master-key traffic for 7+
+   minutes before cutover. The dead old value was scrubbed from the VPS backup
+   copies made during the migration.
+3. **kilo-code blocked** (reversible): the broad pre-D-044 key, unused since
+   2026-09-23. Two never-used unnamed unrestricted keys (created 2026-09-26
+   19:42/19:56, no alias, no metadata, never in the spend log) were revoked.
+   The key table is now exactly the eight purpose-named keys, each scoped.
+4. **Open WebUI hardening applied** (the B-037 half that was staged): the
+   hardened compose replaced `/opt/open-webui/compose.yaml`. The session
+   signing secret was persisted (same value) so nobody was logged out; the
+   data volume was reused; HSTS/nosniff/referrer/SAMEORIGIN are live on both
+   loopback and `chat.legenex.co`; CORS/Socket.IO are pinned and a disallowed
+   origin receives no allow-origin header. Pre-recreate backup:
+   `backups/open-webui/20260926T221601Z-prehardening` (webui.db snapshot +
+   counts: 4 users, 59 chats, 1 memory, 3 files, 1 folder, 1 note — identical
+   after the recreate).
+5. **rotate-swap-key.sh hardened**: bearer keys now travel via a curl config
+   on a pipe (local and node-2), never argv, matching orch-auth.sh; preflight
+   PASS at 22:23 UTC; still NOT executed (needs the ~5-minute text outage
+   window; B-037).
+6. The empty untracked `.agents/` directory (referenced by nothing, writable
+   inside Computer) was removed as a planted-instruction-shape gap.
+
+**Still open for the human:** GX_SWAP_API_KEY rotation (staged, preflight
+passes, ~5-minute outage — needs a window), B-035 locked-rows amendment,
+Cloudflare Always-Use-HTTPS/HSTS zone toggle + Access decision, Nous
+provider-side revocation (interactive login), and transcript cleanup after
+the swap rotation.
