@@ -40,9 +40,10 @@ class TestMiniRealWindow(unittest.TestCase):
         self.assertIs(route(chat(20)).tier, Tier.MINI)
 
     def test_oversized_request_is_never_routed_to_mini(self):
-        # ~50k characters of prose is more than the 32768-token window can safely hold once the estimator's
-        # safety margin is applied; it must escalate to a tier whose window holds it.
-        d = route(chat(60_000))
+        # About 37k estimated tokens: more than gx-mini's 32768 window, less than gx-code's 65536. It must
+        # escalate to the smallest tier that holds it (gx-code), never be sent to gx-mini.
+        d = route(chat(10_000))
+        self.assertIs(d.tier, Tier.CODE, d.reasons)
         self.assertIsNot(d.tier, Tier.MINI, d.reasons)
         self.assertGreaterEqual(TIERS[d.tier].max_context, d.features.total_context_needed, d.reasons)
 
