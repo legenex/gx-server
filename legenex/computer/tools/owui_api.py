@@ -9,6 +9,9 @@ stdin: {"email": <user email or null for "the only admin">, "require_admin": tru
   {"openai_upsert": {"url": ..., "key": ..., "config": {...}|null, "config_if_new": {...}}}
       read-modify-write of the OpenAI connection list done in-process, so the other
       connections' keys are never exported. config null keeps the existing settings.
+  {"openai_remove": url}
+      drop the connection with that url, its stored key and its config, and re-index the
+      remaining connections' configs (Open WebUI keys them by list position)
   {"openai_has": url}
 """
 import json
@@ -112,6 +115,23 @@ def openai_upsert(tok, spec):
     return {"action": action, "index": idx, "status": st, "result": redact(out)}
 
 
+def openai_remove(tok, url):
+    cfg = openai_config(tok)
+    urls = list(cfg["OPENAI_API_BASE_URLS"])
+    if url not in urls:
+        return {"removed": False, "status": 200}
+    keys = (list(cfg["OPENAI_API_KEYS"]) + [""] * len(urls))[:len(urls)]
+    confs = dict(cfg["OPENAI_API_CONFIGS"])
+    drop = urls.index(url)
+    keep = [i for i in range(len(urls)) if i != drop]
+    body = {"ENABLE_OPENAI_API": cfg["ENABLE_OPENAI_API"],
+            "OPENAI_API_BASE_URLS": [urls[i] for i in keep],
+            "OPENAI_API_KEYS": [keys[i] for i in keep],
+            "OPENAI_API_CONFIGS": {str(n): confs[str(i)] for n, i in enumerate(keep) if str(i) in confs}}
+    st, out = call(tok, "POST", "/openai/config/update", body)
+    return {"removed": st == 200, "was_index": drop, "status": st, "result": redact(out)}
+
+
 def main():
     req = json.load(sys.stdin)
     uid, role, email = user_row(req.get("email"), req.get("require_admin", True))
@@ -124,6 +144,8 @@ def main():
             results.append({"op": f"{m} {p}", "status": st, "body": redact(out)})
         elif "openai_upsert" in op:
             results.append({"op": "openai_upsert", **openai_upsert(tok, op["openai_upsert"])})
+        elif "openai_remove" in op:
+            results.append({"op": "openai_remove", **openai_remove(tok, op["openai_remove"])})
         elif "openai_has" in op:
             results.append({"op": "openai_has", "present": op["openai_has"] in openai_config(tok)["OPENAI_API_BASE_URLS"]})
     print(json.dumps(results, default=str))
