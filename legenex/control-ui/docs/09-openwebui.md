@@ -33,8 +33,17 @@ also add/list/update/delete memories.
 
 ## Computer workspaces
 
-Open WebUI can list Computer workspaces as models `cptr/<name>` once a
-Computer gateway key exists. See [Computer](/#/docs/computer).
+The Computer workspace appears in the model selector as **GX-Cluster -
+/projects/gx-cluster** (`cptr/gx-cluster`), for admins only. It runs a coding
+agent with terminal and git on the live checkout. See [Computer](/#/docs/computer).
+
+## Projects and long chats
+
+* The **GX-Cluster** folder holds the project prompt and the *GX-Cluster —
+  project instructions* note. Put project chats in it.
+* Long saved chats are compacted automatically at about 20 000 tokens
+  (summary written by `gx-mini`). That size is set by gx-mini's real
+  32 768-token window.
 
 ## Model identity
 

@@ -1281,9 +1281,11 @@ node down to 7 GiB.
 
 Lowering the reserve for this job is not an option (locked rule).
 
-## B-029 (S3) — production Open WebUI uses the Kilo Code gateway key
+## B-029 (S3) — RESOLVED 2026-09-26 — production Open WebUI uses the Kilo Code gateway key
 
-**Status:** OPEN (hygiene). **Found:** 2026-09-17, final cleanup pass.
+**Resolution (2026-09-26, D-043):** Open WebUI actually authenticated with the LiteLLM **master key**, not `kilo-code` (hash comparison; nothing printed). It now uses its own virtual key `open-webui` (gx-mini, gx-code, gx-auto, gx-max), and inference was verified afterwards. `kilo-code` is untouched.
+
+**Status (historical):** OPEN (hygiene). **Found:** 2026-09-17, final cleanup pass.
 
 The production `open-webui` connection to `http://100.105.214.61:4000/v1`
 authenticates with the LiteLLM virtual key aliased `kilo-code` (matched by
@@ -1498,3 +1500,32 @@ assume that changing the source changed the live site — the deploy script
 proves it by comparing what the server hands the browser with what is in the
 checkout.
 
+
+## B-032 (S3) — gx-mini's advertised window is larger than the engine's real window
+
+**Status:** OPEN (needs sign-off: gateway/orchestrator config). **Found:**
+2026-09-26, Open WebUI compaction verification.
+
+`gx-mini` runs `--ctx-size 65536 --parallel 2` (`legenex/gateway/llama-swap/node01.yaml`
+and the running container), so the window is **32 768 tokens per request,
+input + output**. But:
+
+* LiteLLM `model_info.max_input_tokens` for gx-mini is **57344**;
+* the orchestrator tier `Tier.MINI` has `max_context=65_536`
+  (`legenex/orchestrator/gx_orchestrator/tiers.py`), and the D-039 budget hook
+  uses it;
+* the comment above the gx-mini block in `node01.yaml` still says
+  `131072 split over --parallel 2 -> 65536`.
+
+Evidence: a 35 275-token request through the gateway is refused by the engine
+("exceeds the available context size (32768 tokens)"). The refusal is clean and
+immediate, so nothing is silent, but the budget hook cannot refuse early or
+clamp correctly, and gx-auto may route a 33–57 k-token prompt to gx-mini, where
+it will fail.
+
+**Not changed by the agent:** the user ruled out inference-architecture changes
+for this job. Open WebUI compaction is sized to the real 32 768 instead.
+
+**Action (human sign-off):** either set gx-mini `max_input_tokens` to about
+24576 and `Tier.MINI.max_context` to 32768 (then restart gx-litellm and the
+orchestrator), or give gx-mini `--ctx-size 131072` again if memory allows.

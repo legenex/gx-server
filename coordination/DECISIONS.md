@@ -1451,3 +1451,40 @@ multi-step reasoning correct (11:36 / 156 km), a coding-debug task correct
 from content, tool calling through `qwen3_xml`, and **vision** — it read the
 red jacket out of a real generated source image. Served through LiteLLM as
 `gx-reason` with reasoning surfaced. Unloads cleanly and the memory returns.
+
+## D-043 — Open WebUI ↔ Computer integration: one canonical identity, least-privilege keys, admin-only workspace models
+
+2026-09-26, on the user's instruction to repair the Computer rollout end to end
+without UI setup steps. Amends no locked decision. Computer stays on gx10-01,
+where D-038 put it, and no new service was added.
+
+**Identity.** The Open WebUI admin account is canonical. Computer has exactly
+one user, which is that same person: same login name as the Open WebUI e-mail,
+with display name and avatar synced by `legenex/computer/tools/provision.py`.
+It keeps its own Computer password. Rejected alternatives:
+
+* Single sign-on. cptr 0.9.21 has only `password`, `pam` and `trusted_header`
+  auth, and Open WebUI cannot act as an identity provider.
+* `trusted_header`. It needs a new authenticating proxy on gx10-01 (L-2). cptr
+  also auto-creates asserted users without enforcing `pending`, and it has no
+  break-glass login.
+* Copying the Open WebUI bcrypt hash. It is not supported by any Computer API,
+  and Computer's agents run as the uid that owns `/data/app.db`, so the
+  public-facing account's hash would become agent-readable.
+
+**Credentials.** Each app gets its own LiteLLM virtual key limited to the four
+public aliases (`gx-computer`, `open-webui`), kept 0600 under
+`/srv/projects/gx-cluster/secrets/`. Before this, Open WebUI used the master
+key. The Computer gateway key lives only in Open WebUI's connection store.
+
+**Exposure.** `cptr/*` models stay admin-only in Open WebUI (no model row, no
+grants). Gateway chats auto-approve tools as the Computer admin, and Open WebUI
+is public.
+
+**Public repository.** Computer writes transcripts and tool output under
+`<workspace>/.cptr/`. `.gitignore` ignores `**/.cptr/*` except `system.md` and
+`model`, and Computer's own `.gitignore` rewriting is off.
+
+**Compaction.** Sized to the smallest *real* per-request window (gx-mini
+32 768). The threshold and cap are 20 000, with a data-framed summariser prompt
+that sends only the dropped messages (B-032).

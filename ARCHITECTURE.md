@@ -633,3 +633,20 @@ OpenAI gateway at `http://127.0.0.1:8000/v1`. Workspace models are
 `cptr/<folder-name>`. Grok CLI is the `/usr/local/bin/grok` binary only;
 host auth is not mounted. Operator docs: `legenex/computer/README.md`.
 
+**Integration (2026-09-26, D-043).**
+
+* **Identity:** the Open WebUI admin account is canonical. Computer's single
+  admin has the same login name, and its display name and avatar are synced.
+  There is no SSO, because cptr 0.9.21 has no OIDC and Open WebUI is not an
+  IdP; `trusted_header` would need a new proxy (L-2).
+* **Credentials:** least-privilege LiteLLM virtual keys, `gx-computer` for
+  Computer and `open-webui` for Open WebUI. Neither app holds the master key.
+  The Computer gateway key exists only in Open WebUI's connection store.
+* **Exposure:** `cptr/*` is admin-only in Open WebUI, because gateway chats
+  auto-approve tools as the Computer admin.
+* **Public repo:** Computer's workspace state (`.cptr/*`) is gitignored.
+* **Compaction:** Open WebUI compaction is sized to gx-mini's real
+  32 768-token window.
+* **Tooling:** everything is reproducible with
+  `legenex/computer/tools/provision.py` and proven by `verify.py`.
+
