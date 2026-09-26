@@ -1,0 +1,55 @@
+# STAGED, NOT DEPLOYED (D-044). Same as docker-compose.yml plus the response hardening below.
+# Applying it recreates the open-webui container (a few seconds of downtime, no data change:
+# the external volume `open-webui` is reused). Before applying, persist the session secret, which
+# today exists only in the container layer (/app/backend/.webui_secret_key), so a recreate does
+# not log everyone out:
+#   docker exec open-webui cat /app/backend/.webui_secret_key  ->  WEBUI_SECRET_KEY=<value>
+#   in /srv/projects/gx-cluster/secrets/open-webui/webui-secret.env (mode 0600)
+# Apply with: docker compose -f /opt/open-webui/compose.yaml up -d  (after copying this over it).
+# Verify afterwards: python3 legenex/computer/tools/verify.py --compaction, response headers on
+# https://chat.legenex.co/, and a websocket chat from each origin listed in CORS_ALLOW_ORIGIN.
+name: open-webui
+
+services:
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:v0.11.4
+    container_name: open-webui
+    network_mode: host
+    env_file:
+      - /srv/projects/gx-cluster/secrets/open-webui/webui-secret.env
+    environment:
+      OLLAMA_BASE_URL: http://127.0.0.1:11434
+      PORT: "3000"
+      ENABLE_MEMORIES: "True"
+      ENABLE_MEMORY_SYSTEM_CONTEXT: "True"
+      ENABLE_MEMORY_BACKGROUND_REVIEW: "True"
+      MEMORIES_REVIEW_INTERVAL_TURNS: "10"
+      MEMORIES_USER_CHAR_LIMIT: "8000"
+      MEMORIES_CONTEXT_CHAR_LIMIT: "12000"
+      ENABLE_FOLDERS: "True"
+      ENABLE_NOTES: "True"
+      USER_PERMISSIONS_FEATURES_MEMORIES: "True"
+      # Browsers honour HSTS only on the HTTPS chat.legenex.co path (Cloudflare terminates TLS);
+      # plain-HTTP tailnet access ignores it. No CSP: the UI needs inline scripts and voice needs
+      # the microphone. No Secure cookie: it would break http://<tailnet-ip>:3000.
+      HSTS: "max-age=31536000"
+      XCONTENT_TYPE: "nosniff"
+      REFERRER_POLICY: "strict-origin-when-cross-origin"
+      XFRAME_OPTIONS: "SAMEORIGIN"
+      # CORS and Socket.IO pinned to the origins people use, instead of reflecting any origin.
+      # Any other hostname used to reach :3000 must be added here or its websocket is refused.
+      CORS_ALLOW_ORIGIN: "https://chat.legenex.co;http://chat.legenex.co;http://127.0.0.1:3000;http://localhost:3000;http://100.105.214.61:3000;http://10.60.21.37:3000;http://gx10-01:3000;http://gx10-01.taila7ef6a.ts.net:3000"
+    volumes:
+      - open-webui:/app/backend/data
+    restart: always
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+volumes:
+  open-webui:
+    name: open-webui
+    external: true
