@@ -1,11 +1,10 @@
-# STAGED, NOT DEPLOYED (D-044). Same as docker-compose.yml plus the response hardening below.
-# Applying it recreates the open-webui container (a few seconds of downtime, no data change:
-# the external volume `open-webui` is reused). Before applying, persist the session secret, which
-# today exists only in the container layer (/app/backend/.webui_secret_key), so a recreate does
-# not log everyone out:
-#   docker exec open-webui cat /app/backend/.webui_secret_key  ->  WEBUI_SECRET_KEY=<value>
-#   in /srv/projects/gx-cluster/secrets/open-webui/webui-secret.env (mode 0600)
-# Apply with: docker compose -f /opt/open-webui/compose.yaml up -d  (after copying this over it).
+# DEPLOYED 2026-09-26 (D-045): this is byte-identical to /opt/open-webui/compose.yaml, which
+# the live container runs. Same as docker-compose.yml plus the response hardening below. The
+# session secret is persisted in /srv/projects/gx-cluster/secrets/open-webui/webui-secret.env
+# (mode 0600, same value the container always had, so no logouts) and the external volume
+# `open-webui` is reused (no data change on recreate).
+# To apply an update: copy this file to /opt/open-webui/compose.yaml, then
+#   docker compose -f /opt/open-webui/compose.yaml up -d
 # Verify afterwards: python3 legenex/computer/tools/verify.py --compaction, response headers on
 # https://chat.legenex.co/, and a websocket chat from each origin listed in CORS_ALLOW_ORIGIN.
 name: open-webui
