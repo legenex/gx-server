@@ -14,6 +14,7 @@ must not be exposed unauthenticated.
 
 from __future__ import annotations
 
+import hmac
 import json
 import logging
 import os
@@ -341,12 +342,28 @@ class Handler(BaseHTTPRequestHandler):
         key = self.cfg.gateway_key()
         return {"Authorization": f"Bearer {key}"} if key else {}
 
+    def _authorized(self) -> bool:
+        """Constant-time bearer check; refuses everything when no key is configured."""
+        expected = self.cfg.orchestrator_key()
+        header = self.headers.get("Authorization") or ""
+        scheme, _, token = header.partition(" ")
+        ok = bool(expected) and scheme.lower() == "bearer" and hmac.compare_digest(
+            token.strip().encode(), expected.encode())
+        if not ok:
+            self._send_error_json(401, "orchestrator authentication required", "unauthorized",
+                                  {"WWW-Authenticate": "Bearer", "Connection": "close"})
+            self.close_connection = True
+        return ok
+
     # ------------------------------------------------------------------- GET
     def do_GET(self) -> None:  # noqa: N802
         path = self.path.split("?", 1)[0].rstrip("/") or "/"
 
         if path in ("/health", "/healthz", "/"):
             self._send_json(200, {"status": "ok", "service": "gx-orchestrator"})
+            return
+
+        if not self._authorized():
             return
 
         if path == "/health/detailed":
@@ -452,6 +469,8 @@ class Handler(BaseHTTPRequestHandler):
     # ------------------------------------------------------------------ POST
     def do_POST(self) -> None:  # noqa: N802
         path = self.path.split("?", 1)[0].rstrip("/") or "/"
+        if not self._authorized():   # before the body is read or parsed
+            return
         try:
             payload = self._read_json()
         except json.JSONDecodeError as exc:

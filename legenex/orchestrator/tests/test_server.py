@@ -250,6 +250,10 @@ class _FakeHealth:
         return {t: TierStatus(AliasState.READY, "ok", usable=True) for t in (_Tier.MINI, _Tier.FAST, _Tier.REASON)}
 
 
+_ORCH_KEY = "test-orchestrator-key"
+_AUTH = {"Authorization": f"Bearer {_ORCH_KEY}"}
+
+
 class _Cfg:
     def __init__(self, gw, mx):
         self.gateway_base = gw
@@ -259,6 +263,9 @@ class _Cfg:
 
     def gateway_key(self):
         return None
+
+    def orchestrator_key(self):
+        return _ORCH_KEY
 
 
 class TestGxAutoBehaviour(unittest.TestCase):
@@ -286,7 +293,7 @@ class TestGxAutoBehaviour(unittest.TestCase):
 
     def _post(self, base, payload, rid="req-test-1"):
         req = _urlreq.Request(base + "/v1/chat/completions", data=_json.dumps(payload).encode(),
-                              headers={"Content-Type": "application/json", "X-GX-Request-Id": rid})
+                              headers={"Content-Type": "application/json", "X-GX-Request-Id": rid, **_AUTH})
         try:
             with _urlreq.urlopen(req, timeout=10) as r:
                 return r.status, dict(r.headers), _json.loads(r.read())
@@ -342,10 +349,48 @@ class TestGxAutoBehaviour(unittest.TestCase):
         payload = {"model": "gx-auto", "messages": [{"role": "user", "content": "hello"}]}
         self._post(base, payload, rid="abc-1")
         fp = _srv.request_fingerprint(payload)
-        with _urlreq.urlopen(f"{base}/routing/decisions?fingerprint={fp}", timeout=5) as r:
+        req = _urlreq.Request(f"{base}/routing/decisions?fingerprint={fp}", headers=_AUTH)
+        with _urlreq.urlopen(req, timeout=5) as r:
             data = _json.loads(r.read())["data"]
         self.assertTrue(data)
         self.assertTrue(all(d["fingerprint"] == fp for d in data))
+
+    # D-044: inbound authentication
+    def _raw(self, base, method, path, headers=None, body=None):
+        req = _urlreq.Request(base + path, data=body, method=method, headers=headers or {})
+        try:
+            with _urlreq.urlopen(req, timeout=5) as r:
+                return r.status, r.read()
+        except _urlreq.HTTPError as e:
+            return e.code, e.read()
+
+    def test_health_is_open_and_everything_else_needs_the_key(self):
+        base, lc, _ = self._serve(State.DOWN)
+        self.assertEqual(self._raw(base, "GET", "/health")[0], 200)
+        for path in ("/health/detailed", "/text/status", "/v1/models", "/routing/decisions",
+                     "/lifecycle/gx-max/status", "/lifecycle/gx-max/events"):
+            self.assertEqual(self._raw(base, "GET", path)[0], 401, path)
+            self.assertEqual(self._raw(base, "GET", path, {"Authorization": "Bearer wrong"})[0], 401, path)
+            self.assertEqual(self._raw(base, "GET", path, _AUTH)[0], 200, path)
+        self.assertEqual(lc.acquired, 0)
+
+    def test_control_posts_are_rejected_without_the_key_and_never_act(self):
+        base, lc, _ = self._serve(State.DOWN)
+        for path in ("/lifecycle/gx-max/acquire", "/lifecycle/gx-max/release", "/v1/chat/completions"):
+            for hdrs in ({}, {"Authorization": "Bearer wrong"}, {"Authorization": "Basic " + _ORCH_KEY}):
+                st, _ = self._raw(base, "POST", path, {"Content-Type": "application/json", **hdrs}, b"{not json")
+                self.assertEqual(st, 401, path)   # 401 before the body is parsed (not 400)
+        self.assertEqual(lc.acquired, 0)
+        self.assertEqual(self.gw.calls, [])
+
+    def test_unset_key_fails_closed(self):
+        base, _, _ = self._serve(State.DOWN)
+        _Cfg.orchestrator_key = lambda self: None
+        try:
+            self.assertEqual(self._raw(base, "GET", "/lifecycle/gx-max/status", _AUTH)[0], 401)
+            self.assertEqual(self._raw(base, "GET", "/health")[0], 200)
+        finally:
+            _Cfg.orchestrator_key = lambda self: _ORCH_KEY
 
     def test_hostile_request_id_is_replaced(self):
         base, _, journal = self._serve(State.DOWN)
