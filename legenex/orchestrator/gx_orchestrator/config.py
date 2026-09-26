@@ -124,11 +124,11 @@ class Config:
     def orchestrator_key(self) -> str | None:
         """Bearer key this service requires on every non-health route (D-044).
 
-        Environment only. The historical placeholder counts as unset, and an
-        unset key makes the service refuse everything except /health.
+        Environment only. Placeholder values (not-required, CHANGEME) count as
+        unset, and an unset key makes the service refuse everything except /health.
         """
         key = (os.environ.get("GX_ORCHESTRATOR_API_KEY") or "").strip()
-        return None if key in ("", "not-required") else key
+        return None if key.casefold() in ("", "not-required", "changeme") else key
 
     def swap_key(self) -> str | None:
         """Bearer token llama-swap requires, from the environment only.

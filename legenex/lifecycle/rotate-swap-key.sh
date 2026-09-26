@@ -28,7 +28,7 @@ gateway="${repo}/legenex/gateway"
 . "${repo}/legenex/lifecycle/orch-auth.sh"
 
 log() { printf '%s %s\n' "$(date -u +%H:%M:%SZ)" "$*"; }
-die() { log "ABORT: $*"; exit 1; }
+die() { [ "${ROTATING:-0}" = 1 ] && rollback; log "ABORT: $*"; exit 1; }  # rolls back mid-rotation failures
 getvar() { sed -n "s/^$1=//p" "$SECRETS_ENV" | tail -1; }
 
 preflight() {
@@ -59,11 +59,16 @@ preflight() {
   return $bad
 }
 
-rollback() {
+rollback() {   # idempotent: a second entry (die after trap) does nothing
+  [ "${ROLLED_BACK:-0}" = 1 ] && return 0
+  ROLLED_BACK=1
   log "ROLLBACK: restoring the previous key on both nodes"
-  cp -p "${BK}/gateway.env" "$SECRETS_ENV"
-  ssh "$N2" "cp -p ${N2_GW}/.env.pre-rotate ${N2_GW}/.env" || true
+  cp -p "${BK}/gateway.env" "$SECRETS_ENV" || log "ROLLBACK WARN: could not restore ${SECRETS_ENV}"
+  ssh "$N2" "cp -p ${N2_GW}/.env.pre-rotate ${N2_GW}/.env" || log "ROLLBACK WARN: could not restore node 2 .env"
   recreate_all || true
+  KEY="$(getvar GX_SWAP_API_KEY || true)"
+  if wait_running node1 http://127.0.0.1:28080 300; then log "ROLLBACK: node 1 models ready"; else log "ROLLBACK WARN: node 1 models not ready"; fi
+  if wait_running node2 http://192.168.100.11:28080 300; then log "ROLLBACK: node 2 models ready"; else log "ROLLBACK WARN: node 2 models not ready"; fi
 }
 
 recreate_node2() { ssh "$N2" "cd ${N2_GW} && docker compose -f docker-compose.node02.yml up -d --force-recreate llama-swap-node02" >/dev/null; }
@@ -94,22 +99,22 @@ case "${1:-}" in
     stamp="$(date -u +%Y%m%dT%H%M%SZ)"; BK="${BACKUPS}/swap-rotation-${stamp}"; mkdir -p -m 700 "$BK"
     cp -p "$SECRETS_ENV" "${BK}/gateway.env"
     ssh "$N2" "cp -p ${N2_GW}/.env ${N2_GW}/.env.pre-rotate"
+    ROTATING=1; trap 'rollback' ERR   # armed before the first write: any failure now restores the old key
     NEW="sk-swap-$(openssl rand -hex 32)"
-    python3 - "$SECRETS_ENV" "$NEW" <<'PY'
+    printf '%s' "$NEW" | python3 - "$SECRETS_ENV" <<'PY'   # new key via stdin, never argv
 import os, re, sys
-p, new = sys.argv[1:]
+p, new = sys.argv[1], sys.stdin.read()
 s = re.sub(r'(?m)^GX_SWAP_API_KEY=.*$', 'GX_SWAP_API_KEY=' + new, open(p).read())
 open(p + '.tmp', 'w').write(s); os.chmod(p + '.tmp', 0o600); os.replace(p + '.tmp', p)
 PY
-    printf '%s' "$NEW" | ssh "$N2" "K=\$(cat); python3 - \"\$K\" <<'PY'
-import os, re, sys, pathlib
+    printf '%s' "$NEW" | ssh "$N2" "NEWKEY=\$(cat); export NEWKEY; python3 - <<'PY'   # key via ssh stdin -> env, never argv
+import os, re, pathlib
 p = pathlib.Path(os.path.expanduser('${N2_GW}/.env')); s = p.read_text()
-s = re.sub(r'(?m)^GX_SWAP_API_KEY=.*\$', 'GX_SWAP_API_KEY=' + sys.argv[1], s)
+s = re.sub(r'(?m)^GX_SWAP_API_KEY=.*\$', 'GX_SWAP_API_KEY=' + os.environ['NEWKEY'], s)
 t = p.with_name('.env.tmp'); t.write_text(s); os.chmod(t, 0o600); os.replace(t, p)
 PY"
     unset NEW
     KEY="$(getvar GX_SWAP_API_KEY)"
-    trap 'rollback' ERR
     log "node 2: recreate llama-swap (gx-code reloads)"
     recreate_node2
     log "node 1: recreate llama-swap and gx-litellm (gx-mini reloads in about 10 s, gx-code in about 3 min)"
@@ -120,7 +125,7 @@ PY"
     wait_running node2 http://192.168.100.11:28080 600 || die "node 2 models did not come back"
     old_rejected="$(bearer_curl "$(sed -n 's/^GX_SWAP_API_KEY=//p' "${BK}/gateway.env")" -s -m5 -o /dev/null -w '%{http_code}' http://127.0.0.1:28080/running)"
     [ "$old_rejected" = 401 ] || die "old key still accepted on node 1 (HTTP ${old_rejected})"
-    trap - ERR
+    trap - ERR; ROTATING=0
     log "SWAP ROTATION complete; previous key rejected; backup at ${BK} (remove it once verified)"
     ;;
   *) echo "usage: $0 --preflight | --execute" >&2; exit 2 ;;

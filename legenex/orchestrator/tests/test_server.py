@@ -403,3 +403,24 @@ class TestGxAutoBehaviour(unittest.TestCase):
                                    rid="bad id\twith spaces")
         self.assertNotEqual(headers.get("X-GX-Request-Id"), "bad id\twith spaces")
         self.assertEqual(len(headers.get("X-GX-Request-Id", "")), 32)
+
+
+class TestOrchestratorKeyPlaceholder(unittest.TestCase):
+    """D-044: the .env.sample placeholder must behave exactly like an unset key.
+
+    A fresh deployment that never replaced GX_ORCHESTRATOR_API_KEY=CHANGEME
+    must fail closed (401 on everything except /health), not accept the
+    literal placeholder as a bearer credential.
+    """
+
+    def test_placeholder_counts_as_unset(self):
+        import os
+        from unittest import mock
+
+        from gx_orchestrator.config import Config
+
+        for value in ("", "not-required", "CHANGEME", "changeme", "  CHANGEME  "):
+            with mock.patch.dict(os.environ, {"GX_ORCHESTRATOR_API_KEY": value}):
+                self.assertIsNone(Config().orchestrator_key(), repr(value))
+        with mock.patch.dict(os.environ, {"GX_ORCHESTRATOR_API_KEY": "sk-real-key"}):
+            self.assertEqual(Config().orchestrator_key(), "sk-real-key")
