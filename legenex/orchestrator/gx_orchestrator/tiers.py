@@ -61,8 +61,10 @@ TIERS: dict[Tier, TierSpec] = {
     Tier.MINI: TierSpec(
         alias=Tier.MINI,
         node="gx10-01",
-        # llama.cpp --ctx-size 131072 --parallel 2 -> 65536 per request slot.
-        max_context=65_536,
+        # llama.cpp --ctx-size 65536 --parallel 2 -> 32768 per request slot (verified on the live
+        # server: /props default_generation_settings.n_ctx and /slots, 2026-09-26; B-032). The budget
+        # hook and gx-auto routing size every request against THIS window, so it must be the slot size.
+        max_context=32_768,
         vision=True,
         tools=True,
         cost_rank=1,

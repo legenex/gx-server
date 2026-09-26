@@ -110,8 +110,9 @@ model_list:
       extra_body:
         chat_template_kwargs: {"enable_thinking": false}
     model_info:
-      # llama.cpp --ctx-size 131072 --parallel 2 -> 65536 per request.
-      max_input_tokens: 57344
+      # llama.cpp --ctx-size 65536 --parallel 2 -> 32768 per request slot (verified live via
+      # /props and /slots, 2026-09-26; B-032). 24576 in + 8192 out = 32768.
+      max_input_tokens: 24576
       max_output_tokens: 8192
       supports_vision: true
       supports_function_calling: true

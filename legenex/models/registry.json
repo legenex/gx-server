@@ -23,7 +23,7 @@
       "parameters": "4B dense",
       "active_parameters": null,
       "quantization": "GGUF Q4_K_M + BF16 vision projector",
-      "context": 65536,
+      "context": 32768,
       "max_output": 8192,
       "vision": true,
       "tools": true,

@@ -192,8 +192,9 @@ models:
   # Uncensored ("aggressive" refusal removal), multimodal, tool calling via
   # the model's own Jinja template (--jinja).
   #
-  # Context: --ctx-size 131072 split over --parallel 2 -> 65536 tokens per
-  # request slot. Hybrid Gated-DeltaNet/attention (3:1), so the KV cache for
+  # Context: --ctx-size 65536 split over --parallel 2 -> 32768 tokens per
+  # request slot, input + output (verified live 2026-09-26, B-032). The KV
+  # figure below was sized for the earlier 131072 setting. Hybrid Gated-DeltaNet/attention (3:1), so the KV cache for
   # the full 131072 is ~4 GB f16. Footprint ~10 GB: inside the 14 GB budget.
   #
   # ttl 0 + startup preload (hooks below) -> resident. Port 19001 is pinned
