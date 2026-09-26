@@ -101,12 +101,12 @@ case "${1:-}" in
     ssh "$N2" "cp -p ${N2_GW}/.env ${N2_GW}/.env.pre-rotate"
     ROTATING=1; trap 'rollback' ERR   # armed before the first write: any failure now restores the old key
     NEW="sk-swap-$(openssl rand -hex 32)"
-    printf '%s' "$NEW" | python3 - "$SECRETS_ENV" <<'PY'   # new key via stdin, never argv
+    printf '%s' "$NEW" | python3 -c '   # key on stdin, script/paths in argv only — the value is never argv
 import os, re, sys
 p, new = sys.argv[1], sys.stdin.read()
-s = re.sub(r'(?m)^GX_SWAP_API_KEY=.*$', 'GX_SWAP_API_KEY=' + new, open(p).read())
-open(p + '.tmp', 'w').write(s); os.chmod(p + '.tmp', 0o600); os.replace(p + '.tmp', p)
-PY
+s = re.sub(r"(?m)^GX_SWAP_API_KEY=.*$", "GX_SWAP_API_KEY=" + new, open(p).read())
+open(p + ".tmp", "w").write(s); os.chmod(p + ".tmp", 0o600); os.replace(p + ".tmp", p)
+' "$SECRETS_ENV"
     printf '%s' "$NEW" | ssh "$N2" "NEWKEY=\$(cat); export NEWKEY; python3 - <<'PY'   # key via ssh stdin -> env, never argv
 import os, re, pathlib
 p = pathlib.Path(os.path.expanduser('${N2_GW}/.env')); s = p.read_text()
