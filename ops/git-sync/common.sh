@@ -29,7 +29,8 @@ GX_SYNC_GITLEAKS="${GX_SYNC_GITLEAKS:-$(command -v gitleaks 2>/dev/null || echo 
 # Open WebUI Computer): a .gitleaks.toml or .gitleaksignore planted in the
 # working tree must not be able to switch the scan off.
 GX_SYNC_GITLEAKS_DIR="${GX_SYNC_GITLEAKS_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
-GX_SYNC_GITLEAKS_ARGS=(--config "${GX_SYNC_GITLEAKS_DIR}/gitleaks.toml" --gitleaks-ignore-path "${GX_SYNC_GITLEAKS_DIR}")
+GX_SYNC_GITLEAKS_ARGS=(--config "${GX_SYNC_GITLEAKS_DIR}/gitleaks.toml" --gitleaks-ignore-path "${GX_SYNC_GITLEAKS_DIR}"
+                       --ignore-gitleaks-allow)
 # Tracked files larger than this are refused at staging time.
 GX_SYNC_MAX_FILE_BYTES="${GX_SYNC_MAX_FILE_BYTES:-5242880}"
 # Pre-existing large tracked files that are known and accepted.
@@ -113,7 +114,14 @@ gxs_file_too_large() {
 # Secret scan of what is currently staged. Prints only file:line:rule, never
 # the matched value. Returns 0 clean, 1 findings, 2 scanner unavailable.
 gxs_scan_staged() {
-  local report rc
+  local report rc overrides
+  # gitleaks 8.30 still reads <source>/.gitleaksignore even with an explicit
+  # --gitleaks-ignore-path, so any such file in the tree fails the gate.
+  overrides="$(cd "${GX_SYNC_REPO}" && find . -name .gitleaksignore -not -path './.git/*' -not -path '*/node_modules/*' 2>/dev/null)"
+  if [ -n "${overrides}" ]; then
+    printf '%s: scanner override file present\n' ${overrides}
+    return 1
+  fi
   if [ -x "${GX_SYNC_GITLEAKS}" ]; then
     report="$(mktemp)"
     ( cd "${GX_SYNC_REPO}" && "${GX_SYNC_GITLEAKS}" git --pre-commit --staged "${GX_SYNC_GITLEAKS_ARGS[@]}" --redact --no-banner \
@@ -129,16 +137,16 @@ PY
       return 1
     fi
     rm -f "${report}"
-    [ "${rc}" -eq 0 ] && return 0
   fi
-  # Fallback: conservative regex scan of the staged diff (added lines only).
+  # Conservative regex scan of the staged diff (added lines only). Runs even when
+  # gitleaks passed: it cannot be switched off by files in the working tree.
   local hits
   hits="$(g diff --cached -U0 --no-color | awk '
     /^\+\+\+ b\//{file=substr($0,7); next}
     /^\+/{ if (tolower($0) ~ /(ghp_|gho_|ghs_|github_pat_|hf_|sk-)(your|example|xxxx|placeholder|changeme)/) next
           if ($0 ~ /(ghp_|gho_|ghs_|github_pat_)[A-Za-z0-9_]{20,}|tskey-[A-Za-z0-9-]{10,}|hf_[A-Za-z0-9]{30,}|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----|sk-[A-Za-z0-9_-]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}/) print file ": secret-like token" }')"
   if [ -n "${hits}" ]; then printf '%s\n' "${hits}"; return 1; fi
-  [ -x "${GX_SYNC_GITLEAKS}" ] && return 2
+  if [ -x "${GX_SYNC_GITLEAKS}" ] && [ "${rc:-2}" -ne 0 ]; then return 2; fi   # gitleaks errored
   return 0
 }
 
