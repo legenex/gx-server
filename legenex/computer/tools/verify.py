@@ -203,6 +203,10 @@ def verify_owui(email: str | None, agent: bool, c: Computer) -> None:
     for f in os.listdir(logs) if os.path.isdir(logs) else []:
         if os.path.getmtime(f"{logs}/{f}") * 1000 >= started:
             os.remove(f"{logs}/{f}")
+    for d in ("chats", "task_logs"):   # Computer recreates these on demand
+        p = f"{HOST_WORKSPACE}/.cptr/{d}"
+        if os.path.isdir(p) and not os.listdir(p):
+            os.rmdir(p)
 
 
 def verify_compaction(email: str | None) -> None:
