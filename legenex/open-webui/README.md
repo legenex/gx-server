@@ -30,9 +30,11 @@ rotating the master key no longer touches Open WebUI.
 `cptr/gx-cluster` has no model row, so only admins can list or call it. Keep it
 that way: Computer runs gateway chats with auto-approved tools as its admin.
 
-Everything in this file that is not a secret is (re)applied by
-`python3 legenex/computer/tools/provision.py` and checked by `verify.py` in the
-same directory. Both authenticate with a 10-minute admin session minted inside
+`python3 legenex/computer/tools/provision.py` (re)applies the connection keys and
+settings, the Computer connection, the GX-Cluster folder and note, and
+compaction. `verify.py` in the same directory checks them together with the
+memory settings. Community sharing and Arena (both off) and connection 0 (off)
+were set once and are not managed by the tools. Both authenticate with a 10-minute admin session minted inside
 the container from its own secret, which is the token signin issues. No
 password is used.
 
@@ -94,8 +96,9 @@ handling". Notes are enabled.
 | `gx-mini` | llama.cpp `--ctx-size 65536 --parallel 2` | **32 768** (input + output) |
 | `gx-code` (both nodes) | llama.cpp `--ctx-size 65536 --parallel 1` | 65 536 |
 | `gx-auto` | orchestrator: routes to gx-mini / gx-code | the routed engine's |
-| `gx-max` | orchestrator dual worker (gx-code-01 + gx-code-02) | 65 536 |
+| `gx-max` | orchestrator dual worker (gx-code-01 + gx-code-02), per the live gateway config | 65 536 |
 
+This table reflects the live gateway. `CLAUDE.md` L-6 and L-10 predate it (B-035).
 The gateway's `model_info.max_input_tokens` for gx-mini (57344) and the
 orchestrator's `MINI` tier (`max_context=65_536`) still describe an older
 `131072/2` layout (see `coordination/BLOCKERS.md` B-032). An oversized gx-mini
@@ -143,8 +146,9 @@ Computer-integration repair (2026-09-26), taken before any change:
 It holds `webui.db` (SQLite backup API; `integrity_check` ok), the session
 secret file `webui_secret_key`, `vector_db+uploads.tar`, `compose.yaml`,
 `container-inspect.json` and `counts.json`. `counts.json` has the per-table
-counts and content hashes of users, auth, chats, messages, memories and files,
-and `verify.py` style checks compare against it. The directory is 0700; it
+counts and content hashes of users, auth, chats, messages, memories and files.
+Recompute them against the live DB to prove nothing was lost; on 2026-09-26
+they matched, apart from the added folder and note. The directory is 0700; it
 contains secrets.
 
 ## Restore

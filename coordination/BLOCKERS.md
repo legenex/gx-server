@@ -1281,7 +1281,7 @@ node down to 7 GiB.
 
 Lowering the reserve for this job is not an option (locked rule).
 
-## B-029 (S3) — RESOLVED 2026-09-26 — production Open WebUI uses the Kilo Code gateway key
+## B-029 (S3) — RESOLVED 2026-09-26 — production Open WebUI shared a LiteLLM key with other clients (it was the master key)
 
 **Resolution (2026-09-26, D-043):** Open WebUI actually authenticated with the LiteLLM **master key**, not `kilo-code` (hash comparison; nothing printed). It now uses its own virtual key `open-webui` (gx-mini, gx-code, gx-auto, gx-max), and inference was verified afterwards. `kilo-code` is untouched.
 
@@ -1541,7 +1541,23 @@ The values of six internal credentials appeared in earlier agent transcripts
 `~/.grok/sessions/*`, and two gx10-02 transcripts and archives). None is in git
 history. Four were rotated on 2026-09-26 and verified: `POSTGRES_PASSWORD`,
 `LITELLM_UI_PASSWORD`, `GX_MEDIA_API_KEY`, `GX_VOICE_API_KEY` (procedure:
-D-043 / CHANGELOG). The new LiteLLM UI password is in
+D-043 / CHANGELOG).
+
+**Incident during this pass (19:41–19:55 UTC).** The rotation atomically
+replaced `legenex/gateway/.env`. That silently detached the single-file
+read-only overlay that hid the file inside Open WebUI Computer, so for about
+14 minutes the real `.env` was readable and writable there. One agent run
+happened in that window, a read-only verification prompt that was deleted
+afterwards; there is no evidence the file was read. Remediation:
+
+* The container was restarted, which restored the overlay.
+* The real file moved to `/srv/projects/gx-cluster/secrets/gateway.env`, and
+  `legenex/gateway/.env` is now a symlink that dangles inside Computer. The
+  daily integrity audit checks the symlink.
+* `legenex/gateway` became a read-only directory overlay.
+* The four values were **rotated again** at 19:56 UTC.
+
+Lesson: never hide a secret with a single-file bind mount. The new LiteLLM UI password is in
 `/srv/projects/gx-cluster/secrets/litellm/ui-password` (0600). Two were **not**
 rotated:
 
@@ -1574,17 +1590,29 @@ that provider's console.
 
 ## B-034 (S2) — Security follow-ups from the Computer integration review that need sign-off
 
-**Status:** OPEN. **Found:** 2026-09-26, independent security review. Fixed in
-the same pass: read-only overlays for everything the host runs *unattended*
-(`legenex/host`, `.git/config`, `.git/worktrees`, `.kilo`, `.gitignore`,
-`legenex/computer`), CORS pinning, `cap_drop: ALL`, `pids_limit`, key
-concurrency limit, community sharing off, arena off. Remaining:
+**Status:** OPEN. **Found:** 2026-09-26, independent security review
+(re-reviewed after repairs). Fixed in the same pass:
+
+* **Read-only directory overlays** (`create_host_path: false`) for everything
+  the host runs unattended or that controls publishing: all of `.git` (no
+  planted hooks, config or forged commits), `.githooks`, `ops/git-sync`,
+  `.kilo`, `legenex/host`, `legenex/gateway`, `legenex/lifecycle`,
+  `legenex/scripts`, `legenex/media` and `legenex/computer`.
+* **Gateway secrets moved out of the tree** (see B-033).
+* **Autosync hardening:** it refuses `.cptr/*` and `.gitleaks*` files whatever
+  `.gitignore` says, and gitleaks runs with a pinned config and ignore path
+  from `ops/git-sync`. A planted `.gitleaks.toml` used to disable the gate.
+* **Container and app settings:** CORS pinning, `cap_drop: ALL`,
+  `pids_limit`, `gx-computer` concurrency limit, community sharing off, Arena
+  off.
+
+Remaining:
 
 1. **Computer edits code that host services run on their next restart.**
-   `legenex/control-ui`, `legenex/orchestrator`, `legenex/gateway` (including
-   LiteLLM `config.yaml` and `gx_hooks`) and the llama-swap yaml are
-   executed by `legenex` (docker group, so root-equivalent) on both nodes, and
-   autosync ships them to gx10-02. The user asked for Computer to work on the
+   `legenex/control-ui`, `legenex/orchestrator` and `legenex/playground` run
+   as `legenex` (docker group, so root-equivalent) on both nodes, and autosync
+   ships them to gx10-02. The control UI also lazily imports modules during
+   admin actions. The user asked for Computer to work on the
    real checkout, so these stay writable. The strict alternative is a separate
    Computer clone or worktree that autosync does not push, with human-reviewed
    promotion.
@@ -1607,3 +1635,23 @@ concurrency limit, community sharing off, arena off. Remaining:
    container layer. Fix: bind and CORS settings, and persist
    `WEBUI_SECRET_KEY`, in one planned recreate.
 6. **Tailscale ACL:** restrict `:8000` (Computer) to admin devices.
+
+## B-035 (S3) — CLAUDE.md locked rows L-6 and L-10 no longer describe the live gateway
+
+**Status:** OPEN (locked decisions; only the human can amend them). **Found:**
+2026-09-26.
+
+* **L-10** lists eleven public aliases. The live LiteLLM config
+  (`legenex/gateway/litellm/config.yaml`) serves `gx-mini`, `gx-code`,
+  `gx-auto` and `gx-max`, and its header says `gx-fast`, `gx-reason`,
+  `gx-image`, `gx-video`, `gx-voice` and `gx-music` are retired from the
+  gateway.
+* **L-6** says gx-max is SGLang TP=2 DeepSeek. The live default is the
+  orchestrator's dual worker (gx-code-01 + gx-code-02), with SGLang kept as
+  `GX_MAX_MODE=deepseek`.
+* No decision entry records either change.
+* The Computer and Open WebUI docs describe the live gateway. `CLAUDE.md` is
+  injected into Computer's system prompt, so agents there see both
+  descriptions.
+
+**Action (human):** amend L-6 and L-10 or record why the live config differs.

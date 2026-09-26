@@ -1488,3 +1488,13 @@ is public.
 **Compaction.** Sized to the smallest *real* per-request window (gx-mini
 32 768). The threshold and cap are 20 000, with a data-framed summariser prompt
 that sends only the dropped messages (B-032).
+
+**Containment.** Computer works on the real checkout, but:
+
+* Git is read-only inside it, and autosync commits its edits.
+* Everything the host executes unattended, or that controls publishing, is a
+  read-only *directory* overlay (B-034).
+* Secrets are never in the mounted tree. The gateway `.env` is a symlink into
+  `/srv/projects/gx-cluster/secrets`.
+* Single-file overlays are not used for secrets, because host-side file
+  replacement detaches them (B-033 incident).

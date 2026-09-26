@@ -249,6 +249,18 @@ else
       r WARN "open-webui gx-* identity entries differ from the registry (Control Center > Setup > Open WebUI)"
     fi
   fi
+  # gx10-01: the gateway .env must stay OUT of the project tree (D-043). The tree is
+  # mounted into Open WebUI Computer; legenex/gateway/.env is a symlink into the
+  # secrets store, which is not mounted there. `sed -i` or an editor that replaces
+  # the link would silently put every gateway secret back inside the workspace.
+  if [ "$(cat "${GX_SYNC_ROLE_FILE}" 2>/dev/null)" = "writer" ]; then
+    envl="${GX_SYNC_REPO}/legenex/gateway/.env"
+    if [ -L "${envl}" ] && case "$(readlink -f "${envl}")" in /srv/projects/gx-cluster/secrets/*) true ;; *) false ;; esac; then
+      r PASS "legenex/gateway/.env is a symlink into the secrets store (not visible to Computer)"
+    else
+      r FAIL "legenex/gateway/.env is not a symlink into /srv/projects/gx-cluster/secrets (move the file there, re-link, recreate gx-computer)"
+    fi
+  fi
   # The running gateway must hold the media key from the ignored .env (a recreate
   # from a shell with a stale variable once left it on the placeholder). Only
   # hashes are compared; no key is printed.

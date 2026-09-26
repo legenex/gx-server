@@ -20,8 +20,12 @@ done" or "UI step" is now done, through the apps' own APIs.
   * `CLAUDE.md` is injected via `.cptr/system.md` placeholders.
   * LiteLLM connection with key `gx-computer` (4 aliases, default `gx-auto`).
   * Gateway key lives only in Open WebUI.
-  * CORS pinned, `cap_drop: ALL`, new read-only overlays.
-  * `.cptr/*` is gitignored.
+  * CORS pinned, `cap_drop: ALL`.
+  * Git is read-only inside Computer, with read-only directory overlays for
+    everything the host runs unattended.
+  * The gateway `.env` now lives in `/srv/projects/gx-cluster/secrets/` (the
+    tree holds a symlink).
+  * `.cptr/*` is gitignored and refused by autosync.
 * **Open WebUI:**
   * LiteLLM connection moved off the **master key** to virtual key
     `open-webui`.
@@ -31,14 +35,16 @@ done" or "UI step" is now done, through the apps' own APIs.
     gx-mini's real 32 768 window (B-032).
   * Community sharing and Arena off.
 * **Credentials:** rotated and verified `POSTGRES_PASSWORD`,
-  `LITELLM_UI_PASSWORD`, `GX_MEDIA_API_KEY`, `GX_VOICE_API_KEY`.
+  `LITELLM_UI_PASSWORD`, `GX_MEDIA_API_KEY`, `GX_VOICE_API_KEY`, twice. The
+  second rotation followed a 14-minute overlay gap (B-033).
   `LITELLM_MASTER_KEY` and `GX_SWAP_API_KEY` await a decision (B-033).
   Security follow-ups needing sign-off: B-034.
 * **Proof:**
   * `python3 legenex/computer/tools/verify.py --compaction`: live end to end.
     Every Computer file operation is checked on the host, plus git, terminal,
     the gateway, agent inference and the long-chat compaction.
-  * `ops/git-sync/integrity-audit.sh`: 18/18 PASS.
+  * `ops/git-sync/integrity-audit.sh`: all PASS.
+  * `ops/git-sync/tests/sync-regression.sh`: 19/19 PASS.
 * **Re-apply anything:** `python3 legenex/computer/tools/provision.py`
   (idempotent).
 * **Backups:** `/srv/projects/gx-cluster/backups/computer-repair-20260925T225949Z/`

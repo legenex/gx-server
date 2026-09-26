@@ -28,8 +28,9 @@ not on ConnectX, not in the Cloudflare tunnel (its only ingress is
 
 The canonical identity is the Open WebUI admin account. Computer has **one**
 user, its admin, with the **same login name as the Open WebUI e-mail**. Its
-display name and avatar are copied from Open WebUI by `tools/provision.py`, so
-Computer greets and labels the same person. The account keeps Computer's own
+display name is kept equal to Open WebUI's by `tools/provision.py`, which also
+copies the avatar once (when Computer has none), so Computer greets and labels
+the same person. The account keeps Computer's own
 password (set at first login). There is no second or orphaned identity.
 
 Why not single sign-on (checked against the installed source, 2026-09-26):
@@ -64,26 +65,34 @@ Why not single sign-on (checked against the installed source, 2026-09-26):
   ignores `**/.cptr/*` except `system.md` and `model`, plus
   `/generated-image-*` and `/edited-image-*`. `CPTR_AUTO_GITIGNORE_DOT_CPTR=false`
   stops Computer rewriting `.gitignore`. `tools/test_tools.py` guards these rules.
-* Read-only overlays cover everything the host runs *unattended* or that
-  could subvert git or publishing:
-  * `legenex/gateway/.env` (the placeholder `env.hidden`);
-  * `.git/hooks`, `.githooks`, `.git/config` (no planted `core.fsmonitor`,
-    `hooksPath` or filter drivers) and `.git/worktrees`;
-  * `.kilo`;
-  * `ops/git-sync`;
-  * `legenex/host` (`gx-hostwatch.sh` runs every 60 s on both nodes);
-  * `.gitignore`;
-  * `legenex/computer` (this compose file and the tools the host runs).
+* **Git is read-only inside Computer.** `status`, `log`, `diff` and `show`
+  work; `commit`, `stash` and `checkout` fail. gx10-01 autosync commits
+  Computer's file edits, and it independently refuses `.cptr/*` and planted
+  `.gitleaks*` files (`ops/git-sync/common.sh`).
+* **Read-only directory overlays** (`read_only`, `create_host_path: false`)
+  cover everything the host runs without a human deciding to restart
+  something, or that controls publishing:
+  * `.git` (config, hooks, refs, index, worktrees), `.githooks`,
+    `ops/git-sync`, `.kilo`;
+  * `legenex/host` (`gx-hostwatch.sh`, every 60 s on both nodes);
+  * `legenex/gateway` (LiteLLM config and hooks, llama-swap yaml);
+  * `legenex/lifecycle` (run on gx-max acquire);
+  * `legenex/scripts` and `legenex/media` (Control Center actions);
+  * `legenex/computer`.
 
-  Normal source edits, `git status`, `add` and `commit` work; `git config`
-  and `push -u` do not. Single-file binds pin the inode, so recreate the
-  container after the host rewrites `.gitignore` or `.git/config`. `verify.py`
-  detects this.
-* **Residual risk (B-034):** other service code (`legenex/control-ui`,
-  `legenex/orchestrator`, `legenex/gateway`, llama-swap yaml) stays editable,
-  because Computer is meant to work on the real project. The host runs that
-  code on the next service restart, on both nodes. The strict alternative is a
-  separate Computer clone with reviewed promotion.
+  `.gitignore` is the only single-file overlay. `tools/verify.py` checks through
+  `/proc/self/mountinfo` that every overlay is mounted.
+* **Secrets are outside the tree.** The real gateway `.env` is
+  `/srv/projects/gx-cluster/secrets/gateway.env`. `legenex/gateway/.env` is a
+  symlink to it, which dangles inside Computer. Never hide a secret with a
+  single-file overlay: when the host replaces the file (atomic write, `git
+  checkout`), Linux silently detaches the mount. That happened once on
+  2026-09-26 (B-033), and the affected values were rotated.
+* **Residual risk (B-034):** `legenex/control-ui`, `legenex/orchestrator`,
+  `legenex/playground` and the rest of the source stay editable, because
+  Computer is meant to work on the real project. The host runs that code on its
+  next service restart, on both nodes. The strict alternative is a separate
+  Computer clone with reviewed promotion.
 
 ## Local inference (Computer → LiteLLM)
 
@@ -102,7 +111,9 @@ stores it Fernet-encrypted in its DB.
 
 * Computer gateway key **`open-webui`** (`sk-cptr-…`). Computer stores only
   its SHA-256. The plaintext exists only in Open WebUI's connection store.
-  The key acts as the Computer admin.
+  The key acts as the Computer admin. `provision.py --rotate-gateway-key`
+  replaces it make-before-break: create, prove in Computer, write to Open WebUI,
+  prove there, then revoke the old key.
 * Open WebUI connection: `http://127.0.0.1:8000/v1`, auto-discovered models,
   tag `computer`, with these headers:
 
@@ -132,7 +143,7 @@ stores it Fernet-encrypted in its DB.
   `GX_COMPUTER_CORS_ORIGINS` in the ignored `.env`. Other same-host origins
   (for example `:3000`) and foreign origins get HTTP 400.
 * Agents in Computer can read what the `cptr` uid can read: the project tree
-  (minus the overlays) and Computer's own `/data`. That includes the encrypted
+  (the gateway secrets are not in it) and Computer's own `/data`. That includes the encrypted
   `gx-computer` key and its decryption secret, which is why that key is
   least-privilege. The gx10-01 secrets store is not mounted.
 * The Grok CLI binary is mounted at `/usr/local/bin/grok`. No agent profile is
@@ -144,13 +155,14 @@ stores it Fernet-encrypted in its DB.
 | Command (from `legenex/computer/tools`) | What it does |
 |---|---|
 | `python3 provision.py` | Idempotent: LiteLLM keys, Computer profile, connection, default model, workspace and gateway key, then Open WebUI connections, the GX-Cluster folder and note, and compaction. `--rotate-gateway-key` replaces the gateway key in both apps. |
-| `python3 verify.py [--compaction]` | Live end-to-end check (34 checks with `--compaction`). Every Computer file operation is checked on the host. It cleans up after itself. |
-| `python3 -m unittest -v test_tools` | Offline guards: redaction, `.cptr` ignore rules, template placeholders. |
+| `python3 verify.py [--compaction]` | Live end-to-end check (about 38 checks with `--compaction`). Every Computer file operation is checked on the host. The agent run is tagged, and only its own chat and task log are removed; test files are removed in `finally`. |
+| `python3 -m unittest -v test_tools` | Offline guards: redaction, connection-list index handling, `.cptr` ignore rules and the autosync guard, template placeholders, the note snapshot. |
 
 Admin calls use short-lived sessions minted **inside** each container with
 that app's own signing secret: the same tokens their login endpoints issue.
-The secrets never leave the containers, and no output contains a credential.
-No password is read, set or reset.
+The secrets never leave the containers. Output is redacted by field name and
+token shape, and it prints no e-mail addresses or names. No password is read,
+set or reset.
 
 ## Backup and recovery
 

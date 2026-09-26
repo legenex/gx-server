@@ -644,7 +644,11 @@ host auth is not mounted. Operator docs: `legenex/computer/README.md`.
   The Computer gateway key exists only in Open WebUI's connection store.
 * **Exposure:** `cptr/*` is admin-only in Open WebUI, because gateway chats
   auto-approve tools as the Computer admin.
-* **Public repo:** Computer's workspace state (`.cptr/*`) is gitignored.
+* **Public repo:** Computer's workspace state (`.cptr/*`) is gitignored and
+  refused by autosync.
+* **Containment:** git is read-only in Computer, and read-only directory
+  overlays cover host-executed paths. The gateway `.env` lives in the secrets
+  store, and the tree holds only a symlink.
 * **Compaction:** Open WebUI compaction is sized to gx-mini's real
   32 768-token window.
 * **Tooling:** everything is reproducible with

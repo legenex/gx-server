@@ -32,6 +32,8 @@ RETIRE_WORKSPACES = ["/home/cptr"]          # cptr's default "home" workspace fr
 DEFAULT_MODEL = "gx-auto"                   # router alias; /projects/gx-cluster/.cptr/model agrees
 CONNECTION_NAME = "GX LiteLLM (local)"
 GATEWAY_KEY_NAME = "open-webui"
+WORKSPACE_MODEL = "cptr/gx-cluster"
+GX_COMPUTER_LIMITS = {"max_parallel_requests": 4}   # the agent needs few concurrent calls
 MODEL_ORDER = ["gx-auto", "gx-mini", "gx-code", "gx-max"]
 FOLDER_NAME = "GX-Cluster"
 NOTE_TITLE = "GX-Cluster — project instructions"
@@ -79,17 +81,18 @@ this note is a reference snapshot for chats in the GX-Cluster folder.
 """
 
 
-def provision_computer(ident: dict, cptr_key: str, rotate: bool, owui_has_computer: bool) -> str | None:
+def provision_computer(ident: dict, cptr_key: str) -> Computer:
     c = Computer(ident["email"])
     expect(c.role == "admin", "the canonical account is not a Computer admin")
-    step("computer.identity", username=c.username, role=c.role)
+    step("computer.identity", same_login_as_owui=True, role=c.role)
 
-    # profile: same person, same display name and avatar as the canonical Open WebUI account
+    # profile: same person, same display name as the canonical Open WebUI account; the
+    # avatar is copied once (Computer stores its own file) when Computer has none
     name, img = cptr_sql("select display_name, profile_image_url from users where id = ?", (c.user_id,))[0]
     if name != ident["name"]:
         st, _ = c.call("PUT", "/api/auth/profile", {"display_name": ident["name"]})
         expect(st == 200, f"display name update failed ({st})")
-    step("computer.display_name", value=ident["name"], changed=name != ident["name"])
+    step("computer.display_name", matches_owui=True, changed=name != ident["name"])
     if ident["avatar_b64"] and not img:
         blob, b = base64.b64decode(ident["avatar_b64"]), uuid.uuid4().hex
         ext = ident["avatar_mime"].split("/")[1].split("+")[0]
@@ -97,7 +100,7 @@ def provision_computer(ident: dict, cptr_key: str, rotate: bool, owui_has_comput
                 f"Content-Type: {ident['avatar_mime']}\r\n\r\n").encode() + blob + f"\r\n--{b}--\r\n".encode()
         st, _ = c.call("PUT", "/api/auth/avatar", raw=body, ctype=f"multipart/form-data; boundary={b}")
         expect(st == 200, f"avatar upload failed ({st})")
-    step("computer.avatar", synced=bool(ident["avatar_b64"]), changed=bool(ident["avatar_b64"] and not img))
+    step("computer.avatar", copied=bool(ident["avatar_b64"] and not img), present=bool(img or ident["avatar_b64"]))
 
     # local inference: LiteLLM on gx_gateway with the least-privilege key, public aliases only
     st, conns = c.call("GET", "/api/admin/connections")
@@ -144,59 +147,97 @@ def provision_computer(ident: dict, cptr_key: str, rotate: bool, owui_has_comput
         step("computer.retire_workspace", path=stale, removed=st == 200, refs=refs)
     st, _ = c.call("PUT", "/api/state/preferences", {"workspaceOrder": [WORKSPACE]})
     step("computer.workspace_order", ok=st == 200)
+    return c
 
-    # gateway key for Open WebUI (acts as this user; shown once, stored hashed by Computer)
+
+def owui_sees_workspace(email: str) -> bool:
+    """True when Open WebUI's stored gateway key currently works (the workspace model is listed)."""
+    r = owui([{"call": ["GET", "/api/models?refresh=true"]}], email)[1]
+    return r["status"] == 200 and WORKSPACE_MODEL in [m["id"] for m in (r["body"] or {}).get("data", [])]
+
+
+def ensure_gateway_key(c: Computer, ident: dict, rotate: bool) -> None:
+    """Computer gateway key for Open WebUI, make-before-break.
+
+    Kept when Open WebUI already lists the workspace through its stored key. Otherwise (or
+    with --rotate-gateway-key) a new key is created, proven against Computer, written to
+    Open WebUI and proven there; only then are the previous keys revoked. If anything fails
+    after creation, the new key is revoked and the old state is left untouched.
+    """
+    if not rotate and owui_sees_workspace(ident["email"]):
+        step("gateway_key", action="kept", reason="Open WebUI lists the workspace with its stored key")
+        return
     st, keys = c.call("GET", "/v1/keys")
-    mine = [k for k in keys or [] if k.get("name") == GATEWAY_KEY_NAME]
-    if mine and owui_has_computer and not rotate:
-        step("computer.gateway_key", action="kept", count=len(mine))
-        return None
-    for k in mine:
-        c.call("DELETE", f"/v1/keys/{k['id']}")
+    old_ids = [k["id"] for k in keys or [] if k.get("name") == GATEWAY_KEY_NAME]
     st, r = c.call("POST", "/v1/keys", {"name": GATEWAY_KEY_NAME})
-    key = (r or {}).get("key")
+    key, new_id = (r or {}).get("key"), (r or {}).get("id")
     expect(st == 200 and bool(key), f"gateway key creation failed ({st})")
-    st, models = c.call("GET", "/v1/models", bearer=key)
-    ids = [m["id"] for m in (models or {}).get("data", [])]
-    expect("cptr/gx-cluster" in ids, f"gateway does not expose the workspace: {ids}")
-    step("computer.gateway_key", action="rotated" if mine else "created", revoked_old=len(mine), models=ids)
-    return key
+    try:
+        st, models = c.call("GET", "/v1/models", bearer=key)
+        ids = [m["id"] for m in (models or {}).get("data", [])]
+        expect(WORKSPACE_MODEL in ids, f"gateway does not expose the workspace: {ids}")
+        r = owui([{"openai_upsert": {"url": COMPUTER_URL, "key": key, "config": COMPUTER_CONN}}], ident["email"])[1]
+        expect(r["status"] == 200, f"Open WebUI connection update failed ({r['status']})")
+        expect(owui_sees_workspace(ident["email"]), "Open WebUI does not list the workspace with the new key")
+    except Exception:
+        c.call("DELETE", f"/v1/keys/{new_id}")
+        raise
+    finally:
+        del key
+    for kid in old_ids:
+        c.call("DELETE", f"/v1/keys/{kid}")
+    step("gateway_key", action="rotated" if old_ids else "created", revoked_old=len(old_ids),
+         owui_connection_index=r["index"])
 
 
-def provision_owui(ident: dict, owui_key: str, gateway_key: str | None) -> None:
-    ops = [{"openai_upsert": {"url": LITELLM_FROM_OWUI, "key": owui_key, "config": None,
-                              "config_if_new": LITELLM_CONN_IF_NEW}}]
-    if gateway_key:
-        ops.append({"openai_upsert": {"url": COMPUTER_URL, "key": gateway_key, "config": COMPUTER_CONN}})
-    for r in owui(ops, ident["email"])[1:]:
-        expect(r["status"] == 200, f"Open WebUI connection update failed: {r}")
-        step("owui.connection", index=r["index"], action=r["action"])
+def provision_owui(ident: dict, owui_key: str) -> None:
+    res = owui([{"openai_upsert": {"url": LITELLM_FROM_OWUI, "key": owui_key, "config": None,
+                                   "config_if_new": LITELLM_CONN_IF_NEW}}], ident["email"])
+    owner, r = res[0]["user_id"], res[1]
+    expect(r["status"] == 200, f"Open WebUI LiteLLM connection update failed ({r['status']})")
+    step("owui.litellm_connection", index=r["index"], action=r["action"])
 
-    # project folder + instructions note (content refreshed from CLAUDE.md)
-    notes, folders = [r["body"] for r in owui([{"call": ["GET", "/api/v1/notes/"]},
-                                                {"call": ["GET", "/api/v1/folders/"]}], ident["email"])[1:]]
-    notes = notes if isinstance(notes, list) else (notes or {}).get("items", [])
-    note = next((n for n in notes if n.get("title") == NOTE_TITLE), None)
+    # project folder: found by name; its instructions note found through the folder's own
+    # knowledge entry (so renames do not duplicate it). Knowledge the user attached and a
+    # customised system prompt are preserved; only the note's content is refreshed.
+    folders = owui([{"call": ["GET", "/api/v1/folders/"]}], ident["email"])[1]["body"] or []
+    folder = next((f for f in folders if f.get("name") == FOLDER_NAME and not f.get("parent_id")), None)
+    data = {}
+    if folder:
+        data = (owui([{"call": ["GET", f"/api/v1/folders/{folder['id']}"]}], ident["email"])[1]["body"] or {}).get("data") or {}
+    files = list(data.get("files") or [])
+    note_id = next((e["id"] for e in files if e.get("type") == "note" and e.get("name") == NOTE_TITLE), None)
+    if not note_id:
+        notes = owui([{"call": ["GET", "/api/v1/notes/"]}], ident["email"])[1]["body"]
+        notes = notes if isinstance(notes, list) else (notes or {}).get("items", [])
+        note_id = next((n["id"] for n in notes if n.get("title") == NOTE_TITLE and n.get("user_id", owner) == owner), None)
     md = note_markdown()
-    if note:
-        r = owui([{"call": ["POST", f"/api/v1/notes/{note['id']}/update",   # validated as NoteForm: title required
+    if note_id:
+        r = owui([{"call": ["POST", f"/api/v1/notes/{note_id}/update",   # validated as NoteForm: title required
                             {"title": NOTE_TITLE, "data": {"content": {"md": md}}}]}], ident["email"])[1]
     else:
         r = owui([{"call": ["POST", "/api/v1/notes/create",
                             {"title": NOTE_TITLE, "data": {"content": {"md": md}}, "access_grants": []}]}], ident["email"])[1]
-        note = r["body"]
-    expect(r["status"] == 200, f"note upsert failed: {r['status']}")
-    step("owui.note", id=note["id"], action="updated" if r["op"].endswith("/update") else "created", chars=len(md))
-    data = {"system_prompt": (HERE / "owui_folder_prompt.md").read_text().strip(),
-            "files": [{"type": "note", "id": note["id"], "name": NOTE_TITLE}]}
-    folder = next((f for f in folders or [] if f.get("name") == FOLDER_NAME and not f.get("parent_id")), None)
-    if folder:
-        r = owui([{"call": ["POST", f"/api/v1/folders/{folder['id']}/update", {"data": data}]}], ident["email"])[1]
+        note_id = (r["body"] or {}).get("id")
+    expect(r["status"] == 200 and note_id, f"note upsert failed: {r['status']}")
+    step("owui.note", id=note_id, action="refreshed" if r["op"].endswith("/update") else "created", chars=len(md))
+
+    managed_prompt = (HERE / "owui_folder_prompt.md").read_text().strip()
+    new_files = files + ([] if any(e.get("id") == note_id for e in files)
+                         else [{"type": "note", "id": note_id, "name": NOTE_TITLE}])
+    new_data = {"system_prompt": data.get("system_prompt") or managed_prompt, "files": new_files}
+    if not folder:
+        r = owui([{"call": ["POST", "/api/v1/folders/", {"name": FOLDER_NAME, "data": new_data}]}], ident["email"])[1]
+        expect(r["status"] == 200, f"folder create failed: {r['status']}")
+        action = "created"
+    elif new_data != {"system_prompt": data.get("system_prompt"), "files": files}:
+        r = owui([{"call": ["POST", f"/api/v1/folders/{folder['id']}/update", {"data": new_data}]}], ident["email"])[1]
+        expect(r["status"] == 200, f"folder update failed: {r['status']}")
+        action = "updated"
     else:
-        r = owui([{"call": ["POST", "/api/v1/folders/", {"name": FOLDER_NAME, "data": data}]}], ident["email"])[1]
-        folder = r["body"]
-    expect(r["status"] == 200, f"folder upsert failed: {r['status']}")
-    step("owui.folder", id=folder["id"], folder=FOLDER_NAME, action="updated" if r["op"].endswith("/update") else "created")
+        action = "unchanged"
+    step("owui.folder", folder=FOLDER_NAME, action=action, knowledge_entries=len(new_files),
+         system_prompt="managed" if new_data["system_prompt"] == managed_prompt else "customised (kept)")
 
     # context compaction (full-form endpoint: read, change, write back)
     cur = owui([{"call": ["GET", "/api/v1/chats/config"]}], ident["email"])[1]["body"]
@@ -214,14 +255,14 @@ def main() -> int:
     args = ap.parse_args()
     try:
         ident = canonical_identity(args.email)
-        step("canonical_identity", email_domain=ident["email"].split("@")[-1], role=ident["role"])
-        a1, cptr_key = ensure_litellm_key("gx-computer", SECRETS / "computer" / "litellm-api-key")
+        step("canonical_identity", found=True, role=ident["role"])
+        a1, cptr_key = ensure_litellm_key("gx-computer", SECRETS / "computer" / "litellm-api-key", GX_COMPUTER_LIMITS)
         a2, owui_key = ensure_litellm_key("open-webui", SECRETS / "open-webui" / "litellm-api-key")
-        step("litellm.keys", gx_computer=a1, open_webui=a2, aliases=list(PUBLIC_ALIASES))
-        has = owui([{"openai_has": COMPUTER_URL}], ident["email"])[1]["present"]
-        gateway_key = provision_computer(ident, cptr_key, args.rotate_gateway_key, has)
-        provision_owui(ident, owui_key, gateway_key)
-        del cptr_key, owui_key, gateway_key
+        step("litellm.keys", gx_computer=a1, open_webui=a2, aliases=list(PUBLIC_ALIASES), gx_computer_limits=GX_COMPUTER_LIMITS)
+        c = provision_computer(ident, cptr_key)
+        ensure_gateway_key(c, ident, args.rotate_gateway_key)
+        provision_owui(ident, owui_key)
+        del cptr_key, owui_key
     except ToolError as exc:
         print(json.dumps(report, indent=1))
         print(f"FAILED: {exc}", file=sys.stderr)

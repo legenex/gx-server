@@ -17,6 +17,7 @@ import argparse
 import json
 import os
 import random
+import shutil
 import subprocess
 import sys
 import time
@@ -26,6 +27,8 @@ from gxtools import (CPTR_CONTAINER, CPTR_PY, HOST_WORKSPACE, WORKSPACE, Compute
                      cptr_sql, owui, owui_sql, run)
 
 results: list[tuple[str, str, str]] = []
+RO_DIRS = [".git", ".githooks", "ops/git-sync", ".kilo", "legenex/host", "legenex/gateway", "legenex/lifecycle",
+           "legenex/scripts", "legenex/media", "legenex/computer"]
 
 
 def check(name: str, ok: bool, detail: str = "") -> bool:
@@ -53,7 +56,9 @@ def call(m, p, b=None):
         return json.loads(x.read() or b"null")
 sid = call("POST", "/api/terminal", {"rows": 24, "cols": 200, "cwd": "/projects/gx-cluster"})["session_id"]
 async def go():
-    async with websockets.connect(f"ws://127.0.0.1:8000/api/terminal/{sid}/ws?token={tok}", max_size=None) as w:
+    # cookie header, never ?token=: uvicorn logs the query string
+    async with websockets.connect(f"ws://127.0.0.1:8000/api/terminal/{sid}/ws", max_size=None,
+                                  additional_headers={"Cookie": "cptr_session=" + tok}) as w:
         await w.send(b"\x00" + cmd.encode())
         buf = b""
         while buf.count(marker.encode()) < 2:
@@ -79,7 +84,7 @@ print(json.dumps({"len": len(p), "claude": "# CLAUDE.md" in p and "LOCKED" in p,
 def verify_computer(c: Computer, nonce: str) -> None:
     head = run(["git", "-C", HOST_WORKSPACE, "rev-parse", "HEAD"]).strip()
     st, me = c.call("GET", "/api/auth")
-    check("computer: canonical admin session", st == 200 and me.get("role") == "admin", f"display_name={me.get('display_name')!r}")
+    check("computer: canonical admin session", st == 200 and me.get("role") == "admin")
     st, ws = c.call("GET", "/api/state/workspaces")
     check("computer: GX-Cluster is the registered workspace", st == 200 and [w["path"] for w in ws] == [WORKSPACE],
           ", ".join(f"{w['name']}={w['path']}" for w in ws or []))
@@ -101,6 +106,7 @@ def verify_computer(c: Computer, nonce: str) -> None:
     made_tmp = not os.path.exists(f"{HOST_WORKSPACE}/tmp")
     d = f"{WORKSPACE}/tmp/cptr-verify-{nonce}"
     f1, f2 = f"{d}/probe.txt", f"{d}/probe-renamed.txt"
+    hf = f"{HOST_WORKSPACE}/tmp/term-{nonce}.txt"
     ops = [
         ("fs: create directory", lambda: c.call("POST", "/api/workspace/files/create", {"path": d, "type": "directory"}), lambda: os.path.isdir(host(d))),
         ("fs: create file", lambda: c.call("POST", "/api/workspace/files/create", {"path": f1, "type": "file"}), lambda: os.path.isfile(host(f1))),
@@ -114,26 +120,26 @@ def verify_computer(c: Computer, nonce: str) -> None:
         ("fs: delete, seen on host", lambda: c.call("POST", "/api/workspace/files/delete", {"path": f2}), lambda: not os.path.exists(host(f2))),
         ("fs: remove test directory", lambda: c.call("POST", "/api/workspace/files/delete", {"path": d}), lambda: not os.path.exists(host(d))),
     ]
-    for name, act, on_host in ops:
-        st, body = act()
-        ok = st == 200 and (on_host() if on_host else (body or {}).get("content") == f"alpha {nonce}\n")
-        if not check(name, ok, f"HTTP {st}"):
-            break
-
-    rel = f"tmp/term-{nonce}.txt"
-    r = in_cptr(TERMINAL, json.dumps([c.secret_token, f"git rev-parse --show-toplevel; git rev-parse HEAD; "
-                                                          f"echo T-{nonce} > {rel}; echo DONE-{nonce}\n", f"DONE-{nonce}"]))
-    out = json.loads(r.stdout).get("out", "") if r.returncode == 0 else ""
-    check("terminal: shell runs in the workspace and sees the same git HEAD",
-          "/projects/gx-cluster" in out and head in out, "" if out else r.stderr.strip()[-200:])
-    hf = f"{HOST_WORKSPACE}/{rel}"
-    check("terminal: file written in terminal is on the host",
-          os.path.exists(hf) and open(hf).read().strip() == f"T-{nonce}")
-    if os.path.exists(hf):
-        os.remove(hf)
-    if made_tmp and os.path.isdir(f"{HOST_WORKSPACE}/tmp") and not os.listdir(f"{HOST_WORKSPACE}/tmp"):
-        os.rmdir(f"{HOST_WORKSPACE}/tmp")
-    check("fs+terminal: nothing left for autosync", run(["git", "-C", HOST_WORKSPACE, "status", "--porcelain", "--", "tmp"]) == "")
+    try:
+        for name, act, on_host in ops:
+            st, body = act()
+            ok = st == 200 and (on_host() if on_host else (body or {}).get("content") == f"alpha {nonce}\n")
+            if not check(name, ok, f"HTTP {st}"):
+                break
+        r = in_cptr(TERMINAL, json.dumps([c.secret_token, f"git rev-parse --show-toplevel; git rev-parse HEAD; "
+                                                              f"echo T-{nonce} > tmp/term-{nonce}.txt; echo DONE-{nonce}\n", f"DONE-{nonce}"]))
+        out = json.loads(r.stdout).get("out", "") if r.returncode == 0 else ""
+        check("terminal: shell runs in the workspace and sees the same git HEAD",
+              "/projects/gx-cluster" in out and head in out, "" if out else r.stderr.strip()[-200:])
+        check("terminal: file written in terminal is on the host",
+              os.path.exists(hf) and open(hf).read().strip() == f"T-{nonce}")
+    finally:
+        shutil.rmtree(host(d), ignore_errors=True)
+        if os.path.exists(hf):
+            os.remove(hf)
+        if made_tmp and os.path.isdir(f"{HOST_WORKSPACE}/tmp") and not os.listdir(f"{HOST_WORKSPACE}/tmp"):
+            os.rmdir(f"{HOST_WORKSPACE}/tmp")
+    check("fs+terminal: test files removed", not os.path.exists(host(d)) and not os.path.exists(hf))
 
     r = in_cptr(PROMPT, "")
     p = json.loads(r.stdout) if r.returncode == 0 else {}
@@ -143,18 +149,17 @@ def verify_computer(c: Computer, nonce: str) -> None:
     st, _ = c.call("GET", "/v1/models", cookie=False)
     check("gateway: unauthenticated request refused", st == 401, f"HTTP {st}")
 
-    # read-only overlays (docker-compose.computer.yml): enforced, and single-file binds not stale
-    probe = ("for p in .git/config .gitignore; do sha256sum $p; done; "
-             "for d in legenex/host legenex/computer .git/hooks .git/worktrees .kilo; do "
-             "if touch $d/.ro-probe 2>/dev/null; then rm -f $d/.ro-probe; echo WRITABLE $d; fi; done; "
-             "git config --local gx.ro-probe 1 2>/dev/null && git config --local --unset gx.ro-probe && echo WRITABLE .git/config; true")
-    out = run(["docker", "exec", "-w", WORKSPACE, CPTR_CONTAINER, "sh", "-c", probe])
-    check("overlays: hooks, host scripts, git config, worktrees, .gitignore, Computer config are read-only",
-          "WRITABLE" not in out, " ".join(l for l in out.splitlines() if "WRITABLE" in l))
-    hostsums = run(["sh", "-c", f"cd {HOST_WORKSPACE} && sha256sum .git/config .gitignore"])
-    check("overlays: container view of .gitignore and .git/config matches the host (recreate if not)",
-          sorted(l.split()[0] for l in out.splitlines() if len(l.split()) == 2 and len(l.split()[0]) == 64)
-          == sorted(l.split()[0] for l in hostsums.splitlines()))
+    # read-only overlays (docker-compose.computer.yml): mounted, enforced, and the gateway secret unreadable
+    probe = ("cut -d' ' -f5 /proc/self/mountinfo; "
+             "for d in " + " ".join(RO_DIRS) + "; do if touch $d/.ro-probe 2>/dev/null; then rm -f $d/.ro-probe; echo WRITABLE $d; fi; done; "
+             "if [ -w .gitignore ]; then echo WRITABLE .gitignore; fi; "
+             "if cat legenex/gateway/.env >/dev/null 2>&1; then echo READABLE legenex/gateway/.env; fi")
+    out = run(["docker", "exec", "-w", WORKSPACE, CPTR_CONTAINER, "sh", "-c", probe]).splitlines()
+    mounted = set(out)
+    missing = [p for p in RO_DIRS + [".gitignore"] if f"{WORKSPACE}/{p}" not in mounted]
+    check("overlays: every read-only overlay is mounted (recreate gx-computer if not)", not missing, " ".join(missing))
+    bad = [l for l in out if l.startswith(("WRITABLE", "READABLE"))]
+    check("overlays: protected paths read-only; gateway .env unreadable inside Computer", not bad, " ".join(bad))
 
 
 def verify_owui(email: str | None, agent: bool, c: Computer) -> None:
@@ -173,6 +178,8 @@ def verify_owui(email: str | None, agent: bool, c: Computer) -> None:
     check("owui: admin sees the GX aliases and the Computer workspace",
           all(a in ids for a in ("gx-auto", "gx-mini", "gx-code", "gx-max", "cptr/gx-cluster")), str(ids))
     check("owui: GX-Cluster project folder exists", any(f["name"] == "GX-Cluster" for f in r[2]["body"]))
+    rows = owui_sql("select count(*) from model where id like 'cptr/%' or base_model_id like 'cptr/%'")[0][0]
+    check("owui: no model entry or preset exposes cptr/* (keeps it admin-only)", rows == 0, f"{rows} row(s)")
     others = owui_sql("select email from user where role != 'admin' limit 1")
     if others:
         r = owui([{"call": ["GET", "/api/models"]},
@@ -187,22 +194,31 @@ def verify_owui(email: str | None, agent: bool, c: Computer) -> None:
     check("owui: normal inference (gx-mini via LiteLLM)", r["status"] == 200 and "OK-GX" in txt, txt.strip()[:40])
     if not agent:
         return
-    started = int(time.time() * 1000)
+    tag = uuid.uuid4().hex[:10]
+    before = run(["git", "-C", HOST_WORKSPACE, "status", "--porcelain"])
     r = owui([{"call": ["POST", "/api/chat/completions", {"model": "cptr/gx-cluster", "stream": False, "messages": [{"role": "user", "content":
-        "Verification run: do not create, modify or delete any file. Run `git rev-parse --abbrev-ref HEAD` in the workspace, "
-        "then answer on two lines: 'BRANCH: <name>' and 'L-8: <what locked constraint L-8 in the project instructions requires>'."}]}],
-        "timeout": 900}], email)[1]
+        f"Verification run {tag}: do not create, modify or delete any file. Run `echo VERIFY-{tag}; git rev-parse --abbrev-ref HEAD` "
+        "in the workspace, then answer on two lines: 'BRANCH: <name>' and 'L-8: <what locked constraint L-8 in the project "
+        "instructions requires>'."}]}], "timeout": 900}], email)[1]
     txt = (r["body"] or {}).get("choices", [{}])[0].get("message", {}).get("content", "") if isinstance(r["body"], dict) else str(r["body"])
     check("owui -> Computer gateway -> agent -> LiteLLM (ran git, read the project instructions)",
           r["status"] == 200 and "main" in txt and "swapfile-sglang" in txt, txt.strip().replace("\n", " / ")[:160])
-    # remove the verification chat(s) the gateway created, and their task logs
-    for (chat_id,) in cptr_sql("select id from chats where created_at >= ?", (started,)):
-        st, _ = c.call("DELETE", f"/api/chats/{chat_id}")
-        check("cleanup: verification chat deleted in Computer", st == 200, chat_id[:8])
+    check("agent: working tree unchanged by the read-only agent run",
+          run(["git", "-C", HOST_WORKSPACE, "status", "--porcelain"]) == before)
+    # remove only this run's chat(s) and task log(s): identified by the tag, never by time
+    c = Computer(c.username, ttl=900)   # fresh session: the agent call may have outlived the first one
+    tagged = [row[0] for row in cptr_sql("select distinct chat_id from chat_messages where content like ?", (f"%{tag}%",))]
+    for chat_id in tagged:
+        st, _ = c.call("DELETE", f"/api/chats/{chat_id}")   # 404 = already removed with its parent
+    left = cptr_sql("select count(*) from chat_messages where content like ?", (f"%{tag}%",))[0][0]
+    check("cleanup: this run's Computer chat deleted (and only it)", bool(tagged) and left == 0, f"{len(tagged)} chat(s)")
     logs = f"{HOST_WORKSPACE}/.cptr/task_logs"
     for f in os.listdir(logs) if os.path.isdir(logs) else []:
-        if os.path.getmtime(f"{logs}/{f}") * 1000 >= started:
-            os.remove(f"{logs}/{f}")
+        try:
+            if f"VERIFY-{tag}" in open(f"{logs}/{f}", errors="replace").read():
+                os.remove(f"{logs}/{f}")
+        except OSError:
+            pass
     for d in ("chats", "task_logs"):   # Computer recreates these on demand
         p = f"{HOST_WORKSPACE}/.cptr/{d}"
         if os.path.isdir(p) and not os.listdir(p):
@@ -235,7 +251,8 @@ def verify_compaction(email: str | None) -> None:
     q = "What is the maintenance code word I gave you in my very first message? Reply with the code word only."
     plain = [{"role": m["role"], "content": m["content"]} for m in msgs] + [{"role": "user", "content": q}]
     ctrl = owui([{"call": ["POST", "/api/chat/completions", {"model": "gx-mini", "messages": plain, "stream": False}]}], email)[1]
-    check("compaction: control without compaction exceeds gx-mini's real window", ctrl["status"] >= 400,
+    check("compaction: control without compaction exceeds gx-mini's real window",
+          ctrl["status"] >= 400 and "context" in json.dumps(ctrl["body"]).lower(),
           str(ctrl["body"])[:120])
     chat = owui([{"call": ["POST", "/api/v1/chats/new", {"chat": {"title": f"ZZ-TEMP compaction verify {nonce}",
             "models": ["gx-mini"], "messages": msgs, "history": {"messages": {m["id"]: m for m in msgs},
@@ -276,7 +293,9 @@ def main() -> int:
     args = ap.parse_args()
     try:
         ident = canonical_identity(args.email)
-        c = Computer(ident["email"])
+        c = Computer(ident["email"], ttl=1800)
+        check("identity: Computer has exactly one user, the canonical admin",
+              cptr_sql("select count(*) from users")[0][0] == 1 and c.role == "admin")
         check("identity: Computer display name matches Open WebUI", cptr_sql(
             "select display_name from users where id = ?", (c.user_id,))[0][0] == ident["name"])
         verify_computer(c, uuid.uuid4().hex[:10])

@@ -122,6 +122,13 @@ kernel/netplan/RDMA changes.
 cd legenex/gateway
 cp .env.sample .env && chmod 600 .env && $EDITOR .env   # fill in every REQUIRED value
 
+# gx10-01 (D-043): the real file lives OUTSIDE the project tree, because the tree
+# is mounted into Open WebUI Computer. legenex/gateway/.env is a symlink:
+#   mv .env /srv/projects/gx-cluster/secrets/gateway.env && ln -s /srv/projects/gx-cluster/secrets/gateway.env .env
+# Edit /srv/projects/gx-cluster/secrets/gateway.env directly. Never `sed -i` the
+# symlink: that replaces it with a regular file inside the tree (the daily
+# integrity audit and legenex/computer/tools/verify.py both catch it).
+
 # One-time: build the llama-swap image (upstream has no docker CLI, so it
 # cannot spawn model containers; the repo Dockerfile adds it).
 docker compose -f docker-compose.gateway.yml build llama-swap-node01

@@ -23,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   * Open WebUI **GX-Cluster** folder with the project prompt and the
     *GX-Cluster — project instructions* note.
 - `legenex/computer/tools/`: `provision.py` (idempotent integration),
-  `verify.py` (34 live end-to-end checks incl. `--compaction`) and
+  `verify.py` (about 38 live end-to-end checks incl. `--compaction`) and
   `test_tools.py` (offline guards).
 - Open WebUI context compaction **on**: `gx-mini` summariser, threshold/cap
   20000 sized to gx-mini's real 32 768-token window, and a data-framed summary
@@ -42,8 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Computer: `.cptr/system.md` keeps cptr's template placeholders, so
   `CLAUDE.md`, memory, skills and the file tree are injected.
 - Computer: CORS pinned to its own origins, `cap_drop: ALL`, `pids_limit`,
-  `CPTR_AUTO_GITIGNORE_DOT_CPTR=false`. New read-only overlays: `.git/config`,
-  `.git/worktrees`, `.kilo`, `legenex/host`, `.gitignore`, `legenex/computer`.
+  `CPTR_AUTO_GITIGNORE_DOT_CPTR=false` (overlays: see Security).
 - Open WebUI: community sharing and the (already hidden) Arena model disabled.
 
 ### Security
@@ -53,6 +52,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   nodes, after finding them in earlier agent transcripts. Each was verified
   new-accepted/old-refused where applicable. `LITELLM_MASTER_KEY` and
   `GX_SWAP_API_KEY` are pending a decision (B-033).
+- **Incident fixed:** the rotation's atomic rewrite of the gateway `.env`
+  detached Computer's single-file overlay for about 14 minutes. Fixes: the real
+  file moved to `/srv/projects/gx-cluster/secrets/gateway.env` and
+  `legenex/gateway/.env` is now a symlink; `legenex/gateway` is a read-only
+  directory overlay; the four values were rotated again; the integrity audit
+  checks the symlink (B-033).
+- Computer: git is read-only (whole `.git`). Read-only directory overlays for
+  `legenex/{host,gateway,lifecycle,scripts,media,computer}`, `.kilo`,
+  `.githooks` and `ops/git-sync`, with `create_host_path: false`.
+- Autosync refuses `.cptr/*` and `.gitleaks*` files, and runs gitleaks with a
+  pinned config and ignore path; a planted `.gitleaks.toml` could disable it.
 - `.gitignore` ignores Computer workspace state (`**/.cptr/*` except
   `system.md`/`model`, generated images). The repo is public and autosynced.
 

@@ -66,21 +66,67 @@ services:
       #   legenex/lifecycle run by the orchestrator on gx-max acquire/release
       #   legenex/scripts, legenex/media   run by Control Center actions
       #   legenex/computer  this compose file, .env and the host-run tools
-      - ${GX_COMPUTER_PROJECTS:-/home/legenex/Documents/Projects/Server}/gx-cluster/.git:/projects/gx-cluster/.git:ro
-      - ${GX_COMPUTER_PROJECTS:-/home/legenex/Documents/Projects/Server}/gx-cluster/.githooks:/projects/gx-cluster/.githooks:ro
-      - ${GX_COMPUTER_PROJECTS:-/home/legenex/Documents/Projects/Server}/gx-cluster/ops/git-sync:/projects/gx-cluster/ops/git-sync:ro
-      - ${GX_COMPUTER_PROJECTS:-/home/legenex/Documents/Projects/Server}/gx-cluster/.kilo:/projects/gx-cluster/.kilo:ro
-      - ${GX_COMPUTER_PROJECTS:-/home/legenex/Documents/Projects/Server}/gx-cluster/legenex/host:/projects/gx-cluster/legenex/host:ro
-      - ${GX_COMPUTER_PROJECTS:-/home/legenex/Documents/Projects/Server}/gx-cluster/legenex/gateway:/projects/gx-cluster/legenex/gateway:ro
-      - ${GX_COMPUTER_PROJECTS:-/home/legenex/Documents/Projects/Server}/gx-cluster/legenex/lifecycle:/projects/gx-cluster/legenex/lifecycle:ro
-      - ${GX_COMPUTER_PROJECTS:-/home/legenex/Documents/Projects/Server}/gx-cluster/legenex/scripts:/projects/gx-cluster/legenex/scripts:ro
-      - ${GX_COMPUTER_PROJECTS:-/home/legenex/Documents/Projects/Server}/gx-cluster/legenex/media:/projects/gx-cluster/legenex/media:ro
-      - ${GX_COMPUTER_PROJECTS:-/home/legenex/Documents/Projects/Server}/gx-cluster/legenex/computer:/projects/gx-cluster/legenex/computer:ro
+      # create_host_path: false — a missing source fails the start instead of
+      # Docker creating a root-owned path in the tree (no sudo on this node).
+      - type: bind
+        source: ${GX_COMPUTER_PROJECTS:-/home/legenex/Documents/Projects/Server}/gx-cluster/.git
+        target: /projects/gx-cluster/.git
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${GX_COMPUTER_PROJECTS:-/home/legenex/Documents/Projects/Server}/gx-cluster/.githooks
+        target: /projects/gx-cluster/.githooks
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${GX_COMPUTER_PROJECTS:-/home/legenex/Documents/Projects/Server}/gx-cluster/ops/git-sync
+        target: /projects/gx-cluster/ops/git-sync
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${GX_COMPUTER_PROJECTS:-/home/legenex/Documents/Projects/Server}/gx-cluster/.kilo
+        target: /projects/gx-cluster/.kilo
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${GX_COMPUTER_PROJECTS:-/home/legenex/Documents/Projects/Server}/gx-cluster/legenex/host
+        target: /projects/gx-cluster/legenex/host
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${GX_COMPUTER_PROJECTS:-/home/legenex/Documents/Projects/Server}/gx-cluster/legenex/gateway
+        target: /projects/gx-cluster/legenex/gateway
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${GX_COMPUTER_PROJECTS:-/home/legenex/Documents/Projects/Server}/gx-cluster/legenex/lifecycle
+        target: /projects/gx-cluster/legenex/lifecycle
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${GX_COMPUTER_PROJECTS:-/home/legenex/Documents/Projects/Server}/gx-cluster/legenex/scripts
+        target: /projects/gx-cluster/legenex/scripts
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${GX_COMPUTER_PROJECTS:-/home/legenex/Documents/Projects/Server}/gx-cluster/legenex/media
+        target: /projects/gx-cluster/legenex/media
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${GX_COMPUTER_PROJECTS:-/home/legenex/Documents/Projects/Server}/gx-cluster/legenex/computer
+        target: /projects/gx-cluster/legenex/computer
+        read_only: true
+        bind: {create_host_path: false}
       # Single file (no directory to hang it on): the ignore rules that keep
       # .cptr transcripts out of the public repo. A host rewrite of .gitignore
       # detaches it; the autosync forbidden-path guard for .cptr/** is the
       # backstop and tools/verify.py checks the mount is present.
-      - ${GX_COMPUTER_PROJECTS:-/home/legenex/Documents/Projects/Server}/gx-cluster/.gitignore:/projects/gx-cluster/.gitignore:ro
+      - type: bind
+        source: ${GX_COMPUTER_PROJECTS:-/home/legenex/Documents/Projects/Server}/gx-cluster/.gitignore
+        target: /projects/gx-cluster/.gitignore
+        read_only: true
+        bind: {create_host_path: false}
       # Host Grok Build CLI binary only (statically linked). Host auth is NOT
       # mounted. A `grok login` inside Computer is stored in /home/cptr/.grok
       # in the container layer (lost on recreate), not in the data volume.
