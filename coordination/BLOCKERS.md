@@ -1529,3 +1529,81 @@ for this job. Open WebUI compaction is sized to the real 32 768 instead.
 **Action (human sign-off):** either set gx-mini `max_input_tokens` to about
 24576 and `Tier.MINI.max_context` to 32768 (then restart gx-litellm and the
 orchestrator), or give gx-mini `--ctx-size 131072` again if memory allows.
+
+## B-033 (S2) — LITELLM_MASTER_KEY and GX_SWAP_API_KEY were exposed in agent transcripts and are not yet rotated
+
+**Status:** OPEN (needs a human decision). **Found:** 2026-09-26 (Computer
+integration repair). Values were never printed; matches were found by in-script
+comparison.
+
+The values of six internal credentials appeared in earlier agent transcripts
+(Claude Code session `4013d3c8…` and others, Kilo's `kilo.db`,
+`~/.grok/sessions/*`, and two gx10-02 transcripts and archives). None is in git
+history. Four were rotated on 2026-09-26 and verified: `POSTGRES_PASSWORD`,
+`LITELLM_UI_PASSWORD`, `GX_MEDIA_API_KEY`, `GX_VOICE_API_KEY` (procedure:
+D-043 / CHANGELOG). The new LiteLLM UI password is in
+`/srv/projects/gx-cluster/secrets/litellm/ui-password` (0600). Two were **not**
+rotated:
+
+* **`LITELLM_MASTER_KEY`.** Still used by an *unidentified off-box
+  OpenAI-Python client*: about 2 600 gx-code calls a day over the Tailscale
+  proxy, user agent `OpenAI/Python 2.24.0`, likely a laptop on the tailnet. It
+  is also used by the Kilo CLI (`~/.local/share/kilo/auth.json`), AgentOS
+  (`~/.config/agentos-control-center/llm.env`), and the orchestrator and
+  Control Center (`.env`, which a rotation updates). The Control Center
+  Connections page tells people to use the master key. Rotating now would
+  silently cut off clients the agent cannot reach. Open WebUI no longer uses
+  it (D-043).
+  **Action:** identify the off-box client and give it, Kilo and AgentOS their
+  own virtual keys (Control Center → API Keys). Then rotate: edit `.env`,
+  recreate `litellm` with the unset-wrapper command from B-024/B-027, and
+  restart `gx-orchestrator` and `gx-control-ui`.
+* **`GX_SWAP_API_KEY`.** Internal only. Rotating recreates llama-swap on both
+  nodes, which unloads and reloads every text model (an outage of all aliases
+  for minutes). Its protective value is limited while the llama-server
+  upstreams (`gx-llama-swap-node01:19001/19011`) answer without a key on
+  `gx_gateway`. **Action:** schedule a window. Unload via the supervisors,
+  write both nodes' `.env`, recreate `llama-swap-node02`, `llama-swap-node01`
+  and `litellm`, then restart the orchestrator and Control Center.
+
+External-provider credentials (Nous inference key in Open WebUI connection 0,
+Hugging Face token, GitHub CLI token, Cloudflare tunnel token, xAI/Grok and
+Kilo logins) were **not examined**; the session's permission policy blocked
+reading those stores. If an earlier agent printed any of them, rotate it in
+that provider's console.
+
+## B-034 (S2) — Security follow-ups from the Computer integration review that need sign-off
+
+**Status:** OPEN. **Found:** 2026-09-26, independent security review. Fixed in
+the same pass: read-only overlays for everything the host runs *unattended*
+(`legenex/host`, `.git/config`, `.git/worktrees`, `.kilo`, `.gitignore`,
+`legenex/computer`), CORS pinning, `cap_drop: ALL`, `pids_limit`, key
+concurrency limit, community sharing off, arena off. Remaining:
+
+1. **Computer edits code that host services run on their next restart.**
+   `legenex/control-ui`, `legenex/orchestrator`, `legenex/gateway` (including
+   LiteLLM `config.yaml` and `gx_hooks`) and the llama-swap yaml are
+   executed by `legenex` (docker group, so root-equivalent) on both nodes, and
+   autosync ships them to gx10-02. The user asked for Computer to work on the
+   real checkout, so these stay writable. The strict alternative is a separate
+   Computer clone or worktree that autosync does not push, with human-reviewed
+   promotion.
+2. **The public Open WebUI admin login is the gate to (1)**, via
+   `cptr/gx-cluster`, whose tools are auto-approved. Recommended: Cloudflare
+   Access with MFA in front of `chat.legenex.co`, Always Use HTTPS/HSTS, and a
+   shorter `auth.jwt_expiry` than `4w`. A `Secure` session cookie would break
+   plain-HTTP Tailscale access to `:3000`.
+3. **The orchestrator (`:18900`) has no inbound authentication** and is
+   reachable from containers via `host.docker.internal`. It relays with the
+   master key, and `POST /lifecycle/gx-max/acquire` can take over both nodes.
+   Fix: enforce a bearer key (LiteLLM already sends `GX_ORCHESTRATOR_API_KEY`,
+   currently `not-required`).
+4. **Unauthenticated llama-server upstreams** (`:19001`, `:19011`) on
+   `gx_gateway`. Other host services are reachable from Computer too. Fix: a
+   separate Docker network shared only with `gx-litellm`, and upstream
+   `--api-key`.
+5. **Open WebUI** listens on `0.0.0.0:3000` (plain HTTP on the LAN) and
+   reflects any CORS origin with credentials. Its session secret lives in the
+   container layer. Fix: bind and CORS settings, and persist
+   `WEBUI_SECRET_KEY`, in one planned recreate.
+6. **Tailscale ACL:** restrict `:8000` (Computer) to admin devices.

@@ -23,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   * Open WebUI **GX-Cluster** folder with the project prompt and the
     *GX-Cluster — project instructions* note.
 - `legenex/computer/tools/`: `provision.py` (idempotent integration),
-  `verify.py` (32 live end-to-end checks incl. `--compaction`) and
+  `verify.py` (34 live end-to-end checks incl. `--compaction`) and
   `test_tools.py` (offline guards).
 - Open WebUI context compaction **on**: `gx-mini` summariser, threshold/cap
   20000 sized to gx-mini's real 32 768-token window, and a data-framed summary
@@ -48,6 +48,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Rotated `POSTGRES_PASSWORD` (ALTER ROLE via SCRAM verifier),
+  `LITELLM_UI_PASSWORD`, `GX_MEDIA_API_KEY` and `GX_VOICE_API_KEY` on both
+  nodes, after finding them in earlier agent transcripts. Each was verified
+  new-accepted/old-refused where applicable. `LITELLM_MASTER_KEY` and
+  `GX_SWAP_API_KEY` are pending a decision (B-033).
 - `.gitignore` ignores Computer workspace state (`**/.cptr/*` except
   `system.md`/`model`, generated images). The repo is public and autosynced.
 

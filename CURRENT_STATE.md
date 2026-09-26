@@ -3,6 +3,47 @@
 **This file must always reflect reality.** If you are a new agent resuming this
 work, read this first, then ARCHITECTURE.md (what is locked), then BLOCKERS.md.
 
+## LATEST UPDATE — 2026-09-26 (Open WebUI ↔ Computer integration repaired end to end, D-043)
+
+Supersedes the two 2026-09-25 entries below: everything they list as "not
+done" or "UI step" is now done, through the apps' own APIs.
+
+* **Open WebUI data untouched.** 4 users, 59 chats, 277 messages, 1 memory and
+  3 files are unchanged, with identical content hashes against the pre-change
+  backup. Added: the **GX-Cluster** folder and its instructions note.
+* **Identity:** Computer's only user is the Open WebUI admin, with the same
+  login name, display name and avatar. No SSO exists between these versions;
+  see D-043.
+* **Computer:**
+  * Workspace **GX-Cluster** = `/projects/gx-cluster`; the empty
+    `/home/cptr` default was retired.
+  * `CLAUDE.md` is injected via `.cptr/system.md` placeholders.
+  * LiteLLM connection with key `gx-computer` (4 aliases, default `gx-auto`).
+  * Gateway key lives only in Open WebUI.
+  * CORS pinned, `cap_drop: ALL`, new read-only overlays.
+  * `.cptr/*` is gitignored.
+* **Open WebUI:**
+  * LiteLLM connection moved off the **master key** to virtual key
+    `open-webui`.
+  * Computer connection with 5 conversation headers. The model is
+    **GX-Cluster - /projects/gx-cluster** (`cptr/gx-cluster`), admin-only.
+  * Compaction **on**: gx-mini summariser, 20000 threshold, sized to
+    gx-mini's real 32 768 window (B-032).
+  * Community sharing and Arena off.
+* **Credentials:** rotated and verified `POSTGRES_PASSWORD`,
+  `LITELLM_UI_PASSWORD`, `GX_MEDIA_API_KEY`, `GX_VOICE_API_KEY`.
+  `LITELLM_MASTER_KEY` and `GX_SWAP_API_KEY` await a decision (B-033).
+  Security follow-ups needing sign-off: B-034.
+* **Proof:**
+  * `python3 legenex/computer/tools/verify.py --compaction`: live end to end.
+    Every Computer file operation is checked on the host, plus git, terminal,
+    the gateway, agent inference and the long-chat compaction.
+  * `ops/git-sync/integrity-audit.sh`: 18/18 PASS.
+* **Re-apply anything:** `python3 legenex/computer/tools/provision.py`
+  (idempotent).
+* **Backups:** `/srv/projects/gx-cluster/backups/computer-repair-20260925T225949Z/`
+  (pre-change) and `…-post` (post-change).
+
 ## UPDATE — 2026-09-25 (verification pass, Open WebUI + Computer)
 
 Verified live: memory CRUD (in-process, throwaway test user, cleaned up, legit

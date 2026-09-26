@@ -64,9 +64,26 @@ Why not single sign-on (checked against the installed source, 2026-09-26):
   ignores `**/.cptr/*` except `system.md` and `model`, plus
   `/generated-image-*` and `/edited-image-*`. `CPTR_AUTO_GITIGNORE_DOT_CPTR=false`
   stops Computer rewriting `.gitignore`. `tools/test_tools.py` guards these rules.
-* Read-only overlays: `legenex/gateway/.env` (placeholder `env.hidden`),
-  `.git/hooks`, `.githooks`, `ops/git-sync`. Normal source edits and
-  `git add/commit` work.
+* Read-only overlays cover everything the host runs *unattended* or that
+  could subvert git or publishing:
+  * `legenex/gateway/.env` (the placeholder `env.hidden`);
+  * `.git/hooks`, `.githooks`, `.git/config` (no planted `core.fsmonitor`,
+    `hooksPath` or filter drivers) and `.git/worktrees`;
+  * `.kilo`;
+  * `ops/git-sync`;
+  * `legenex/host` (`gx-hostwatch.sh` runs every 60 s on both nodes);
+  * `.gitignore`;
+  * `legenex/computer` (this compose file and the tools the host runs).
+
+  Normal source edits, `git status`, `add` and `commit` work; `git config`
+  and `push -u` do not. Single-file binds pin the inode, so recreate the
+  container after the host rewrites `.gitignore` or `.git/config`. `verify.py`
+  detects this.
+* **Residual risk (B-034):** other service code (`legenex/control-ui`,
+  `legenex/orchestrator`, `legenex/gateway`, llama-swap yaml) stays editable,
+  because Computer is meant to work on the real project. The host runs that
+  code on the next service restart, on both nodes. The strict alternative is a
+  separate Computer clone with reviewed promotion.
 
 ## Local inference (Computer → LiteLLM)
 
@@ -127,7 +144,7 @@ stores it Fernet-encrypted in its DB.
 | Command (from `legenex/computer/tools`) | What it does |
 |---|---|
 | `python3 provision.py` | Idempotent: LiteLLM keys, Computer profile, connection, default model, workspace and gateway key, then Open WebUI connections, the GX-Cluster folder and note, and compaction. `--rotate-gateway-key` replaces the gateway key in both apps. |
-| `python3 verify.py [--compaction]` | Live end-to-end check (32 checks with `--compaction`). Every Computer file operation is checked on the host. It cleans up after itself. |
+| `python3 verify.py [--compaction]` | Live end-to-end check (34 checks with `--compaction`). Every Computer file operation is checked on the host. It cleans up after itself. |
 | `python3 -m unittest -v test_tools` | Offline guards: redaction, `.cptr` ignore rules, template placeholders. |
 
 Admin calls use short-lived sessions minted **inside** each container with
