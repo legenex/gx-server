@@ -33,7 +33,11 @@ DEFAULT_MODEL = "gx-auto"                   # router alias; /projects/gx-cluster
 CONNECTION_NAME = "GX LiteLLM (local)"
 GATEWAY_KEY_NAME = "open-webui"
 WORKSPACE_MODEL = "cptr/gx-cluster"
-GX_COMPUTER_LIMITS = {"max_parallel_requests": 4}   # the agent needs few concurrent calls
+GX_COMPUTER_LIMITS = {"max_parallel_requests": 4, "rpm_limit": 120, "tpm_limit": 600_000}
+# D-044: Computer's own gateway key never reaches gx-max (the two-node distributed model, which
+# takes over both nodes). gx-auto stays: the orchestrator never acquires gx-max on its behalf.
+# Local models cost nothing, so a spend budget would never bind; rate and concurrency limits do.
+GX_COMPUTER_MODELS = ["gx-auto", "gx-mini", "gx-code"]
 MODEL_ORDER = ["gx-auto", "gx-mini", "gx-code", "gx-max"]
 FOLDER_NAME = "GX-Cluster"
 NOTE_TITLE = "GX-Cluster — project instructions"
@@ -105,7 +109,7 @@ def provision_computer(ident: dict, cptr_key: str) -> Computer:
     # local inference: LiteLLM on gx_gateway with the least-privilege key, public aliases only
     st, conns = c.call("GET", "/api/admin/connections")
     same = [x for x in (conns or {}).get("connections", []) if x.get("base_url") == LITELLM_FROM_CPTR]
-    spec = {"name": CONNECTION_NAME, "api_key": cptr_key, "enabled": True, "models": MODEL_ORDER}
+    spec = {"name": CONNECTION_NAME, "api_key": cptr_key, "enabled": True, "models": GX_COMPUTER_MODELS}
     if same:
         cid = same[0]["id"]
         st, _ = c.call("PUT", f"/api/admin/connections/{cid}", spec)
@@ -256,9 +260,10 @@ def main() -> int:
     try:
         ident = canonical_identity(args.email)
         step("canonical_identity", found=True, role=ident["role"])
-        a1, cptr_key = ensure_litellm_key("gx-computer", SECRETS / "computer" / "litellm-api-key", GX_COMPUTER_LIMITS)
+        a1, cptr_key = ensure_litellm_key("gx-computer", SECRETS / "computer" / "litellm-api-key", GX_COMPUTER_LIMITS,
+                                     GX_COMPUTER_MODELS)
         a2, owui_key = ensure_litellm_key("open-webui", SECRETS / "open-webui" / "litellm-api-key")
-        step("litellm.keys", gx_computer=a1, open_webui=a2, aliases=list(PUBLIC_ALIASES), gx_computer_limits=GX_COMPUTER_LIMITS)
+        step("litellm.keys", gx_computer=a1, open_webui=a2, aliases=list(PUBLIC_ALIASES), gx_computer_limits=GX_COMPUTER_LIMITS, gx_computer_models=GX_COMPUTER_MODELS)
         c = provision_computer(ident, cptr_key)
         ensure_gateway_key(c, ident, args.rotate_gateway_key)
         provision_owui(ident, owui_key)

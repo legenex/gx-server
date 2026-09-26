@@ -170,13 +170,14 @@ def _key_works(secret: str) -> bool:
         return False
 
 
-def ensure_litellm_key(name: str, store: Path, limits: dict | None = None) -> tuple[str, str]:
+def ensure_litellm_key(name: str, store: Path, limits: dict | None = None,
+                       models: list[str] | None = None) -> tuple[str, str]:
     """Return (action, secret) for a LiteLLM virtual key limited to the public aliases.
 
     Created once through the Control Center KeyManager (same metadata as keys made in
     Control Center -> API Keys) and kept 0600 in the secrets store. A stored key that the
     gateway no longer accepts (revoked in Control Center) is an error, not a silent success.
-    `limits` (e.g. max_parallel_requests) are applied on every run.
+    `limits` (e.g. max_parallel_requests) and `models` (default: all public aliases) are applied on every run.
     """
     km = KeyManager(LITELLM_HOST, _master_key)
     try:
@@ -189,7 +190,7 @@ def ensure_litellm_key(name: str, store: Path, limits: dict | None = None) -> tu
         else:
             if name in keys:
                 raise ToolError(f"LiteLLM key '{name}' exists but {store} is missing; revoke it in Control Center first")
-            created = km.create({"name": name, "models": list(PUBLIC_ALIASES), "expiry": "never", **(limits or {})},
+            created = km.create({"name": name, "models": list(models or PUBLIC_ALIASES), "expiry": "never", **(limits or {})},
                                 user="gx-computer-tools")
             store.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
             fd = os.open(store, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -198,8 +199,9 @@ def ensure_litellm_key(name: str, store: Path, limits: dict | None = None) -> tu
             secret, action = created["secret"], "created"
             keys = {k["name"]: k for k in km.list()}
         entry = keys.get(name)
-        if entry and limits and any(entry.get(k) != v for k, v in limits.items()):
-            km._call("POST", "/key/update", {"key": entry["id"], **limits})
+        want = {**(limits or {}), **({"models": list(models)} if models else {})}
+        if entry and want and any(entry.get(k) != v for k, v in want.items()):
+            km._call("POST", "/key/update", {"key": entry["id"], **want})
             action += "+limits"
     except KeyManagerError as exc:
         raise ToolError(f"LiteLLM key management failed: {exc}") from None

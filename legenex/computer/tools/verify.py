@@ -95,7 +95,7 @@ def verify_computer(c: Computer, nonce: str) -> None:
     st, models = c.call("GET", "/api/chats/models")
     ids = sorted(m["id"] for m in (models or {}).get("models", []))
     check("computer: models are the public aliases, default gx-auto",
-          ids == ["gx-auto", "gx-code", "gx-max", "gx-mini"] and (models or {}).get("default") == "gx-auto", str(ids))
+          ids == ["gx-auto", "gx-code", "gx-mini"] and (models or {}).get("default") == "gx-auto", str(ids))
     st, listing = c.call("GET", f"/api/workspace/files?path={c.q(WORKSPACE)}")
     names = [e.get("name") for e in (listing or {}).get("entries", [])]
     check("computer: real project files visible", "CLAUDE.md" in names and "legenex" in names, f"{len(names)} entries")
