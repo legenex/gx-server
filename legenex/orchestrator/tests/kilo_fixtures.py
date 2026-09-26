@@ -201,12 +201,15 @@ def kilo_continuation(task: str, *, native_tool_role: bool = True) -> dict[str, 
 
 
 #: (task text, expected tier, why) for first-turn Kilo requests.
+#: NOTE (B-032, 2026-09-26): Kilo attaches a ~47k-token toolbox to every request. gx-mini's real per-request
+#: window is 32768 tokens (llama.cpp --ctx-size 65536 --parallel 2), so these conversational first turns can no
+#: longer fit gx-mini and correctly route to the smallest tier that holds them (gx-code).
 KILO_ROUTING_CASES: tuple[tuple[str, str, str], ...] = (
-    ("are you there?", "gx-mini", "presence check with the whole toolbox attached"),
-    ("hello", "gx-mini", "greeting"),
-    ("what can you help me with in this repo?", "gx-mini", "capability question, no task"),
-    ("who are you and which model are you?", "gx-mini", "identity question"),
-    ("thanks, that's all", "gx-mini", "acknowledgement"),
+    ("are you there?", "gx-code", "presence check with the whole toolbox attached"),
+    ("hello", "gx-code", "greeting"),
+    ("what can you help me with in this repo?", "gx-code", "capability question, no task"),
+    ("who are you and which model are you?", "gx-code", "identity question"),
+    ("thanks, that's all", "gx-code", "acknowledgement"),
     (
         "Fix the failing test in tests/test_orders.py and update the orders endpoint so the "
         "total includes tax.",

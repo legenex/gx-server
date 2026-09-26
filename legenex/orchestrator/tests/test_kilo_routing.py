@@ -37,11 +37,13 @@ class TestKiloFirstTurnRouting(unittest.TestCase):
                 d = route(kilo_request(task))
                 self.assertEqual(d.tier.value, expected, d.reasons)
 
-    def test_schema_is_large_but_fits_mini(self):
+    def test_schema_is_large_and_exceeds_the_real_mini_window(self):
         f = extract_features(kilo_request("are you there?"))
         self.assertGreater(f.tool_schema_tokens, 10_000, "fixture must carry a heavy schema")
         self.assertGreater(f.prompt_tokens, 30_000, "fixture must carry a heavy prompt")
-        self.assertLessEqual(f.total_context_needed, TIERS[Tier.MINI].max_context)
+        # B-032: gx-mini's real window is 32768, so this heavy request must not be sized for it.
+        self.assertGreater(f.total_context_needed, TIERS[Tier.MINI].max_context)
+        self.assertLessEqual(f.total_context_needed, TIERS[Tier.CODE].max_context)
         self.assertEqual(f.intent, INTENT_CONVERSATIONAL)
         self.assertLessEqual(f.complexity_score, 0)
 
@@ -53,11 +55,11 @@ class TestKiloFirstTurnRouting(unittest.TestCase):
 
     def test_user_message_tag_is_extracted(self):
         d = route(kilo_request("are you there?", tag="user_message"))
-        self.assertIs(d.tier, Tier.MINI)
+        self.assertIs(d.tier, Tier.CODE)  # B-032: the ~47k toolbox cannot fit gx-mini's real 32768 window
 
     def test_huge_max_tokens_does_not_escalate(self):
         d = route(kilo_request("hello", max_tokens=262_144))
-        self.assertIs(d.tier, Tier.MINI)
+        self.assertIs(d.tier, Tier.CODE)  # capacity, not max_tokens, decides: still the smallest tier that fits
 
     def test_decision_explains_schema_was_ignored(self):
         d = route(kilo_request("are you there?"))
