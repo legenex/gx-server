@@ -61,6 +61,7 @@ set -uo pipefail
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 ORCH="${GX_ORCH:-http://127.0.0.1:18900}"
+. "${repo}/legenex/lifecycle/orch-auth.sh"
 GATEWAY="${GX_GATEWAY:-http://127.0.0.1:4000}"
 NODE2_SSH="${GX_NODE2_SSH:-legenex-02@gx10-02}"
 NODE2_FABRIC_A="${GX_NODE2_FABRIC_A:-192.168.100.11}"
@@ -117,7 +118,7 @@ remote() {
 cleanup_trap() {
   if [ "${CLEANUP_ON_EXIT}" -eq 1 ]; then
     log "=== --cleanup-on-exit: releasing gx-max (best effort) ==="
-    curl -fsS -m "${RELEASE_TIMEOUT}" -X POST "${ORCH}/lifecycle/gx-max/release" \
+    orch_curl -fsS -m "${RELEASE_TIMEOUT}" -X POST "${ORCH}/lifecycle/gx-max/release" \
       -H 'Content-Type: application/json' -d '{"force": true, "restore": true}' >/dev/null 2>&1 || true
   fi
 }
@@ -174,7 +175,7 @@ preflight() {
     || { step_fail "orchestrator" "not reachable at ${ORCH}/health"; return 1; }
 
   local state
-  state=$(curl -fsS -m 10 "${ORCH}/lifecycle/gx-max/status" 2>/dev/null | json_get "['state']")
+  state=$(orch_curl -fsS -m 10 "${ORCH}/lifecycle/gx-max/status" 2>/dev/null | json_get "['state']")
   case "${state}" in
     down|"") step_pass "gx-max is DOWN before this run starts (clean baseline)" ;;
     ready)   step_warn "gx-max already READY" "it will simply be adopted; the acquire step below should return immediately" ;;
@@ -194,7 +195,7 @@ do_acquire() {
   log "=== acquire (POST ${ORCH}/lifecycle/gx-max/acquire) ==="
   local start end elapsed resp http_code body
   start=$(date +%s)
-  resp=$(curl -sS -m "$((ACQUIRE_TIMEOUT + 30))" -w '\n__HTTP__%{http_code}' \
+  resp=$(orch_curl -sS -m "$((ACQUIRE_TIMEOUT + 30))" -w '\n__HTTP__%{http_code}' \
     -X POST "${ORCH}/lifecycle/gx-max/acquire" \
     -H 'Content-Type: application/json' \
     -d "{\"timeout\": ${ACQUIRE_TIMEOUT}}" 2>&1)
@@ -242,7 +243,7 @@ health_check_both_ranks() {
     && step_pass "node2 rank1 container running" \
     || step_fail "node2 rank1 container" "status=${r1}"
 
-  orch_state=$(curl -fsS -m 10 "${ORCH}/lifecycle/gx-max/status" 2>/dev/null | json_get "['state']")
+  orch_state=$(orch_curl -fsS -m 10 "${ORCH}/lifecycle/gx-max/status" 2>/dev/null | json_get "['state']")
   [ "${orch_state}" = "ready" ] \
     && step_pass "orchestrator reports state=ready" \
     || step_fail "orchestrator state" "expected ready, got '${orch_state}'"
@@ -299,7 +300,7 @@ else: print((d['choices'][0]['message'].get('content') or '').strip())
 do_release() {
   log "=== release (POST ${ORCH}/lifecycle/gx-max/release) ==="
   local resp http_code body
-  resp=$(curl -sS -m "$((RELEASE_TIMEOUT + 30))" -w '\n__HTTP__%{http_code}' \
+  resp=$(orch_curl -sS -m "$((RELEASE_TIMEOUT + 30))" -w '\n__HTTP__%{http_code}' \
     -X POST "${ORCH}/lifecycle/gx-max/release" \
     -H 'Content-Type: application/json' -d '{"force": false, "restore": true}' 2>&1)
   http_code=$(printf '%s' "${resp}" | grep -o '__HTTP__[0-9]*' | tail -1 | sed 's/__HTTP__//')
@@ -350,7 +351,7 @@ verify_restore_normal() {
   sleep 5
 
   local state
-  state=$(curl -fsS -m 10 "${ORCH}/lifecycle/gx-max/status" 2>/dev/null | json_get "['state']")
+  state=$(orch_curl -fsS -m 10 "${ORCH}/lifecycle/gx-max/status" 2>/dev/null | json_get "['state']")
   [ "${state}" = "down" ] \
     && step_pass "orchestrator reports state=down after release" \
     || step_fail "orchestrator state after release" "expected down, got '${state}'"

@@ -309,7 +309,8 @@ def test_connection(cfg, client: str, secret: Any) -> dict:
             decision = None
             try:
                 _, journal = http_json("GET", f"{cfg.orchestrator_base}/routing/decisions?fingerprint="
-                                       f"{_fingerprint(messages)}&limit=5", timeout=5)
+                                       f"{_fingerprint(messages)}&limit=5", timeout=5,
+                                       headers=bearer(cfg.secret("GX_ORCHESTRATOR_API_KEY")))
                 decision = next((d for d in (journal or {}).get("data", []) if d.get("event") == "decision"), None)
             except HTTPError:
                 pass

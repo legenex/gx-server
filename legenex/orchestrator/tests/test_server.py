@@ -235,6 +235,9 @@ class _FakeLifecycle:
     def acquire(self, timeout=None):
         self.acquired += 1
 
+    def events(self, after=0, limit=200):
+        return {"events": []}
+
     def mark_used(self):
         pass
 
@@ -286,6 +289,7 @@ class TestGxAutoBehaviour(unittest.TestCase):
             "lifecycle": lifecycle,
             "health": _FakeHealth(),
             "journal": journal,
+            "metrics": _srv.TextMetrics(),
         })
         httpd = _TS(("127.0.0.1", 0), handler)
         _threading.Thread(target=httpd.serve_forever, daemon=True).start()

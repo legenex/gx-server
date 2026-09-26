@@ -34,6 +34,19 @@ sys.path.insert(0, str(REPO / "legenex" / "orchestrator" / "tests"))
 
 GATEWAY = os.environ.get("GX_GATEWAY_URL", "http://127.0.0.1:4000/v1")
 ORCH = os.environ.get("GX_ORCH_URL", "http://127.0.0.1:18900")
+
+
+def _orch_req(url):
+    """Orchestrator request carrying its bearer key (D-044)."""
+    key = os.environ.get("GX_ORCHESTRATOR_API_KEY", "")
+    if not key or key == "not-required":
+        try:
+            for line in open("/srv/projects/gx-cluster/secrets/gateway.env"):
+                if line.startswith("GX_ORCHESTRATOR_API_KEY="):
+                    key = line.split("=", 1)[1].strip()
+        except OSError:
+            pass
+    return urllib.request.Request(url, headers={"Authorization": f"Bearer {key}"} if key else {})
 OUT_DIR = Path(os.environ.get("GX_ACCEPTANCE_DIR", "/srv/logs/acceptance"))
 
 
@@ -403,7 +416,7 @@ def run_auto_kilo() -> list[dict]:
             s, err = {}, f"HTTP {exc.code}"
         # The gateway may not forward our request-id header; the messages
         # fingerprint identifies this exact request either way.
-        with urllib.request.urlopen(f"{ORCH}/routing/decisions?fingerprint={fp}&limit=10", timeout=10) as r:
+        with urllib.request.urlopen(_orch_req(f"{ORCH}/routing/decisions?fingerprint={fp}&limit=10"), timeout=10) as r:
             recs = json.load(r)["data"]
         decisions = [x for x in recs if x.get("event") == "decision"]
         completed = [x for x in recs if x.get("event") == "completed"]
@@ -440,7 +453,7 @@ def _auto_case(label: str, payload: dict, expected: str | None, *, expect_status
         status = exc.code
         err = exc.read().decode("utf-8", "replace")[:400]
     secs = round(time.monotonic() - t0, 2)
-    with urllib.request.urlopen(f"{ORCH}/routing/decisions?fingerprint={fp}&limit=10", timeout=10) as r:
+    with urllib.request.urlopen(_orch_req(f"{ORCH}/routing/decisions?fingerprint={fp}&limit=10"), timeout=10) as r:
         recs = json.load(r)["data"]
     decision = next((x for x in recs if x.get("event") == "decision"), {})
     done = next((x for x in recs if x.get("event") == "completed"

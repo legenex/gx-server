@@ -30,7 +30,7 @@ from .config import UIConfig
 from .models import ResultLog
 from .redact import redact
 from .services import SWAP_MODELS, Cluster
-from .util import HTTPError, http, http_json, run, ssh_args
+from .util import HTTPError, bearer, http, http_json, run, ssh_args
 
 GXMAX_CONFIRM = "gx-max"
 FORCE_CONFIRM = "FORCE RELEASE"
@@ -260,6 +260,7 @@ def build_registry(r: ActionRunner) -> dict[str, ActionSpec]:
     cfg, cl = r.cfg, r.cluster
     specs: list[ActionSpec] = []
     orch = cfg.orchestrator_base
+    orch_h = bearer(cfg.secret("GX_ORCHESTRATOR_API_KEY"))   # D-044
 
     # ============================ gx-max (orchestrator lifecycle only) ====
     def gxmax_acquire(job: Job) -> bool:
@@ -268,7 +269,7 @@ def build_registry(r: ActionRunner) -> dict[str, ActionSpec]:
         t0 = time.time()
         try:
             status, body = http_json("POST", f"{orch}/lifecycle/gx-max/acquire",
-                                     body={"timeout": 1800}, timeout=1900)
+                                     body={"timeout": 1800}, timeout=1900, headers=orch_h)
         except HTTPError as exc:
             job.log(exc.message)
             r.results.record("gx-max", "load", False, exc.message)
@@ -288,7 +289,7 @@ def build_registry(r: ActionRunner) -> dict[str, ActionSpec]:
             t0 = time.time()
             try:
                 status, body = http_json("POST", f"{orch}/lifecycle/gx-max/release",
-                                         body={"force": force, "restore": True}, timeout=1200)
+                                         body={"force": force, "restore": True}, timeout=1200, headers=orch_h)
             except HTTPError as exc:
                 job.log(exc.message)
                 return False

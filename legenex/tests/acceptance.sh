@@ -18,6 +18,7 @@ repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 ENV_FILE="${repo}/legenex/gateway/.env"
 GATEWAY="${GX_GATEWAY:-http://127.0.0.1:4000}"
 ORCH="${GX_ORCH:-http://127.0.0.1:18900}"
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lifecycle/orch-auth.sh"
 
 if [ -f "${ENV_FILE}" ]; then
   KEY="$(grep '^LITELLM_MASTER_KEY=' "${ENV_FILE}" | cut -d= -f2-)"
@@ -189,7 +190,7 @@ t_reason(){
 # hardcoded: the moment gx-max becomes admissible again these tests run by
 # themselves. See coordination/BLOCKERS.md B-022.
 gx_max_blocked(){
-  curl -fsS -m 10 "${ORCH}/health/detailed" 2>/dev/null | python3 -c "
+  orch_curl -fsS -m 10 "${ORCH}/health/detailed" 2>/dev/null | python3 -c "
 import json,sys
 try: d=json.load(sys.stdin)
 except Exception: print(''); raise SystemExit

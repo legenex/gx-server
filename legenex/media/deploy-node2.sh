@@ -23,6 +23,7 @@ WITH_COMFY=0
 N2="${GX_NODE2_SSH:-legenex-02@gx10-02}"
 N2_REPO="${GX_NODE2_REPO:-/home/legenex-02/Documents/Projects/Server/gx-cluster}"
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
+. "${REPO}/legenex/lifecycle/orch-auth.sh"
 HEAD="$(git -C "${REPO}" rev-parse HEAD)"
 
 if [ -n "$(git -C "${REPO}" status --porcelain -- legenex/media)" ]; then
@@ -39,7 +40,7 @@ done
 if [ "${WITH_COMFY}" = 1 ]; then
   busy="$(curl -fsS -m 5 http://192.168.100.11:18800/health | python3 -c 'import json,sys; d=json.load(sys.stdin); print(int(bool(d.get("busy") or d.get("video_queue_depth"))))')"
   [ "${busy}" = 0 ] || { echo "a media generation is running; not recreating ComfyUI" >&2; exit 1; }
-  gx_state="$(curl -fsS -m 5 http://127.0.0.1:18900/lifecycle/gx-max/status | python3 -c 'import json,sys; print(json.load(sys.stdin)["state"])')"
+  gx_state="$(orch_curl -fsS -m 5 http://127.0.0.1:18900/lifecycle/gx-max/status | python3 -c 'import json,sys; print(json.load(sys.stdin)["state"])')"
   [ "${gx_state}" = down ] || { echo "gx-max is ${gx_state}; not touching the media stack" >&2; exit 1; }
 fi
 

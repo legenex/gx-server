@@ -26,6 +26,7 @@ Usage:
 
 from __future__ import annotations
 
+import os
 import argparse
 import json
 import subprocess
@@ -190,7 +191,9 @@ class OrchestratorSnapshot:
 def fetch_orchestrator_snapshot(base_url: str, *, timeout: float = 5.0) -> OrchestratorSnapshot:
     """GET `<base_url>/health/detailed` once. Never raises."""
     try:
-        resp = get_json(f"{base_url.rstrip('/')}/health/detailed", timeout=timeout)
+        key = os.environ.get("GX_ORCHESTRATOR_API_KEY", "").strip()   # D-044
+        headers = {"Authorization": f"Bearer {key}"} if key and key != "not-required" else None
+        resp = get_json(f"{base_url.rstrip('/')}/health/detailed", headers=headers, timeout=timeout)
         body = resp.json()
     except Exception as exc:  # noqa: BLE001
         return OrchestratorSnapshot(reachable=False, error=repr(exc))

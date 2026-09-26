@@ -67,6 +67,9 @@ class Cluster:
     def litellm_headers(self) -> dict[str, str]:
         return bearer(self.key("LITELLM_MASTER_KEY"))
 
+    def orch_headers(self) -> dict[str, str]:
+        return bearer(self.key("GX_ORCHESTRATOR_API_KEY"))
+
     def media_headers(self) -> dict[str, str]:
         return bearer(self.key("GX_MEDIA_API_KEY"))
 
@@ -111,8 +114,9 @@ class Cluster:
         if c.offline:
             return {"offline": True}
         swap_h = self.swap_headers()
+        orch_h = self.orch_headers()
         out: dict[str, Any] = {
-            "orchestrator": _probe(http_json, "GET", f"{c.orchestrator_base}/health/detailed", timeout=4),
+            "orchestrator": _probe(http_json, "GET", f"{c.orchestrator_base}/health/detailed", headers=orch_h, timeout=4),
             "litellm_live": _probe(http_json, "GET", f"{c.litellm_base}/health/liveliness", timeout=4),
             "litellm_ready": _probe(http_json, "GET", f"{c.litellm_base}/health/readiness", timeout=4),
             "swap_node1": _probe(http_json, "GET", f"{c.node1_swap_base}/v1/models", headers=swap_h, timeout=4),
@@ -123,7 +127,7 @@ class Cluster:
             "agentos": _probe(_http_status, "http://127.0.0.1:4173/api/health", timeout=4),
             "sglang": _probe(http_json, "GET", f"{c.gxmax_base}/health", timeout=3),
             # D-039: per-alias budget, routing and last-request facts.
-            "text_status": _probe(http_json, "GET", f"{c.orchestrator_base}/text/status", timeout=4),
+            "text_status": _probe(http_json, "GET", f"{c.orchestrator_base}/text/status", headers=orch_h, timeout=4),
             "gateway_text": gateway_text_metrics(c.srv_logs / "gx-text" / "gateway-text.jsonl"),
         }
         if out["sglang"]["ok"]:
@@ -142,9 +146,10 @@ class Cluster:
         if self.cfg.offline:
             return {"status": {"state": "down"}, "events": {"events": [], "history": []}}
         base = self.cfg.orchestrator_base
+        h = self.orch_headers()
         return {
-            "status": _probe(http_json, "GET", f"{base}/lifecycle/gx-max/status", timeout=4),
-            "events": _probe(http_json, "GET", f"{base}/lifecycle/gx-max/events?limit=400", timeout=4),
+            "status": _probe(http_json, "GET", f"{base}/lifecycle/gx-max/status", headers=h, timeout=4),
+            "events": _probe(http_json, "GET", f"{base}/lifecycle/gx-max/events?limit=400", headers=h, timeout=4),
         }
 
     def gxmax_state(self) -> str:
