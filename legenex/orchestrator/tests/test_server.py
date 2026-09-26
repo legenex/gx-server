@@ -260,6 +260,7 @@ class _Cfg:
         self.gxmax_base = mx
         self.gxmax_model_id = "/model"
         self.upstream_timeout = 10
+        self.gxmax_mode = "deepseek"   # these tests exercise the SGLang path
 
     def gateway_key(self):
         return None
