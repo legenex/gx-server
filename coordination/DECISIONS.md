@@ -1575,10 +1575,23 @@ B-037 was permission-blocked in that session.
    `backups/open-webui/20260926T221601Z-prehardening` (webui.db snapshot +
    counts: 4 users, 59 chats, 1 memory, 3 files, 1 folder, 1 note — identical
    after the recreate).
-5. **rotate-swap-key.sh hardened**: bearer keys now travel via a curl config
-   on a pipe (local and node-2), never argv, matching orch-auth.sh; preflight
-   PASS at 22:23 UTC; still NOT executed (needs the ~5-minute text outage
-   window; B-037).
+5. **rotate-swap-key.sh hardened** (independent-review findings repaired
+   2026-09-27): bearer keys travel via a curl config on a pipe (local and
+   node-2), never argv; the NEW key reaches both `.env` writes through stdin
+   only (node 2 via ssh stdin into an environment variable), never argv; `die()`
+   rolls back deterministically when a rotation is in flight, so the `|| die`
+   paths no longer depend on bash ERR-trap semantics; the ERR trap is armed
+   *before* the first `.env` write instead of after both; `rollback()` is
+   idempotent, guards re-entry, and re-verifies both nodes' models after
+   restoring. All failure paths were proven in a sandbox (die, ERR trap,
+   double-entry). Preflight PASS at 22:42 UTC; still NOT executed (needs the
+   ~5-minute text outage window; B-037).
+6. **Orchestrator placeholder is fail-closed**: `GX_ORCHESTRATOR_API_KEY=CHANGEME`
+   (the `.env.sample` placeholder) now counts as unset in `config.py` and in
+   `orch-auth.sh`, so a fresh deployment refuses everything except `/health`
+   instead of accepting `Bearer CHANGEME`. Regression test added
+   (`TestOrchestratorKeyPlaceholder`). Independent-review finding; no live
+   impact (the real key was already set and verified end-to-end).
 6. The empty untracked `.agents/` directory (referenced by nothing, writable
    inside Computer) was removed as a planted-instruction-shape gap.
 

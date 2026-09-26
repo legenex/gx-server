@@ -1756,12 +1756,15 @@ copies. Original finding preserved below.
 the key only from its container environment and the resident models run inside its network namespace,
 so the rotation reloads them: gx-mini back in about 1 minute, gx-code (a backend on each node,
 reloading in parallel) in about 4, gx-auto follows gx-code; about 5 minutes in all, with gx-max down.
-Preflight re-run 2026-09-26 22:23 UTC after D-045's argv-hygiene fix (bearer keys now travel via a
-curl config on a pipe, never argv, on both nodes): PASS — gx-max down, no media stack on node 2, RAM
-node1=41G / node2=84G, the current key accepted by both llama-swaps, no established upstream
-connections. `--execute` backs up both `.env` files first and rolls back on failure. Consumers:
-llama-swap node 1 and node 2, gx-litellm, gx-orchestrator, gx-control-ui. Executing needs an
-authorized outage window (~5 minutes of text-model unavailability).
+Preflight re-run 2026-09-26 22:42 UTC after D-045's argv/rollback hardening (bearer keys via a curl
+config on a pipe; the NEW key reaches both `.env` writes through stdin only; `die` and the ERR trap —
+armed *before* the first write — restore the previous key deterministically, and `rollback` is
+idempotent and re-verifies both nodes' models afterwards): PASS — gx-max down, no media stack on
+node 2, RAM node1=43G / node2=83G, the current key accepted by both llama-swaps, no established
+upstream connections. `--execute` backs up both `.env` files first and rolls back on every failure
+path (sandbox-proven). Consumers: llama-swap node 1 and node 2, gx-litellm, gx-orchestrator,
+gx-control-ui. Executing needs an authorized outage window (~5 minutes of text-model
+unavailability).
 
 **Open WebUI response hardening — DEPLOYED (D-045).** The staged compose replaced
 `/opt/open-webui/compose.yaml`: HSTS, `nosniff`, referrer policy, `SAMEORIGIN` framing, CORS/Socket.IO

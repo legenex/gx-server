@@ -73,9 +73,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and the session secret persisted to `secrets/open-webui/webui-secret.env`
   (0600, same value — nobody logged out). Data volume reused; counts
   identical before/after; disallowed origins get no allow-origin header.
-- `rotate-swap-key.sh`: bearer keys now travel via a curl config on a pipe,
-  never argv; `--preflight` PASS; staged, NOT executed (needs the outage
+- `rotate-swap-key.sh`: bearer keys travel via a curl config on a pipe and the
+  NEW key reaches both `.env` writes through stdin only (node 2 via ssh stdin
+  to an environment variable) — never argv; `die()` and the ERR trap (armed
+  before the first write) restore the previous key deterministically,
+  `rollback()` is idempotent and re-verifies both nodes' models afterwards;
+  the local stdin write's heredoc/pipe conflict was caught and fixed in a
+  sandbox dry-run. `--preflight` PASS; staged, NOT executed (needs the outage
   window).
+- Orchestrator: the `.env.sample` placeholder now counts as unset — a fresh
+  deployment with `GX_ORCHESTRATOR_API_KEY=CHANGEME` refuses everything except
+  `/health` instead of accepting `Bearer CHANGEME` (config + `orch-auth.sh`,
+  regression test added; independent-review finding).
 - Orchestrator authentication live (D-044): every route except `/health`,
   `/healthz` and `/` requires `Authorization: Bearer $GX_ORCHESTRATOR_API_KEY`
   (constant-time, fail-closed); LiteLLM, Control Center, `status_cli` and the
