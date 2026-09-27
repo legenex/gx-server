@@ -1,3 +1,8 @@
+gigpilot:4d1f4e1fde32-20260926t231805z 9619e60b9639 429MB
+gigpilot:cdd7eddda462-20260926t230226z 0a8e39b74fe5 429MB
+gigpilot:01fc921c6edc-20260926t223433z e491ca161ca7 429MB
+gigpilot:1eb0de76e424-20260926t221142z 4a22eafdccb0 429MB
+ghcr.io/open-webui/open-webui:v0.11.4 a8ccfc7b6c9c 4.14GB
 financialos:1fbad5aa9ce5-dirty 013e9041f78c 369MB
 financialos:1fbad5aa9ce5-dirty-20260918t223339z 013e9041f78c 369MB
 financialos:59199d8eac17-dirty 1ef0a9f36862 369MB
@@ -10,6 +15,7 @@ financialos:5a36adc94971-dirty-20260918t183553z 3020e08ceb80 367MB
 financialos:5a36adc94971-dirty-20260918t183253z 7216eae2be95 367MB
 financialos:5a36adc94971-dirty-20260918t182707z f19bec871968 367MB
 financialos:5a36adc94971-dirty-20260918t182232z 64eda202ab9e 367MB
+caddy:2 8b20b62e1c76 60.4MB
 financialos-build:runtime-probe 0547f983071c 317MB
 financialos-build:deps-probe 35c65ddb688a 657MB
 gx-llama-swap:latest 4d8b312788b3 467MB
@@ -29,5 +35,6 @@ node:22-bookworm-slim 97aaa653fb55 247MB
 postgres:17-bookworm 05794c28e6ee 459MB
 redis:7-alpine 9a56851f1a97 39.5MB
 postgres:16-alpine c05eced0bdb4 288MB
+ghcr.io/open-webui/computer:0.9.21 6973841e1585 768MB
 alpine:latest 1991bd789d71 8.66MB
 nvidia/cuda:12.6.0-base-ubuntu24.04 a2877da37062 271MB

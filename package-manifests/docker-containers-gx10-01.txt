@@ -1,18 +1,25 @@
-gx-code legenex/llama-cpp-spark:latest Up 10 minutes
-gx-mini legenex/llama-cpp-spark:latest Up 11 minutes
-gx-litellm ghcr.io/berriai/litellm:main-stable Up 13 minutes (healthy)
-gx-llama-swap-node01 gx-llama-swap:latest Up 38 minutes (healthy)
-pageflo-gx10-preview-postgres-1 postgres:16-alpine Up 38 minutes (healthy)
-pageflo-gx10-preview-redis-1 redis:7-alpine Up 38 minutes
-financialos-app-1 financialos:1fbad5aa9ce5-dirty-20260918t223339z Up 38 minutes (healthy)
-financialos-worker-1 financialos:1fbad5aa9ce5-dirty-20260918t223339z Up 38 minutes (healthy)
-financialos-db-1 postgres:17-bookworm Up 38 minutes (healthy)
-financialos-test-testdb-1 postgres:17-bookworm Exited (0) 4 days ago
-gx-litellm-db postgres:16-alpine Up 38 minutes (healthy)
-datascraper-postgres-1 postgres:16-alpine Exited (0) 12 days ago
-datascraper-redis-1 redis:7-alpine Exited (0) 12 days ago
-reachinbox-mcp-app-1 reachinbox/app Exited (255) 2 weeks ago
-reachinbox-mcp-webhook-ingress-1 reachinbox/webhook-ingress Exited (255) 2 weeks ago
-reachinbox-mcp-web-1 reachinbox/web Exited (255) 2 weeks ago
-reachinbox-mcp-postgres-1 postgres:16-alpine Exited (255) 2 weeks ago
-open-webui ghcr.io/open-webui/open-webui:main Up 38 minutes (healthy)
+gigpilot-edge-1 caddy:2 Up 2 hours (healthy)
+gigpilot-app-1 gigpilot:4d1f4e1fde32-20260926t231805z Up 2 hours (healthy)
+gigpilot-worker-1 gigpilot:4d1f4e1fde32-20260926t231805z Up 2 hours (healthy)
+gigpilot-web-1 gigpilot:4d1f4e1fde32-20260926t231805z Up 2 hours (healthy)
+gigpilot-migrate-1 gigpilot:4d1f4e1fde32-20260926t231805z Exited (0) 2 hours ago
+gigpilot-db-1 postgres:17-bookworm Up 2 hours (healthy)
+open-webui ghcr.io/open-webui/open-webui:v0.11.4 Up 3 hours (healthy)
+gx-litellm ghcr.io/berriai/litellm:main-stable Up 3 hours (healthy)
+gx-computer ghcr.io/open-webui/computer:0.9.21 Up 4 hours (healthy)
+gx-litellm-db postgres:16-alpine Up 6 hours (healthy)
+gx-mini legenex/llama-cpp-spark:latest Up 42 hours
+gx-code legenex/llama-cpp-spark:latest Up 42 hours
+gx-llama-swap-node01 gx-llama-swap:latest Up 42 hours (healthy)
+pageflo-gx10-preview-postgres-1 postgres:16-alpine Up 42 hours (healthy)
+pageflo-gx10-preview-redis-1 redis:7-alpine Up 42 hours
+financialos-app-1 financialos:1fbad5aa9ce5-dirty-20260918t223339z Up 42 hours (healthy)
+financialos-worker-1 financialos:1fbad5aa9ce5-dirty-20260918t223339z Up 42 hours (healthy)
+financialos-db-1 postgres:17-bookworm Up 42 hours (healthy)
+financialos-test-testdb-1 postgres:17-bookworm Exited (0) 7 days ago
+datascraper-postgres-1 postgres:16-alpine Exited (0) 2 weeks ago
+datascraper-redis-1 redis:7-alpine Exited (0) 2 weeks ago
+reachinbox-mcp-app-1 reachinbox/app Exited (255) 3 weeks ago
+reachinbox-mcp-webhook-ingress-1 reachinbox/webhook-ingress Exited (255) 3 weeks ago
+reachinbox-mcp-web-1 reachinbox/web Exited (255) 3 weeks ago
+reachinbox-mcp-postgres-1 postgres:16-alpine Exited (255) 3 weeks ago

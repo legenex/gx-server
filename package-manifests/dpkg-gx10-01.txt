@@ -79,7 +79,7 @@ cloud-initramfs-dyn-netconf	0.49~24.04.1
 cloudflared	2026.9.1
 cmake	3.28.3-1build7
 cmake-data	3.28.3-1build7
-code	1.138.0-1789458676
+code	1.139.0-1790091463
 colord	1.4.7-1build2
 colord-data	1.4.7-1build2
 command-not-found	23.04.0
