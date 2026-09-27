@@ -1,0 +1,54 @@
+{
+  "captured": "2026-09-27T15:10:00+02:00",
+  "note": "pre-cleanup filesystem state; see INVENTORY-20260927.md for full plan",
+  "gx10-01": {
+    "disk_root_gb": {
+      "total": 916,
+      "used": 697,
+      "avail": 173
+    },
+    "srv": {
+      "models_gb": 268,
+      "projects_gb": 0.7,
+      "logs_gb": 0.3,
+      "cache_kb": 20
+    },
+    "home_gb": {
+      "Documents": 209,
+      "of_which_backups_restic": 183,
+      "of_which_dumps": 13,
+      "Downloads": 2.2
+    },
+    "docker": {
+      "images_notable": {
+        "sglang": 33.3,
+        "vllm-gb10-flashnext": 20.6,
+        "open-webui-main": 4.6,
+        "playwright": 2.46,
+        "ffmpeg": 0.487
+      },
+      "build_cache_gb": 11.8
+    },
+    "swap_root_owned_gb": {
+      "swapfile-sglang": 48,
+      "swap.img": 16
+    }
+  },
+  "gx10-02": {
+    "disk_root_gb": {
+      "total": 916,
+      "used": 499,
+      "avail": 371
+    },
+    "srv": {
+      "models_gb": 241,
+      "ai_stack_gb": 6.8,
+      "projects_gb": 0.765,
+      "logs_gb": 0.13,
+      "cache_mb": 5
+    },
+    "home_gb": {
+      "Documents_backups_restic": 140
+    }
+  }
+}
