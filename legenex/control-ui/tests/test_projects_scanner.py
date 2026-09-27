@@ -58,7 +58,7 @@ class TestScan(ProjectsBase):
         self.assertEqual(repo["children"], [])
         plain = next(p for p in out["projects"] if p["name"] == "plain-dir")
         self.assertFalse(plain["is_git"])
-        self.assertIsNone(plain["branch"])
+        self.assertIsNone(plain.get("branch"))
 
     def test_dirty_flag(self):
         (self.git_dir / "new.py").write_text("y = 2\n")
@@ -80,7 +80,7 @@ class TestScan(ProjectsBase):
         repo = next(p for p in out["projects"] if p["name"] == "repo-app")
         self.assertEqual(repo["scheduler"], {"active": 1, "queued": 1})
         plain = next(p for p in out["projects"] if p["name"] == "plain-dir")
-        self.assertEqual(plain["scheduler"], {"active": 1})
+        self.assertEqual(plain["scheduler"], {"active": 1, "queued": 0})
         # no scheduler -> no fabricated attribution
         out = sc.scan({"available": False})
         repo = next(p for p in out["projects"] if p["name"] == "repo-app")

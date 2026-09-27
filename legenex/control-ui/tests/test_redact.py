@@ -10,7 +10,7 @@ from gx_control_ui.redact import MASK, is_credential_key, redact, redact_obj
 class TestRedact(unittest.TestCase):
     def test_exact_secret_values(self):
         key = fake_key("zz")
-        with env_vars(GX_SWAP_API_KEY=key):
+        with env_vars(GX_ORCHESTRATOR_API_KEY=key):
             out = redact(f"curl -H x:{key} http://h")
         self.assertNotIn(key, out)
         self.assertIn(MASK, out)

@@ -34,7 +34,7 @@ class TestPinCompare(PinBase):
         # the live submodule does not exist in the fixture world -> drift
         self.assertIsNone(commit_pin["live"])
         self.assertFalse(commit_pin["match"])
-        self.assertIn(out["policy"], json.dumps(out))
+        self.assertIn(out["policy"], json.dumps(out, ensure_ascii=False))
 
     def test_live_commit_match(self):
         self.uv._submodule_commit = lambda: PINNED_COMMIT  # type: ignore[method-assign]
@@ -60,7 +60,16 @@ class TestPinCompare(PinBase):
         self.assertFalse(rev["match"])  # no manifest on disk -> cannot verify
 
 
-class TestCheck(PinBase):
+class TestCheck(unittest.TestCase):
+    """check() against a live-mode env; upstream probes are stubbed."""
+
+    def setUp(self):
+        self.env = TempEnv(offline=False)
+        self.uv = UpdatesView(self.env.cfg)
+
+    def tearDown(self):
+        self.env.cleanup()
+
     def test_check_queries_upstream_and_reports_only(self):
         self.uv._hf_revisions = lambda repo: {"sha": "64ba41b6c916a587db06eae2e19b7845f7be6e6b"} \
             if "Mia-AiLab" in repo else {"sha": "ffffffffffffffffffffffffffffffffffffffff"}  # type: ignore[method-assign]
@@ -71,9 +80,14 @@ class TestCheck(PinBase):
         self.assertTrue(rows["dsv41-flash-exl3-stock"]["match"])
         self.assertFalse(rows["dsv41-flash-exl3-uncensored"]["match"])
         self.assertEqual(len(out["drift"]), 1)
+        # nothing anywhere suggests an update will be applied
+        self.assertNotIn("will update", json.dumps(out))
 
     def test_check_offline_is_honest(self):
-        out = self.uv.check()
+        env = TempEnv()  # offline
+        self.addCleanup(env.cleanup)
+        uv = UpdatesView(env.cfg)
+        out = uv.check()
         self.assertFalse(out["results"][0]["checked"])
         self.assertEqual(out["results"][0]["name"], "offline mode")
 

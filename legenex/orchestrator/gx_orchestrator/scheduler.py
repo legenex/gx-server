@@ -30,6 +30,7 @@ slot for the next promotion.
 from __future__ import annotations
 
 import collections
+import itertools
 import json
 import logging
 import os
@@ -167,6 +168,7 @@ class Scheduler:
         self._history: "collections.deque[dict]" = collections.deque(maxlen=history_cap)
 
         self._stopping = threading.Event()
+        self._tmp_seq = itertools.count()
         self._reaper = threading.Thread(target=self._reap_loop, name="gx-sched-reaper", daemon=True)
 
         self._load_history_file()
@@ -188,7 +190,10 @@ class Scheduler:
             }
         try:
             self._queue_path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = self._queue_path.with_suffix(".tmp")
+            # Unique per write: two threads persisting concurrently must not
+            # delete each other's temp file between write and rename.
+            tmp = self._queue_path.with_name(
+                f"{self._queue_path.name}.{os.getpid()}.{next(self._tmp_seq)}.tmp")
             tmp.write_text(json.dumps(payload, indent=1), encoding="utf-8")
             os.replace(tmp, self._queue_path)
         except OSError:

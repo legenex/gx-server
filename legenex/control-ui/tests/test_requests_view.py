@@ -23,7 +23,7 @@ def _record(i=0, **over):
 class RequestsBase(unittest.TestCase):
     def setUp(self):
         self.records = [_record(0), _record(1, state="active", agent="planner", project="proj-b"),
-                        _record(2, state="error", profile="fast")]
+                        _record(2, state="error", profile="fast", project="proj-c")]
         self.stub = StubUpstream({
             ("GET", "/scheduler/status"): (200, {"queued": self.records[:1], "active": self.records[1:2],
                                                  "counts": {"queued": 1, "active": 1}}),

@@ -4,7 +4,6 @@ orchestrator, with confirmation, args validation and audit."""
 from __future__ import annotations
 
 import json
-import os
 import time
 import unittest
 from pathlib import Path
@@ -26,14 +25,20 @@ class ActionsBase(unittest.TestCase):
             ("POST", "/lifecycle/gx-max/acquire"): (200, {"state": "ready", "last_startup_seconds": 300}),
             ("POST", "/lifecycle/gx-max/release"): (200, {"state": "down"}),
             ("POST", "/lifecycle/gx-max/drain"): (200, {"state": "draining"}),
+            ("POST", "/scheduler/cancel"): (200, {"id": "req-123", "state": "cancelled"}),
+            ("POST", "/scheduler/retry"): (200, {"id": "req-123", "state": "queued"}),
         })
         self.env = TempEnv(orchestrator_base=self.stub.url, offline=False)
+        self.addCleanup(self.stub.close)
+        self.addCleanup(self.env.cleanup)
+        # gx10-02 "reachable": no real SSH in a unit test (the stub orchestrator
+        # carries every lifecycle call).
+        patcher = mock.patch.object(Cluster, "_node2_facts",
+                                    lambda self: {"role": "node2", "reachable": True, "ssh_ms": 1})
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self.results = ResultLog(self.env.cfg.state_dir / "results.json")
         self.runner = ActionRunner(self.env.cfg, Cluster(self.env.cfg), self.results)
-
-    def tearDown(self):
-        self.stub.close()
-        self.env.cleanup()
 
     def submit(self, name, confirm=None, args=None):
         return self.runner.submit(name, user="admin", ip="127.0.0.1", confirm=confirm, args=args)
@@ -74,8 +79,12 @@ class TestGxMaxLifecycle(ActionsBase):
     def test_start_requires_the_typed_confirmation_and_a_valid_profile(self):
         with self.assertRaises(ActionRefused):
             self.submit("gxmax_start")
-        with self.assertRaises(ActionRefused):
-            self.submit("gxmax_start", confirm="gx-max", args={"profile": "nope"})
+        # an unknown profile is refused at execution (the registry is the
+        # source of truth), so the job itself fails honestly
+        job = self.submit("gxmax_start", confirm="gx-max", args={"profile": "nope"})
+        done = self.wait(job)
+        self.assertEqual(done["state"], "failed")
+        self.assertIn("unknown profile", " ".join(done["output"]))
         job = self.submit("gxmax_start", confirm="gx-max", args={"profile": "fast"})
         done = self.wait(job)
         self.assertEqual(done["state"], "succeeded", done["output"])
@@ -143,7 +152,6 @@ class TestSafety(ActionsBase):
         self.assertIn('"user": "admin"', text)
 
     def test_benchmark_refuses_when_the_suite_is_missing(self):
-        self.env.cfg.bench_dir  # the fixture repo has no ops/bench
         job = self.submit("benchmark_run", confirm=True, args={"name": "startup"})
         done = self.wait(job)
         self.assertEqual(done["state"], "failed")

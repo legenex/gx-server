@@ -219,7 +219,9 @@ class FileManager:
         real = self.resolve(dir_path, for_write=True)
         if not real.is_dir():
             raise FileManagerError("upload target must be a directory", 400, "not_dir")
-        name = self._safe_name(Path(filename).name if filename else "")
+        # The WHOLE supplied name is validated (no '/', '\', control chars, no
+        # leading dot) — never a basename of it, so "a/b" and "../evil" refuse.
+        name = self._safe_name(filename if isinstance(filename, str) else "")
         target = real / name
         # A name that would escape after resolution is impossible (we write to
         # a validated dir + basename), but re-check anyway, belt and braces.

@@ -52,7 +52,7 @@ class TempEnv:
                         str(root / "files" / "archive"), str(root / "files" / "models"),
                         str(root / "files" / "cache"), str(root / "srvlogs")),
             file_protected=(str(root / "files" / "backups" / "GX"), str(root / "files" / "projects" / "gx-backup")),
-            trash_root=root / "trash",
+            trash_root=root / "files" / "cache" / "trash",  # like /srv/cache/trash: inside a root
             watchdog_incidents=root / "state" / "watchdog" / "incidents.jsonl",
             registry_path=root / "registry.json",
             mia_dir=root / "mia-dsv41",      # absent: update pins show honest drift

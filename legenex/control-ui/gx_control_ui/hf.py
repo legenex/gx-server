@@ -430,11 +430,14 @@ def classify(repo: str, tags: list[str], files: list[dict], config: dict | None,
     if kind == "checkpoint" and safetensors and len(safetensors) <= 3 and not config and \
             any(t in tagset for t in ("comfyui", "diffusers", "text-to-image", "image-to-video")):
         kind = "comfyui_model"
-    # Music models are their own task class (D-036): never a chat or image model.
+    # Music models are recognised as their own task class (label only).
     music = repo.lower().startswith("ace-step/") or bool(
         tagset & {"text-to-audio", "text-to-music", "music-generation", "music"})
     if music and kind not in ("not_a_checkpoint",):
         kind = "music_model"
+    # V4.1: media classes stay as descriptive labels (so a repo can be
+    # recognised), but this cluster no longer runs any media stack — there is
+    # no gx-image / gx-video / gx-music path to suggest.
 
     trust_remote = bool(config and (config.get("auto_map") or (config.get("text_config") or {}).get("auto_map")))
     quant = _quant(tags, files)
@@ -452,6 +455,7 @@ def classify(repo: str, tags: list[str], files: list[dict], config: dict | None,
 
     runtimes: list[str] = []
     aliases: list[str] = []
+    warnings = []
     if kind == "checkpoint" and has_gguf:
         runtimes.append("llama.cpp")
     if kind == "checkpoint" and safetensors and config:
@@ -460,15 +464,15 @@ def classify(repo: str, tags: list[str], files: list[dict], config: dict | None,
             runtimes.append("Mia EXL3 kit (gx-max)")
             aliases.append("gx-max")
     if kind in ("comfyui_model", "lora", "vae", "text_encoder", "controlnet", "comfyui_workflow"):
-        runtimes.append("ComfyUI (media router)")
-        aliases += ["gx-image", "gx-video"] if kind != "comfyui_workflow" else []
-    warnings = []
+        runtimes = []
+        aliases = []
+        warnings.append("Media artefact: this cluster no longer runs a media stack. It cannot be "
+                        "staged or served here.")
     if kind == "music_model":
-        runtimes = ["ACE-Step 1.5 (gx-music, gx10-02)"]
-        aliases = ["gx-music"]
-        warnings.append("Music model: it can only replace a gx-music component. It is staged on gx10-02 and "
-                        "switched with the documented gx-music procedure (Docs > Model Manager); the "
-                        "Model Manager never assigns it to a text or image alias.")
+        runtimes = []
+        aliases = []
+        warnings.append("Music model: this cluster no longer runs a music stack. It cannot be "
+                        "staged or served here.")
     if kind == "not_a_checkpoint":
         warnings.append("This repository has no model weights (for example a refusal-direction or patch "
                         "file). It cannot be served on its own.")

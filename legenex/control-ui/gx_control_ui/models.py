@@ -249,7 +249,10 @@ def registry_view(cluster, cfg) -> dict:
         "schema": reg.get("schema"),
         "registry_ok": ok,
         "cluster": reg.get("cluster") or {},
-        "aliases": {a: dict(s) for a, s in (reg.get("aliases") or {}).items() if isinstance(s, dict)},
+        # Only the known aliases are ever echoed (a pre-schema-2 registry may
+        # still name retired aliases; they must not leak back to a page).
+        "aliases": {a: dict(s) for a, s in (reg.get("aliases") or {}).items()
+                    if isinstance(s, dict) and a in ALIASES},
         "capabilities": reg.get("capabilities") or {},
         "runtimes": runtimes(reg),
         "fabric": fabric_rails(reg),

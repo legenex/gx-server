@@ -314,7 +314,9 @@ def build_registry(r: ActionRunner) -> dict[str, ActionSpec]:
 
     def gxmax_drain(job: Job) -> bool:
         job.log("POST gx-orchestrator /lifecycle/gx-max/drain (stop accepting; in-flight finish)")
-        ok, body = orch_call(job, "POST", "/lifecycle/gx-max/drain", {}, 600)
+        # Any 2xx is success: the orchestrator answers "draining" (a normal
+        # mid-transition state), not ready/down.
+        ok, body = orch_call(job, "POST", "/lifecycle/gx-max/drain", {}, 600, ok_states=())
         job.result = body if isinstance(body, dict) else {}
         r.results.record("gx-max", "drain", ok, json.dumps(body)[:300])
         return ok

@@ -328,7 +328,7 @@ class TestAuthenticatedApi(ServerBase):
         self.assertEqual(status, 400)
         self.assertEqual(body["error"]["code"], "refused")
         # a valid arg is accepted (the job itself will fail offline: 202 anyway)
-        status, _, body = self.post("/api/actions/scheduler_cancel", {"request_id": "abc"})
+        status, _, body = self.post("/api/actions/scheduler_retry", {"request_id": "abc"})
         self.assertEqual(status, 202, body)
 
     def test_body_limits(self):
@@ -367,7 +367,7 @@ class TestAuthenticatedApi(ServerBase):
 
     def test_updates_view_never_mutates(self):
         _, _, body = self.req("GET", "/api/updates")
-        self.assertIn(body["policy"], json.dumps(body))
+        self.assertIn(body["policy"], json.dumps(body, ensure_ascii=False))
         self.assertIn("never updates", body["policy"])
         status, _, out = self.post("/api/updates/check")
         self.assertEqual(status, 200)

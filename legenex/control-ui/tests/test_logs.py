@@ -118,10 +118,15 @@ class TestStreams(unittest.TestCase):
         with mock.patch.object(logs, "run", fake_run):
             with mock.patch.object(logs, "stream_by_id", lambda cfg, i: Stream(
                     "rank1", "rank1", "node2", "file", "/home/legenex-02/gx-max-rank1.log", "g")):
-                data = read_stream(env.cfg, "rank1", "25; rm -rf /")
+                # a hostile "lines" value is clamped to the default — it never
+                # reaches the remote command, and the target is shlex-quoted
+                data = read_stream(env.cfg, "rank1", "25; rm -rf /", "")
+                remote_hostile = captured["args"][-1]
+                data = read_stream(env.cfg, "rank1", 25, "")
         self.assertEqual(data["lines"], ["l1", "l2"])
-        remote = captured["args"][-1]
-        self.assertEqual(remote, "tail -n 25 -- /home/legenex-02/gx-max-rank1.log")
+        self.assertEqual(remote_hostile, f"tail -n {logs.DEFAULT_LINES} -- "
+                                          "/home/legenex-02/gx-max-rank1.log")
+        self.assertEqual(captured["args"][-1], "tail -n 25 -- /home/legenex-02/gx-max-rank1.log")
 
 
 if __name__ == "__main__":

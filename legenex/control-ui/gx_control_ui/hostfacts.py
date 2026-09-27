@@ -29,11 +29,9 @@ USER_UNITS = {
         "gx-orchestrator.service", "gx-control-ui.service", "gx-hostwatch.timer",
         "gx-git-watch.service", "gx-git-autosync.timer", "gx-git-daily-audit.timer",
         "agentos-control-center.service", "agentos-supervisor.service",
-        "gx-playground.service",
     ],
     "node2": [
         "gx-hostwatch.timer", "gx-git-reconcile.timer", "gx-git-daily-audit.timer",
-        "gx-music.service",
     ],
 }
 

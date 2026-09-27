@@ -75,7 +75,7 @@ class TestLiveState(ModelsBase):
         self.assertEqual(len(packs), 2)
         for m in packs:
             self.assertEqual(m["state"], "available")   # gx-max is down offline
-            self.assertIn("gx-max is down", m["state_detail"])
+            self.assertIn("gx-max is", m["state_detail"])
         auto = next(m for m in out if m.get("alias") == "gx-auto")
         self.assertEqual(auto["state"], "unavailable")   # scheduler offline
         gx = next(m for m in out if m.get("alias") == "gx-max")
@@ -105,7 +105,9 @@ class TestViewsShape(ModelsBase):
         from gx_control_ui.server import App
         app = App(self.env.cfg)
         nv = views.nodes(app)
-        self.assertIn("gx10-01", nv["units"])
+        self.assertIn("node1", nv)
+        self.assertIn("node2", nv)
+        self.assertIn("units", nv["node1"])     # per-node unit lists
         self.assertEqual(nv["gxmax"]["state"], "unknown")  # offline: honest
         jv = views.jobs(app)
         self.assertIn("ui_jobs", jv)

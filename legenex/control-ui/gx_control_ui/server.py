@@ -96,7 +96,7 @@ CSP = (
 SECURITY_HEADERS = {
     "Content-Security-Policy": CSP,
     "X-Content-Type-Options": "nosniff",
-    "X-Frame-Options": "DENIED",
+    "X-Frame-Options": "DENY",
     "Referrer-Policy": "no-referrer",
     "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
     "Cross-Origin-Opener-Policy": "same-origin",
@@ -1055,7 +1055,15 @@ def api_setup_test(h: Handler) -> None:
 # ================================================================ API keys
 @route("GET", r"/api/keys")
 def api_keys(h: Handler) -> None:
-    h._json(200, {"keys": h.app.keys.list(), "gateway_url": h.app.cfg.public_gateway_url})
+    try:
+        keys = h.app.keys.list()
+    except KeyError_ as exc:
+        # Honest degradation (offline mode, master key not loaded): the page
+        # loads and says why, instead of a red banner.
+        h._json(200, {"keys": [], "unavailable": True, "reason": redact(str(exc)),
+                      "gateway_url": h.app.cfg.public_gateway_url})
+        return
+    h._json(200, {"keys": keys, "gateway_url": h.app.cfg.public_gateway_url})
 
 
 @route("POST", r"/api/keys")

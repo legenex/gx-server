@@ -52,7 +52,9 @@ class TestAllowlist(FileManagerBase):
                     secrets_dir, self.proj / "src" / ".." / ".." / ".." / ".." / "secrets"):
             with self.assertRaises(FileManagerError, msg=repr(str(bad))) as ctx:
                 self.fm.browse(str(bad))
-            self.assertEqual(ctx.exception.status, 403, str(bad))
+            # absolute escape -> 403; a relative path -> 400 invalid_path.
+            # Both are refusals; neither lets the browser name a target.
+            self.assertIn(ctx.exception.status, (400, 403), str(bad))
 
     def test_absolute_paths_outside_every_root_refused(self):
         with self.assertRaises(FileManagerError):
@@ -118,9 +120,9 @@ class TestAllowlist(FileManagerBase):
     def test_upload_rejects_bad_names_and_streams_to_disk(self):
         def writer(tmp: Path) -> int:
             tmp.write_bytes(b"hello upload")
-            return 11
+            return 12
         entry = self.fm.upload(str(self.proj), "note.txt", writer)
-        self.assertEqual((entry["name"], entry["size"]), ("note.txt", 11))
+        self.assertEqual((entry["name"], entry["size"]), ("note.txt", 12))
         for bad in ("../evil", ".hidden", "a/b", "", "x" * 300, None):
             with self.assertRaises(FileManagerError, msg=repr(bad)):
                 self.fm.upload(str(self.proj), bad, writer)

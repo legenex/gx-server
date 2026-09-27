@@ -54,7 +54,8 @@ class TestParsers(unittest.TestCase):
         self.assertTrue(rows[2]["gid"].endswith("000b"))
         # the registry pin (NCCL_IB_GID_INDEX=3) selects the ACTIVE RoCE entry
         pinned = next(r for r in rows if r["gid_index"] == 3)
-        self.assertEqual(pinned["gid_type"], "RoCE v2")
+        self.assertIn("RoCE v2", pinned["gid_type"])
+        self.assertIn("ACTIVE", pinned["gid_type"])
 
     def test_parsers_tolerate_garbage(self):
         self.assertEqual(parse_ip_br(""), {})

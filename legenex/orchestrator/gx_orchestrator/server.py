@@ -805,8 +805,15 @@ class Handler(BaseHTTPRequestHandler):
     def _serve_direct(self, path: str, payload: dict[str, Any]) -> None:
         started = time.monotonic()
         request_id = self._request_id()
-        profile_name = self._direct_profile()
-        reasoning = self._direct_reasoning(profile_name)
+        try:
+            profile_name = self._direct_profile()
+            reasoning = self._direct_reasoning(profile_name)
+        except RegistryError as exc:
+            # An X-GX-Profile/X-GX-Reasoning header that names nothing real
+            # is a 400, never a silent default (and never a crash).
+            self._send_error_json(400, str(exc), "invalid_profile", NO_RETRY_HEADERS,
+                                  **{"X-GX-Request-Id": request_id})
+            return
         if not self._common_gate(
             alias=ALIAS_DIRECT, profile_name=profile_name, reasoning=reasoning,
             payload=payload, request_id=request_id, log_fields=None,

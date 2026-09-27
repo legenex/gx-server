@@ -72,7 +72,8 @@ def history(cfg: UIConfig, *, project: str = "", agent: str = "", profile: str =
     contract stays minimal; the record allow-list keeps privacy guarantees."""
     limit = max(1, min(int(limit or 200), MAX_HISTORY))
     if cfg.offline:
-        return {"available": False, "reason": "offline mode", "records": []}
+        return {"available": False, "reason": "offline mode", "records": [],
+                "note": "metadata only; prompt bodies are never stored or exposed"}
     try:
         code, body = http_json("GET", f"{cfg.orchestrator_base}/scheduler/history?limit={MAX_HISTORY}",
                                headers=_headers(cfg), timeout=6)

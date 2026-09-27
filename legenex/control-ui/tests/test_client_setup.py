@@ -3,70 +3,100 @@ gx-mini/gx-code/ComfyUI leftovers."""
 
 from __future__ import annotations
 
-import re
+import json
 import unittest
 
-from support import TempEnv
+from support import TempEnv, fake_key
 
 from gx_control_ui import setup
-from gx_control_ui.setup import connections_view, kilo_config, test_connection, test_live
 
 
-class ConfigTests(unittest.TestCase):
+class SetupBase(unittest.TestCase):
     def setUp(self):
         self.env = TempEnv()
 
     def tearDown(self):
         self.env.cleanup()
 
-    def test_only_two_endpoints(self):
-        cfgs = connections_view(self.env.cfg)["configs"]
-        self.assertEqual({c["id"] for c in cfgs}, {"gx-max", "gx-auto"})
 
-    def test_kilo_config_shape(self):
-        cfg = kilo_config(self.env.cfg)
-        self.assertIn(cfg["default_model"], ("gx-max", "gx-auto"))
-        model_ids = [m["id"] for m in cfg["model_config"]]
-        self.assertEqual(set(model_ids), {"gx-max", "gx-auto"})
-        for m in cfg["model_config"]:
-            self.assertEqual(m["context_length"], 262144)
-            self.assertEqual(m["model_info"]["max_model_len"], 262144)
-            self.assertEqual(m["model_info"]["owned_by"], "vLLM/LiteLLM")
-            self.assertEqual(m["capabilities"]["function_calling"], True)
-            self.assertEqual(m["capabilities"]["supports_reasoning"], True)
-        text = str(cfg)
-        for banned in ("gx-mini", "gx-code", "gx-fast", "gx-reason", "ComfyUI", "llama-swap"):
+class TestConnectionsInfo(SetupBase):
+    def test_only_two_aliases(self):
+        view = setup.connections_info(self.env.cfg)
+        self.assertEqual(view["gateway"]["models"], ["gx-max", "gx-auto"])
+        self.assertEqual(view["text_aliases"], ["gx-max", "gx-auto"])
+        self.assertEqual(set(view["aliases"]), {"gx-max", "gx-auto"})
+
+    def test_offline_gateway_is_honest_and_masks_nothing(self):
+        view = setup.connections_info(self.env.cfg)
+        self.assertEqual(view["gateway"]["status"], "unknown")  # offline: no fabricated health
+        self.assertEqual(view["api_key"]["masked"], "sk-•••• (not loaded)")
+        self.assertIsNone(view["api_key"]["key"])
+        self.assertFalse(view["api_key"]["revealed"])
+
+    def test_kilo_recommended_model_is_gx_auto(self):
+        view = setup.connections_info(self.env.cfg)
+        self.assertEqual(view["kilo"]["recommended_model"], "gx-auto")
+        self.assertEqual(view["kilo"]["alternatives"], ["gx-max"])
+        self.assertEqual(view["kilo"]["key_env"], "GX_API_KEY")
+
+    def test_openwebui_points_at_the_loopback_gateway(self):
+        view = setup.connections_info(self.env.cfg)
+        self.assertEqual(view["openwebui"]["base_url"], "http://127.0.0.1:4000/v1")
+        self.assertFalse(view["openwebui"]["enable_ollama"])
+        self.assertEqual(view["openwebui"]["model_ids"], ["gx-max", "gx-auto"])
+
+    def test_no_retired_alias_anywhere(self):
+        text = json.dumps(setup.connections_info(self.env.cfg), default=str)
+        for banned in ("gx-mini", "gx-code", "gx-fast", "gx-reason", "gx-image", "gx-video",
+                       "ComfyUI", "SGLang", "llama-swap"):
             self.assertNotIn(banned, text, banned)
 
-    def test_gxauto_points_at_the_local_scheduler(self):
-        cfg = kilo_config(self.env.cfg)
-        auto = next(m for m in cfg["model_config"] if m["id"] == "gx-auto")
-        self.assertIn("/api/key/", auto["litellm_params"]["api_base"])
 
-    def test_connection_report(self):
-        view = connections_view(self.env.cfg, fresh=True)
-        for c in view["configs"]:
-            self.assertIn(c["id"], ("gx-max", "gx-auto"))
-            self.assertIn(c["state"], ("not_configured", "unreachable", "unhealthy", "healthy",
-                                       "offline"))
-            if c["id"] == "gx-max":
-                self.assertIn(c["state"], ("not_configured", "unreachable", "offline"))
+class TestKiloConfig(SetupBase):
+    def test_config_document_shape(self):
+        cfg = json.loads(setup.kilo_config(self.env.cfg, "http://127.0.0.1:4000/v1"))
+        self.assertEqual(cfg["model"], "gx-cluster/gx-auto")
+        provider = cfg["provider"]["gx-cluster"]
+        self.assertEqual(provider["options"]["baseURL"], "http://127.0.0.1:4000/v1")
+        self.assertEqual(provider["options"]["apiKey"], "{env:GX_API_KEY}")
+        self.assertEqual(set(provider["models"]), {"gx-max", "gx-auto"})
+        stock = provider["models"]["gx-max"]
+        self.assertTrue(stock["reasoning"])
+        self.assertTrue(stock["tool_call"])
+        # the production pack's context comes from the registry fixture
+        self.assertEqual(stock["limit"]["context"], 262144)
 
-    def test_connection_tests_with_fake_addresses(self):
-        self.assertEqual(test_connection(self.env.cfg, "gx-max",
-                                        base="https://127.0.0.1:9/v1", key="sk-fallback")["code"], 1)
-        out = test_live(self.env.cfg, "gx-auto", base="https://127.0.0.1:9/v1", key="sk-fallback")
-        self.assertIn(out["code"], (1, 2))
+    def test_registry_facts_drive_capabilities(self):
+        models = setup.kilo_models(self.env.cfg)
+        for alias, m in models.items():
+            self.assertEqual(m["name"], alias)
+            self.assertTrue(m["reasoning"])
+            self.assertEqual(m["modalities"]["output"], ["text"])
+        # the fixture packs are multimodal (vision: true)
+        self.assertIn("image", models["gx-max"]["modalities"]["input"])
+
+
+class TestConnectionTests(SetupBase):
+    def test_client_must_be_known(self):
         with self.assertRaises(ValueError):
-            test_connection(self.env.cfg, "gx-mini")
+            setup.test_connection(self.env.cfg, "gx-mini", fake_key())
         with self.assertRaises(ValueError):
-            test_live(self.env.cfg, "ComfyUI")
+            setup.test_connection(self.env.cfg, "kilo", "not-a-key")
 
-    def test_hint_text_mentions_only_v41_models(self):
-        view = connections_view(self.env.cfg)
-        text = str(view["configs"]) + view["note"]
-        for banned in ("gx-mini", "gx-code", "ComfyUI", "SGLang", "llama-swap"):
-            self.assertNotIn(banned, text, banned)
+    def test_live_target_must_be_known(self):
+        with self.assertRaises(ValueError):
+            setup.test_live(self.env.cfg, "ComfyUI")
+        # offline: honest failure, no gateway probe
+        out = setup.test_live(self.env.cfg, "gx-auto")
+        self.assertFalse(out["ok"])
+        self.assertEqual(out["summary"], "offline")
+
+    def test_mask_key(self):
+        key = fake_key("sk-")
+        masked = setup.mask_key(key)
+        self.assertNotIn(key, masked)
+        self.assertTrue(masked.startswith("sk-"))
+        self.assertTrue(masked.endswith(key[-4:]))
 
 
 if __name__ == "__main__":
