@@ -3,9 +3,21 @@
 // specs for the Overview, Model and Requests pages plus a whole-app smoke
 // pass. Run: npx playwright test -c e2e/playwright.v41.config.js
 import { expect, test } from '@playwright/test';
-import { axeCheck, gotoPage, login, watchPage } from './helpers.js';
+import { axeCheck, gotoPage, watchPage } from './helpers.js';
 
 const PASSWORD = process.env.GX_E2E_PASSWORD;
+
+// helpers.js login() asserts the pre-V4.1 default page ('Dashboard'); this
+// suite logs in itself because the rebuilt default page is Overview.
+async function login(page, password) {
+  await page.goto('/');
+  await expect(page.locator('#login-view')).toBeVisible();
+  await page.fill('#login-user', 'admin');
+  await page.fill('#login-pass', password);
+  await page.click('#login-submit');
+  await expect(page.locator('#app-view')).toBeVisible();
+  await expect(page.locator('.page-title')).toHaveText('Overview');
+}
 
 const PAGES_V41 = [
   ['overview', 'Overview'],
