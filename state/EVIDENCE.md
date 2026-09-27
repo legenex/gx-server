@@ -52,3 +52,15 @@ Raw logs: /srv/logs/fabric-nccl-{20260927,bw-20260927}.log
   (TERM_PROGRAM=vscode, DISPLAY=:1) — terminating the session now would kill the mission.
   Plan: at first real gx-max load, launch via systemd-run/setsid from SSH context, verify SSH
   + Tailscale health, then terminate graphical session; document console-login restoration.
+
+## 2026-09-27 — Uncensoring sources verified (live HF API + docs)
+- drowzeys overlay: gated-auto, NOT granted to token account → BLOCKER B-M1.
+  Apply procedure (hardlink splice of attn.wo_b L10-35, 104 tensors) captured
+  in MIA-RUNTIME.md; would need GPU_MEM_UTIL=0.85 + VLLM_SPARSE_INDEXER_MAX_LOGITS_MB=256.
+- dealignai/DeepSeek-V4.1-Flash-UNCENSORED-EXL3-2.9bpw: sha 8a27b35fc5b145fa05ee965c7d7b243b047915f7,
+  UNGATED, MIT, 39 shards, ~197-210 GiB, multimodal, drop-in for the Mia pack
+  (README verified: same ENGRAM_DIR source, same image, validated 2× GB10).
+  HarmBench-320 ASR 99.4% (vs base 21-36%), MMLU non-ethics −0.58pp, DSpark ~45%
+  acceptance, vision preserved. Serving notes: MAX_MODEL_LEN 262144 validated,
+  KV pool 1GiB, GPU_MEM_UTIL 0.85, MAX_NUM_BATCHED_TOKENS 2048,
+  VLLM_SPARSE_INDEXER_MAX_LOGITS_MB=256 REQUIRED.
