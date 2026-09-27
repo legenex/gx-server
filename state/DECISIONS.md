@@ -28,3 +28,5 @@ overlay + keys helper (storage-efficient), (3) dealignai full UNCENSORED EXL3
 2.9bpw checkpoint only if overlay insufficient and storage permits. Production
 gx-max must be genuinely uncensored; no silent stock fallback. Full provenance
 recorded.
+
+- 2026-09-27 (fast-track P1, corrected): overlay gate still unaccepted (file resolve 403, gated=auto). Evidence-based path stays dealignai CRACK (ungated, drop-in, validated serving notes; HarmBench 99.4%, non-ethics MMLU -0.58pp, DSpark ~45%). Sequence: stock battery -> delete stock pack (disk) -> download dealignai 210G -> load -> uncensor-verify battery -> production select. If the user accepts the drowzeys gate later, the 650MB overlay is the cheaper alternative for a re-test.

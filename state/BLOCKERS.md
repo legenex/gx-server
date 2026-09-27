@@ -1,6 +1,11 @@
 # Mission Blockers — GX10 DeepSeek V4.1 Flash Clean Rebuild
 
-## B-M1 (EXTERNAL, one click from user) — drowzeys abliterated overlay gate
+## B-M1 STILL OPEN (re-verified 2026-09-27 17:4x) — drowzeys overlay gate
+- Metadata API returns 200 (repo is visible) but file resolve returns **403**: gated=auto,
+  the token account has NOT accepted the gate. One click by the user (as legenex HF account)
+  at https://huggingface.co/drowzeys/DeepSeek-V4.1-Flash-Abliterated-Cybersecurity-Unleashed
+  would unlock the 650MB overlay alternative.
+- Until then: dealignai CRACK (ungated, drop-in, vetted) is the P1 path per DECISIONS.md.
 - The storage-efficient overlay (drowzeys/...Cybersecurity-Unleashed, file
   mia_exl3_wo_b_l10_35.safetensors) is HF-gated ("auto" approval) but the
   account's token (legenex) has not been granted; bearer auth cannot accept a
