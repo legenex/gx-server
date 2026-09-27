@@ -178,13 +178,16 @@ class LifecycleWiringTests(unittest.TestCase):
 
     def test_start_holds_and_drains_music_before_other_node2_conflicts(self):
         text = (self.here / "gx-max-start.sh").read_text()
-        body = text[text.index("drain_node2() {"):]
-        body = body[:body.index("\n}\n")]
-        self.assertLess(body.index("gx_n2_hold_set gxmax"), body.index("gx_music_drain_node2"))
-        self.assertLess(body.index("gx_music_drain_node2"), body.index('for c in "${CONFLICTS_N2[@]}"'))
-        self.assertIn("CONFLICTS_N2=(gx-music ", text)
-        # The drain happens before the rank1 launch.
-        self.assertLess(text.index("drain_node2\n"), text.index("=== starting rank1 on node2 ==="))
+        # V4.1: the Mia kit owns the launch; the wrapper's node-2 duty is to
+        # set the gx-max hold (gx-music stands down) BEFORE the kit runs, and
+        # to clear it on the failure path.
+        self.assertLess(text.index("gx_n2_hold_set gxmax"),
+                        text.index("=== starting the Mia kit"))
+        # the hold is held across the whole launch and cleared on failure
+        hold_set_at = text.index("gx_n2_hold_set gxmax")
+        on_exit = text[text.index("on_exit() {"):]
+        self.assertIn("gx_n2_hold_clear gxmax", on_exit)
+        self.assertLess(hold_set_at, text.index("on_exit() {"))
 
     def test_every_release_path_clears_the_hold(self):
         for name in ("gx-max-stop.sh", "gx-max-unwind.sh", "restore-normal.sh"):
