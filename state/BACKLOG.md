@@ -36,3 +36,15 @@ Status legend: [ ] pending, [~] in progress, [x] done, [!] blocked
 - [ ] PHASE 37-38 gx-backup update + non-destructive restore validation
 - [ ] PHASE 39-41 independent reviews (infra/security/model/dashboard/multi-agent/recovery) + repairs + regression
 - [ ] PHASE 42-44 final cleanup scan, commit/push, docs/FINAL-REPORT.md
+
+## Fast-track deferrals (2026-09-27, post-Gate-A backlog — NOT cancelled)
+- Hostinger VPS control-plane deployment (13G free constraint; hermes-only)
+- Rich AgentOS dashboard integration (adapter is read-only coarse today; per-agent metrics
+  + pause/resume need upstream Hermes-core work)
+- Task graph UI beyond flat kanban; advanced project mgmt UI; advanced file-manager features
+- Vision optimisation; 600K context testing; exhaustive context-size benchmarks
+- Extensive historical charts; elaborate update management; dashboard visual polish
+- Optional monitoring platforms; future cloud routing; GX10-03 support (registry extensible)
+- AgentOS CC X-GX-* attribution header patch + model-routing.yaml repoint (needed at Gate C
+  integration, queued as P3 platform wiring)
+- LiteLLM DB virtual-key model-list trims (at gateway redeploy)
