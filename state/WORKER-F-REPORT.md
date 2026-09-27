@@ -112,3 +112,45 @@ existing conventions/components are reused everywhere else.
   server-side anyway).
 * `benchmark_run` exists as an action (Jobs page can run it) but bench
   results have no read API — surfaced honestly on Performance.
+
+## Legacy e2e retirement (follow-up task, post-rebuild)
+
+Status: **COMPLETE.** The stale pre-V4.1 e2e files are gone; the default
+`npx playwright test` now runs the V4.1 hermetic suite.
+
+Removed from `control-ui/e2e/` (exact per-file deletes, no recursive forms;
+history preserved by the repo autosync):
+`fixture_server.py`, `music_stub.py`, `voice_stub.py`, `live_stub.py`,
+`wan_router_stub.py` (the three extra stubs + music_stub were imported only
+by the retired `fixture_server.py`), `offline.ui.spec.js`,
+`live-helpers.js` (consumed only by the live specs), and the live specs
+`live.csrf-lifecycle.spec.js`, `live.gxmax-1-load.spec.js`,
+`live.gxmax-2-release.spec.js`, `live.hf-access.spec.js`,
+`live.models.spec.js`, `live.pages.spec.js`. Also removed the stale
+`__pycache__/*.pyc` for the deleted stubs. No `gx_control_ui/**` or
+`web/**` file was touched.
+
+Rewritten:
+* `e2e/helpers.js` — PAGES is now the 16-route V4.1 map (matches
+  `PAGES_V41` in offline.v41.spec.js), `login()` asserts the new default
+  page title `Overview`; `watchPage`/`gotoPage`/`axeCheck` (what the v41
+  spec imports) kept as-is.
+* `control-ui/playwright.config.js` — the pre-V4.1 offline/live projects
+  are gone; the main config now spreads `e2e/playwright.v41.config.js`
+  (webServer → `fixture_server_v41.py`, port 18091, testMatch →
+  `offline.v41.spec.js`) and keeps a single `offline` project name so
+  `npm run test:e2e` (`--project=offline`) still works.
+
+Verified:
+* `node --check` on helpers.js, playwright.config.js,
+  playwright.v41.config.js, offline.v41.spec.js: OK.
+* `python3 -m py_compile e2e/fixture_server_v41.py`: OK.
+* `npx playwright test -c e2e/playwright.v41.config.js`: **6/6 passed.**
+* `npx playwright test` (default config) and
+  `npx playwright test --project=offline`: **6/6 passed.**
+* Backend regression: `python3 -m unittest discover -s tests`: **204 OK.**
+
+Leftover for the e2e owner: `package.json` still declares
+`"test:live": "playwright test --project=live"`; the live project is
+retired by design, so that script now errors with "project not found" and
+should be dropped from package.json (outside this task's write scope).
