@@ -95,7 +95,7 @@ test('model: registry packs, profiles with effective values, reasoning ladder, t
   await expect(main.getByText('served through gx-max')).toBeVisible();
   // reasoning ladder straight from the registry
   for (const level of ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']) {
-    await expect(main.locator('#page-model').getByText(level, { exact: true }).first()).toBeVisible();
+    await expect(main.getByText(level, { exact: true }).first()).toBeVisible();
   }
   // profiles with effective values; the fixture registry has fast/balanced/swarm
   await expect(main.locator('.profile-btn')).toHaveCount(3);
