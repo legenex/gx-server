@@ -1206,7 +1206,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("drain", help="stop admitting new requests; in-flight ones finish").set_defaults(func=cmd_drain)
 
     maxp = sub.add_parser("max", help="interactive chat quick-poke against gx-max")
-    maxp.add_argument("--reasoning", default=_DEFAULT_REASON, choices=REASONING_LEVELS)
+    maxp.add_argument("--reasoning", default=_DEFAULT_REASONING, choices=REASONING_LEVELS)
     maxp.set_defaults(func=cmd_max)
 
     auto = sub.add_parser("auto", help="one-shot gx-auto test call")

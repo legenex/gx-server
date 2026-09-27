@@ -445,7 +445,7 @@ class Scheduler:
             self._promote_locked()
         self._persist()
         self._append_history(entry)
-        self._idle.notify_all()
+        self._notify()
 
     def record_error(self, record_id: str, err: str) -> None:
         with self._lock:
@@ -461,7 +461,7 @@ class Scheduler:
             self._promote_locked()
         self._persist()
         self._append_history(entry)
-        self._idle.notify_all()
+        self._notify()
 
     # ------------------------------------------------------------------ cancel
     def cancel(self, record_id: str, reason: str = "") -> dict[str, Any]:
@@ -481,6 +481,9 @@ class Scheduler:
                 self._history.append(entry)
                 self._promote_locked()
                 outcome = {"cancelled": True, "state": STATE_CANCELLED}
+                # Wake the request thread parked in wait(): its record is gone.
+                if rec.ready_event is not None:
+                    rec.ready_event.set()
             elif rec.state is STATE_ACTIVE:
                 rec.state = STATE_CANCELLING
                 rec.error = str(reason or "cancel requested")[:500]
@@ -490,7 +493,7 @@ class Scheduler:
         self._persist()
         if outcome.get("state") == STATE_CANCELLED:
             self._append_history(entry)
-            self._idle.notify_all()
+            self._notify()
         return outcome
 
     def retry(self, record_id: str) -> dict[str, Any]:
@@ -532,24 +535,26 @@ class Scheduler:
         """Expire queued+active records past their soft deadline."""
         now = self._clock()
         expired: list[str] = []
+        entries: list[dict[str, Any]] = []
         with self._lock:
             for rec in list(self._records.values()):
                 if rec.state in (STATE_QUEUED, STATE_ACTIVE, STATE_CANCELLING) and rec.timeout_at <= now:
                     rec.state = STATE_TIMEOUT
                     rec.error = f"soft timeout exceeded ({round(now - rec.enqueue_ts)}s)"
                     rec.done_ts = now
-                    entry = rec.as_dict()
+                    entries.append(rec.as_dict())
+                    if rec.ready_event is not None:
+                        rec.ready_event.set()  # wake a thread parked in wait()
                     del self._records[rec.id]
-                    self._history.append(entry)
+                    self._history.append(entries[-1])
                     expired.append(rec.id)
             if expired:
                 self._promote_locked()
         if expired:
             self._persist()
-            for rid in expired:
-                # History entries were captured above; re-find for the append.
-                pass
-            self._idle.notify_all()
+            for entry in entries:
+                self._append_history(entry)
+            self._notify()
         return expired
 
     # ------------------------------------------------------------------ drain

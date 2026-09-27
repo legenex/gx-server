@@ -61,15 +61,12 @@ class TestReadMeminfo(unittest.TestCase):
 
 class TestMemAvailableGib(unittest.TestCase):
     def test_converts_kib_to_gib(self):
-        path = write_temp("MemAvailable: 1048576 kB\n", ".meminfo")  # 1 GiB
-        orig = gx.Path
+        orig = gx.read_meminfo
         try:
-            # monkeypatch read_meminfo instead of /proc
             gx.read_meminfo = lambda p="/proc/meminfo": {"MemAvailable": 1048576}
             self.assertEqual(gx.mem_available_gib(), 1.0)
         finally:
             gx.read_meminfo = orig
-            path.unlink()
 
 
 # ---------------------------------------------------------------------------
@@ -130,10 +127,10 @@ class TestGidTable(unittest.TestCase):
         self.assertFalse(ok)
 
     def test_missing_gids_dir_fails(self):
-        hca = make_fake_sys(self.tmp)
         import shutil
 
-        shutil.rmtree(hca / "gids")
+        hca = make_fake_sys(self.tmp)
+        shutil.rmtree(hca / "ports" / "1" / "gids")
         ok, _ = gx._gid_table_ok(hca, 3)
         self.assertFalse(ok)
 
@@ -342,17 +339,18 @@ class TestParser(unittest.TestCase):
         self.assertEqual(ctx.exception.code, 2)
 
     def test_main_routes_to_function_and_catches_gxerror(self):
-        calls = []
-
-        def fake_func(args):
-            calls.append(args.command)
+        # build_parser() reads the module attribute at call time, so patching
+        # the subcommand function here routes main() into the fake.
+        def fake_status(args):
             raise gx.GxError("boom")
 
-        parser = gx.build_parser()
-        parser._subparsers._group_actions[0].choices["status"].set_defaults(func=fake_func)  # noqa: SLF001
-        rc = gx.main(["status"])
+        orig = gx.cmd_status
+        gx.cmd_status = fake_status
+        try:
+            rc = gx.main(["status"])
+        finally:
+            gx.cmd_status = orig
         self.assertEqual(rc, 1)
-        self.assertEqual(calls, ["status"])
 
 
 if __name__ == "__main__":
