@@ -153,7 +153,7 @@ test('agents and tasks: coarse states only, no fabricated controls', async ({ pa
   for (const bad of ['Pause', 'Resume', /cancel/i]) {
     await expect(main.getByRole('button', { name: bad })).toHaveCount(0);
   }
-  await expect(main.getByText('not supported by AgentOS', { exact: false })).toBeVisible();
+  await expect(main.getByText('not supported by AgentOS', { exact: false }).first()).toBeVisible();
   await gotoPage(page, 'tasks', 'Tasks');
   const tasks = page.locator('#page-tasks');
   await expect(tasks.getByText('Ship V4.1')).toBeVisible();
