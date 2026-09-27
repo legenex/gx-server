@@ -120,24 +120,25 @@ test('requests: history rows, honest privacy note, filters, cancel/retry wiring'
   await login(page, PASSWORD);
   await gotoPage(page, 'requests', 'Requests');
   const main = page.locator('#page-requests');
+  const history = main.getByRole('region', { name: 'Request history' });
   // the scheduler stub relays real (stub) records
-  await expect(main.getByText('req-done-0')).toBeVisible();
-  await expect(main.getByText('req-queued-1')).toBeVisible();
+  await expect(history.getByText('req-done-0')).toBeVisible();
+  await expect(history.getByText('req-queued-1')).toBeVisible();
   // privacy note is shown verbatim
   await expect(main).toContainText('prompt bodies are never stored');
   // a queued row offers Cancel; a done row does not
-  await expect(main.locator('button[data-cancel="req-queued-1"]')).toBeEnabled();
+  await expect(main.locator('button[data-cancel="req-queued-1"]').first()).toBeEnabled();
   await expect(main.locator('button[data-cancel="req-done-0"]')).toHaveCount(0);
   // an errored row offers Retry
-  await expect(main.locator('button[data-retry="req-err-1"]')).toBeEnabled();
+  await expect(main.locator('button[data-retry="req-err-1"]').first()).toBeEnabled();
   // state filter narrows the table
   await page.selectOption('#req-state', 'error');
   await page.getByRole('button', { name: 'Apply' }).click();
-  await expect(main.getByText('req-err-1')).toBeVisible();
-  await expect(main.getByText('req-done-0')).toHaveCount(0);
+  await expect(history.getByText('req-err-1')).toBeVisible();
+  await expect(history.getByText('req-done-0')).toHaveCount(0);
   await page.selectOption('#req-state', '');
   await page.getByRole('button', { name: 'Apply' }).click();
-  await expect(main.getByText('req-done-0')).toBeVisible();
+  await expect(history.getByText('req-done-0')).toBeVisible();
 });
 
 test('agents and tasks: coarse states only, no fabricated controls', async ({ page }) => {
