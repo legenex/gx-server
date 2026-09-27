@@ -1,0 +1,11 @@
+You are the ARCHITECT for the repo at <<repo_path>>.
+
+Inspector findings:
+<<inspector_findings>>
+
+Design the fix plan: which functions change, what validation/error
+handling looks like (ValueError for bad input, KeyError handled at the REST
+layer as 404), what the tests directory needs. Max 15 lines. No execution
+needed; the implementer follows this. End with: PLAN: <one-line summary>.
+
+<<protocol>>

@@ -1,0 +1,16 @@
+You are the BACKEND IMPLEMENTER for the repo at <<repo_path>>.
+
+Architect plan:
+<<architect_plan>>
+
+Implement it now with ```write blocks (full file contents) and verify with
+```bash blocks (python3 smoke runs). Requirements:
+- tracker.py: validate inputs in add_task (title must be a non-empty str),
+  keep get_task raising KeyError (callers handle it),
+  FIX delete_task to remove the task with the given id (raise KeyError if absent).
+- server.py: return 400 on invalid input, 404 on unknown task ids,
+  500 never for a missing task.
+- Keep the public function signatures unchanged.
+End your turn with: IMPLEMENTED: <list of files changed>.
+
+<<protocol>>

@@ -95,65 +95,35 @@ class WorkloadSpec:
 
 
 #: Measured/documented footprints. Sources: MODELS.md, CURRENT_STATE.md,
-#: coordination/BLOCKERS.md B-011 (measured VmRSS during the gx-reason
-#: investigation) and legenex/gateway/README.md's memory-budget section.
+#: state/MIA-RUNTIME.md (DeepSeek V4.1 Flash EXL3 memory envelope: ~99.5 GiB
+#: weights/rank + ~2.5 GiB KV pool + context/NCCL/cudagraphs ~5-7 GiB).
 #: This is the SINGLE table both the Python orchestrator and every bash
 #: lifecycle script consult -- nobody re-derives these numbers by hand, and a
 #: caller launching something not in this table must pass an explicit
 #: `--estimated-gib`, never a guess baked into the guard.
+#:
+#: V4.1 (2026-09-27): the old model stack is RETIRED AND DELETED -- gx-mini,
+#: gx-fast, gx-reason and comfyui no longer exist as workloads, so their
+#: sizing entries are gone with them. Exactly one heavyweight workload
+#: remains: the two-node gx-max engine, one rank per node.
 WORKLOAD_SIZING: dict[str, WorkloadSpec] = {
-    "gx-mini": WorkloadSpec(
-        "gx-mini", "node1", WorkloadClass.SMALL, 10.0,
-        "Qwen3.5-4B Q4_K_M + BF16 mmproj, llama.cpp. Always-hot resident tier.",
-    ),
-    "gx-fast": WorkloadSpec(
-        "gx-fast", "node1", WorkloadClass.MEDIUM, 25.0,
-        "~30-40B MoE on vLLM, --gpu-memory-utilization 0.66 of a ~121GiB node. "
-        "Up to two instances have been discussed but the heavy group is "
-        "swap:true (exclusive-one-at-a-time) today.",
-    ),
-    "gx-reason": WorkloadSpec(
-        "gx-reason", "node2", WorkloadClass.LARGE, 52.0,
-        "wyattearp/Qwen3.8-27B-Uncensored-NVFP4 @91ec573a on vLLM (D-042), "
-        "replacing the interim nvidia/Qwen3.6-27B-NVFP4 and the abandoned "
-        "iSkye target. 26.61 GiB of weights + a 0.42 vLLM pool. 52 GiB is "
-        "CONFIRMED BY MEASUREMENT 2026-09-18, not a ceiling: loading it moved "
-        "node2 from 114.68 -> 63.45 GiB MemAvailable, i.e. a real 51.2 GiB "
-        "node-level footprint, and unloading returned it to 114.68. The "
-        "previous model's ~44 GiB figure was NOT carried over -- this "
-        "checkpoint is 6 GiB larger on disk and runs a larger pool. Note this "
-        "figure comes from /proc/meminfo, which is what compute_admission() "
-        "reads -- the container's own memory cgroup reports far less because "
-        "the CUDA pool is not charged to it on this hardware (B-021), so never "
-        "size this from `docker stats`. Still owns node2 exclusively (D-007) -- "
-        "never co-scheduled with ComfyUI or any other large/exclusive "
-        "workload.",
-    ),
     "gx-max-rank0": WorkloadSpec(
         "gx-max-rank0", "node1", WorkloadClass.EXCLUSIVE, 105.0,
-        "SGLang TP=2 rank0, DeepSeek V4 Flash NVFP4. Takes over node1. "
-        "This is the STEADY-STATE residency the ledger records once serving "
-        "(--mem-fraction-static 0.80 x 121.63 GiB = 97.3 GiB static pool plus "
-        "process/driver overhead). It is NOT admitted with the ordinary "
-        "estimate+reserve formula: gx-max uses compute_takeover_admission() "
-        "(D-025). The ~117 GiB load-phase peak is a transient absorbed by "
-        "/swapfile-sglang (the 2026-09-14 verified run went to 63/63 GB swap "
-        "and recovered) and is policed live by gx-max-safety.sh, not by "
-        "admission arithmetic. History: 90 -> 95 -> 117 (peak, which made "
-        "gx-max mathematically unlaunchable, B-022) -> 105 (steady, D-025).",
+        "Mia kit head rank (container dsv41-exl3-head): DeepSeek V4.1 Flash "
+        "EXL3, vLLM TP=2 rank 0. Takes over node1. Steady-state ~105 GiB "
+        "(99.5 GiB EXL3 weights + 2.5 GiB pinned KV pool + context/NCCL/"
+        "cudagraphs). Admitted via compute_takeover_admission() (D-025), not "
+        "the ordinary estimate+reserve formula; the boot transient is "
+        "monitored live, not admitted against. Sized from /proc/meminfo: the "
+        "CUDA pool is not charged to the container's cgroup on this hardware "
+        "(B-021), so never size this from `docker stats`.",
     ),
     "gx-max-rank1": WorkloadSpec(
         "gx-max-rank1", "node2", WorkloadClass.EXCLUSIVE, 105.0,
-        "SGLang TP=2 rank1. Takes over node2. See gx-max-rank0's note. rank1 "
-        "carries a node-local watchdog (legenex/lifecycle/rank1-deadman.sh) "
-        "that applies the same gx-max-safety.sh rules on node 2 and removes "
-        "rank1 if rank0 disappears (B-020).",
-    ),
-    "comfyui": WorkloadSpec(
-        "comfyui", "node2", WorkloadClass.MEDIUM, 44.0,
-        "ComfyUI media pipelines (gx-image/gx-video). Budgeted <=22-44GiB "
-        "resident per node02.yaml/D-007; must not run at LARGE size while "
-        "gx-reason is resident.",
+        "Mia kit worker rank (container dsv41-exl3-worker) on gx10-02. "
+        "Same envelope as rank0. Carries a node-local watchdog "
+        "(legenex/lifecycle/rank1-deadman.sh) that applies the same safety "
+        "rules on node 2 and removes rank1 if rank0 disappears (B-020).",
     ),
 }
 

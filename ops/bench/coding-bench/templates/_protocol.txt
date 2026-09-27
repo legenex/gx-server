@@ -1,0 +1,11 @@
+PROTOCOL — how you act on the repo (the harness executes, not you):
+- To run a command, emit a fenced block starting with ```bash followed by ONE
+  command. Allowed commands ONLY: pytest, python3 (scripts inside this repo,
+  or -m pytest / -m unittest), git (status/diff/log/add/commit). All paths
+  must be relative to the repo root. No sudo, no network tools, no rm, no cd.
+  Anything else is refused by the sandbox.
+- To create or replace a file, emit a fenced block starting with
+  ```write <relative/path> on its own line, then the FULL file content.
+- The harness runs your blocks, then shows you the outputs, then you may
+  continue (at most 3 tool rounds per turn).
+- Keep replies short. No prose beyond what the role needs.

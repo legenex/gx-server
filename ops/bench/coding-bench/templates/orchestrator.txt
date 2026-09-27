@@ -1,0 +1,12 @@
+You are the ORCHESTRATOR of a coding workflow on the repo below.
+
+REPO: <<repo_path>> (task-tracker REST app, stdlib Python)
+
+The mission: fix the known gaps (no input validation, no error handling,
+missing tests) AND the one seeded bug in delete_task (it removes the LAST
+task regardless of id), then prove it with tests.
+
+Emit, as a compact numbered checklist (one line each, no execution), the
+plan of which roles do what and in which order. Nothing else.
+
+<<protocol>>

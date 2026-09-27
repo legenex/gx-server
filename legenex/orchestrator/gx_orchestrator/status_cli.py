@@ -1,23 +1,16 @@
-"""`gx status` -- one human- and machine-readable snapshot of the two-node
-gx-cluster.
+"""`gx status` -- one human- and machine-readable snapshot of the cluster.
 
-Deliberately dependency-free (see D-003 in coordination/DECISIONS.md): reads
-`/proc/meminfo` directly, shells out to `uname` / `docker` / `ping` via
-`subprocess`, and talks to the orchestrator over plain `urllib`. No pip
-package is required anywhere in this module.
+Deliberately dependency-free (see D-003): reads `/proc/meminfo` directly,
+shells out to `uname` / `docker` via `subprocess`, and talks to the
+orchestrator over plain `urllib`. No pip package is required anywhere in
+this module.
 
-Design note -- this does NOT re-implement upstream probing. Per-alias state
-for gx-mini / gx-fast / gx-reason / gx-max comes straight from the running
-orchestrator's own `/health/detailed` endpoint (backed by `TierHealth`, see
-health.py), so there is exactly one place that probing logic lives. This
-module adds only what the orchestrator does not already know:
-
-  * local host facts (kernel, RAM, swap, which containers are running)
-  * node 2's KERNEL-level liveness -- a single ICMP probe. BLOCKERS.md B-012
-    documents why this specific, separate signal matters: node 2 can be
-    "alive but userspace-starved" (kernel answers ICMP, llama-swap never
-    answers TCP at all), so kernel-liveness and llama-swap-reachability are
-    two different facts, not one.
+The V4.1 status shape (ARCHITECTURE-V41 §3): cluster state (lifecycle), the
+current serving profile, queue depth / active count, node health
+one-liners, and the model id + uncensored flag from the registry. There is
+one model and two aliases; there are no per-tier probes left to re-implement
+-- everything except the local host facts comes from the orchestrator's
+`/text/status` endpoint so probing logic lives in exactly one place.
 
 Usage:
     python3 -m gx_orchestrator.status_cli [--json]
@@ -26,43 +19,33 @@ Usage:
 
 from __future__ import annotations
 
-import os
 import argparse
 import json
+import os
 import subprocess
 import sys
 import time
 import urllib.parse
-from dataclasses import dataclass, field
-from typing import Any, Mapping
+from typing import Any, Callable
+from pathlib import Path
 
 from .config import CONFIG, Config
-from .tiers import Tier
-from .upstream import get_json, probe
+from .profiles import RegistryError, load_registry
+from .upstream import UpstreamError, get_json
 
-#: ARCHITECTURE.md L-4 / CLAUDE.md L-4: pinned on BOTH nodes. Kernel 7.0 broke
-#: RDMA memory registration for gx-max (see coordination/DECISIONS.md D-001).
-#: Duplicated here as a plain constant (not imported from the docs) so this
-#: script has no dependency beyond the stdlib -- if the pin ever changes, this
-#: line and the docs must be updated together.
+#: ARCHITECTURE.md L-4 / CLAUDE.md L-4: pinned on BOTH nodes. Kernel 7.0
+#: broke RDMA memory registration (see coordination/DECISIONS.md D-001).
+#: Duplicated as a plain constant so this script has no dependency beyond
+#: the stdlib -- if the pin ever changes, this line and the docs must move
+#: together.
 EXPECTED_KERNEL = "6.17.0-1032-nvidia"
 
-#: Node 1 container names this script recognises as "the current workload".
-#: Anything else running is not this stack's concern (CLAUDE.md explicitly
-#: lists unrelated pre-existing services on this shared host).
-_NODE1_WORKLOAD_CONTAINERS = ("gx-mini", "gx-fast", "gx-max-rank0")
 
-#: A single ICMP probe's deadline, in whole seconds (ping's -W wants an int
-#: on the iputils build shipped here). Short and NOT retried -- see the
-#: module docstring and BLOCKERS.md B-012.
-_NODE2_PING_DEADLINE_S = 2
-
-
-def _run(cmd: list[str], timeout: float = 5.0) -> str | None:
+def _run(cmd: list[str], timeout: float = 5.0) -> "str | None":
     """Run `cmd`, returning stripped stdout, or None on any failure.
 
-    Never raises: every caller in this module must degrade to "unknown"
-    rather than crash the whole report over one missing tool or a timeout.
+    Never raises: every caller degrades to "unknown" rather than crashing the
+    whole report over one missing tool or a timeout.
     """
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
@@ -78,7 +61,7 @@ def _run(cmd: list[str], timeout: float = 5.0) -> str | None:
 # --------------------------------------------------------------------------
 
 
-def read_meminfo(path: str = "/proc/meminfo") -> dict[str, int] | None:
+def read_meminfo(path: str = "/proc/meminfo") -> "dict[str, int] | None":
     """Parse a `/proc/meminfo`-shaped file into a dict of kibibytes.
 
     `path` is overridable (tests pass a fixture file); production code always
@@ -104,10 +87,8 @@ def read_meminfo(path: str = "/proc/meminfo") -> dict[str, int] | None:
 
 
 def _docker_ps() -> list[dict[str, str]]:
-    """`docker ps` as a list of {name, status}. Empty list if docker is
-    unreachable -- this must never raise (a broken docker socket must not
-    take down the whole status report).
-    """
+    """`docker ps` as {name, status} pairs. Empty when docker is unreachable
+    (a broken docker socket must not take down the whole report)."""
     out = _run(["docker", "ps", "--format", "{{.Names}}|{{.Status}}"])
     if out is None:
         return []
@@ -126,16 +107,14 @@ def local_node1_facts(cfg: Config) -> dict[str, Any]:
     meminfo = read_meminfo()
     containers = _docker_ps()
     names_running = {c["name"] for c in containers}
-    workload = [n for n in _NODE1_WORKLOAD_CONTAINERS if n in names_running] or None
+    workload = next(
+        (n for n in (cfg.head_container,) if n in names_running), None
+    )
 
-    litellm_root = cfg.gateway_base.rstrip("/").removesuffix("/v1")
-    litellm_up = probe(f"{litellm_root}/health/liveliness", timeout=cfg.node1_probe_timeout)
-    swap_up = probe(f"{cfg.node1_swap_base.rstrip('/')}/health", timeout=cfg.node1_probe_timeout)
-
-    def gib(kib_key: str) -> float | None:
-        if meminfo is None or kib_key not in meminfo:
+    def gib(key: str) -> "float | None":
+        if meminfo is None or key not in meminfo:
             return None
-        return round(meminfo[kib_key] / (1024 * 1024), 1)
+        return round(meminfo[key] / (1024 * 1024), 1)
 
     return {
         "online": True,  # this script always runs ON node 1
@@ -148,31 +127,31 @@ def local_node1_facts(cfg: Config) -> dict[str, Any]:
         "swap_free_gib": gib("SwapFree"),
         "workload": workload,
         "containers": containers,
-        "gateway": {"litellm": litellm_up, "llama_swap": swap_up},
     }
 
 
 # --------------------------------------------------------------------------
-# Node 2 -- a single, fast, non-retrying kernel-liveness probe
+# Registry facts (model id + uncensored flag)
 # --------------------------------------------------------------------------
 
 
-def node2_kernel_reachable(cfg: Config) -> bool:
-    """One ICMP echo, short deadline, no retry.
-
-    This is deliberately NOT a userspace/HTTP probe: BLOCKERS.md B-012 records
-    that node 2 can answer ICMP while llama-swap never answers TCP at all
-    ("alive but userspace-starved"). Distinguishing those two is the entire
-    point of this separate check -- llama-swap's own reachability is reported
-    by the orchestrator's TierHealth (see gx-reason's entry in `aliases`).
-    """
-    host = urllib.parse.urlparse(cfg.node2_swap_base).hostname
-    if not host:
-        return False
-    return (
-        _run(["ping", "-c", "1", "-W", str(_NODE2_PING_DEADLINE_S), host], timeout=_NODE2_PING_DEADLINE_S + 1)
-        is not None
-    )
+def registry_model_facts(cfg: Config) -> dict[str, Any]:
+    """Model id + uncensored flag straight from the registry, with a clear
+    error instead of a guess when the registry is missing or stale."""
+    try:
+        registry = load_registry(cfg.registry_path)
+    except (RegistryError, OSError) as exc:
+        return {"error": str(exc)}
+    model = registry.production_model()
+    runtime = registry.runtime(registry.alias("gx-max").runtime)
+    return {
+        "model_id": runtime.served_model_id,
+        "uncensored": model.uncensored,
+        "quant": model.quant,
+        "max_context": model.max_context,
+        "vision": model.vision,
+        "tools": model.tools,
+    }
 
 
 # --------------------------------------------------------------------------
@@ -180,16 +159,9 @@ def node2_kernel_reachable(cfg: Config) -> bool:
 # --------------------------------------------------------------------------
 
 
-@dataclass
-class OrchestratorSnapshot:
-    reachable: bool
-    tiers: dict[str, dict[str, Any]] = field(default_factory=dict)
-    gx_max: dict[str, Any] = field(default_factory=dict)
-    error: str = ""
-
-
 def _orchestrator_key() -> str:
-    """The orchestrator's bearer key (D-044): the environment, else the protected secrets store."""
+    """The orchestrator's bearer key (D-044): the environment, else the
+    protected secrets store."""
     key = os.environ.get("GX_ORCHESTRATOR_API_KEY", "").strip()
     if not key or key == "not-required":
         try:
@@ -202,88 +174,21 @@ def _orchestrator_key() -> str:
     return "" if key == "not-required" else key
 
 
-def fetch_orchestrator_snapshot(base_url: str, *, timeout: float = 5.0) -> OrchestratorSnapshot:
-    """GET `<base_url>/health/detailed` once. Never raises."""
+def fetch_orchestrator_snapshot(base_url: str, *, timeout: float = 5.0) -> dict[str, Any]:
+    """GET `<base_url>/text/status` once. Returns the parsed body with
+    `reachable` / `error` filled in. Never raises."""
     try:
         key = _orchestrator_key()
         headers = {"Authorization": f"Bearer {key}"} if key else None
-        resp = get_json(f"{base_url.rstrip('/')}/health/detailed", headers=headers, timeout=timeout)
+        resp = get_json(f"{base_url.rstrip('/')}/text/status", headers=headers, timeout=timeout)
         body = resp.json()
-    except Exception as exc:  # noqa: BLE001
-        return OrchestratorSnapshot(reachable=False, error=repr(exc))
-    return OrchestratorSnapshot(
-        reachable=True,
-        tiers=body.get("tiers", {}),
-        gx_max=body.get("gx_max", {}),
-    )
-
-
-# --------------------------------------------------------------------------
-# Alias table (mini/fast/reason/max come from the orchestrator; auto/image/
-# video are derived here because the orchestrator does not own them)
-# --------------------------------------------------------------------------
-
-
-def _normalize_tier_status(value: Any) -> dict[str, Any]:
-    """Coerce whatever the orchestrator returned for one tier into the
-    expected `{state, usable, reason}` shape.
-
-    Defensive on purpose: this script and the orchestrator can drift out of
-    sync (an old orchestrator process still running a previous version of
-    `/health/detailed`, for instance -- exactly what happened the first time
-    this was tested live, when the running service still had the OLD
-    boolean-only response cached in its process memory). Never crash the
-    whole report over one tier's shape, and never silently treat an
-    unrecognised shape as healthy.
-    """
-    if isinstance(value, Mapping) and "state" in value:
-        return dict(value)
-    if value is None:
-        return {"state": "unavailable", "usable": False, "reason": "not_reported"}
-    return {
-        "state": "unavailable",
-        "usable": False,
-        "reason": f"unrecognised_orchestrator_response:{value!r}",
-    }
-
-
-def build_alias_table(snap: OrchestratorSnapshot, node2_online: bool) -> dict[str, dict[str, Any]]:
-    aliases: dict[str, dict[str, Any]] = {}
-
-    if not snap.reachable:
-        # Never guess: if the orchestrator itself cannot be reached, every
-        # alias it would otherwise speak for is unknown, not "probably fine".
-        reason = f"orchestrator_unreachable: {snap.error}" if snap.error else "orchestrator_unreachable"
-        for alias in (Tier.MINI, Tier.FAST, Tier.REASON, Tier.MAX, Tier.AUTO):
-            aliases[alias.value] = {"state": "unavailable", "usable": False, "reason": reason}
-    else:
-        for alias in (Tier.MINI, Tier.FAST, Tier.REASON, Tier.MAX):
-            aliases[alias.value] = _normalize_tier_status(snap.tiers.get(alias.value))
-        # gx-auto is pure routing logic inside the orchestrator process itself
-        # -- no upstream of its own. If we can reach the orchestrator at all,
-        # gx-auto is, by construction, able to make a routing decision.
-        aliases[Tier.AUTO.value] = {
-            "state": "ready",
-            "usable": True,
-            "reason": "orchestrator routing (picks among mini/fast/reason/max per request)",
-        }
-
-    # gx-image / gx-video: NOT owned by the orchestrator (media router lives
-    # on node 2, outside this project's scope tonight -- see CURRENT_STATE.md
-    # "built, unproven via API"). Report honestly rather than inferring
-    # readiness: at most we can say whether their only possible host is even
-    # reachable.
-    if not node2_online:
-        media = {"state": "unavailable", "usable": False, "reason": "node2_offline"}
-    else:
-        media = {
-            "state": "unavailable",
-            "usable": False,
-            "reason": "media_router_not_probed_by_gx_status (out of orchestrator scope; see CURRENT_STATE.md)",
-        }
-    aliases[Tier.IMAGE.value] = dict(media)
-    aliases[Tier.VIDEO.value] = dict(media)
-    return aliases
+    except (UpstreamError, Exception) as exc:  # noqa: BLE001
+        return {"reachable": False, "error": repr(exc)}
+    if not isinstance(body, dict):
+        return {"reachable": False, "error": f"unrecognised orchestrator response: {body!r}"}
+    body["reachable"] = True
+    body["error"] = ""
+    return body
 
 
 # --------------------------------------------------------------------------
@@ -293,27 +198,45 @@ def build_alias_table(snap: OrchestratorSnapshot, node2_online: bool) -> dict[st
 
 def build_report(cfg: Config, orchestrator_base: str) -> dict[str, Any]:
     node1 = local_node1_facts(cfg)
-    node2_online = node2_kernel_reachable(cfg)
-    snap = fetch_orchestrator_snapshot(orchestrator_base, timeout=cfg.node1_probe_timeout)
-    aliases = build_alias_table(snap, node2_online)
-
-    node2 = {
-        "online": node2_online,
-        "note": (
-            "kernel answers ICMP" if node2_online else "no ICMP reply within "
-            f"{_NODE2_PING_DEADLINE_S}s (single probe, not retried)"
-        ),
-        "llama_swap": aliases.get(Tier.REASON.value, {}),
-        "workload": "gx-reason" if aliases.get(Tier.REASON.value, {}).get("state") == "ready" else None,
-    }
-
+    snap = fetch_orchestrator_snapshot(orchestrator_base)
     return {
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
         "node1": node1,
-        "node2": node2,
-        "aliases": aliases,
-        "orchestrator": {"reachable": snap.reachable, "base": orchestrator_base, "error": snap.error},
+        "model": registry_model_facts(cfg),
+        "orchestrator": {
+            "reachable": bool(snap.get("reachable")),
+            "base": orchestrator_base,
+            "error": snap.get("error", ""),
+            # The V4.1 shape, passed through unchanged when reachable.
+            "cluster": snap.get("model", {}),
+            "queue": snap.get("queue", {}),
+        },
     }
+
+
+def _one_line_nodes(cluster: dict[str, Any]) -> list[str]:
+    """Node health one-liners from the orchestrator's snapshot."""
+    nodes = cluster.get("nodes") or {}
+    head = nodes.get("head") or {}
+    worker = nodes.get("worker") or {}
+    mem = nodes.get("mem") or {}
+    lines = []
+    if head.get("healthy") and head.get("serves_model"):
+        lines.append("head  : healthy (model id verified)")
+    else:
+        lines.append(f"head  : DOWN ({head.get('detail') or 'unreachable'})")
+    fabric = worker.get("fabric") or {}
+    if worker.get("ssh_reachable") and worker.get("container_running"):
+        rails = ", ".join(f"{ip}:{'up' if ok else 'DOWN'}" for ip, ok in fabric.items()) or "-"
+        lines.append(f"worker: container running (fabric {rails})")
+    else:
+        lines.append(f"worker: PROBLEM ({worker.get('detail') or 'ssh/container unreachable'})")
+    lines.append(
+        "mem   : node1={n1} GiB  node2={n2} GiB MemAvailable".format(
+            n1=mem.get("node1_gib"), n2=mem.get("node2_gib"),
+        )
+    )
+    return lines
 
 
 def render_human(report: dict[str, Any]) -> str:
@@ -321,45 +244,38 @@ def render_human(report: dict[str, Any]) -> str:
     lines.append(f"gx-cluster status -- {report['generated_at']}")
     lines.append("")
 
-    n1 = report["node1"]
-    pin_note = "" if n1["kernel_pinned"] else "  *** NOT the pinned kernel -- see BLOCKERS.md B-001 ***"
-    lines.append("NODE 1 (gx10-01, control)  ONLINE")
-    lines.append(f"  kernel      {n1['kernel']}{pin_note}")
-    lines.append(f"  ram         {n1['ram_available_gib']} GiB available / {n1['ram_total_gib']} GiB total")
-    lines.append(f"  swap        {n1['swap_free_gib']} GiB free / {n1['swap_total_gib']} GiB total")
-    lines.append(f"  workload    {', '.join(n1['workload']) if n1['workload'] else '(idle)'}")
-    lines.append(
-        f"  gateway     litellm={'healthy' if n1['gateway']['litellm'] else 'DOWN'}  "
-        f"llama-swap={'healthy' if n1['gateway']['llama_swap'] else 'DOWN'}"
-    )
-    lines.append("")
-
-    n2 = report["node2"]
-    lswap = n2["llama_swap"]
-    if not n2["online"]:
-        headline = "OFFLINE"
-    elif not lswap.get("usable"):
-        # The exact BLOCKERS.md B-012 signature: kernel answers ICMP, but
-        # llama-swap (userspace) never answers at all. These are two
-        # different facts -- do not collapse them into one "ONLINE"/"OFFLINE"
-        # that would either hide the outage or contradict the kernel probe.
-        headline = "KERNEL ONLINE / USERSPACE UNREACHABLE"
+    model = report["model"]
+    if "error" in model:
+        lines.append(f"MODEL  *** registry problem: {model['error']} ***")
     else:
-        headline = "ONLINE"
-    lines.append(f"NODE 2 (gx10-02, compute)  {headline}")
-    lines.append(f"  {n2['note']}")
-    lines.append(f"  llama-swap  {lswap.get('state', 'unknown')}  ({lswap.get('reason', '-')})")
-    lines.append(f"  workload    {n2['workload'] or 'unknown'}")
-    lines.append("")
+        unc = "uncensored" if model.get("uncensored") else "STOCK (not uncensored!)"
+        lines.append(f"MODEL  {model.get('model_id')}  ({unc}, {model.get('quant', '?')})")
 
     orch = report["orchestrator"]
     if not orch["reachable"]:
         lines.append(f"*** orchestrator at {orch['base']} is UNREACHABLE: {orch['error']} ***")
-        lines.append("")
+        lines.append("(cluster state, queue and node health are unknown, not assumed)")
+    else:
+        cluster = orch["cluster"]
+        lifecycle = cluster.get("lifecycle") or {}
+        state = lifecycle.get("state", "unknown")
+        profile = cluster.get("profile") or "(none)"
+        lines.append(f"CLUSTER  {state}  profile={profile}  model uptime={lifecycle.get('seconds_in_state')}s")
+        lines.extend(f"  {line}" for line in _one_line_nodes(cluster))
+        queue = orch["queue"]
+        lines.append(
+            f"QUEUE  active={queue.get('active')}/{queue.get('capacity')}  "
+            f"queued={queue.get('queued')}  oldest_wait={queue.get('oldest_wait_seconds')}s"
+        )
+    lines.append("")
 
-    lines.append("ALIASES")
-    for alias, status in report["aliases"].items():
-        lines.append(f"  {alias:<10} {status.get('state', 'unknown'):<12} {status.get('reason', '')}")
+    n1 = report["node1"]
+    pin_note = "" if n1["kernel_pinned"] else "  *** NOT the pinned kernel -- see BLOCKERS.md B-001 ***"
+    lines.append("NODE 1 (gx10-01, head)  ONLINE")
+    lines.append(f"  kernel      {n1['kernel']}{pin_note}")
+    lines.append(f"  ram         {n1['ram_available_gib']} GiB available / {n1['ram_total_gib']} GiB total")
+    lines.append(f"  swap        {n1['swap_free_gib']} GiB free / {n1['swap_total_gib']} GiB total")
+    lines.append(f"  workload    {n1['workload'] or '(model not resident)'}")
 
     return "\n".join(lines) + "\n"
 
@@ -368,7 +284,7 @@ def render_json(report: dict[str, Any]) -> str:
     return json.dumps(report, indent=2, sort_keys=False) + "\n"
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: "list[str] | None" = None) -> int:
     parser = argparse.ArgumentParser(prog="gx-status", description=__doc__)
     parser.add_argument("--json", action="store_true", help="emit machine-readable JSON instead of text")
     parser.add_argument(

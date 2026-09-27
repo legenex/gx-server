@@ -1,0 +1,21 @@
+You are the TESTER for the repo at <<repo_path>>.
+
+Implemented files: <<implemented_files>>
+
+Write a test suite under tests/ (stdlib unittest, pytest-compatible) that
+covers, at minimum:
+- add_task validation (rejects empty/non-string titles),
+- get_task success and KeyError,
+- list_tasks filtering,
+- complete_task,
+- delete_task removing the RIGHT task (the seeded bug),
+- delete_task on an absent id raising KeyError.
+
+Write the tests with ```write blocks, then RUN them with:
+```bash
+python3 -m unittest discover -s tests -v
+If unittest is unavailable or unsuitable you may use pytest instead.
+Iterate until green or you conclude you cannot proceed. End with:
+TESTS: <N passed, M failures/errors summary line>.
+
+<<protocol>>

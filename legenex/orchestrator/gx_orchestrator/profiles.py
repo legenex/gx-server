@@ -80,10 +80,10 @@ class ProfileSpec:
     name: str
     max_num_seqs: int
     spec_method: str  # "dspark" | "none"
-    dspark_tokens: int = 0
     max_model_len: int
     reasoning_default: str
     target: str = ""
+    dspark_tokens: int = 0
     #: Present only on the bounded `custom` profile.
     max_num_seqs_bounds: tuple[int, int] | None = None
     max_model_len_bounds: tuple[int, int] | None = None
