@@ -1,23 +1,27 @@
+// Shared helpers for the V4.1 e2e suite (offline.v41.spec.js against
+// fixture_server_v41.py). The pre-V4.1 PAGES map and the 'Dashboard'
+// default page were retired with the old eleven-alias world; the rebuilt
+// dashboard defaults to Overview.
 import AxeBuilder from '@axe-core/playwright';
 import { expect } from '@playwright/test';
 
 export const PAGES = [
-  ['dashboard', 'Dashboard'],
-  ['resources', 'Resource Control'],
-  ['models', 'Models'],
-  ['manager', 'Model Manager'],
-  ['storage', 'Storage & Cleanup'],
-  ['setup', 'Connections'],
-  ['connections', 'Connections'],
-  ['backup', 'Backup & Recovery'],
-  ['runtime', 'Runtime'],
-  ['cluster', 'Cluster'],
-  ['jobs', 'Jobs / Queue'],
+  ['overview', 'Overview'],
+  ['model', 'Model'],
+  ['performance', 'Performance'],
+  ['requests', 'Requests'],
+  ['agents', 'Agents'],
+  ['tasks', 'Tasks'],
+  ['projects', 'Projects'],
+  ['files', 'Files'],
+  ['storage', 'Storage'],
   ['logs', 'Logs'],
-  ['playground', 'API Playground'],
-  ['docs', 'Docs'],
-  ['keys', 'API Keys'],
+  ['network', 'Network'],
+  ['updates', 'Updates'],
   ['settings', 'Settings / System'],
+  ['recovery', 'Recovery'],
+  ['jobs', 'Jobs / Actions'],
+  ['keys', 'API Keys'],
 ];
 
 // Collects console errors, page errors, CSP violations and failed requests.
@@ -47,7 +51,7 @@ export async function login(page, password, username = process.env.GX_UI_USER ||
   await page.fill('#login-pass', password);
   await page.click('#login-submit');
   await expect(page.locator('#app-view')).toBeVisible();
-  await expect(page.locator('.page-title')).toHaveText('Dashboard');
+  await expect(page.locator('.page-title')).toHaveText('Overview');
 }
 
 export async function gotoPage(page, name, title) {

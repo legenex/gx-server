@@ -1,57 +1,13 @@
-// Two projects:
-//   offline — hermetic: the real UI backend with synthetic cluster data and
-//             stub upstreams (e2e/fixture_server.py). Safe to run anywhere.
-//   live    — against the deployed UI on gx10-01 (http://127.0.0.1:8088) with
-//             REAL model calls. Password from GX_UI_PASSWORD or the 0600
-//             initial-password file. Run deliberately: npm run test:live
-import { randomBytes } from 'node:crypto';
-import { defineConfig, devices } from '@playwright/test';
+// Default Playwright config: runs the V4.1 hermetic suite. The pre-V4.1
+// offline fixture (e2e/fixture_server.py) and the live specs were retired
+// with the rebuilt dashboard; this config now extends the V4.1 config
+// (e2e/playwright.v41.config.js → e2e/fixture_server_v41.py +
+// offline.v41.spec.js). The "offline" project name is kept so
+// `npm run test:e2e` (--project=offline) keeps working; there is no "live"
+// project any more (its specs are retired).
+import v41Config from './e2e/playwright.v41.config.js';
 
-const e2ePassword = process.env.GX_E2E_PASSWORD || `E2e-${randomBytes(12).toString('hex')}`;
-process.env.GX_E2E_PASSWORD = e2ePassword;
-const offlinePort = Number(process.env.GX_E2E_PORT || 18089);
-const onlyLive = process.argv.includes('--project=live');
-
-// Parallel workstreams running Playwright in the same checkout share this
-// directory and delete each other's traces mid-run ("browserContext.close:
-// ENOENT ... recording.trace"), which reads as a flaky test. Each run can take
-// its own directory with GX_E2E_OUTPUT_DIR.
-const outputDir = process.env.GX_E2E_OUTPUT_DIR || 'test-results';
-
-export default defineConfig({
-  outputDir,
-  testDir: './e2e',
-  timeout: 120_000,
-  expect: { timeout: 20_000 },
-  fullyParallel: false,
-  workers: 1,
-  reporter: [['list'], ['json', { outputFile: `${outputDir}/results.json` }]],
-  use: {
-    trace: 'retain-on-failure',
-    screenshot: 'only-on-failure',
-    colorScheme: 'dark',
-  },
-  projects: [
-    {
-      name: 'offline',
-      testMatch: /offline\..*\.spec\.js/,
-      use: { ...devices['Desktop Chrome'], baseURL: `http://127.0.0.1:${offlinePort}` },
-    },
-    {
-      name: 'live',
-      testMatch: /live\..*\.spec\.js/,
-      timeout: 60 * 60_000,
-      // Google Chrome (not the bundled Chromium) so H.264 MP4 from gx-video can be
-      // decoded for the frame check.
-      // No traces against the real UI: they would record the real login body.
-      use: { ...devices['Desktop Chrome'], channel: 'chrome', baseURL: process.env.GX_UI_URL || 'http://127.0.0.1:8088', trace: 'off' },
-    },
-  ],
-  webServer: onlyLive ? undefined : {
-    command: `python3 e2e/fixture_server.py ${offlinePort}`,
-    url: `http://127.0.0.1:${offlinePort}/api/health`,
-    reuseExistingServer: false,
-    timeout: 30_000,
-    env: { GX_E2E_PASSWORD: e2ePassword, GX_UI_ACCESS_LOG: '0' },
-  },
-});
+export default {
+  ...v41Config,
+  projects: [{ name: 'offline' }],
+};
