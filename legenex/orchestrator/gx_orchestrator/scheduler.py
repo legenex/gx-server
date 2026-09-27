@@ -36,7 +36,7 @@ import os
 import threading
 import time
 import uuid
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
@@ -169,6 +169,7 @@ class Scheduler:
         self._stopping = threading.Event()
         self._reaper = threading.Thread(target=self._reap_loop, name="gx-sched-reaper", daemon=True)
 
+        self._load_history_file()
         self._restore()
         self._reaper.start()
 
@@ -427,6 +428,19 @@ class Scheduler:
         return promoted
 
     # ------------------------------------------------------------- wait / state
+    def _terminal_state_of(self, record_id: str) -> str:
+        """The recorded terminal state of a record that is no longer live.
+
+        A waiter woken by a cancel/reap finds its record gone from the live
+        map; the history ring still names HOW it ended, which is what the
+        caller needs to answer the client. A truly unknown id is STATE_ERROR.
+        """
+        with self._lock:
+            for entry in reversed(self._history):
+                if entry.get("id") == record_id:
+                    return str(entry.get("state") or STATE_ERROR)
+        return STATE_ERROR
+
     def wait(self, record_id: str, timeout: "float | None" = None) -> str:
         """Block until `record_id` is active or terminal.
 
@@ -439,7 +453,9 @@ class Scheduler:
             with self._lock:
                 rec = self._records.get(record_id)
                 if rec is None:
-                    return STATE_ERROR
+                    # Gone: cancelled/reaped while we were parked. The history
+                    # ring names the real terminal state.
+                    return self._terminal_state_of(record_id)
                 if rec.state in (STATE_ACTIVE, STATE_CANCELLING):
                     return rec.state
                 if rec.state in _TERMINAL:
@@ -452,8 +468,9 @@ class Scheduler:
                 continue
             with self._lock:
                 rec = self._records.get(record_id)
-                state = rec.state if rec else STATE_ERROR
-            return state
+                if rec is None:
+                    return self._terminal_state_of(record_id)
+                return rec.state
 
     def get(self, record_id: str) -> "dict[str, Any] | None":
         with self._lock:

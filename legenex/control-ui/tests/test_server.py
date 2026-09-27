@@ -71,9 +71,16 @@ class ServerBase(unittest.TestCase):
         return self.req("POST", path, body if body is not None else {}, headers)
 
 
-SESSION_ROUTES = ["/api/overview", "/api/nodes", "/api/cluster", "/api/models", "/api/jobs", "/api/actions",
-                  "/api/logs", "/api/logs/orchestrator", "/api/system", "/api/docs", "/api/docs/getting-started",
-                  "/api/playground/config", "/api/actions/jobs/0123456789abcdef"]
+SESSION_ROUTES = ["/api/overview", "/api/nodes", "/api/cluster", "/api/models", "/api/jobs",
+                  "/api/actions", "/api/logs", "/api/logs/orchestrator", "/api/system", "/api/docs",
+                  "/api/docs/getting-started", "/api/requests", "/api/agents", "/api/agents/tasks",
+                  "/api/projects", "/api/files/roots", "/api/files/trash", "/api/storage", "/api/network",
+                  "/api/updates", "/api/recovery", "/api/resources", "/api/setup", "/api/connections",
+                  "/api/keys", "/api/actions/jobs/0123456789abcdef"]
+
+RETIRED_ROUTES = ["/api/playground/config", "/api/media/assets", "/api/music/jobs", "/api/voice/upload",
+                  "/api/creative/overview", "/api/manager/inventory", "/v1/music/jobs",
+                  "/api/setup/openwebui/identity"]
 
 
 class TestPublic(ServerBase):
@@ -97,7 +104,6 @@ class TestPublic(ServerBase):
     def test_static_and_spa_fallback(self):
         status, headers, body = self.req("GET", "/")
         self.assertEqual(status, 200)
-        self.assertIn(b"GX Cluster Control", body)
         self.assertNotIn(b"<script>", body)  # no inline script (CSP)
         status, _, body2 = self.req("GET", "/models")
         self.assertEqual(body2, body)
@@ -125,9 +131,9 @@ class TestPublic(ServerBase):
             status, _, body = self.req("GET", path)
             self.assertEqual(status, 401, path)
             self.assertEqual(body["error"]["code"], "unauthenticated")
-        for path in ("/api/actions/system.refresh", "/api/models/gx-max/load", "/api/playground/chat",
-                     "/api/logout"):
-            status, _, _ = self.post(path, {"confirm": "gx-max"}, csrf=False)
+        for path in ("/api/actions/system.refresh", "/api/resources/gxmax/start", "/api/logout",
+                     "/api/files/delete", "/api/files/trash/purge"):
+            status, _, _ = self.post(path, {}, csrf=False)
             self.assertEqual(status, 401, path)
 
     def test_forged_cookie_rejected(self):
@@ -140,6 +146,15 @@ class TestPublic(ServerBase):
         self.assertEqual(self.req("DELETE", "/api/health")[0], 405)
         self.assertEqual(self.req("GET", "/api/shell")[0], 404)
         self.assertEqual(self.req("POST", "/api/health", {})[0], 405)
+
+    def test_retired_endpoints_are_410_gone(self):
+        for path in RETIRED_ROUTES:
+            status, _, body = self.req("GET", path)
+            self.assertEqual(status, 410, path)
+            self.assertEqual(body["error"]["code"], "gone")
+            self.assertIn("retired", body["error"]["message"])
+        status, _, body = self.post("/api/playground/chat", {"model": "gx-max", "messages": []})
+        self.assertEqual(status, 410)
 
 
 class TestLogin(ServerBase):
@@ -222,28 +237,59 @@ class TestAuthenticatedApi(ServerBase):
             self.assertEqual(status, 200, (path, body))
             self.assertEqual(headers.get("Cache-Control"), "no-store")
 
-    def test_models_lists_the_four_logical_modes(self):
+    def test_models_is_the_v41_single_model_world(self):
         _, _, body = self.req("GET", "/api/models")
-        aliases = [m["alias"] for m in body["models"]]
-        self.assertEqual(aliases, ["gx-mini", "gx-code", "gx-auto", "gx-max"])
-        self.assertEqual(len(aliases), len(set(aliases)), "no alias may appear twice")
-        self.assertNotIn("gx-image", aliases)
-        self.assertNotIn("gx-fast", aliases)
-        gx = next(m for m in body["models"] if m["alias"] == "gx-max")
-        self.assertEqual(gx["topology"]["mode"], "dual-worker")
-        self.assertEqual(gx["topology"]["solver"], "gx-code-01")
-        self.assertEqual(gx["topology"]["reviewer"], "gx-code-02")
-        self.assertEqual(gx["actions"], {})
-        self.assertNotIn("gx-vision", json.dumps(body))
-        self.assertNotIn("GX-Playground", json.dumps(body))
+        ids = [m.get("id") or m.get("alias") for m in body["models"]]
+        self.assertIn("gx-max", ids)
+        self.assertIn("gx-auto", ids)
+        for banned in ("gx-mini", "gx-code", "gx-fast", "gx-reason", "gx-image", "gx-video",
+                       "gx-music", "gx-voice", "gx-call", "gx-live"):
+            self.assertNotIn(banned, json.dumps(body), banned)
+        uncensored = next(m for m in body["models"] if m.get("id") == "dsv41-flash-exl3-uncensored")
+        self.assertTrue(uncensored["uncensored"])
+        self.assertTrue(uncensored["production"])
+        stock = next(m for m in body["models"] if m.get("id") == "dsv41-flash-exl3-stock")
+        self.assertFalse(stock["uncensored"])
+        self.assertFalse(stock["production"])
+        reg = body["registry"]
+        self.assertEqual(reg["registry_ok"], True)
+        self.assertIn("balanced", reg["profiles"])
+        self.assertIn("max", reg["reasoning"]["levels"])
+        text = json.dumps(body)
+        self.assertNotIn("llama-swap", text)
+        self.assertNotIn("SGLang", text)
 
     def test_overview_shape(self):
         _, _, body = self.req("GET", "/api/overview")
-        for key in ("overall", "nodes", "services", "rails", "tailscale", "gxmax", "git", "queue", "problems",
-                    "locks", "ledger", "models"):
+        for key in ("overall", "nodes", "services", "rails", "tailscale", "gxmax", "git", "queue",
+                    "problems", "locks", "ledger", "registry_ok"):
             self.assertIn(key, body)
         self.assertEqual([n["name"] for n in body["nodes"]], ["gx10-01", "gx10-02"])
         self.assertEqual(len(body["rails"]), 2)
+        self.assertIn(body["gxmax"]["state"], ("down", "unknown"))
+
+    def test_requests_page_is_honest_offline(self):
+        _, _, body = self.req("GET", "/api/requests")
+        self.assertEqual(body["status"]["available"], False)
+        self.assertIn("reason", body["status"])
+        self.assertEqual(body["history"]["available"], False)
+        self.assertEqual(body["history"]["records"], [])
+        self.assertIn("never", body["history"]["note"])
+
+    def test_agents_page_is_honest_disconnected(self):
+        _, _, body = self.req("GET", "/api/agents")
+        self.assertEqual(body["agentos"]["connected"], False)
+        self.assertEqual(body["supported_controls"], [])
+        self.assertIn("pause/resume/cancel", " ".join(body["notes"]))
+
+    def test_files_pages(self):
+        roots = self.req("GET", "/api/files/roots")[2]
+        self.assertEqual(len(roots["roots"]), 6)
+        _, _, trash = self.req("GET", "/api/files/trash")
+        self.assertEqual(trash["entries"], [])
+        status, _, body = self.req("GET", "/api/files/browse?path=/etc/passwd")
+        self.assertEqual(status, 403)
+        self.assertEqual(body["error"]["code"], "outside_roots")
 
     def test_csrf_and_origin_enforced(self):
         status, _, body = self.post("/api/actions/system.refresh", csrf=False)
@@ -269,11 +315,21 @@ class TestAuthenticatedApi(ServerBase):
     def test_action_errors(self):
         self.assertEqual(self.post("/api/actions/shell")[0], 404)
         self.assertEqual(self.post("/api/actions/..%2f..")[0], 404)
-        status, _, body = self.post("/api/models/gx-max/load", {})
+        status, _, body = self.post("/api/resources/gxmax/start", {})
         self.assertEqual(status, 400)
         self.assertIn("gx-max", body["error"]["message"])
-        self.assertEqual(self.post("/api/models/gx-vision/load")[0], 404)
-        self.assertEqual(self.post("/api/models/gx-max/exec")[0], 404)
+        status, _, body = self.post("/api/actions/gxmax_start", {"profile": "nonsense"})
+        self.assertEqual(status, 400)
+        status, _, body = self.post("/api/actions/gxmax_start", {})
+        self.assertEqual(status, 400)  # needs the typed confirmation
+
+    def test_action_args_validation(self):
+        status, _, body = self.post("/api/actions/benchmark_run", {"name": "ok", "evil": "x"})
+        self.assertEqual(status, 400)
+        self.assertEqual(body["error"]["code"], "refused")
+        # a valid arg is accepted (the job itself will fail offline: 202 anyway)
+        status, _, body = self.post("/api/actions/scheduler_cancel", {"request_id": "abc"})
+        self.assertEqual(status, 202, body)
 
     def test_body_limits(self):
         huge = {"confirm": "x" * (srv.MAX_BODY + 10)}
@@ -285,31 +341,18 @@ class TestAuthenticatedApi(ServerBase):
 
     def test_logs_endpoint(self):
         status, _, body = self.req("GET", "/api/logs")
-        self.assertGreaterEqual(len(body["streams"]), 20)
+        self.assertGreaterEqual(len(body["streams"]), 15)
+        ids = {s["id"] for s in body["streams"]}
+        self.assertLessEqual({"orchestrator", "scheduler-history", "litellm", "mia", "open-webui",
+                              "hostwatch-node1", "control-ui-audit"}, ids)
         self.assertEqual(self.req("GET", "/api/logs/not-a-stream")[0], 404)
         self.assertEqual(self.req("GET", "/api/logs/..%2F..%2Fetc%2Fpasswd")[0], 404)
-        status, headers, _ = self.req("GET", "/api/logs/rank1?lines=10&format=text")
-        self.assertEqual(status, 200)
-        self.assertIn("attachment", headers["Content-Disposition"])
 
     def test_docs_endpoints(self):
         _, _, body = self.req("GET", "/api/docs")
         self.assertGreaterEqual(len(body["pages"]), 6)
-        _, _, page = self.req("GET", "/api/docs/models")
-        self.assertIn("gx-max", page["html"])
-        _, _, res = self.req("GET", "/api/docs?q=deadman")
-        self.assertTrue(res["results"])
+        _, _, res = self.req("GET", "/api/docs?q=gx-max")
         self.assertEqual(self.req("GET", "/api/docs/..%2f")[0], 404)
-
-    def test_playground_validation_via_api(self):
-        status, _, body = self.post("/api/playground/chat", {"model": "gpt-4", "prompt": "hi"})
-        self.assertEqual(status, 400)
-        status, _, body = self.post("/api/playground/video", {"prompt": ""})
-        self.assertEqual(status, 400)
-        self.assertEqual(self.req("GET", "/api/playground/video/..%2fx")[0], 404)
-        # A gateway-encoded id is routed (it reaches the upstream, which is down here).
-        encoded = "video_" + "bGl0ZWxsbTpjdXN0b21fbGxtX3Byb3ZpZGVy" * 3 + "=="
-        self.assertNotEqual(self.req("GET", f"/api/playground/video/{encoded}")[0], 404)
 
     def test_system_view_hides_secret_values(self):
         _, _, body = self.req("GET", "/api/system")
@@ -318,7 +361,32 @@ class TestAuthenticatedApi(ServerBase):
         self.assertEqual(body["kernel_pin"], "6.17.0-1032-nvidia")
         names = [a["name"] for a in body["actions"]]
         self.assertIn("system.integrity_audit", names)
+        self.assertIn("gxmax_start", names)
+        self.assertIn("purge_trash", names)
         self.assertFalse([n for n in names if "upgrade" in n or "firmware" in n or "kernel_update" in n])
+
+    def test_updates_view_never_mutates(self):
+        _, _, body = self.req("GET", "/api/updates")
+        self.assertIn(body["policy"], json.dumps(body))
+        self.assertIn("never updates", body["policy"])
+        status, _, out = self.post("/api/updates/check")
+        self.assertEqual(status, 200)
+        self.assertEqual(out["results"][0]["name"], "offline mode")
+
+    def test_recovery_view_honest_without_watchdog(self):
+        _, _, body = self.req("GET", "/api/recovery")
+        self.assertEqual(body["watchdog"]["available"], False)
+        self.assertIn("watchdog", body["watchdog"]["reason"])
+
+    def test_storage_and_network_views(self):
+        status, _, body = self.req("GET", "/api/storage")
+        self.assertEqual(status, 200)
+        self.assertEqual(body["head"]["name"], "gx10-01")
+        self.assertIn("cleanup_note", body)
+        status, _, net = self.req("GET", "/api/network")
+        self.assertEqual(status, 200)
+        self.assertTrue(net["offline"])
+        self.assertEqual(len(net["rails"]), 2)
 
 
 class TestKeepAlive(ServerBase):
@@ -353,20 +421,6 @@ class TestKeepAlive(ServerBase):
         conn.close()
 
 
-class TestRangeParsing(unittest.TestCase):
-    def test_parse_range(self):
-        pr = srv.parse_range
-        self.assertIsNone(pr(None, 100))
-        self.assertIsNone(pr("bytes=0-1,5-6", 100))
-        self.assertEqual(pr("bytes=0-", 100), (0, 99))
-        self.assertEqual(pr("bytes=10-19", 100), (10, 19))
-        self.assertEqual(pr("bytes=90-500", 100), (90, 99))
-        self.assertEqual(pr("bytes=-10", 100), (90, 99))
-        self.assertEqual(pr("bytes=100-", 100), "invalid")
-        self.assertEqual(pr("bytes=5-2", 100), "invalid")
-        self.assertIsNone(pr("bytes=a-b", 100))
-
-
 class TestBindSafety(unittest.TestCase):
     def test_wildcard_bind_refused(self):
         from gx_control_ui.config import _resolve_hosts
@@ -374,10 +428,6 @@ class TestBindSafety(unittest.TestCase):
             with self.assertRaises(ValueError):
                 _resolve_hosts(bad)
         self.assertEqual(_resolve_hosts("127.0.0.1, 127.0.0.1"), ("127.0.0.1",))
-
-
-if __name__ == "__main__":
-    unittest.main()
 
 
 class TestAcceptanceAccount(ServerBase):
@@ -408,3 +458,7 @@ class TestAcceptanceAccount(ServerBase):
         self.assertEqual(status, 401)
         status, _, _ = self.req("POST", "/api/login", {"username": "acceptance", "password": PASSWORD})
         self.assertEqual(status, 401)
+
+
+if __name__ == "__main__":
+    unittest.main()

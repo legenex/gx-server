@@ -1,4 +1,5 @@
-"""Context budgeting (D-039): never knowingly forward a request that cannot fit.
+"""Context budgeting (D-039, V4.1): never knowingly forward a request that
+cannot fit the profile's served window.
 
 Hermetic. Run with:  python3 -m unittest discover -s legenex/orchestrator/tests
 """
@@ -14,242 +15,256 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from gx_orchestrator import budget as B  # noqa: E402
-from gx_orchestrator.server import clamp_output_budget, tier_budget  # noqa: E402
-from gx_orchestrator.tiers import TIERS, Tier  # noqa: E402
-from kilo_fixtures import claude_code_continuation  # noqa: E402
-
-#: The engine's own message for the 2026-09-17 failure, verbatim.
-OBSERVED_ENGINE_ERROR = (
-    "litellm.ContextWindowExceededError: litellm.BadRequestError: ContextWindowExceededError: "
-    "OpenAIException - This model's maximum context length is 65536 tokens. However, you requested "
-    "32000 output tokens and your prompt contains at least 33537 input tokens, for a total of at "
-    "least 65537 tokens. Please reduce the length of the input prompt or the number of requested "
-    "output tokens. (parameter=input_tokens, value=33537)"
-)
+from gx_orchestrator.config import Config  # noqa: E402
+from gx_orchestrator.server import profile_budget  # noqa: E402
+from tests.registry_fixtures import load_fixture_registry  # noqa: E402
 
 
-def chat(text: str, **kw):
-    return {"messages": [{"role": "user", "content": text}], **kw}
+def _payload(chars_per_msg: int = 1000, n_msgs: int = 10, **extra) -> dict:
+    msgs = [{"role": "user", "content": "x" * chars_per_msg} for _ in range(n_msgs)]
+    return {"messages": msgs, **extra}
 
 
-class TestEstimate(unittest.TestCase):
-    def test_every_part_of_the_request_counts(self):
-        base = B.estimate_input(chat("hello"))
-        with_system = B.estimate_input({"messages": [
-            {"role": "system", "content": "s" * 3200}, {"role": "user", "content": "hello"}]})
-        self.assertGreaterEqual(with_system.system_tokens, 1000)
-        self.assertGreater(with_system.total_tokens, base.total_tokens + 1000)
+def _claude_code_like_payload() -> dict:
+    """The D-039 failure shape: ~20 k tokens of tool schema plus an agentic
+    'give me your whole output window' request."""
+    tools = []
+    for i in range(40):
+        tools.append({
+            "type": "function",
+            "function": {
+                "name": f"tool_{i}",
+                "description": "y" * 400,
+                "parameters": {"type": "object", "properties": {
+                    f"arg_{j}": {"type": "string", "description": "z" * 60}
+                    for j in range(6)
+                }},
+            },
+        })
+    return {
+        "messages": [{"role": "user", "content": "please continue"}],
+        "tools": tools,
+        "max_tokens": 32000,
+    }
 
-        tools = [{"type": "function", "function": {"name": "t", "description": "d" * 3200}}]
-        with_tools = B.estimate_input(chat("hello", tools=tools))
-        self.assertGreaterEqual(with_tools.tool_schema_tokens, 1000)
-        self.assertEqual(with_tools.tool_count, 1)
-        self.assertGreater(with_tools.total_tokens, base.total_tokens + 1000)
 
-    def test_tool_calls_tool_results_and_reasoning_count(self):
-        msgs = [
-            {"role": "user", "content": "go"},
-            {"role": "assistant", "content": None, "reasoning_content": "r" * 3200,
-             "tool_calls": [{"id": "1", "type": "function",
-                             "function": {"name": "read", "arguments": json.dumps({"p": "a" * 3200})}}]},
-            {"role": "tool", "tool_call_id": "1", "content": "z" * 3200},
-        ]
-        est = B.estimate_input({"messages": msgs})
-        self.assertGreater(est.history_tokens, 2900)
-        self.assertEqual(est.message_count, 3)
+class TestEstimation(unittest.TestCase):
+    def test_text_messages(self):
+        est = B.estimate_input(_payload(3200, 20))
+        # 64 000 chars / 3.2 = 20 000 pessimistic
+        self.assertEqual(est.message_count, 20)
+        self.assertEqual(est.history_tokens, 20_001)
 
-    def test_image_bytes_are_not_text(self):
-        huge_b64 = "data:image/png;base64," + "A" * 2_000_000
-        est = B.estimate_input({"messages": [{"role": "user", "content": [
-            {"type": "text", "text": "what is this"},
-            {"type": "image_url", "image_url": {"url": huge_b64}}]}]})
+    def test_system_vs_history_split(self):
+        payload = {
+            "messages": [
+                {"role": "system", "content": "s" * 320},
+                {"role": "user", "content": "u" * 320},
+            ]
+        }
+        est = B.estimate_input(payload)
+        self.assertEqual(est.system_tokens, 101)
+        self.assertEqual(est.history_tokens, 101)
+
+    def test_tool_schema_counted_never_binary(self):
+        payload = {
+            "messages": [{"role": "user", "content": [
+                {"type": "text", "text": "hello"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64," + "A" * 50_000}},
+            ]}],
+            "tools": [{"type": "function", "function": {
+                "name": "f", "description": "d" * 320,
+                "parameters": {"type": "object"},
+            }}],
+        }
+        est = B.estimate_input(payload)
         self.assertEqual(est.image_count, 1)
+        self.assertEqual(est.tool_count, 1)
+        # the base64 blob must not be counted as prompt text
         self.assertLess(est.total_tokens, 5_000)
+        # image tokens are counted at the upper bound
+        self.assertGreaterEqual(est.total_tokens, B.IMAGE_TOKENS_UPPER)
 
-    def test_unknown_parts_count_text_not_binary(self):
-        est = B.estimate_input({"messages": [{"role": "user", "content": [
-            {"type": "tool_result", "content": [{"type": "text", "text": "q" * 3200}]},
-            {"type": "document", "data": "B" * 100_000}]}]})
-        self.assertGreater(est.total_tokens, 900)
-        self.assertLess(est.total_tokens, 2_000)
+    def test_reasoning_replay_is_history(self):
+        payload = {"messages": [
+            {"role": "assistant", "content": "", "reasoning_content": "r" * 3200},
+        ]}
+        est = B.estimate_input(payload)
+        self.assertEqual(est.history_tokens, 1_001)
 
-    def test_upper_is_pessimistic_and_lower_is_optimistic(self):
-        # The observed request: engine 33 537 tokens.
-        est = B.estimate_input(claude_code_continuation())
-        self.assertGreater(est.total_tokens, 33_537)
-        self.assertLess(est.lower_bound_tokens, 33_537)
-
-    def test_degenerate(self):
-        for payload in ({}, {"messages": None}, {"messages": ["x", 3]}, None):
-            est = B.estimate_input(payload)  # must not raise
-            self.assertEqual(est.message_count, 0)
+    def test_requested_output(self):
+        self.assertEqual(B.requested_output({"max_tokens": 5000}), 5000)
+        self.assertEqual(B.requested_output({"max_completion_tokens": 7}), 7)
+        self.assertIsNone(B.requested_output({"max_tokens": 0}))
+        self.assertIsNone(B.requested_output({"max_tokens": True}))  # bool is not a budget
+        self.assertIsNone(B.requested_output({"max_tokens": "junk"}))
+        self.assertIsNone(B.requested_output({}))
 
 
 class TestComputeBudget(unittest.TestCase):
-    def test_short_request_is_untouched(self):
-        b = tier_budget(chat("hello", max_tokens=2048), Tier.REASON)
+    LIMIT = 65_536
+
+    def budget(self, payload, **kw):
+        return B.compute_budget(
+            payload, model="gx-max:balanced", context_limit=self.LIMIT,
+            max_output_limit=32_768, **kw,
+        )
+
+    def test_request_that_fits_is_forwarded_unchanged(self):
+        b = self.budget(_payload(320, 10) | {"max_tokens": 4096})
         self.assertEqual(b.status, B.STATUS_OK)
-        self.assertEqual(b.output_tokens, 2048)
         self.assertFalse(b.clamped)
+        self.assertEqual(b.output_tokens, 4096)
+        applied = B.apply_budget(_payload(320, 10) | {"max_tokens": 4096}, b)
+        self.assertEqual(applied["max_tokens"], 4096)
 
-    def test_smaller_safe_request_is_preserved(self):
-        b = tier_budget(chat("x" * 100_000, max_tokens=500), Tier.REASON)
-        self.assertEqual(b.output_tokens, 500)
-        self.assertFalse(b.clamped)
-
-    def test_no_max_tokens_stays_unset_when_room_exists(self):
-        payload = chat("hello")
-        b = tier_budget(payload, Tier.FAST)
-        self.assertIsNone(b.output_tokens)
-        self.assertNotIn("max_tokens", B.apply_budget(payload, b))
-
-    def test_engine_output_ceiling_still_applies(self):
-        out = clamp_output_budget(chat("hello", max_tokens=262_144), Tier.MINI)
-        self.assertEqual(out["max_tokens"], TIERS[Tier.MINI].max_output)
-
-    def test_max_completion_tokens_is_clamped_too(self):
-        payload = claude_code_continuation()
-        payload.pop("max_tokens")
-        payload["max_completion_tokens"] = 32_000
-        out = clamp_output_budget(payload, Tier.REASON)
-        self.assertLess(out["max_completion_tokens"], 32_000)
-        self.assertNotIn("max_tokens", out)
-
-    def test_observed_65536_failure_is_clamped_to_fit(self):
-        """EXACT regression: 22 tools, ~18k schema tokens, max_tokens 32000, 65 536 window."""
-        payload = claude_code_continuation()
-        self.assertEqual(payload["max_tokens"], 32_000)
-        b = tier_budget(payload, Tier.REASON)
-        self.assertEqual(b.context_limit, 65_536)
-        self.assertEqual(b.tool_count, 22)
-        self.assertGreater(b.tool_schema_tokens, 17_000)
+    def test_huge_requested_output_is_clamped(self):
+        # The D-039 shape against a 16 k window: the agentic 32 k output
+        # request cannot survive, the budget must clamp it to what fits.
+        b = B.compute_budget(
+            _claude_code_like_payload(), model="gx-max:balanced",
+            context_limit=16_384, max_output_limit=4_096,
+        )
+        self.assertTrue(b.fits)
         self.assertEqual(b.requested_output_tokens, 32_000)
+        self.assertLess(b.output_tokens, 32_000)
+        self.assertLessEqual(b.output_tokens, b.max_output_limit)
         self.assertTrue(b.clamped)
-        self.assertEqual(b.status, B.STATUS_CLAMPED)
-        self.assertLessEqual(b.estimated_input_tokens + b.output_tokens + b.safety_margin, 65_536)
-        # The engine's real count was 33 537: the clamped request fits it too.
-        self.assertLessEqual(33_537 + b.output_tokens, 65_536)
-        out = B.apply_budget(payload, b)
-        self.assertEqual(out["max_tokens"], b.output_tokens)
-        self.assertEqual(payload["max_tokens"], 32_000, "the caller's payload is not mutated")
-        # The fields the spec requires are all present.
-        for key in ("model", "context_limit", "estimated_input_tokens", "tool_schema_tokens",
-                    "requested_output_tokens", "safe_output_tokens", "clamped",
-                    "remaining_context", "error_code"):
-            self.assertIn(key, b.as_dict())
+        applied = B.apply_budget(_claude_code_like_payload(), b)
+        self.assertLess(applied["max_tokens"], 32_000)
+        # TIGHT: the pessimistic estimate leaves only a minimal allowance,
+        # so the request goes out with a small budget and the engine's own
+        # tokenizer decides (corrected once, never resent unchanged).
+        self.assertLessEqual(b.output_tokens, B.MIN_USEFUL_OUTPUT)
+        self.assertTrue(b.fits)  # engine decides, not refused
 
-    def test_same_request_on_fast_is_not_clamped(self):
-        b = tier_budget(claude_code_continuation(), Tier.FAST)
+    def test_no_output_budget_large_window_is_left_to_engine(self):
+        b = self.budget(_payload(320, 10))
         self.assertEqual(b.status, B.STATUS_OK)
-        self.assertEqual(b.output_tokens, 32_000)
+        self.assertIsNone(b.output_tokens)
 
-    def test_input_that_cannot_fit_is_overflow(self):
-        text = "x" * int(70_000 * B.CHARS_PER_TOKEN_LOWER)
-        b = tier_budget(chat(text, max_tokens=100), Tier.REASON)
+    def test_certain_overflow_is_refused(self):
+        b = self.budget(_payload(3_200, 200))  # 200 000 optimistic chars
         self.assertEqual(b.status, B.STATUS_OVERFLOW)
         self.assertFalse(b.fits)
-        self.assertEqual(b.error_code, "context_length_exceeded")
+        self.assertEqual(b.error_code, B.ERROR_CODE)
+        self.assertEqual(b.safe_output_tokens, 0)
         self.assertIsNone(b.output_tokens)
+        msg = B.overflow_message(b)
+        self.assertIn("context window", msg)
+        self.assertIn("Shorten", msg)
 
-    def test_tight_input_gets_a_small_allowance_not_a_refusal(self):
-        # Pessimistically over the window, optimistically inside it.
-        text = "x" * int(66_000 * B.CHARS_PER_TOKEN_UPPER)
-        b = tier_budget(chat(text, max_tokens=32_000), Tier.REASON)
-        self.assertEqual(b.status, B.STATUS_TIGHT)
-        self.assertEqual(b.output_tokens, B.MIN_USEFUL_OUTPUT)
-        self.assertTrue(b.clamped)
+    def test_borderline_is_tight_not_overflow(self):
+        # optimistic says it fits, pessimistic is unsure -> engine decides
+        b = self.budget(_payload(3_200, 100), min_output=1024)
+        self.assertIn(b.status, (B.STATUS_TIGHT, B.STATUS_CLAMPED))
+        self.assertTrue(b.fits)
 
-    def test_margin_scales_with_window(self):
-        self.assertEqual(B.safety_margin(8_192), B.SAFETY_MARGIN_MIN)
-        self.assertEqual(B.safety_margin(327_680), int(327_680 * B.SAFETY_MARGIN_FRACTION))
-
-    def test_bool_and_junk_max_tokens_are_ignored(self):
-        self.assertIsNone(B.requested_output({"max_tokens": True}))
-        self.assertIsNone(B.requested_output({"max_tokens": "lots"}))
-        self.assertIsNone(B.requested_output({"max_tokens": -5}))
-        self.assertEqual(B.requested_output({"max_tokens": "300"}), 300)
+    def test_error_payload_shape(self):
+        b = self.budget(_payload(3_200, 200))
+        err = B.error_payload(b, message="too long", attempts=1, elapsed_ms=12.5)
+        self.assertEqual(err["error"]["code"], B.ERROR_CODE)
+        self.assertFalse(err["error"]["retryable"])
+        self.assertEqual(err["error"]["gx_budget"]["attempts"], 1)
+        self.assertEqual(err["error"]["gx_budget"]["elapsed_ms"], 12.5)
+        self.assertTrue(json.loads(json.dumps(err)))  # log-safe
 
 
 class TestEngineFeedback(unittest.TestCase):
-    def test_parses_the_observed_vllm_message(self):
-        err = B.parse_context_error(OBSERVED_ENGINE_ERROR)
-        self.assertEqual((err.context_limit, err.input_tokens), (65_536, 33_537))
+    def test_parse_vllm_exact_counts(self):
+        b = B.compute_budget(
+            _payload(3_200, 100) | {"max_tokens": 32_000},
+            model="gx-max:long", context_limit=65_536, max_output_limit=32_768,
+        )
+        err = B.parse_context_error(
+            "Error: this model's maximum context length is 65536 tokens. "
+            "However, you requested 32000 output tokens and your prompt "
+            "contains at least 33200 input tokens"
+        )
+        self.assertEqual(err.context_limit, 65_536)
+        self.assertEqual(err.input_tokens, 33_200)
+        # A refusal consistent with the engine's own arithmetic: the input
+        # count leaves just enough for a corrected, smaller output.
+        err = B.EngineContextError(65_536, 65_000)
+        fixed = B.corrected_output(err, b)
+        self.assertIsNotNone(fixed)
+        self.assertGreaterEqual(fixed, B.MIN_RETRY_OUTPUT)
+        self.assertLessEqual(fixed, 65_536 - 65_000 - B.EXACT_RETRY_MARGIN)
 
-    def test_parses_older_vllm_and_llamacpp(self):
-        old = ("This model's maximum context length is 8192 tokens. However, you requested 9000 "
-               "tokens (7000 in the messages, 2000 in the completion).")
-        self.assertEqual(B.parse_context_error(old).input_tokens, 7000)
-        cpp = "request (70000 tokens) exceeds the available context size (65536 tokens), try increasing it"
-        err = B.parse_context_error(cpp)
-        self.assertEqual((err.context_limit, err.input_tokens), (65_536, 70_000))
+    def test_correction_is_bounded_by_request_and_ceiling(self):
+        b = B.compute_budget(
+            {"messages": [{"role": "user", "content": "hi"}], "max_tokens": 1000},
+            model="m", context_limit=8_192, max_output_limit=4_096,
+        )
+        err = B.EngineContextError(8_192, 7_600)
+        fixed = B.corrected_output(err, b)
+        self.assertLessEqual(fixed, 1000)  # never more than requested
+        self.assertGreaterEqual(fixed, B.MIN_RETRY_OUTPUT)
 
-    def test_generic_and_unrelated(self):
-        self.assertEqual(B.parse_context_error('{"code":"context_length_exceeded"}'), B.EngineContextError(None, None))
-        self.assertIsNone(B.parse_context_error("All non-assistant messages must contain 'content'"))
+    def test_no_retry_when_input_leaves_nothing(self):
+        b = B.compute_budget(
+            {"messages": [{"role": "user", "content": "hi"}], "max_tokens": 1000},
+            model="m", context_limit=8_192, max_output_limit=4_096,
+        )
+        self.assertIsNone(B.corrected_output(B.EngineContextError(8_192, 8_100), b))
+
+    def test_no_retry_when_unknown_input_count(self):
+        b = B.compute_budget({"messages": []}, model="m",
+                             context_limit=8_192, max_output_limit=4_096)
+        self.assertIsNone(B.corrected_output(B.EngineContextError(None, None), b))
+
+    def test_no_retry_when_the_engine_already_refused_that_budget(self):
+        b = B.compute_budget(
+            {"messages": [{"role": "user", "content": "hi"}], "max_tokens": 500},
+            model="m", context_limit=8_192, max_output_limit=4_096,
+        )
+        # b.output_tokens == 500 (fits, unclamped); engine says input leaves 600
+        err = B.EngineContextError(8_192, 7_600)
+        self.assertIsNone(B.corrected_output(err, b))
+
+    def test_parse_unrelated_error_is_none(self):
+        self.assertIsNone(B.parse_context_error("rate limit exceeded"))
         self.assertIsNone(B.parse_context_error(""))
 
-    def _budget(self, output: int, requested: int = 32_000):
-        base = tier_budget(chat("x", max_tokens=requested), Tier.REASON)
-        from dataclasses import replace
-        return replace(base, output_tokens=output)
-
-    def test_correction_uses_the_exact_count_once(self):
-        b = self._budget(20_000)
-        fixed = B.corrected_output(B.EngineContextError(65_536, 50_000), b)
-        self.assertEqual(fixed, 65_536 - 50_000 - B.EXACT_RETRY_MARGIN)
-
-    def test_no_correction_that_would_resend_an_equivalent_payload(self):
-        b = self._budget(10_000)
-        self.assertIsNone(B.corrected_output(B.EngineContextError(65_536, 33_537), b))
-
-    def test_no_correction_without_a_count_or_without_room(self):
-        b = self._budget(20_000)
-        self.assertIsNone(B.corrected_output(B.EngineContextError(None, None), b))
-        self.assertIsNone(B.corrected_output(B.EngineContextError(65_536, 65_400), b))
-
-    def test_error_payload_is_structured_and_not_retryable(self):
-        b = tier_budget(chat("x" * int(70_000 * B.CHARS_PER_TOKEN_LOWER)), Tier.REASON)
-        body = B.error_payload(b, message=B.overflow_message(b), attempts=1, elapsed_ms=3.2)
-        err = body["error"]
-        self.assertEqual(err["code"], "context_length_exceeded")
-        self.assertEqual(err["type"], "invalid_request_error")
-        self.assertFalse(err["retryable"])
-        for key in ("model", "context_limit", "estimated_input_tokens", "tool_schema_tokens",
-                    "requested_output_tokens", "safe_output_tokens", "clamped", "remaining_context",
-                    "error_code", "attempts", "elapsed_ms"):
-            self.assertIn(key, err["gx_budget"])
-        json.dumps(body)
+    def test_parse_generic_context_error(self):
+        e = B.parse_context_error("Prompt is too long: 90000 tokens > 65536 maximum")
+        self.assertIsNotNone(e)
+        self.assertEqual(B.parse_context_error("ContextWindowExceededError"), B.EngineContextError(None, None))
 
 
-class TestTierTableMatchesServedConfig(unittest.TestCase):
-    """The budget is only authoritative if the tier table matches what is served."""
+class TestProfileBudget(unittest.TestCase):
+    """The V4.1 server glue: a profile's served window is the budget's window."""
 
-    REPO = Path(__file__).resolve().parents[3]
+    def setUp(self):
+        self.registry = load_fixture_registry()
+        self.cfg = Config(gxmax_max_output=32_768)
 
-    def _flag(self, text: str, flag: str) -> list[int]:
-        import re
-        return [int(m) for m in re.findall(rf"{flag}\s+(\d+)", text)]
+    def test_window_comes_from_the_profile(self):
+        for name, spec in self.registry.profiles.items():
+            b = profile_budget(_payload(100, 2) | {"max_tokens": 999}, self.registry, name, self.cfg)
+            self.assertEqual(b.context_limit, spec.max_model_len)
+            self.assertEqual(b.model, f"gx-max:{name}")
 
-    def test_llama_swap_windows(self):
-        node1 = (self.REPO / "legenex/gateway/llama-swap/node01.yaml").read_text()
-        node2 = (self.REPO / "legenex/gateway/llama-swap/node02.yaml").read_text()
-        self.assertIn(TIERS[Tier.FAST].max_context, self._flag(node1, "--max-model-len"))
-        ctx = self._flag(node1, "--ctx-size")[0]
-        parallel = self._flag(node1, "--parallel")[0]
-        self.assertEqual(TIERS[Tier.MINI].max_context, ctx // parallel)
-        self.assertEqual(set(self._flag(node2, "--max-model-len")), {TIERS[Tier.REASON].max_context})
+    def test_swarm_small_window_clamps_harder_than_fast(self):
+        payload = _payload(3_200, 40) | {"max_tokens": 32_000}
+        swarm = profile_budget(payload, self.registry, "swarm", self.cfg)
+        fast = profile_budget(payload, self.registry, "fast", self.cfg)
+        self.assertLess(swarm.context_limit, fast.context_limit)
+        self.assertLessEqual(swarm.output_tokens, fast.output_tokens)
 
-    def test_gx_max_window(self):
-        conf = (self.REPO / "legenex/lifecycle/gx-max.conf").read_text()
-        import re
-        m = re.search(r'GXMAX_CONTEXT_LENGTH="\$\{GXMAX_CONTEXT_LENGTH:-(\d+)\}"', conf)
-        self.assertEqual(int(m.group(1)), TIERS[Tier.MAX].max_context)
+    def test_swarm_window_overflows_where_fast_does_not(self):
+        payload = _payload(3_200, 550)  # ~1.76M chars: overflows swarm's 256k window
+        swarm = profile_budget(payload, self.registry, "swarm", self.cfg)
+        fast = profile_budget(payload, self.registry, "fast", self.cfg)
+        self.assertFalse(swarm.fits)
+        self.assertEqual(swarm.status, B.STATUS_OVERFLOW)
+        self.assertTrue(fast.fits)
 
-    def test_registry_windows(self):
-        reg = json.loads((self.REPO / "legenex/models/registry.json").read_text())["aliases"]
-        for tier in (Tier.MINI, Tier.FAST, Tier.REASON, Tier.MAX):
-            self.assertEqual(reg[tier.value]["context"], TIERS[tier].max_context, tier)
+    def test_output_ceiling_from_config(self):
+        b = profile_budget({"messages": [{"role": "user", "content": "hi"}]},
+                           self.registry, "balanced", Config(gxmax_max_output=1_000))
+        self.assertEqual(b.max_output_limit, 1_000)
 
 
 if __name__ == "__main__":
-    unittest.main()
+    unittest.main(verbosity=2)

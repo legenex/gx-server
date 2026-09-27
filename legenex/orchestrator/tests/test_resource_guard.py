@@ -554,15 +554,22 @@ class TakeoverAdmissionTests(unittest.TestCase):
         self.assertEqual((f.avail_mib, f.swap_free_mib, f.swap_total_mib, f.swapfile_active, f.psi_full10),
                          (2048, 3072, 4096, True, 2.5))
 
-    def test_health_probe_ignores_undrained_memory_but_not_missing_swapfile(self):
-        from gx_orchestrator import server
-        from gx_orchestrator import resource_guard as rg
-        busy = self._facts(avail_mib=40000)  # gx-mini/gx-fast loaded, not drained
-        with unittest.mock.patch.object(rg, "read_node_facts", return_value=busy):
-            self.assertEqual(server._gx_max_admission_blocked(), "")
+    def test_takeover_admission_ignores_undrained_memory_but_not_missing_swapfile(self):
+        # V4.1: the admission probe moved out of server.py into the resource
+        # guard itself; the takeover policy is what the bash preflight calls.
+        # With the clean-start floor at 0 the arithmetic ignores undrained
+        # memory (the drain step owns that), but the swapfile requirement is
+        # independent of the floor and must still refuse.
+        from gx_orchestrator.resource_guard import TakeoverPolicy, compute_takeover_admission
+        relaxed = TakeoverPolicy(clean_start_min_avail_gib=0.0)
+        busy = self._facts(avail_mib=40000)  # not fully drained yet
+        self.assertTrue(
+            compute_takeover_admission("node1", busy, other_exclusive_residents=[], policy=relaxed).allowed
+        )
         noswap = self._facts(swapfile_active=0)
-        with unittest.mock.patch.object(rg, "read_node_facts", return_value=noswap):
-            self.assertIn("swapfile-sglang", server._gx_max_admission_blocked())
+        result = compute_takeover_admission("node1", noswap, other_exclusive_residents=[], policy=relaxed)
+        self.assertFalse(result.allowed)
+        self.assertIn("swapfile-sglang", result.reason)
 
     def test_ledger_exclusive_resident_blocks_cli(self):
         ResidencyLedger(Path(self.tmp.name) / "node1-residency.json", is_running=lambda c: True).add(

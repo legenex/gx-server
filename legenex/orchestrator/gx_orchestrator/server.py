@@ -706,6 +706,15 @@ class Handler(BaseHTTPRequestHandler):
                 )
                 return
 
+        # Queue wait for the gateway hook (x-gx-queue-wait-ms): how long this
+        # request sat in the queue before admission. Only stamped when the
+        # request WAS queued -- the hook treats an absent header as "direct
+        # path, never queued", and that must stay meaningful.
+        queue_wait_ms = None
+        rec = self.scheduler.get(request_id)
+        if decision.get("state") == SCHED.DECISION_QUEUED and rec and rec.get("start_ts") and rec.get("enqueue_ts"):
+            queue_wait_ms = round((rec["start_ts"] - rec["enqueue_ts"]) * 1000, 1)
+
         # Admission implies capacity; make sure the engine itself is READY
         # (the acquire above may still be warming -- join it, bounded).
         try:
@@ -726,7 +735,7 @@ class Handler(BaseHTTPRequestHandler):
             outcome = self._relay(
                 url, body, budget=budget, request_id=request_id, started=started,
                 alias=alias, profile_name=profile_name, reasoning=reasoning,
-                record_id=request_id,
+                record_id=request_id, queue_wait_ms=queue_wait_ms,
             )
         finally:
             self.lifecycle.end_use()
@@ -840,6 +849,7 @@ class Handler(BaseHTTPRequestHandler):
         profile_name: str = "",
         reasoning: str = "",
         record_id: str = "",
+        queue_wait_ms: "float | None" = None,
     ) -> RelayOutcome:
         """Relay one request with its budget applied.
 
@@ -921,6 +931,10 @@ class Handler(BaseHTTPRequestHandler):
         extra_headers["X-GX-Output-Clamped"] = "true" if current.clamped else "false"
         if out.retry_reason:
             extra_headers["X-GX-Retry-Reason"] = out.retry_reason
+        # The gateway budget hook reads exactly this header (absent = the
+        # request was never queued, a direct-path serve).
+        if queue_wait_ms is not None:
+            extra_headers["x-gx-queue-wait-ms"] = str(queue_wait_ms)
 
         with resp:
             if out.streamed:

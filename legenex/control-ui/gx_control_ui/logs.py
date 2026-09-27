@@ -1,6 +1,11 @@
 """Predefined, read-only log streams.
 
-The browser can only name a stream id from `STREAMS`; it cannot supply a
+The stream inventory comes from the CONFIG (config.log_sources()) — the V4.1
+source list including the scheduler history JSONL, the orchestrator log and
+the mia /srv/logs/dsv41-* logs once they exist. No per-feature source is
+hardcoded here.
+
+The browser can only name a stream id from that list; it cannot supply a
 path, a container name or a command. Every line returned is redacted.
 """
 
@@ -18,7 +23,6 @@ from .util import run, ssh_args
 
 MIN_LINES, MAX_LINES, DEFAULT_LINES = 10, 2000, 200
 MAX_QUERY = 200
-_N2_HOME = "/home/legenex-02"
 
 
 @dataclass(frozen=True)
@@ -35,45 +39,17 @@ class Stream:
                 "source": self.target, "group": self.group}
 
 
-STREAMS: tuple[Stream, ...] = (
-    Stream("orchestrator", "gx-orchestrator", "node1", "file", "/srv/logs/gx-orchestrator.log", "Control plane"),
-    Stream("gxmax-lifecycle", "gx-max lifecycle (acquire/release output)", "node1", "file",
-           "/srv/logs/gx-max-lifecycle.log", "gx-max"),
-    Stream("litellm", "LiteLLM gateway", "node1", "docker", "gx-litellm", "Control plane"),
-    Stream("swap-node1", "llama-swap node 1", "node1", "docker", "gx-llama-swap-node01", "Models"),
-    Stream("swap-node2", "llama-swap node 2", "node2", "docker", "gx-llama-swap-node02", "Models"),
-    Stream("gx-mini", "gx-mini", "node1", "docker", "gx-mini", "Models"),
-    Stream("gx-code-01", "gx-code-01", "node1", "docker", "gx-code", "Models"),
-    Stream("gx-code-02", "gx-code-02", "node2", "docker", "gx-code", "Models"),
-    Stream("gx-auto", "gx-auto routing decisions", "node1", "file", "/srv/logs/gx-auto-routing.jsonl", "Models"),
-    Stream("rank0", "gx-max rank 0 (node 1)", "node1", "file", "/srv/logs/gx-max-rank0.log", "gx-max"),
-    Stream("rank1", "gx-max rank 1 (node 2)", "node2", "file", f"{_N2_HOME}/gx-max-rank1.log", "gx-max"),
-    Stream("gxmax-safety", "gx-max safety samples (node 1, latest run)", "node1", "glob",
-           "/srv/logs/gx-max-safety-node1-*.tsv", "gx-max"),
-    Stream("gxmax-node2-mem", "gx-max node 2 memory samples (latest run)", "node2", "file",
-           f"{_N2_HOME}/gx-max-node2-mem.tsv", "gx-max"),
-    Stream("rank0-watch", "rank 0 watcher", "node1", "file", "/srv/logs/gx-max-rank0-watch.log", "gx-max"),
-    Stream("rank1-deadman", "rank 1 deadman", "node2", "file", f"{_N2_HOME}/gx-max-rank1-deadman.log", "gx-max"),
-    Stream("open-webui", "OpenWebUI", "node1", "docker", "open-webui", "Apps"),
-    Stream("backup", "GX backup", "node1", "journal", "gx-backup.service", "Backup"),
-    Stream("git-autosync", "Git autosync (node 1)", "node1", "file",
-           "/srv/logs/gx-git-sync/node1-autosync.log", "Git"),
-    Stream("git-push-failures", "Git push failures (node 1)", "node1", "file",
-           "/srv/logs/gx-git-sync/push-failures.log", "Git"),
-    Stream("git-reconcile", "Git reconcile (node 2)", "node2", "file",
-           "/srv/logs/gx-git-sync/node2-reconcile.log", "Git"),
-    Stream("audit-node1", "Daily integrity audit (node 1)", "node1", "file",
-           "/srv/logs/gx-git-sync/audit-latest.log", "Git"),
-    Stream("audit-node2", "Daily integrity audit (node 2)", "node2", "file",
-           "/srv/logs/gx-git-sync/audit-latest.log", "Git"),
-    Stream("hostwatch-node1", "hostwatch (node 1)", "node1", "file", "/srv/logs/gx-hostwatch.log", "Host"),
-    Stream("hostwatch-node2", "hostwatch (node 2)", "node2", "file", "/srv/logs/gx-hostwatch.log", "Host"),
-    Stream("control-ui", "control UI service", "node1", "file",
-           "/srv/logs/gx-control-ui/control-ui.log", "Control plane"),
-    Stream("control-ui-audit", "control UI audit trail", "node1", "file",
-           "/srv/logs/gx-control-ui/audit.log", "Control plane"),
-)
-BY_ID = {s.id: s for s in STREAMS}
+def streams(cfg: UIConfig) -> tuple[Stream, ...]:
+    """The deployment's stream list, built from config.log_source_list()."""
+    out = []
+    for src in cfg.log_source_list():
+        out.append(Stream(str(src["id"]), str(src["label"]), str(src["node"]), str(src["kind"]),
+                          str(src["target"]), str(src.get("group", ""))))
+    return tuple(out)
+
+
+def stream_by_id(cfg: UIConfig, stream_id: str) -> Stream | None:
+    return next((s for s in streams(cfg) if s.id == stream_id), None)
 
 
 def clamp_lines(value) -> int:
@@ -106,7 +82,7 @@ def _latest(pattern: str) -> str | None:
 
 
 def read_stream(cfg: UIConfig, stream_id: str, lines, query: str = "") -> dict:
-    stream = BY_ID.get(stream_id)
+    stream = stream_by_id(cfg, stream_id)
     if stream is None:
         raise KeyError(stream_id)
     n = clamp_lines(lines)

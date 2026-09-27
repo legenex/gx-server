@@ -1,5 +1,8 @@
 """Page-level JSON views built from the cached cluster readings.
 
+V4.1 world: one model (DeepSeek V4.1 Flash EXL3) behind the gx-max lifecycle;
+the scheduler owns the request queue; gx10-02 carries only the rank-1 mirror.
+
 Status vocabulary: ok (green), warn (amber), crit (red), unknown (grey).
 A status is only ever "ok" because a probe said so -- never because a
 container merely exists.
@@ -14,27 +17,14 @@ from typing import TYPE_CHECKING, Any
 
 from . import __version__
 from .logs import tail_file
-from .models import live_state
+from .models import read_registry
 from .redact import redact
-from .util import run, tcp_state
+from .util import run
 
 if TYPE_CHECKING:
     from .server import App
 
 GIB = 2**30
-RAILS = (
-    {"name": "Rail 1", "subnet": "192.168.100.0/24", "node1_ip": "192.168.100.10", "node2_ip": "192.168.100.11",
-     "netdev": "enp1s0f0np0", "rdma": "rocep1s0f0"},
-    {"name": "Rail 2", "subnet": "192.168.101.0/24", "node1_ip": "192.168.101.10", "node2_ip": "192.168.101.11",
-     "netdev": "enP2p1s0f0np0", "rdma": "roceP2p1s0f0"},
-)
-NODES = {
-    "node1": {"name": "gx10-01", "role": "control / gateway / gx-mini / gx-code-01 / orchestrator",
-              "tailscale_ip": "100.105.214.61", "user": "legenex"},
-    "node2": {"name": "gx10-02", "role": "gx-code-02 / gx-max reviewer",
-              "tailscale_ip": "100.73.238.4", "user": "legenex-02"},
-}
-MODEL_CONTAINERS = ("gx-mini", "gx-code")
 
 _ORDER = {"ok": 0, "unknown": 1, "warn": 2, "crit": 3}
 
@@ -62,21 +52,37 @@ def _rail_state(facts: dict, rail: dict) -> dict:
     return {"ok": False, "state": "absent"}
 
 
-def _iface(facts: dict, name: str) -> dict:
-    for itf in (facts or {}).get("interfaces") or []:
-        if itf.get("name") == name:
-            return itf
-    return {}
+def _rails(app: App) -> list[dict]:
+    """Rail rows: registry IPs (schema 2) with the historical netdev probe keys."""
+    from .netview import NetView
+    reg = read_registry(app.cfg.registry_path)
+    nodes = reg.get("nodes") or {}
+    head = next((n for n, s in nodes.items() if isinstance(s, dict) and s.get("role") == "head"), "gx10-01")
+    worker = next((n for n, s in nodes.items() if isinstance(s, dict) and s.get("role") == "worker"),
+                  "gx10-02")
+    hcas_head = (nodes.get(head) or {}).get("hcas") or ["rocep1s0f0", "roceP2p1s0f0"]
+    hcas_worker = (nodes.get(worker) or {}).get("hcas") or ["rocep1s0f0", "roceP2p1s0f0"]
+    rows = []
+    for i, key in enumerate(("rail1", "rail2")):
+        rows.append({
+            "name": f"Rail {i + 1}",
+            "node1_ip": ((nodes.get(head) or {}).get("fabric") or {}).get(key) or app.cfg.fabric_local[i],
+            "node2_ip": ((nodes.get(worker) or {}).get("fabric") or {}).get(key) or app.cfg.fabric_peers[i],
+            "netdev": hcas_head[i] if i < len(hcas_head) else "",
+            "rdma": hcas_worker[i] if i < len(hcas_worker) else "",
+        })
+    return rows
 
 
 def fabric_probe(app: App) -> dict:
     """TCP reachability of node 2's fabric addresses from node 1. 'refused'
     means the far kernel answered -- the link is alive."""
+    from .util import tcp_state
     cache = getattr(app, "_fabric_cache", None)
     if cache and time.time() - cache["at"] < 10:
         return cache
     res: dict[str, Any] = {"at": time.time()}
-    for rail in RAILS:
+    for rail in _rails(app):
         if app.cfg.offline:
             res[rail["node2_ip"]] = "unknown"
         else:
@@ -85,8 +91,26 @@ def fabric_probe(app: App) -> dict:
     return res
 
 
-def node_summary(key: str, facts: dict, gxmax_state: str) -> dict:
-    meta = NODES[key]
+def _node_meta(app: App, key: str) -> dict:
+    reg = read_registry(app.cfg.registry_path)
+    nodes = reg.get("nodes") or {}
+    head = next((n for n, s in nodes.items() if isinstance(s, dict) and s.get("role") == "head"), None)
+    worker = next((n for n, s in nodes.items() if isinstance(s, dict) and s.get("role") == "worker"),
+                  None)
+    if key == "node1" and head:
+        spec = nodes[head]
+        return {"name": head, "role": "head: orchestrator, gateway, control UI, gx-max rank 0",
+                "tailscale_ip": spec.get("tailscale_ip"), "user": spec.get("user")}
+    if key == "node2" and worker:
+        spec = nodes[worker]
+        return {"name": worker, "role": "worker: gx-max rank 1 (mirror only; no management stack)",
+                "tailscale_ip": spec.get("tailscale_ip"), "user": spec.get("user")}
+    return {"name": "gx10-0" + ("1" if key == "node1" else "2"), "role": "", "tailscale_ip": None,
+            "user": None}
+
+
+def node_summary(app: App, key: str, facts: dict, gxmax_state: str) -> dict:
+    meta = _node_meta(app, key)
     if not facts or not facts.get("reachable", facts.get("role") == "node1"):
         return {"key": key, **meta, "reachable": False, "level": "crit",
                 "problems": [facts.get("error") or "not reachable over SSH"] if facts else ["no data"],
@@ -145,9 +169,6 @@ def node_summary(key: str, facts: dict, gxmax_state: str) -> dict:
     if failed_units:
         problems.append(f"units not healthy: {', '.join(failed_units)}")
         level = worst(level, "warn")
-    containers = {c["name"]: c for c in (facts.get("docker") or {}).get("containers", [])}
-    workloads = [{"name": n, "state": containers[n]["state"], "status": containers[n]["status"]}
-                 for n in MODEL_CONTAINERS if n in containers]
     temp = facts.get("temperature") or {}
     return {
         "key": key, **meta, "reachable": True, "level": level, "problems": problems,
@@ -160,34 +181,38 @@ def node_summary(key: str, facts: dict, gxmax_state: str) -> dict:
         "load1": load.get("load1"), "nproc": load.get("nproc"),
         "gpu": temp.get("gpu"), "cpu_max_c": temp.get("cpu_max_c"),
         "hostwatch": hw, "tailscale_ok": ts.get("ok"), "guard_lock": facts.get("guard_lock"),
-        "workloads": workloads, "git_head": (facts.get("git") or {}).get("head"),
+        "git_head": (facts.get("git") or {}).get("head"),
         "collected_at": facts.get("collected_at"), "ssh_ms": facts.get("ssh_ms"),
     }
 
 
-def _service_levels(svc: dict, gxmax_state: str) -> list[dict]:
-    drained = gxmax_state in ("acquiring", "ready", "releasing")
+def _service_levels(app: App, svc: dict, gxmax_state: str) -> list[dict]:
+    """Cluster-managed rows + user apps, honestly labelled."""
+    rows: list[dict] = []
 
-    def row(name, probe_key, when_down="crit", expected_down=False, note=""):
+    def row(name, probe_key, when_down="crit", managed=True, note=""):
         p = svc.get(probe_key) or {}
-        if p.get("ok"):
-            lvl = "ok"
-        elif expected_down:
-            lvl = "ok"
-            note = note or "stopped on purpose while gx-max owns the cluster"
-        else:
-            lvl = when_down
-        return {"name": name, "level": lvl, "ok": bool(p.get("ok")), "status": p.get("status"),
-                "ms": p.get("ms"), "error": p.get("error"), "note": note}
+        level = "ok" if p.get("ok") else ("unknown" if (app.cfg.offline or p.get("status") is None)
+                                          else when_down)
+        return {"name": name, "level": level, "ok": bool(p.get("ok")), "status": p.get("status"),
+                "ms": p.get("ms"), "error": p.get("error"), "note": note,
+                "managed": managed}
 
-    rows = [
+    rows += [
         row("LiteLLM gateway", "litellm_live"),
         row("LiteLLM readiness (DB)", "litellm_ready", "warn"),
         row("gx-orchestrator", "orchestrator"),
-        row("llama-swap gx10-01", "swap_node1", "crit", drained),
-        row("llama-swap gx10-02", "swap_node2", "warn", drained),
-        row("OpenWebUI", "openwebui", "warn"),
-        row("AgentOS", "agentos", "warn"),
+        row("Scheduler (orchestrator)", "scheduler", "warn"),
+        row("Mia runtime :8888 (only while READY)", "mia", "warn",
+            note=f"gx-max is {gxmax_state}; :8888 is not serving while down" if gxmax_state != "ready"
+            else ""),
+        row("hostwatch", None, "warn", note="checked via node facts (hostwatch status file)"),
+        row("ts-proxy (docker)", None, "warn",
+            note="presence checked via node facts docker containers"),
+    ]
+    rows += [
+        row("OpenWebUI (user app)", "openwebui", "warn", managed=False),
+        row("AgentOS Control Center (user app)", "agentos", "warn", managed=False),
     ]
     return rows
 
@@ -234,9 +259,10 @@ def _recent_problems(app: App, nodes: list[dict], services: list[dict], gx: dict
     items = []
     for n in nodes:
         for p in n.get("problems", []):
-            items.append({"level": n["level"] if n["level"] != "ok" else "warn", "source": n["name"], "message": p})
+            items.append({"level": n["level"] if n["level"] != "ok" else "warn", "source": n["name"],
+                          "message": p})
     for s in services:
-        if s["level"] != "ok":
+        if s["level"] not in ("ok", "unknown"):
             items.append({"level": s["level"], "source": s["name"],
                           "message": s.get("error") or f"HTTP {s.get('status')}"})
     if gx.get("last_error"):
@@ -258,17 +284,27 @@ def _recent_problems(app: App, nodes: list[dict], services: list[dict], gx: dict
     return items
 
 
+def _queue(app: App) -> dict:
+    snap = app.cluster.scheduler_snapshot(max_age=10)
+    if not snap.get("available"):
+        return {"available": False, "reason": snap.get("reason"), "queued": None, "active": None}
+    from .sse import _count_state
+    return {"available": True, "queued": _count_state(snap, "queued"),
+            "active": _count_state(snap, "active")}
+
+
 def overview(app: App) -> dict:
     n1 = app.cluster.node1.get() or {}
     n2 = app.cluster.node2.get() or {}
     svc = app.cluster.services.get() or {}
     gx = _gxmax(app)
     state = gx.get("state", "unknown")
-    nodes = [node_summary("node1", {**n1, "reachable": True}, state), node_summary("node2", n2, state)]
-    services = _service_levels(svc, state)
+    nodes = [node_summary(app, "node1", {**n1, "reachable": True}, state),
+             node_summary(app, "node2", n2, state)]
+    services = _service_levels(app, svc, state)
     probe = fabric_probe(app)
     rails = []
-    for rail in RAILS:
+    for rail in _rails(app):
         s1, s2 = _rail_state(n1, rail), _rail_state(n2, rail)
         tcp = probe.get(rail["node2_ip"], "unknown")
         ok = s1.get("ok") and (s2.get("ok") or not n2.get("reachable")) and tcp in ("open", "refused")
@@ -277,21 +313,8 @@ def overview(app: App) -> dict:
     ts1, ts2 = (n1.get("tailscale") or {}), (n2.get("tailscale") or {})
     ts_level = "ok" if ts1.get("ok") and (ts2.get("ok") or n2.get("reachable")) else "warn"
     git = git_view(app, n1, n2)
-    models = live_state(app.cluster, app.results)
-    loaded = [m["alias"] for m in models if m["state"] in ("loaded", "ready")]
-    guard = app.cluster.guard.get() or {}
-    gx_card = next((m for m in models if m["alias"] == "gx-max"), None)
-    if gx_card and (gx_card.get("live") or {}).get("mode") == "dual-worker":
-        gx = {
-            "state": gx_card["state"],
-            "phase": "dual-worker",
-            "detail": gx_card.get("state_detail") or "solver gx-code-01 + reviewer gx-code-02",
-            "waiters": 0,
-            "last_error": None,
-            "mode": "dual-worker",
-            "solver": (gx_card.get("live") or {}).get("solver"),
-            "reviewer": (gx_card.get("live") or {}).get("reviewer"),
-        }
+    reg = read_registry(app.cfg.registry_path)
+    queue = _queue(app)
     overall = worst(*(n["level"] for n in nodes), *(s["level"] for s in services),
                     *(r["level"] for r in rails), ts_level,
                     "warn" if gx.get("last_error") else "ok")
@@ -303,17 +326,14 @@ def overview(app: App) -> dict:
         "rails": rails,
         "tailscale": {"level": ts_level, "node1": ts1, "node2": ts2},
         "rdma_ok": all(r["ok"] for r in rails),
-        "gxmax": gx,
-        "loaded_aliases": loaded,
-        "models": [{"alias": m["alias"], "state": m["state"], "detail": m["state_detail"]} for m in models],
+        "gxmax": {"state": state, "phase": gx.get("phase"), "detail": gx.get("detail"),
+                  "profile": gx.get("profile") or (app.resources.profile().get("serving")),
+                  "last_error": gx.get("last_error"), "waiters": gx.get("waiters")},
+        "queue": {**queue, "ui_running": app.actions.running()},
+        "registry_ok": reg.get("schema") == 2,
         "locks": {"node1": n1.get("guard_lock"), "node2": n2.get("guard_lock")},
-        "ledger": {k: v for k, v in guard.items() if k in ("node1", "node2")},
+        "ledger": {k: v for k, v in (app.cluster.guard.get() or {}).items() if k in ("node1", "node2")},
         "git": git,
-        "queue": {
-            "gxmax_waiters": gx.get("waiters"),
-            "gxmax_phase": gx.get("phase"),
-            "ui_running": app.actions.running(),
-        },
         "problems": _recent_problems(app, nodes, services, gx),
         "cache_age": {"node1": app.cluster.node1.age, "node2": app.cluster.node2.age,
                       "services": app.cluster.services.age},
@@ -327,15 +347,14 @@ def nodes(app: App) -> dict:
     svc = app.cluster.services.get() or {}
 
     def detail(key: str, facts: dict) -> dict:
-        s = node_summary(key, {**facts, "reachable": facts.get("reachable", key == "node1")}, gx.get("state", ""))
-        s["swaps"] = facts.get("swaps")
+        s = node_summary(app, key, {**facts, "reachable": facts.get("reachable", key == "node1")},
+                         gx.get("state", ""))
         s["psi"] = facts.get("psi")
         s["load"] = facts.get("load")
         s["temperature"] = facts.get("temperature")
         s["containers"] = (facts.get("docker") or {}).get("containers", [])
         s["docker_stats"] = facts.get("docker_stats")
         s["units"] = facts.get("units")
-        s["watcher"] = facts.get("gxmax_watcher")
         s["memory"] = facts.get("memory")
         return s
 
@@ -343,12 +362,9 @@ def nodes(app: App) -> dict:
         "generated_at": time.time(),
         "node1": detail("node1", n1),
         "node2": detail("node2", n2),
-        "services": _service_levels(svc, gx.get("state", "")),
-        "llama_swap": {
-            "node1": ((svc.get("swap_node1_running") or {}).get("body") or {}).get("running"),
-            "node2": ((svc.get("swap_node2_running") or {}).get("body") or {}).get("running"),
-        },
+        "services": _service_levels(app, svc, gx.get("state", "")),
         "orchestrator": (svc.get("orchestrator") or {}).get("body"),
+        "scheduler": (svc.get("scheduler") or {}).get("body"),
         "gxmax": gx,
         "ledger": app.cluster.guard.get(),
     }
@@ -358,15 +374,12 @@ def cluster(app: App) -> dict:
     ov = overview(app)
     n1 = app.cluster.node1.get() or {}
     n2 = app.cluster.node2.get() or {}
-    for rail in ov["rails"]:
-        rail["node1_iface"] = _iface(n1, rail["netdev"])
-        rail["node2_iface"] = _iface(n2, rail["netdev"])
     return {
         "generated_at": ov["generated_at"],
         "explanation": ("Two independent 128 GB unified-memory systems (about 121 GiB usable each). "
-                        "They do NOT share memory: there is no 256 GB pool. Each node runs its own "
-                        "models inside its own memory. Only gx-max spans both, as two tensor-parallel "
-                        "ranks that exchange activations over the ConnectX-7 RoCE rails."),
+                        "They do NOT share memory: there is no 256 GB pool. One model — DeepSeek "
+                        "V4.1 Flash EXL3 — runs as two tensor-parallel ranks (gx10-01 rank 0, "
+                        "gx10-02 rank 1) exchanging activations over the ConnectX-7 RoCE rails."),
         "nodes": ov["nodes"],
         "rails": ov["rails"],
         "tailscale": ov["tailscale"],
@@ -377,29 +390,23 @@ def cluster(app: App) -> dict:
                     "Model and NCCL traffic use only the RoCE rails.",
         },
         "gxmax": ov["gxmax"],
+        "queue": ov["queue"],
     }
-
-
-def _orchestrator_events(app: App) -> dict:
-    lc = app.cluster.lifecycle.get() or {}
-    ev = (lc.get("events") or {})
-    body = ev.get("body")
-    return body if ev.get("ok") and isinstance(body, dict) else {}
 
 
 def jobs(app: App) -> dict:
     gx = _gxmax(app)
-    ev = _orchestrator_events(app)
-    svc = app.cluster.services.get() or {}
+    lc = app.cluster.lifecycle.get() or {}
+    ev = (lc.get("events") or {})
+    body = ev.get("body") if ev.get("ok") else {}
+    ev = body if isinstance(body, dict) else {}
     return {
         "generated_at": time.time(),
         "gxmax": gx,
         "gxmax_active_job": ev.get("active_job"),
         "gxmax_history": list(reversed(ev.get("history") or [])),
         "gxmax_events": [{**e, "line": redact(e.get("line", ""))} for e in (ev.get("events") or [])][-300:],
-        "phases": ["queued", "preflight", "draining", "admission", "loading_rank1", "loading_rank0",
-                   "warming", "ready", "serving", "draining_requests", "stopping_ranks",
-                   "memory_recovery", "restoring", "released", "unwinding", "failed", "idle"],
+        "queue": _queue(app),
         "ui_jobs": app.actions.jobs(),
     }
 
@@ -414,14 +421,17 @@ def system(app: App) -> dict:
     except OSError:
         pass
     hide_units = ("gx-playground", "gx-call", "gx-live", "gx-music", "gx-voice", "gx-comfyui")
+
     def _keep_unit(u: dict) -> bool:
         name = u.get("unit") or ""
         return not any(h in name for h in hide_units)
+
     units = {
         "gx10-01": [u for u in (n1.get("units") or []) if _keep_unit(u)],
         "gx10-02": [u for u in (n2.get("units") or []) if _keep_unit(u)],
     }
-    timers = run(["systemctl", "--user", "list-timers", "--all", "--no-pager", "--output=json"], timeout=5)
+    timers = run(["systemctl", "--user", "list-timers", "--all", "--no-pager", "--output=json"],
+                 timeout=5)
     try:
         timer_rows = [t for t in json.loads(timers.out) if "gx" in (t.get("unit") or "")] if timers.ok else []
     except ValueError:
@@ -430,36 +440,36 @@ def system(app: App) -> dict:
         "generated_at": time.time(),
         "project_version": version,
         "ui_version": __version__,
-        "repo": {"path": str(cfg.repo_root), "remote": cfg.github_url, "branch": (n1.get("git") or {}).get("branch")},
+        "repo": {"path": str(cfg.repo_root), "remote": cfg.github_url,
+                 "branch": (n1.get("git") or {}).get("branch")},
         "git": git_view(app, n1, n2),
         "kernel_pin": "6.17.0-1032-nvidia",
         "kernels": {"gx10-01": n1.get("kernel"), "gx10-02": n2.get("kernel")},
         "endpoints": [
             {"name": "LiteLLM gateway (clients)", "url": cfg.public_gateway_url, "scope": "Tailscale + loopback"},
             {"name": "LiteLLM (internal)", "url": cfg.litellm_base, "scope": "loopback"},
-            {"name": "gx-orchestrator", "url": cfg.orchestrator_base, "scope": "loopback + docker bridge"},
-            {"name": "llama-swap gx10-01", "url": cfg.node1_swap_base, "scope": "loopback"},
-            {"name": "llama-swap gx10-02", "url": cfg.node2_swap_base, "scope": "RoCE fabric"},
-            {"name": "Control UI", "url": f"http://{NODES['node1']['tailscale_ip']}:{cfg.port}/",
+            {"name": "gx-orchestrator + scheduler", "url": cfg.orchestrator_base, "scope": "loopback + docker bridge"},
+            {"name": "Mia runtime (raw, loopback ONLY)", "url": cfg.mia_base, "scope": "loopback; never public"},
+            {"name": "Control UI", "url": f"http://{_node_meta(app, 'node1')['tailscale_ip']}:{cfg.port}/",
              "scope": "Tailscale + loopback"},
-            {"name": "OpenWebUI", "url": "http://127.0.0.1:3000", "scope": "loopback + Tailscale"},
-            {"name": "AgentOS Control Center", "url": "http://127.0.0.1:4173", "scope": "loopback"},
+            {"name": "OpenWebUI (user app)", "url": "http://127.0.0.1:3000", "scope": "loopback + Tailscale"},
+            {"name": "AgentOS Control Center (user app)", "url": cfg.agentos_base, "scope": "loopback"},
         ],
         "units": units,
         "timers": timer_rows,
         "runtime_dirs": [
-            {"path": str(cfg.state_dir), "purpose": "control UI state (model results)"},
+            {"path": str(cfg.state_dir), "purpose": "control UI state"},
             {"path": str(cfg.secret_dir), "purpose": "control UI password store (0700/0600)"},
             {"path": str(cfg.log_dir), "purpose": "control UI service + audit logs"},
-            {"path": str(cfg.guard_dir), "purpose": "admission locks and residency ledgers"},
-            {"path": "/srv/projects/gx-cluster/state/orchestrator", "purpose": "gx-max job history"},
-            {"path": "/srv/projects/gx-cluster/state/git-sync", "purpose": "Git sync role + lock"},
+            {"path": str(cfg.guard_dir), "purpose": "guard protocol (profile, pins, holds)"},
+            {"path": str(cfg.gx_state_root / "scheduler"), "purpose": "scheduler queue + history"},
+            {"path": str(cfg.gx_state_root / "watchdog"), "purpose": "watchdog incidents JSONL"},
             {"path": "/srv/logs", "purpose": "all service logs"},
-            {"path": "/srv/models", "purpose": "model weights (per node, not shared)"},
+            {"path": "/srv/models", "purpose": "model packs (per node, not shared)"},
+            {"path": str(cfg.trash_root), "purpose": "file manager trash (restore / purge)"},
         ],
         "secrets": app.cluster.secret_hygiene(),
         "sessions": app.sessions.count(),
-        "actions": [s.public() for s in app.actions.registry.values()
-                    if s.name.startswith(("system.", "infra."))],
+        "actions": [s.public() for s in app.actions.registry.values()],
         "jobs": app.actions.jobs()[:20],
     }

@@ -32,6 +32,7 @@ import json
 import logging
 import os
 import re
+import signal
 import subprocess
 import threading
 import time
@@ -97,8 +98,6 @@ _HISTORY_KEEP = 25
 #: BOTH nodes before a release is called clean. The engine pins ~105 GiB per
 #: node; anything still resident is a leak, not noise.
 _MEM_RETURN_TOLERANCE_GIB = 5.0
-#: How long to keep re-checking memory return after stop.sh exits (seconds).
-_MEM_RETURN_WAIT_S = 60.0
 
 #: The completion probe: a real multiplication the model must answer. A proxy
 #: that answers /health but cannot generate is NOT ready (this is the
@@ -265,6 +264,8 @@ class GxMaxLifecycle:
         drain_hook: Callable[[float], int] | None = None,
         on_ready: Callable[[str, int], None] | None = None,
         extra_env: Mapping[str, str] | None = None,
+        settle_seconds: float = 90.0,
+        mem_return_wait_s: float = 60.0,
     ) -> None:
         self._dir = Path(runtime_dir)
         # Observability only: a plain append-only log of every script line and
@@ -283,6 +284,12 @@ class GxMaxLifecycle:
         self._idle_ttl = idle_ttl
         self._acquire_timeout = acquire_timeout
         self._extra_env = dict(extra_env or {})
+        #: How long to keep probing after a successful start before giving
+        #: up (the script's own health wait plus a margin for the stronger
+        #: model-id + completion probe). Injectable so tests stay hermetic.
+        self._settle_seconds = settle_seconds
+        #: How long to keep re-checking memory return after stop.sh exits.
+        self._mem_return_wait_s = mem_return_wait_s
 
         # Pluggable host facts -- fakes in tests, real I/O here.
         self._ready_probe = ready_probe or (lambda: default_ready_probe(api_base, model_id))
@@ -325,8 +332,6 @@ class GxMaxLifecycle:
         self._reaper = threading.Thread(target=self._idle_reaper, name="gxmax-ttl", daemon=True)
         self._reaper.start()
 
-    #: How long to keep probing after a successful start before giving up.
-    _SETTLE_SECONDS = 90
     #: Minimum interval between reconciliation probes.
     _RECONCILE_INTERVAL = 10.0
 
@@ -520,7 +525,7 @@ class GxMaxLifecycle:
                 # stronger fact (model id + a real completion), so settle
                 # for a short window before declaring failure: a transient
                 # probe miss must not discard a successful start.
-                if self._await_ready(self._SETTLE_SECONDS):
+                if self._await_ready(self._settle_seconds):
                     with self._cv:
                         self._last_used = time.time()
                         self._profile = profile.name
@@ -532,7 +537,7 @@ class GxMaxLifecycle:
                     return
                 err = (
                     f"start.sh exited 0 but the engine did not pass the readiness probe "
-                    f"(health + /v1/models + completion) within {self._SETTLE_SECONDS}s"
+                    f"(health + /v1/models + completion) within {self._settle_seconds}s"
                 )
             else:
                 tail = (proc.stdout or "").strip().splitlines()[-15:]
@@ -673,10 +678,10 @@ class GxMaxLifecycle:
     def _await_memory_return(self) -> bool:
         """True when both nodes' MemAvailable is back within tolerance.
 
-        Gives the kernel up to _MEM_RETURN_WAIT_S to actually reclaim the
+        Gives the kernel up to `mem_return_wait_s` to actually reclaim the
         unified-memory allocations after the containers exit.
         """
-        deadline = time.time() + _MEM_RETURN_WAIT_S
+        deadline = time.time() + self._mem_return_wait_s
         while True:
             ok = all(
                 self._container_running(node) is False for node in ("node1", "node2")
@@ -818,6 +823,10 @@ class GxMaxLifecycle:
             bufsize=1,
             cwd=str(cwd) if cwd else None,
             env=env,
+            # Own process group so a timeout can kill the WHOLE tree: the
+            # Mia kit spawns docker compose / docker logs children that
+            # outlive the shell and would hold the pipe open otherwise.
+            start_new_session=True,
         )
         captured: list[str] = []
 
@@ -843,11 +852,20 @@ class GxMaxLifecycle:
         try:
             proc.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
-            proc.kill()
+            # Kill the process GROUP (shell + docker children). The pump
+            # thread is a daemon we deliberately do NOT block on: a wedged
+            # child could hold the pipe open far past the deadline, and
+            # closing the fd under the reader can stall too. Give it a
+            # short grace period for the buffered lines, then move on.
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except (ProcessLookupError, PermissionError, OSError):
+                proc.kill()
             proc.wait()
-            reader.join(timeout=5)
+            reader.join(timeout=1.0)
             raise
         reader.join(timeout=5)
+        proc.stdout.close()
         return subprocess.CompletedProcess(args, proc.returncode, "\n".join(captured), "")
 
     # ------------------------------------------------------------ idle reaper

@@ -1,18 +1,22 @@
-"""Clients for the existing control plane, plus cached snapshots of it.
+"""Clients for the V4.1 control plane, plus cached snapshots of it.
 
 Every function here is a thin, read-mostly call to an API that already
-exists. The only writes are the ones `actions.py` explicitly maps to:
-orchestrator acquire/release, llama-swap per-model load/unload, and the
-media router's generation endpoints.
+exists: the orchestrator (lifecycle + scheduler), the LiteLLM gateway, the
+Mia runtime's loopback health endpoint. The old per-tier llama-swap /
+media / SGLang probes are retired with their stacks.
+
+Service inventory (ARCHITECTURE-V41.md section 6):
+  * cluster-managed: litellm, litellm-db, orchestrator, control-ui,
+    hostwatch, ts-proxy (gx10-01); gx10-02 runs nothing but the rank-1
+    mirror of gx-max (no management surface).
+  * unrelated user apps, shown but never managed: open-webui, agentos.
 """
 
 from __future__ import annotations
 
 import json
 import os
-import sys
 import time
-import urllib.parse
 from pathlib import Path
 from typing import Any
 
@@ -21,16 +25,12 @@ from .config import PLACEHOLDER_SECRETS, UIConfig
 from .redact import redact
 from .util import HTTPError, TTLCache, bearer, http, http_json, run, ssh_args, tcp_state
 
-TEXT_ALIASES = ("gx-mini", "gx-code", "gx-max", "gx-auto")
-MEDIA_ALIASES = ()
-#: Operator-facing logical modes. Retired media aliases are not probed.
-ALL_ALIASES = ("gx-mini", "gx-code", "gx-auto", "gx-max")
-SWAP_MODELS = {"gx-mini": "node1", "gx-code": "node1"}
+#: The only public aliases.
+PUBLIC_ALIASES = ("gx-max", "gx-auto")
 
-
-def _http_status(url: str, timeout: float = 4.0):
-    res = http("GET", url, timeout=timeout)
-    return res.status, {"status": res.status}
+#: Services that belong to the cluster (managed) vs user apps (shown only).
+MANAGED_SERVICES = ("litellm", "litellm-db", "orchestrator", "control-ui", "hostwatch", "ts-proxy")
+UNMANAGED_APPS = ("open-webui", "agentos")
 
 
 def _probe(fn, *a, **kw) -> dict:
@@ -42,6 +42,11 @@ def _probe(fn, *a, **kw) -> dict:
     except HTTPError as exc:
         return {"ok": False, "status": 0, "error": exc.message,
                 "ms": round((time.time() - t0) * 1000), "checked_at": time.time()}
+
+
+def _http_status(url: str, timeout: float = 4.0):
+    res = http("GET", url, timeout=timeout)
+    return res.status, {"status": res.status}
 
 
 class Cluster:
@@ -61,20 +66,11 @@ class Cluster:
     def key(self, name: str) -> str | None:
         return self.cfg.secret(name)
 
-    def swap_headers(self) -> dict[str, str]:
-        return bearer(self.key("GX_SWAP_API_KEY"))
-
     def litellm_headers(self) -> dict[str, str]:
         return bearer(self.key("LITELLM_MASTER_KEY"))
 
     def orch_headers(self) -> dict[str, str]:
         return bearer(self.key("GX_ORCHESTRATOR_API_KEY"))
-
-    def media_headers(self) -> dict[str, str]:
-        return bearer(self.key("GX_MEDIA_API_KEY"))
-
-    def swap_base(self, node: str) -> str:
-        return self.cfg.node1_swap_base if node == "node1" else self.cfg.node2_swap_base
 
     # ------------------------------------------------------------ nodes
     def _node1_facts(self) -> dict:
@@ -113,35 +109,54 @@ class Cluster:
         c = self.cfg
         if c.offline:
             return {"offline": True}
-        swap_h = self.swap_headers()
         orch_h = self.orch_headers()
         out: dict[str, Any] = {
-            "orchestrator": _probe(http_json, "GET", f"{c.orchestrator_base}/health/detailed", headers=orch_h, timeout=4),
+            "orchestrator": _probe(http_json, "GET", f"{c.orchestrator_base}/health/detailed",
+                                   headers=orch_h, timeout=4),
             "litellm_live": _probe(http_json, "GET", f"{c.litellm_base}/health/liveliness", timeout=4),
             "litellm_ready": _probe(http_json, "GET", f"{c.litellm_base}/health/readiness", timeout=4),
-            "swap_node1": _probe(http_json, "GET", f"{c.node1_swap_base}/v1/models", headers=swap_h, timeout=4),
-            "swap_node1_running": _probe(http_json, "GET", f"{c.node1_swap_base}/running", headers=swap_h, timeout=4),
-            "swap_node2": _probe(http_json, "GET", f"{c.node2_swap_base}/v1/models", headers=swap_h, timeout=3),
-            "swap_node2_running": _probe(http_json, "GET", f"{c.node2_swap_base}/running", headers=swap_h, timeout=3),
+            # Unrelated user apps on gx10-01: probed so the dashboard can show
+            # them, but never restarted or managed from here.
             "openwebui": _probe(_http_status, "http://127.0.0.1:3000/", timeout=4),
-            "agentos": _probe(_http_status, "http://127.0.0.1:4173/api/health", timeout=4),
-            "sglang": _probe(http_json, "GET", f"{c.gxmax_base}/health", timeout=3),
-            # D-039: per-alias budget, routing and last-request facts.
-            "text_status": _probe(http_json, "GET", f"{c.orchestrator_base}/text/status", headers=orch_h, timeout=4),
-            "gateway_text": gateway_text_metrics(c.srv_logs / "gx-text" / "gateway-text.jsonl"),
+            "agentos": _probe(_http_status, f"{c.agentos_base}/api/health", timeout=4),
+            # The scheduler: the queue depth + active generations the Overview
+            # page shows. Worker A's contract: GET /scheduler/status.
+            "scheduler": _probe(http_json, "GET", f"{c.orchestrator_base}/scheduler/status",
+                                headers=orch_h, timeout=4),
+            "collected_at": time.time(),
         }
-        if out["sglang"]["ok"]:
-            out["sglang_models"] = _probe(http_json, "GET", f"{c.gxmax_base}/v1/models", timeout=4)
-            out["sglang_info"] = _probe(http_json, "GET", f"{c.gxmax_base}/get_server_info", timeout=4)
-            info = out["sglang_info"].get("body")
-            if isinstance(info, dict):
-                keep = ("tp_size", "nnodes", "node_rank", "model_path", "served_model_name",
-                        "context_length", "mem_fraction_static", "dist_init_addr", "version",
-                        "speculative_algorithm", "max_running_requests", "chunked_prefill_size")
-                out["sglang_info"]["body"] = {k: info.get(k) for k in keep if k in info}
-        out["collected_at"] = time.time()
+        # The Mia runtime API is loopback-only and only answers while gx-max
+        # is READY; while down this probe is expected to fail, never an alarm.
+        gx = self.gxmax_state()
+        if gx == "ready":
+            out["mia"] = _probe(http_json, "GET", f"{c.mia_base}/health", timeout=3)
+        else:
+            out["mia"] = {"ok": False, "status": 0, "error": f"gx-max is {gx}; :8888 is not serving",
+                          "checked_at": time.time()}
         return out
 
+    def scheduler_ok(self) -> bool:
+        """True when the orchestrator answered the last scheduler probe."""
+        if self.cfg.offline:
+            return False
+        svc = self.services.get(max_age=10) or {}
+        return bool((svc.get("scheduler") or {}).get("ok"))
+
+    def scheduler_snapshot(self, max_age: float | None = None) -> dict:
+        """The raw /scheduler/status body, or an honest unavailable state."""
+        if self.cfg.offline:
+            return {"available": False, "reason": "offline mode"}
+        svc = self.services.get(max_age=max_age) or {}
+        probe = svc.get("scheduler") or {}
+        if probe.get("ok") and isinstance(probe.get("body"), dict):
+            body = dict(probe["body"])
+            body["available"] = True
+            body["checked_at"] = probe.get("checked_at")
+            return body
+        return {"available": False, "reason": probe.get("error") or "orchestrator scheduler did not answer",
+                "status": probe.get("status"), "checked_at": probe.get("checked_at")}
+
+    # --------------------------------------------------------- lifecycle
     def _lifecycle(self) -> dict:
         if self.cfg.offline:
             return {"status": {"state": "down"}, "events": {"events": [], "history": []}}
@@ -157,6 +172,7 @@ class Cluster:
         body = st.get("body") if isinstance(st, dict) else None
         return (body or {}).get("state", "unknown") if isinstance(body, dict) else "unknown"
 
+    # ---------------------------------------------------------------- git
     def _remote_head(self) -> dict:
         if self.cfg.offline:
             return {"ok": False, "offline": True}
@@ -165,8 +181,9 @@ class Cluster:
             return {"ok": True, "head": res.out.split()[0], "checked_at": time.time()}
         return {"ok": False, "error": redact(res.out.strip()[-200:]), "checked_at": time.time()}
 
+    # --------------------------------------------------------------- guard
     def _guard(self) -> dict:
-        out = {}
+        out: dict[str, Any] = {}
         for node in ("node1", "node2"):
             path = self.cfg.guard_dir / f"{node}-residency.json"
             try:
@@ -180,35 +197,10 @@ class Cluster:
         out["reserve_gib"] = 30
         return out
 
-    # ------------------------------------------------------------- helpers
-    def admission_preview(self, alias: str) -> dict:
-        """What the ONE admission formula (gx_orchestrator.resource_guard)
-        says about loading `alias` right now. Read-only; takes no lock."""
-        orch = self.cfg.repo_root / "legenex" / "orchestrator"
-        if str(orch) not in sys.path:
-            sys.path.insert(0, str(orch))
-        from gx_orchestrator import resource_guard as rg  # noqa: PLC0415
-
-        spec = rg.WORKLOAD_SIZING.get(alias)
-        if spec is None:
-            return {"allowed": True, "reason": "no sizing entry; loads on demand"}
-        node = spec.node
-        facts = self.node1.get() if node == "node1" else self.node2.get()
-        avail = ((facts or {}).get("memory") or {}).get("MemAvailable")
-        if not avail:
-            return {"allowed": False, "reason": f"{node} memory facts unavailable"}
-        ledger = self.guard.get().get(node, {}) or {}
-        residency = 0.0
-        for name, rec in ledger.items():
-            if isinstance(rec, dict) and name != alias:
-                residency += float(rec.get("estimated_gib", 0) or 0)
-        res = rg.compute_admission(node, spec.estimated_gib, current_residency_gib=residency,
-                                   mem_available_gib=avail / 2**30)
-        return {"allowed": res.allowed, "reason": res.reason, "node": node, **res.numbers}
-
+    # -------------------------------------------------------------- helpers
     def secret_hygiene(self) -> list[dict]:
         rows = []
-        for name in ("LITELLM_MASTER_KEY", "GX_SWAP_API_KEY", "GX_ORCHESTRATOR_API_KEY"):
+        for name in ("LITELLM_MASTER_KEY", "GX_ORCHESTRATOR_API_KEY"):
             value = os.environ.get(name, "")
             if not value:
                 state = "unset"
@@ -221,33 +213,16 @@ class Cluster:
             rows.append({"name": name, "state": state})
         return rows
 
-    def swap_load(self, alias: str, timeout: float) -> tuple[bool, str]:
-        node = SWAP_MODELS[alias]
-        url = f"{self.swap_base(node)}/upstream/{urllib.parse.quote(alias)}/health"
-        try:
-            res = http("GET", url, headers=self.swap_headers(), timeout=timeout)
-        except HTTPError as exc:
-            return False, exc.message
-        return 200 <= res.status < 300, f"HTTP {res.status}: {res.text(300)}"
-
-    def swap_unload(self, alias: str) -> tuple[bool, str]:
-        node = SWAP_MODELS[alias]
-        url = f"{self.swap_base(node)}/api/models/unload/{urllib.parse.quote(alias)}"
-        try:
-            res = http("POST", url, headers=self.swap_headers(), timeout=240)
-        except HTTPError as exc:
-            return False, exc.message
-        return 200 <= res.status < 300, f"HTTP {res.status}: {res.text(300)}"
-
     def invalidate(self) -> None:
         for c in (self.node1, self.node2, self.services, self.remote_git, self.guard, self.lifecycle):
             c.invalidate()
 
 
 def gateway_text_metrics(path: Path, *, tail_bytes: int = 256_000) -> dict[str, Any]:
-    """The newest gateway record per text alias (D-039 metrics file).
+    """The newest gateway hook record per alias (privacy-safe metrics JSONL).
 
-    The LiteLLM hook writes timing and token counts only, never prompt text.
+    The LiteLLM budget hook writes timing and token counts only, never prompt
+    text (kept in the V4.1 gateway; ARCHITECTURE-V41.md section 5).
     Returns {"by_alias": {alias: record}, "recent_failures": {alias: n}}.
     """
     out: dict[str, Any] = {"by_alias": {}, "recent_failures": {}, "path": str(path)}

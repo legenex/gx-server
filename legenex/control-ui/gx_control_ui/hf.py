@@ -453,13 +453,11 @@ def classify(repo: str, tags: list[str], files: list[dict], config: dict | None,
     runtimes: list[str] = []
     aliases: list[str] = []
     if kind == "checkpoint" and has_gguf:
-        runtimes.append("llama.cpp (llama-swap)")
-        aliases += ["gx-mini"]
+        runtimes.append("llama.cpp")
     if kind == "checkpoint" and safetensors and config:
-        runtimes.append("vLLM (llama-swap)")
-        aliases += ["gx-fast", "gx-reason"]
+        runtimes.append("vLLM")
         if "deepseek" in arch or "deepseek_v4" in str((config or {}).get("model_type")):
-            runtimes.append("SGLang TP=2 (gx-max)")
+            runtimes.append("Mia EXL3 kit (gx-max)")
             aliases.append("gx-max")
     if kind in ("comfyui_model", "lora", "vae", "text_encoder", "controlnet", "comfyui_workflow"):
         runtimes.append("ComfyUI (media router)")

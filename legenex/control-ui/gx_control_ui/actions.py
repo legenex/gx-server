@@ -1,17 +1,22 @@
 """The complete list of state-changing operations the UI may perform.
 
-Design rules (see ARCHITECTURE.md "Control UI"):
+Design rules (see ARCHITECTURE-V41.md section 6 and section 12):
 
 * Every operation is a named entry in `build_registry()` with a fixed
   implementation. There is no generic "run a command" path; the only
-  caller-controlled input is the operation name (and, for model operations,
-  an alias from a fixed set).
-* gx-max changes go ONLY through the orchestrator's sanctioned
-  acquire/release API. No docker command here starts or stops a rank.
-* Operations that could collide with gx-max refuse while gx-max is loading,
-  serving or releasing, or while a rank container exists on either node.
+  caller-controlled input is the operation name and, where documented, a
+  value from a fixed set (a serving profile, a request id, a bench name).
+* gx-max changes go ONLY through the orchestrator's sanctioned lifecycle
+  API (/lifecycle/gx-max/acquire|release|restart|drain). No docker command
+  here starts or stops a rank.
 * Everything is audited (user, client address, operation, outcome, elapsed)
   to /srv/logs/gx-control-ui/audit.log. Output is redacted.
+* No auto-updates anywhere: `update_check` reports drift, nothing more.
+
+V4.1 action set: gxmax_start(profile), gxmax_stop, gxmax_restart(profile),
+gxmax_drain, health_check, benchmark_run(name), scheduler_cancel(request_id),
+scheduler_retry(request_id), trash_restore(id), purge_trash, update_check —
+plus the retained system/infra operations.
 """
 
 from __future__ import annotations
@@ -19,21 +24,24 @@ from __future__ import annotations
 import collections
 import json
 import os
+import re
 import secrets
 import shlex
 import threading
 import time
 from dataclasses import dataclass, field
 from collections.abc import Callable
+from typing import Any
 
 from .config import UIConfig
-from .models import ResultLog
+from .models import profiles as registry_profiles, read_registry, reasoning as registry_reasoning
 from .redact import redact
-from .services import SWAP_MODELS, Cluster
+from .services import Cluster
 from .util import HTTPError, bearer, http, http_json, run, ssh_args
 
 GXMAX_CONFIRM = "gx-max"
-FORCE_CONFIRM = "FORCE RELEASE"
+PURGE_CONFIRM = "PURGE TRASH"
+_BENCH_NAME_RE = re.compile(r"^[a-z0-9_\-]{1,40}$")
 
 
 class ActionRefused(Exception):
@@ -77,27 +85,33 @@ class ActionSpec:
     description: str
     danger: str                       # safe | caution | danger
     group: str | None                 # serialisation group (None = no lock)
-    run: Callable[[Job], bool]
+    run: Callable[..., bool]
     precheck: Callable[[], str | None] = lambda: None
     confirm_phrase: str | None = None
     admin_only: bool = False
+    #: Names of extra string arguments the caller may pass (validated below).
+    args: tuple[str, ...] = ()
 
     def public(self) -> dict:
         return {"name": self.name, "label": self.label, "description": self.description,
                 "danger": self.danger, "confirm_phrase": self.confirm_phrase,
-                "needs_confirm": self.danger != "safe", "advanced": self.admin_only}
+                "needs_confirm": self.danger != "safe", "advanced": self.admin_only,
+                "args": list(self.args)}
 
 
 class ActionRunner:
-    def __init__(self, cfg: UIConfig, cluster: Cluster, results: ResultLog) -> None:
+    def __init__(self, cfg: UIConfig, cluster: Cluster, results) -> None:
         self.cfg = cfg
         self.cluster = cluster
         self.results = results
         self._jobs: collections.OrderedDict[str, Job] = collections.OrderedDict()
         self._lock = threading.Lock()
         self._groups: dict[str, str] = {}   # group -> running job id
-        #: Resource Control's Maintenance flag (set by the App; D-037)
+        #: Resource Control's Maintenance flag (set by the App; D-037 protocol kept)
         self.maintenance: Callable[[], bool] = lambda: False
+        #: late-bound partners (set by the App after construction)
+        self.filemanager: Any = None          # filemanager.FileManager
+        self.updates: Any = None              # updates_view.UpdatesView
         self.registry = build_registry(self)
         self.audit_path = cfg.log_dir / "audit.log"
 
@@ -113,10 +127,18 @@ class ActionRunner:
             pass
 
     # ---------------------------------------------------------- submission
-    def submit(self, name: str, *, user: str, ip: str, confirm=None) -> Job:
+    def submit(self, name: str, *, user: str, ip: str, confirm=None, args: dict | None = None) -> Job:
         spec = self.registry.get(name)
         if spec is None:
             raise ActionRefused(f"unknown operation: {name}", 404)
+        args = args or {}
+        clean: dict[str, str] = {}
+        for key, value in args.items():
+            if key not in spec.args:
+                raise ActionRefused(f"unknown argument for {name}: {key}", 400)
+            if not isinstance(value, str) or len(value) > 200:
+                raise ActionRefused(f"argument {key} must be a short string", 400)
+            clean[key] = value
         if spec.confirm_phrase is not None:
             if confirm != spec.confirm_phrase:
                 self.audit(user=user, ip=ip, action=name, outcome="refused", reason="confirmation missing")
@@ -146,15 +168,15 @@ class ActionRunner:
             if spec.group:
                 self._groups[spec.group] = job.id
 
-        self.audit(user=user, ip=ip, action=name, outcome="started", job=job.id)
-        threading.Thread(target=self._execute, args=(spec, job), daemon=True,
+        self.audit(user=user, ip=ip, action=name, outcome="started", job=job.id, args=clean or None)
+        threading.Thread(target=self._execute, args=(spec, job, clean), daemon=True,
                          name=f"action-{name}").start()
         return job
 
-    def _execute(self, spec: ActionSpec, job: Job) -> None:
+    def _execute(self, spec: ActionSpec, job: Job, args: dict) -> None:
         ok = False
         try:
-            ok = bool(spec.run(job))
+            ok = bool(spec.run(job, **args)) if args else bool(spec.run(job))
         except Exception as exc:  # noqa: BLE001 - reported to the operator
             job.log(f"error: {type(exc).__name__}: {exc}")
         finally:
@@ -181,35 +203,9 @@ class ActionRunner:
             return [j.as_dict(with_output=False) for j in self._jobs.values() if j.state == "running"]
 
     # ------------------------------------------------------ preconditions
-    def _facts(self):
-        return self.cluster.node1.get() or {}, self.cluster.node2.get() or {}
-
-    def rank_containers(self) -> list[str]:
-        n1, n2 = self._facts()
-        found = []
-        for facts, name in ((n1, "gx-max-rank0"), (n2, "gx-max-rank1")):
-            for c in ((facts.get("docker") or {}).get("containers") or []):
-                if c.get("name") == name:
-                    found.append(f"{name} ({c.get('state')})")
-        return found
-
     def gxmax_state(self) -> str:
         self.cluster.lifecycle.invalidate()
         return self.cluster.gxmax_state()
-
-    def require_gxmax_quiet(self) -> str | None:
-        state = self.gxmax_state()
-        if state != "down":
-            return f"refused: gx-max is {state}; normal workloads stay drained until it is released"
-        ranks = self.rank_containers()
-        if ranks:
-            return f"refused: gx-max rank container present: {', '.join(ranks)}"
-        return None
-
-    def require_no_maintenance(self) -> str | None:
-        if self.maintenance():
-            return "refused: Maintenance mode is on; new heavy work starts again when it ends"
-        return None
 
     def require_no_transition(self) -> str | None:
         state = self.gxmax_state()
@@ -221,12 +217,9 @@ class ActionRunner:
         n2 = self.cluster.node2.get() or {}
         return None if n2.get("reachable") else "refused: gx10-02 is not reachable over SSH"
 
-    def media_busy(self) -> str | None:
-        self.cluster.services.invalidate()
-        media = (self.cluster.services.get() or {}).get("media") or {}
-        body = media.get("body") if media.get("ok") else None
-        if isinstance(body, dict) and (body.get("busy") or body.get("video_queue_depth")):
-            return "refused: a media generation is in progress"
+    def require_no_maintenance(self) -> str | None:
+        if self.maintenance():
+            return "refused: Maintenance mode is on; new heavy work starts again when it ends"
         return None
 
     # --------------------------------------------------------- primitives
@@ -256,224 +249,258 @@ def _all_checks(*checks: Callable[[], str | None]) -> Callable[[], str | None]:
     return inner
 
 
+def serving_profile(r: ActionRunner, wanted: str | None) -> str:
+    """Validate a serving profile against the registry (fast/balanced/...)."""
+    reg = read_registry(r.cfg.registry_path)
+    names = tuple(registry_profiles(reg)) or ("fast", "balanced", "swarm", "deep", "long")
+    if wanted is None or wanted == "":
+        return "balanced"
+    if wanted not in names:
+        raise ActionRefused(f"unknown profile {wanted!r}; registry offers: {', '.join(names)}", 400)
+    return wanted
+
+
 def build_registry(r: ActionRunner) -> dict[str, ActionSpec]:
     cfg, cl = r.cfg, r.cluster
     specs: list[ActionSpec] = []
     orch = cfg.orchestrator_base
-    orch_h = bearer(cfg.secret("GX_ORCHESTRATOR_API_KEY"))   # D-044
+    orch_h = bearer(cfg.secret("GX_ORCHESTRATOR_API_KEY"))
 
-    # ============================ gx-max (orchestrator lifecycle only) ====
-    def gxmax_acquire(job: Job) -> bool:
-        job.log("POST gx-orchestrator /lifecycle/gx-max/acquire (sanctioned lifecycle)")
-        job.log("sequence: drain -> admission -> rank1 -> rank0 -> health; cold load ~9 minutes")
+    def orch_call(job: Job, method: str, path: str, body: dict | None, timeout: float,
+                  ok_states: tuple[str, ...] = ("ready", "down")) -> tuple[bool, dict]:
         t0 = time.time()
         try:
-            status, body = http_json("POST", f"{orch}/lifecycle/gx-max/acquire",
-                                     body={"timeout": 1800}, timeout=1900, headers=orch_h)
+            status, out = http_json(method, f"{orch}{path}", body=body, timeout=timeout, headers=orch_h)
         except HTTPError as exc:
             job.log(exc.message)
-            r.results.record("gx-max", "load", False, exc.message)
-            return False
+            return False, {"error": exc.message}
         elapsed = round(time.time() - t0)
-        ok = status == 200
-        detail = json.dumps(body)[:1500]
-        job.log(f"HTTP {status} after {elapsed}s: {detail}")
+        job.log(f"HTTP {status} after {elapsed}s: {json.dumps(out)[:1500]}")
+        ok = status == 200 and (not ok_states or isinstance(out, dict) and out.get("state") in ok_states)
+        return ok, out if isinstance(out, dict) else {"raw": str(out)[:500]}
+
+    # ============================ gx-max (orchestrator lifecycle only) ====
+    def gxmax_start(job: Job, profile: str = "balanced") -> bool:
+        prof = serving_profile(r, profile)
+        job.log(f"POST gx-orchestrator /lifecycle/gx-max/acquire (profile {prof}; sanctioned lifecycle)")
+        job.log("sequence: preflight -> rank1 -> rank0 -> health; the V4.1 pack is about 105 GiB per node")
+        ok, body = orch_call(job, "POST", "/lifecycle/gx-max/acquire",
+                             {"profile": prof, "timeout": 1800}, 1900, ok_states=("ready",))
         startup = body.get("last_startup_seconds") if isinstance(body, dict) else None
-        job.result = {"http_status": status, "elapsed_seconds": elapsed, "startup_seconds": startup}
-        r.results.record("gx-max", "load", ok, "ready" if ok else detail, seconds=startup or elapsed)
+        job.result = {"http_status": 200 if ok else 0, "profile": prof, "startup_seconds": startup,
+                     **{k: body.get(k) for k in ("state", "error") if isinstance(body, dict) and k in body}}
+        r.results.record("gx-max", "load", ok, "ready" if ok else json.dumps(body)[:300],
+                         profile=prof, seconds=startup)
         return ok
 
-    def gxmax_release(force: bool) -> Callable[[Job], bool]:
-        def inner(job: Job) -> bool:
-            job.log(f"POST gx-orchestrator /lifecycle/gx-max/release force={force} (restore normal workloads)")
-            t0 = time.time()
-            try:
-                status, body = http_json("POST", f"{orch}/lifecycle/gx-max/release",
-                                         body={"force": force, "restore": True}, timeout=1200, headers=orch_h)
-            except HTTPError as exc:
-                job.log(exc.message)
-                return False
-            job.log(f"HTTP {status} after {round(time.time() - t0)}s: {json.dumps(body)[:1000]}")
-            ok = status == 200 and isinstance(body, dict) and body.get("state") == "down"
-            # Verify, do not assume: no rank container may remain.
-            # invalidate() makes the next get() block for a fresh reading.
-            cl.node1.invalidate()
-            cl.node2.invalidate()
-            ranks = r.rank_containers()
-            if ranks:
-                job.log(f"WARNING: rank container still present after release: {ranks}")
-                ok = False
-            else:
-                job.log("verified: no gx-max rank container on either node")
-            r.results.record("gx-max", "unload", ok, "released" if ok else "release incomplete")
-            return ok
-        return inner
+    def gxmax_stop(job: Job) -> bool:
+        job.log("POST gx-orchestrator /lifecycle/gx-max/release (graceful; restore)")
+        ok, body = orch_call(job, "POST", "/lifecycle/gx-max/release",
+                             {"force": False, "restore": True}, 1200, ok_states=("down",))
+        r.results.record("gx-max", "unload", ok, "released" if ok else json.dumps(body)[:300])
+        return ok
 
-    def gxmax_restart(job: Job) -> bool:
-        if r.gxmax_state() == "ready" and not gxmax_release(False)(job):
-            job.log("release failed; not re-acquiring")
-            return False
-        return gxmax_acquire(job)
-
-    def pre_gxmax_load() -> str | None:
+    def gxmax_restart(job: Job, profile: str = "balanced") -> bool:
+        prof = serving_profile(r, profile)
         state = r.gxmax_state()
         if state == "ready":
-            return "gx-max is already READY"
-        if state != "down":
-            return f"refused: gx-max is {state}"
-        return r.require_no_maintenance() or r.require_node2() or r.media_busy()
+            job.log("releasing first (graceful)")
+            ok, _ = orch_call(job, "POST", "/lifecycle/gx-max/release",
+                              {"force": False, "restore": True}, 1200, ok_states=("down",))
+            if not ok:
+                job.log("release failed; not re-acquiring")
+                return False
+        return gxmax_start(job, profile=prof)
 
-    def pre_gxmax_unload() -> str | None:
+    def gxmax_drain(job: Job) -> bool:
+        job.log("POST gx-orchestrator /lifecycle/gx-max/drain (stop accepting; in-flight finish)")
+        ok, body = orch_call(job, "POST", "/lifecycle/gx-max/drain", {}, 600)
+        job.result = body if isinstance(body, dict) else {}
+        r.results.record("gx-max", "drain", ok, json.dumps(body)[:300])
+        return ok
+
+    def pre_gxmax_start() -> str | None:
+        state = r.gxmax_state()
+        if state == "ready":
+            return "gx-max is already READY (use RESTART to change its profile)"
+        return _all_checks(r.require_no_transition, r.require_no_maintenance, r.require_node2)()
+
+    def pre_gxmax_stop() -> str | None:
         state = r.gxmax_state()
         return None if state == "ready" else f"refused: gx-max is {state}, not ready"
 
-    def pre_gxmax_restart() -> str | None:
-        state = r.gxmax_state()
-        if state not in ("ready", "down"):
-            return f"refused: gx-max is {state}"
-        return r.require_node2()
-
-    def pre_force() -> str | None:
-        if r.gxmax_state() == "down" and not r.rank_containers():
-            return "nothing to release: gx-max is down and no rank container exists"
-        return None
-
     specs += [
-        ActionSpec("model.gx-max.load", "Load gx-max (two-node takeover)",
-                   "Calls the orchestrator's sanctioned acquire. Drains gx-mini, gx-fast, gx-reason and "
-                   "the media stack on both nodes, then starts rank 1 and rank 0. ~9 minutes cold.",
-                   "danger", "cluster", gxmax_acquire, pre_gxmax_load, confirm_phrase=GXMAX_CONFIRM),
-        ActionSpec("model.gx-max.unload", "Release gx-max (graceful)",
+        ActionSpec("gxmax_start", "Start gx-max (profile)",
+                   "Acquires the cluster for DeepSeek V4.1 Flash through the orchestrator lifecycle, "
+                   "with the chosen serving profile (fast/balanced/swarm/deep/long). About 105 GiB per "
+                   "node; never starts at boot.",
+                   "danger", "cluster", gxmax_start, pre_gxmax_start, confirm_phrase=GXMAX_CONFIRM,
+                   args=("profile",)),
+        ActionSpec("gxmax_stop", "Stop gx-max (graceful release)",
                    "Orchestrator graceful release: waits for in-flight requests, stops both ranks, "
-                   "verifies memory and restores normal workloads.",
-                   "caution", "cluster", gxmax_release(False), pre_gxmax_unload),
-        ActionSpec("model.gx-max.restart", "Restart gx-max",
-                   "Graceful release followed by a fresh sanctioned acquire (~10 minutes).",
-                   "danger", "cluster", gxmax_restart, pre_gxmax_restart, confirm_phrase=GXMAX_CONFIRM),
-        ActionSpec("model.gx-max.force_release", "Force-release gx-max (advanced)",
-                   "Emergency only: orchestrator release with force=true. Does not wait for in-flight "
-                   "requests. Use when a rank is wedged or a load is stuck.",
-                   "danger", None, gxmax_release(True), pre_force, confirm_phrase=FORCE_CONFIRM,
-                   admin_only=True),
+                   "verifies memory return.",
+                   "caution", "cluster", gxmax_stop, pre_gxmax_stop),
+        ActionSpec("gxmax_restart", "Restart gx-max (profile)",
+                   "Graceful release followed by a fresh acquire with the chosen profile.",
+                   "danger", "cluster", gxmax_restart, _all_checks(r.require_node2, r.require_no_maintenance),
+                   confirm_phrase=GXMAX_CONFIRM, args=("profile",)),
+        ActionSpec("gxmax_drain", "Drain gx-max",
+                   "Asks the orchestrator to stop accepting new requests and let in-flight work finish.",
+                   "caution", "cluster", gxmax_drain, r.require_no_transition),
     ]
 
-    # ================================ llama-swap tiers ====================
-    load_timeouts = {"gx-mini": 600, "gx-fast": 1800, "gx-reason": 2400}
-
-    def swap_load(alias: str) -> Callable[[Job], bool]:
-        def inner(job: Job) -> bool:
-            preview = cl.admission_preview(alias)
-            job.log(f"admission preview: {preview.get('reason')}")
-            if not preview.get("allowed"):
-                return False
-            job.log(f"GET llama-swap {SWAP_MODELS[alias]} /upstream/{alias}/health (load on demand)")
-            t0 = time.time()
-            ok, msg = cl.swap_load(alias, load_timeouts[alias])
-            secs = round(time.time() - t0, 1)
-            job.log(f"{msg} ({secs}s)")
-            job.result = {"load_seconds": secs}
-            r.results.record(alias, "load", ok, msg, seconds=secs)
-            return ok
-        return inner
-
-    def swap_unload(alias: str) -> Callable[[Job], bool]:
-        def inner(job: Job) -> bool:
-            job.log(f"POST llama-swap {SWAP_MODELS[alias]} /api/models/unload/{alias}")
-            ok, msg = cl.swap_unload(alias)
-            job.log(msg)
-            r.results.record(alias, "unload", ok, msg)
-            return ok
-        return inner
-
-    def swap_restart(alias: str) -> Callable[[Job], bool]:
-        def inner(job: Job) -> bool:
-            return swap_unload(alias)(job) and swap_load(alias)(job)
-        return inner
-
-    def pre_swap_load(alias: str) -> Callable[[], str | None]:
-        def inner() -> str | None:
-            checks = [r.require_gxmax_quiet]
-            if SWAP_MODELS[alias] == "node2":
-                checks += [r.require_node2, r.require_no_maintenance]
-            reason = _all_checks(*checks)()
-            if reason:
-                return reason
-            preview = cl.admission_preview(alias)
-            if not preview.get("allowed"):
-                return f"refused by the admission guard: {preview.get('reason')}"
-            return None
-        return inner
-
-    for alias in ("gx-mini", "gx-code"):
-        node = "gx10-01" if SWAP_MODELS[alias] == "node1" else "gx10-02"
-        specs += [
-            ActionSpec(f"model.{alias}.load", f"Load {alias}",
-                       f"Asks llama-swap on {node} to start {alias} now (the same on-demand path a "
-                       "request takes), after the 30 GiB admission check.",
-                       "safe", "cluster", swap_load(alias), pre_swap_load(alias)),
-            ActionSpec(f"model.{alias}.unload", f"Unload {alias}",
-                       f"Asks llama-swap on {node} to stop {alias}. In-flight requests to it fail.",
-                       "caution", "cluster", swap_unload(alias), r.require_no_transition),
-            ActionSpec(f"model.{alias}.restart", f"Restart {alias}",
-                       "Unload, then load again through llama-swap.",
-                       "caution", "cluster", swap_restart(alias), pre_swap_load(alias)),
-        ]
-
-    # ================================ media ===============================
-    def media_unload(job: Job) -> bool:
-        # Through the router (never ComfyUI directly): the router refuses while a
-        # job runs and resets its resident-model record, so the next job is
-        # admitted as cold (D-036).
-        job.log("POST media router /v1/admin/free (router-mediated ComfyUI free)")
+    # ================================ scheduler (relayed controls) ======
+    def scheduler_cancel(job: Job, request_id: str) -> bool:
+        if not re.fullmatch(r"[A-Za-z0-9_\-]{1,128}", request_id):
+            job.log(f"invalid request id: {request_id[:40]!r}")
+            return False
+        job.log(f"POST gx-orchestrator /scheduler/cancel (request {request_id})")
         try:
-            res = http("POST", f"{cfg.media_base}/v1/admin/free", body={}, headers=cl.media_headers(), timeout=60)
-            text = res.text(500)
-            ok = res.status == 200
+            status, body = http_json("POST", f"{orch}/scheduler/cancel", body={"id": request_id},
+                                     timeout=30, headers=orch_h)
         except HTTPError as exc:
-            ok, text = False, exc.message
-        job.log(text)
-        for alias in ("gx-image", "gx-video"):
-            r.results.record(alias, "unload", ok, "ComfyUI models freed" if ok else "free refused")
+            job.log(exc.message)
+            return False
+        job.log(f"HTTP {status}: {json.dumps(body)[:500]}")
+        return 200 <= status < 300
+
+    def scheduler_retry(job: Job, request_id: str) -> bool:
+        if not re.fullmatch(r"[A-Za-z0-9_\-]{1,128}", request_id):
+            job.log(f"invalid request id: {request_id[:40]!r}")
+            return False
+        job.log(f"POST gx-orchestrator /scheduler/retry (request {request_id})")
+        try:
+            status, body = http_json("POST", f"{orch}/scheduler/retry", body={"id": request_id},
+                                     timeout=60, headers=orch_h)
+        except HTTPError as exc:
+            job.log(exc.message)
+            return False
+        job.log(f"HTTP {status}: {json.dumps(body)[:500]}")
+        return 200 <= status < 300
+
+    specs += [
+        ActionSpec("scheduler_cancel", "Cancel a queued/active request",
+                   "Relays a cancel to the orchestrator scheduler (queued always, active best-effort).",
+                   "caution", "scheduler", scheduler_cancel, r.require_no_transition,
+                   args=("request_id",)),
+        ActionSpec("scheduler_retry", "Retry a failed request",
+                   "Relays a retry to the orchestrator scheduler.", "safe", "scheduler", scheduler_retry,
+                   args=("request_id",)),
+    ]
+
+    # ================================ health / benchmarks ===============
+    def health_check(job: Job) -> bool:
+        job.log("GET orchestrator /health/detailed")
+        findings: dict[str, Any] = {}
+        try:
+            status, body = http_json("GET", f"{orch}/health/detailed", headers=orch_h, timeout=8)
+            job.log(f"orchestrator: HTTP {status}: {json.dumps(body)[:800]}")
+            findings["orchestrator"] = {"ok": 200 <= status < 300, "status": status}
+            if isinstance(body, dict):
+                findings["orchestrator"]["body"] = body
+        except HTTPError as exc:
+            job.log(f"orchestrator unreachable: {exc.message}")
+            findings["orchestrator"] = {"ok": False, "error": exc.message}
+        job.log("GET Mia runtime :8888/health (loopback; only while READY)")
+        try:
+            status, body = http_json("GET", f"{cfg.mia_base}/health", timeout=5)
+            job.log(f"mia: HTTP {status}: {json.dumps(body)[:400]}")
+            findings["mia"] = {"ok": 200 <= status < 300, "status": status}
+        except HTTPError as exc:
+            state = r.gxmax_state()
+            job.log(f"mia health not answering (gx-max is {state}): {exc.message}")
+            findings["mia"] = {"ok": state == "down", "state": state, "note": "not serving while down"}
+        n1, n2 = cl.node1.get() or {}, cl.node2.get() or {}
+        for name, facts in (("gx10-01", n1), ("gx10-02", n2)):
+            mem = ((facts or {}).get("memory") or {}).get("MemAvailable")
+            if mem:
+                job.log(f"{name}: MemAvailable {mem / 2**30:.1f} GiB")
+        job.result = findings
+        ok = bool(findings.get("orchestrator", {}).get("ok"))
+        r.results.record("gx-max", "health", ok, json.dumps(findings)[:300])
         return ok
 
-    for alias in ("gx-image", "gx-video"):
-        specs.append(ActionSpec(
-            f"model.{alias}.unload", f"Unload media models ({alias})",
-            "Frees ComfyUI's loaded image AND video weights on gx10-02 (they share one engine). "
-            "The next generation reloads them.",
-            "caution", "media", media_unload, _all_checks(r.require_node2, r.media_busy)))
-
-    # ================================ music ===============================
-    def music_op(op: str) -> Callable[[Job], bool]:
-        def inner(job: Job) -> bool:
-            key = cfg.music_key_file.read_text(encoding="utf-8").strip() if cfg.music_key_file.exists() else ""
-            job.log(f"POST gx-music supervisor /v1/music/{op} (fabric)")
-            t0 = time.time()
-            try:
-                res = http("POST", f"{cfg.music_base}/v1/music/{op}", body={},
-                           headers={"Authorization": f"Bearer {key}"}, timeout=1200 if op == "load" else 120)
-                text, ok = res.text(800), res.status == 200
-            except HTTPError as exc:
-                text, ok = exc.message, False
-            secs = round(time.time() - t0, 1)
-            job.log(f"{text} ({secs}s)")
-            job.result = {"seconds": secs}
-            r.results.record("gx-music", op, ok, text[:200], seconds=secs)
-            return ok
-        return inner
+    def benchmark_run(job: Job, name: str = "startup") -> bool:
+        if not _BENCH_NAME_RE.fullmatch(name or ""):
+            job.log(f"invalid benchmark name: {(name or '')[:40]!r}")
+            return False
+        script = cfg.bench_dir / "run_bench.py"
+        if not script.is_file():
+            job.log(f"the benchmark suite is not present yet ({script}); refusing honestly")
+            return False
+        job.log(f"python3 ops/bench/run_bench.py {name}")
+        res = run(["python3", str(script), name], timeout=3600)
+        job.log(res.out.strip()[-8000:])
+        job.result = {"exit": res.rc, "name": name}
+        r.results.record("bench", name, res.ok, "completed" if res.ok else f"exit {res.rc}")
+        return res.ok
 
     specs += [
-        ActionSpec("model.gx-music.load", "Load gx-music",
-                   "Asks the gx-music supervisor on gx10-02 to load ACE-Step now (admission-guarded; about "
-                   "90 s). Refused while gx-max owns the cluster or in Maintenance.",
-                   "safe", "music", music_op("load"),
-                   _all_checks(r.require_gxmax_quiet, r.require_node2, r.require_no_maintenance)),
-        ActionSpec("model.gx-music.unload", "Unload gx-music",
-                   "Stops the ACE-Step engine on gx10-02 and returns its memory. Refused while a track is "
-                   "generating.", "caution", "music", music_op("unload"), r.require_node2),
+        ActionSpec("health_check", "Run a cluster health check",
+                   "Orchestrator /health/detailed + Mia :8888 health + both nodes' memory. Read-only.",
+                   "safe", None, health_check),
+        ActionSpec("benchmark_run", "Run a benchmark",
+                   "Runs ops/bench/run_bench.py <name> (startup/load/ttft/tps/memory suite). "
+                   "Results land in the bench history JSONL.",
+                   "caution", "bench", benchmark_run, _all_checks(r.require_no_transition,
+                                                                  r.require_no_maintenance),
+                   args=("name",)),
     ]
 
-    # ================================ system ==============================
+    # ================================ trash / updates ===================
+    def trash_restore(job: Job, trash_id: str = "") -> bool:
+        if r.filemanager is None:
+            job.log("file manager not initialised")
+            return False
+        try:
+            info = r.filemanager.restore(trash_id, user=job.user)
+        except Exception as exc:  # noqa: BLE001 - surfaced to the operator
+            job.log(f"restore failed: {type(exc).__name__}: {exc}")
+            return False
+        job.log(f"restored {info.get('original')} from trash ({info.get('id')})")
+        job.result = info
+        return True
+
+    def purge_trash(job: Job) -> bool:
+        if r.filemanager is None:
+            job.log("file manager not initialised")
+            return False
+        try:
+            info = r.filemanager.purge(user=job.user)
+        except Exception as exc:  # noqa: BLE001 - surfaced to the operator
+            job.log(f"purge failed: {type(exc).__name__}: {exc}")
+            return False
+        job.log(f"purged {info.get('count')} trash entries ({info.get('bytes')} bytes freed)")
+        job.result = info
+        return True
+
+    def update_check(job: Job) -> bool:
+        if r.updates is None:
+            job.log("updates view not initialised")
+            return False
+        job.log("checking pins against upstream (GitHub + Hugging Face); nothing is auto-updated")
+        report = r.updates.check()
+        job.log(json.dumps(report)[:4000])
+        job.result = report
+        drift = [d for d in report.get("pins", []) if not d.get("match")]
+        job.log(f"drift: {len(drift)} of {len(report.get('pins', []))} pins")
+        return True
+
+    specs += [
+        ActionSpec("trash_restore", "Restore an item from trash",
+                   "Moves a trashed item back to its original path.", "safe", None, trash_restore,
+                   args=("trash_id",)),
+        ActionSpec("purge_trash", "Purge the trash (permanent)",
+                   "PERMANENTLY deletes every trashed item. Separate from delete; typed confirmation "
+                   "required; audit-logged.",
+                   "danger", None, purge_trash, confirm_phrase=PURGE_CONFIRM, admin_only=True),
+        ActionSpec("update_check", "Check for updates",
+                   "Compares registry pins against upstream (Mia repo HEAD on GitHub, model revisions on "
+                   "Hugging Face). Reports drift; NEVER updates anything.",
+                   "safe", None, update_check),
+    ]
+
+    # ================================ system =============================
     def refresh(job: Job) -> bool:
         cl.invalidate()
         cl.services.get(max_age=0)
@@ -505,10 +532,10 @@ def build_registry(r: ActionRunner) -> dict[str, ActionSpec]:
     def reconcile_node2(job: Job) -> bool:
         job.log("gx10-02: systemctl --user start gx-git-reconcile.service")
         ok, out = r.ssh("systemctl --user start gx-git-reconcile.service && "
-                        f"git -C {shlex.quote(cfg.node2_repo)} rev-parse HEAD", 180)
+                        f"git -C {shlex.quote(str(cfg.node2_repo))} rev-parse HEAD", 180)
         job.log(out.strip()[-2000:])
         head = out.strip().splitlines()[-1] if ok and out.strip() else ""
-        remote = cl._remote_head()
+        remote = cl.remote_git.get() or {}
         job.result = {"node2_head": head, "origin_main": remote.get("head"),
                       "match": bool(head) and head == remote.get("head")}
         job.log(f"node2 HEAD {head[:12]} vs origin/main {str(remote.get('head'))[:12]}")
@@ -531,6 +558,24 @@ def build_registry(r: ActionRunner) -> dict[str, ActionSpec]:
         threading.Thread(target=later, daemon=True).start()
         return True
 
+    def restart_orchestrator(job: Job) -> bool:
+        job.log("gx10-01: systemctl --user restart gx-orchestrator.service")
+        res = run(["systemctl", "--user", "restart", "gx-orchestrator.service"], timeout=90)
+        job.log(res.out.strip() or f"exit {res.rc}")
+        ok = res.ok and r.wait_http(f"{orch}/health", 60)
+        job.log("orchestrator health OK" if ok else "orchestrator did not answer")
+        return ok
+
+    def restart_litellm(job: Job) -> bool:
+        job.log("gx10-01: docker restart gx-litellm")
+        res = run(["docker", "restart", "-t", "30", "gx-litellm"], timeout=120)
+        job.log(res.out.strip())
+        if not res.ok:
+            return False
+        ok = r.wait_http(f"{cfg.litellm_base}/health/liveliness", 120)
+        job.log(f"health {'OK' if ok else 'NOT answering after 120 s'}")
+        return ok
+
     specs += [
         ActionSpec("system.refresh", "Refresh health", "Clears every cache and re-probes the cluster now.",
                    "safe", None, refresh),
@@ -551,71 +596,12 @@ def build_registry(r: ActionRunner) -> dict[str, ActionSpec]:
         ActionSpec("system.restart_ui", "Restart the control UI",
                    "systemctl --user restart gx-control-ui.service. Sessions survive only until restart.",
                    "caution", "ui", restart_ui),
-    ]
-
-    # ======================= non-model infrastructure =====================
-    def docker_restart_local(container: str, health_url: str | None, headers=None) -> Callable[[Job], bool]:
-        def inner(job: Job) -> bool:
-            job.log(f"gx10-01: docker restart {container}")
-            res = run(["docker", "restart", "-t", "30", container], timeout=120)
-            job.log(res.out.strip())
-            if not res.ok:
-                return False
-            if health_url:
-                ok = r.wait_http(health_url, 120, headers)
-                job.log(f"health {'OK' if ok else 'NOT answering after 120 s'}: {health_url}")
-                return ok
-            return True
-        return inner
-
-    def docker_restart_node2(container: str, health_url: str | None) -> Callable[[Job], bool]:
-        def inner(job: Job) -> bool:
-            job.log(f"gx10-02: docker restart {container}")
-            ok, out = r.ssh(f"docker restart -t 30 {shlex.quote(container)}", 150)
-            job.log(out.strip())
-            if ok and health_url:
-                ok = r.wait_http(health_url, 180, None)
-                job.log(f"health {'OK' if ok else 'NOT answering after 180 s'}: {health_url}")
-            return ok
-        return inner
-
-    def restart_orchestrator(job: Job) -> bool:
-        job.log("gx10-01: systemctl --user restart gx-orchestrator.service")
-        res = run(["systemctl", "--user", "restart", "gx-orchestrator.service"], timeout=90)
-        job.log(res.out.strip() or f"exit {res.rc}")
-        ok = res.ok and r.wait_http(f"{orch}/health", 60)
-        job.log("orchestrator health OK" if ok else "orchestrator did not answer")
-        return ok
-
-    def restore_normal(job: Job) -> bool:
-        job.log("legenex/lifecycle/restore-normal.sh (control planes only; models stay on demand)")
-        res = run(["bash", str(cfg.lifecycle_dir / "restore-normal.sh")], timeout=600)
-        job.log(res.out.strip()[-4000:])
-        return res.ok
-
-    specs += [
         ActionSpec("infra.restart_litellm", "Restart LiteLLM gateway",
                    "docker restart gx-litellm. Requests in flight through the gateway fail.",
-                   "caution", "cluster",
-                   docker_restart_local("gx-litellm", f"{cfg.litellm_base}/health/liveliness"),
-                   r.require_no_transition),
-        ActionSpec("infra.restart_swap_node1", "Restart llama-swap (gx10-01)",
-                   "docker restart gx-llama-swap-node01. Stops gx-mini/gx-code-01; they reload on demand.",
-                   "caution", "cluster",
-                   docker_restart_local("gx-llama-swap-node01", f"{cfg.node1_swap_base}/health"),
-                   r.require_gxmax_quiet),
-        ActionSpec("infra.restart_swap_node2", "Restart llama-swap (gx10-02)",
-                   "docker restart gx-llama-swap-node02 on gx10-02. Stops gx-code-02; it reloads on demand.",
-                   "caution", "cluster",
-                   docker_restart_node2("gx-llama-swap-node02", f"{cfg.node2_swap_base}/health"),
-                   _all_checks(r.require_gxmax_quiet, r.require_node2)),
+                   "caution", "cluster", restart_litellm, r.require_no_transition),
         ActionSpec("infra.restart_orchestrator", "Restart gx-orchestrator",
-                   "systemctl --user restart gx-orchestrator.service. Refused while gx-max is "
-                   "loading or releasing; a serving gx-max is re-adopted on start.",
+                   "systemctl --user restart gx-orchestrator.service. Refused while gx-max is loading or "
+                   "releasing; a serving gx-max is re-adopted on start.",
                    "caution", "cluster", restart_orchestrator, r.require_no_transition),
-        ActionSpec("infra.restore_normal", "Restore normal workloads",
-                   "Runs lifecycle/restore-normal.sh: brings the gateway, orchestrator and "
-                   "node 2 llama-swap back up. Loads no model.",
-                   "caution", "cluster", restore_normal, r.require_gxmax_quiet),
     ]
     return {s.name: s for s in specs}

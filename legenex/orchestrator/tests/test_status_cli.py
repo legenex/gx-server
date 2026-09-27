@@ -1,192 +1,183 @@
-"""Tests for `gx status` (gx_orchestrator.status_cli).
+"""Tests for `gx status` (gx_orchestrator.status_cli, V4.1 shape).
 
-Pure-function pieces (meminfo parsing, alias-table derivation, rendering) are
-tested directly. Network/host-dependent pieces (docker, ping, the live
-orchestrator) are exercised through fakes so these tests never touch the
-real cluster.
+Pure functions (meminfo parsing, report assembly, rendering) are tested
+directly; host and network pieces (uname, docker ps, the orchestrator's
+/text/status) run through fakes so these tests never touch a real cluster.
 """
 
 from __future__ import annotations
 
+import json
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from gx_orchestrator import status_cli  # noqa: E402
-from gx_orchestrator.tiers import Tier  # noqa: E402
+from gx_orchestrator.config import Config  # noqa: E402
+from tests.registry_fixtures import write_fixture_registry  # noqa: E402
 
 
-class TestReadMeminfo(unittest.TestCase):
-    def test_parses_real_looking_meminfo(self):
-        sample = (
-            "MemTotal:       126934440 kB\n"
-            "MemFree:         5000000 kB\n"
-            "MemAvailable:   117440512 kB\n"
-            "SwapTotal:       66060288 kB\n"
-            "SwapFree:        66060288 kB\n"
+class _FakeResp:
+    def __init__(self, body):
+        self._body = body
+
+    def json(self):
+        return self._body
+
+
+_MEMINFO = """MemTotal:       132_000_000 kB
+MemFree:         10_000_000 kB
+MemAvailable:    96_000_000 kB
+SwapTotal:       50_331_648 kB
+SwapFree:        50_331_000 kB
+"""
+
+
+class TestPurePieces(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.dir = Path(self.tmp.name)
+        self.reg_path = write_fixture_registry(self.dir / "registry.json")
+        self.cfg = Config(
+            registry_path=self.reg_path,
+            head_container="dsv41-exl3-head",
+            worker_container="dsv41-exl3-worker",
         )
-        with tempfile.NamedTemporaryFile("w", suffix=".meminfo", delete=False) as fh:
-            fh.write(sample)
-            path = fh.name
+
+    def test_read_meminfo(self):
+        p = self.dir / "meminfo"
+        p.write_text(_MEMINFO)
+        info = status_cli.read_meminfo(str(p))
+        self.assertEqual(info["MemAvailable"], 96_000_000)
+        self.assertEqual(info["SwapTotal"], 50_331_648)
+        self.assertIsNone(status_cli.read_meminfo(str(self.dir / "missing")))
+
+    def test_local_node1_facts(self):
+        status_cli._run = lambda cmd, timeout=5.0: {
+            ("uname", "-r"): "6.17.0-1032-nvidia",
+        }.get(tuple(cmd))
+        status_cli.read_meminfo = lambda path="/proc/meminfo": {
+            "MemTotal": 132_000_000, "MemAvailable": 96_000_000,
+            "SwapTotal": 50_331_648, "SwapFree": 50_331_000,
+        }
+        status_cli._docker_ps = lambda: [{"name": "dsv41-exl3-head", "status": "Up 2 hours"}]
         try:
-            info = status_cli.read_meminfo(path)
-            self.assertEqual(info["MemTotal"], 126934440)
-            self.assertEqual(info["MemAvailable"], 117440512)
-            self.assertEqual(info["SwapFree"], 66060288)
+            facts = status_cli.local_node1_facts(self.cfg)
         finally:
-            Path(path).unlink(missing_ok=True)
+            import importlib
+            importlib.reload(status_cli)
+        self.assertTrue(facts["online"])
+        self.assertEqual(facts["kernel"], "6.17.0-1032-nvidia")
+        self.assertTrue(facts["kernel_pinned"])
+        self.assertEqual(facts["ram_available_gib"], 91.6)
+        self.assertEqual(facts["workload"], "dsv41-exl3-head")
+        self.assertEqual(facts["containers"], [{"name": "dsv41-exl3-head", "status": "Up 2 hours"}])
 
-    def test_missing_file_returns_none_not_raise(self):
-        self.assertIsNone(status_cli.read_meminfo("/nonexistent/meminfo"))
+    def test_kernel_not_pinned_is_flagged(self):
+        status_cli._run = lambda cmd, timeout=5.0: "7.0.0" if cmd[:1] == ["uname"] else None
+        status_cli.read_meminfo = lambda path="/proc/meminfo": None
+        status_cli._docker_ps = lambda: []
+        try:
+            facts = status_cli.local_node1_facts(self.cfg)
+        finally:
+            import importlib
+            importlib.reload(status_cli)
+        self.assertFalse(facts["kernel_pinned"])
+        self.assertIn("NOT the pinned kernel", status_cli.render_human({
+            "generated_at": "t", "model": {"model_id": "m", "uncensored": True, "quant": "q"},
+            "orchestrator": {"reachable": False, "base": "b", "error": "x", "cluster": {}, "queue": {}},
+            "node1": facts,
+        }))
 
-    def test_real_proc_meminfo_is_readable_and_has_expected_keys(self):
-        """This runs on a real Linux host in CI/dev, so /proc/meminfo really
-        exists -- assert the parser survives the real file, not just a fixture.
-        """
-        info = status_cli.read_meminfo()
-        self.assertIsNotNone(info)
-        self.assertIn("MemTotal", info)
-        self.assertIn("MemAvailable", info)
-        self.assertGreater(info["MemTotal"], 0)
+    def test_registry_model_facts(self):
+        facts = status_cli.registry_model_facts(self.cfg)
+        self.assertEqual(facts["model_id"], "DeepSeek-v4.1-Flash-EXL3")
+        self.assertTrue(facts["uncensored"])
+        self.assertEqual(facts["quant"], "exl3-2.9bpw-mul1")
+        self.assertEqual(facts["max_context"], 262144)
+        self.assertTrue(facts["vision"])
+        self.assertTrue(facts["tools"])
 
-
-class TestBuildAliasTable(unittest.TestCase):
-    def test_orchestrator_unreachable_marks_everything_unavailable_not_guessed(self):
-        snap = status_cli.OrchestratorSnapshot(reachable=False, error="Connection refused")
-        aliases = status_cli.build_alias_table(snap, node2_online=True)
-        for tier in (Tier.MINI, Tier.FAST, Tier.REASON, Tier.MAX, Tier.AUTO):
-            self.assertEqual(aliases[tier.value]["state"], "unavailable")
-            self.assertFalse(aliases[tier.value]["usable"])
-            self.assertIn("orchestrator_unreachable", aliases[tier.value]["reason"])
-
-    def test_reachable_orchestrator_passes_tier_data_through_unchanged(self):
-        tiers = {
-            "gx-mini": {"state": "ready", "usable": True, "reason": "loaded"},
-            "gx-fast": {"state": "stopped", "usable": True, "reason": "unloaded"},
-            "gx-reason": {"state": "unavailable", "usable": False, "reason": "node2_offline"},
-            "gx-max": {"state": "stopped", "usable": True, "reason": "node2_unavailable"},
-        }
-        snap = status_cli.OrchestratorSnapshot(reachable=True, tiers=tiers)
-        aliases = status_cli.build_alias_table(snap, node2_online=False)
-        self.assertEqual(aliases["gx-mini"], tiers["gx-mini"])
-        self.assertEqual(aliases["gx-reason"], tiers["gx-reason"])
-        # gx-auto is synthesised locally: reachable orchestrator -> ready.
-        self.assertEqual(aliases["gx-auto"]["state"], "ready")
-        self.assertTrue(aliases["gx-auto"]["usable"])
-
-    def test_image_video_report_node2_offline_when_node2_is_down(self):
-        snap = status_cli.OrchestratorSnapshot(reachable=True, tiers={})
-        aliases = status_cli.build_alias_table(snap, node2_online=False)
-        self.assertEqual(aliases["gx-image"]["reason"], "node2_offline")
-        self.assertEqual(aliases["gx-video"]["reason"], "node2_offline")
-        self.assertFalse(aliases["gx-image"]["usable"])
-
-    def test_survives_an_old_orchestrator_still_returning_bare_booleans(self):
-        """Regression test for a real incident hit while writing this script:
-        the orchestrator process running live had not yet reloaded this
-        session's fix and still answered `/health/detailed` with the OLD
-        `{"gx-mini": true, ...}` shape. build_report() must degrade cleanly
-        instead of raising AttributeError on `True.get(...)`.
-        """
-        snap = status_cli.OrchestratorSnapshot(
-            reachable=True,
-            tiers={"gx-mini": True, "gx-fast": True, "gx-reason": True, "gx-max": True},
-        )
-        aliases = status_cli.build_alias_table(snap, node2_online=True)
-        for tier in ("gx-mini", "gx-fast", "gx-reason", "gx-max"):
-            self.assertEqual(aliases[tier]["state"], "unavailable")
-            self.assertFalse(aliases[tier]["usable"])
-            self.assertIn("unrecognised_orchestrator_response", aliases[tier]["reason"])
-
-    def test_image_video_never_claim_ready_even_when_node2_is_up(self):
-        """The orchestrator does not own the media router: gx-status must not
-        fake success for it just because node 2's kernel answers ICMP.
-        """
-        snap = status_cli.OrchestratorSnapshot(reachable=True, tiers={})
-        aliases = status_cli.build_alias_table(snap, node2_online=True)
-        self.assertEqual(aliases["gx-image"]["state"], "unavailable")
-        self.assertNotEqual(aliases["gx-image"]["reason"], "node2_offline")
-        self.assertFalse(aliases["gx-image"]["usable"])
+    def test_registry_model_facts_error_is_explicit(self):
+        facts = status_cli.registry_model_facts(Config(registry_path=self.dir / "nope.json"))
+        self.assertIn("error", facts)
 
 
-class TestRendering(unittest.TestCase):
-    """Rendering must not crash on a well-formed report, and JSON must
-    round-trip through the standard library `json` module.
-    """
-
-    def _sample_report(self) -> dict:
-        return {
-            "generated_at": "2026-09-14T23:00:00+0200",
-            "node1": {
-                "online": True,
-                "kernel": "6.17.0-1032-nvidia",
-                "kernel_pinned": True,
-                "expected_kernel": "6.17.0-1032-nvidia",
-                "ram_total_gib": 121.0,
-                "ram_available_gib": 105.0,
-                "swap_total_gib": 63.0,
-                "swap_free_gib": 63.0,
-                "workload": ["gx-mini"],
-                "containers": [{"name": "gx-mini", "status": "Up 1 minute"}],
-                "gateway": {"litellm": True, "llama_swap": True},
+class TestReport(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.dir = Path(self.tmp.name)
+        self.cfg = Config(registry_path=write_fixture_registry(self.dir / "r.json"))
+        self.snapshot = {
+            "model": {
+                "id": "DeepSeek-v4.1-Flash-EXL3", "uncensored": True,
+                "profile": "balanced", "nodes": {
+                    "head": {"healthy": True, "serves_model": True, "detail": ""},
+                    "worker": {"ssh_reachable": True, "container_running": True,
+                               "fabric": {"192.168.100.11": True, "192.168.101.11": False},
+                               "detail": ""},
+                    "mem": {"node1_gib": 25.0, "node2_gib": 30.0},
+                },
+                "lifecycle": {"state": "ready", "seconds_in_state": 120},
             },
-            "node2": {
-                "online": False,
-                "note": "no ICMP reply within 2s (single probe, not retried)",
-                "llama_swap": {"state": "unavailable", "usable": False, "reason": "node2_offline"},
-                "workload": None,
-            },
-            "aliases": {
-                "gx-mini": {"state": "ready", "usable": True, "reason": "loaded"},
-                "gx-fast": {"state": "stopped", "usable": True, "reason": "unloaded"},
-                "gx-reason": {"state": "unavailable", "usable": False, "reason": "node2_offline"},
-                "gx-max": {"state": "stopped", "usable": True, "reason": "node2_unavailable"},
-                "gx-auto": {"state": "ready", "usable": True, "reason": "orchestrator routing"},
-                "gx-image": {"state": "unavailable", "usable": False, "reason": "node2_offline"},
-                "gx-video": {"state": "unavailable", "usable": False, "reason": "node2_offline"},
-            },
-            "orchestrator": {"reachable": True, "base": "http://127.0.0.1:18900", "error": ""},
+            "queue": {"active": 1, "capacity": 2, "queued": 3, "oldest_wait_seconds": 4},
         }
 
-    def test_render_json_round_trips(self):
-        import json
-
-        report = self._sample_report()
-        text = status_cli.render_json(report)
-        self.assertEqual(json.loads(text), report)
-
-    def test_render_human_contains_every_alias_and_flags_unpinned_kernel(self):
-        report = self._sample_report()
-        report["node1"]["kernel_pinned"] = False
-        report["node1"]["kernel"] = "7.0.0-1019-nvidia"
+    def test_build_report_unreachable_orchestrator(self):
+        status_cli.fetch_orchestrator_snapshot = lambda base, timeout=5.0: {
+            "reachable": False, "error": "connection refused",
+        }
+        try:
+            report = status_cli.build_report(self.cfg, "http://127.0.0.1:18999")
+        finally:
+            import importlib
+            importlib.reload(status_cli)
+        self.assertFalse(report["orchestrator"]["reachable"])
+        self.assertEqual(report["orchestrator"]["error"], "connection refused")
         text = status_cli.render_human(report)
-        for alias in report["aliases"]:
-            self.assertIn(alias, text)
-        self.assertIn("NOT the pinned kernel", text)
-        self.assertIn("B-001", text)
+        self.assertIn("UNREACHABLE", text)
+        self.assertIn("unknown, not assumed", text)
+        self.assertIn("MODEL", text)  # registry facts still render
 
+    def test_build_report_and_human_rendering(self):
+        status_cli.fetch_orchestrator_snapshot = lambda base, timeout=5.0: {
+            "reachable": True, "error": "", **self.snapshot,
+        }
+        try:
+            report = status_cli.build_report(self.cfg, "http://127.0.0.1:18900")
+        finally:
+            import importlib
+            importlib.reload(status_cli)
+        self.assertTrue(report["orchestrator"]["reachable"])
+        self.assertEqual(report["orchestrator"]["cluster"]["profile"], "balanced")
+        text = status_cli.render_human(report)
+        self.assertIn("CLUSTER  ready  profile=balanced", text)
+        self.assertIn("head  : healthy (model id verified)", text)
+        self.assertIn("worker: container running (fabric 192.168.100.11:up, 192.168.101.11:DOWN)", text)
+        self.assertIn("mem   : node1=25.0 GiB  node2=30.0 GiB", text)
+        self.assertIn("QUEUE  active=1/2  queued=3  oldest_wait=4s", text)
+        self.assertIn("DeepSeek-v4.1-Flash-EXL3", text)
+        self.assertIn("uncensored", text)
 
-class TestNode2KernelReachable(unittest.TestCase):
-    def test_unroutable_address_is_reported_offline_quickly(self):
-        """TEST-NET-1 (192.0.2.0/24, RFC 5737) is reserved for documentation
-        and never routes anywhere -- a safe stand-in for "node 2 is down"
-        that does not touch the real cluster.
-        """
-        import time
+    def test_worker_problem_line(self):
+        self.snapshot["model"]["nodes"]["worker"]["ssh_reachable"] = False
+        self.snapshot["model"]["nodes"]["worker"]["container_running"] = False
+        lines = status_cli._one_line_nodes(self.snapshot["model"])
+        self.assertIn("worker: PROBLEM (ssh/container unreachable)", lines)
 
-        from gx_orchestrator.config import Config
-
-        cfg = Config(node2_swap_base="http://192.0.2.1:28080")
-        start = time.time()
-        reachable = status_cli.node2_kernel_reachable(cfg)
-        elapsed = time.time() - start
-        self.assertFalse(reachable)
-        # Single probe, not retried: must not take much longer than the
-        # configured ping deadline.
-        self.assertLess(elapsed, status_cli._NODE2_PING_DEADLINE_S + 3)
+    def test_json_rendering_round_trips(self):
+        report = {
+            "generated_at": "t", "node1": {}, "model": {"model_id": "m"},
+            "orchestrator": {"reachable": False, "base": "b", "error": "e",
+                             "cluster": {}, "queue": {}},
+        }
+        self.assertEqual(json.loads(status_cli.render_json(report)), report)
 
 
 if __name__ == "__main__":

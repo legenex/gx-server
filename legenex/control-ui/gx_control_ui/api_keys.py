@@ -20,7 +20,7 @@ from typing import Any
 from .util import HTTPError, bearer, http_json
 from datetime import UTC
 
-PUBLIC_ALIASES = ("gx-mini", "gx-code", "gx-auto", "gx-max")
+PUBLIC_ALIASES = ("gx-max", "gx-auto")
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ._-]{0,62}$")
 TOKEN_RE = re.compile(r"^[0-9a-f]{32,128}$")
 EXPIRY = {"never": None, "1d": "1d", "7d": "7d", "30d": "30d", "90d": "90d", "365d": "365d"}
@@ -205,7 +205,7 @@ def _expired(expires: Any) -> bool:
         return False
 
 
-def probe(gateway_base: str, secret: str, model: str = "gx-mini") -> dict:
+def probe(gateway_base: str, secret: str, model: str = "gx-auto") -> dict:
     """Use a key for real: list models, then a short chat on `model`."""
     headers = bearer(secret)
     out: dict[str, Any] = {}

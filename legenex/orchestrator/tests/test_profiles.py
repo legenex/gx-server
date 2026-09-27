@@ -130,9 +130,7 @@ class TestValidation(unittest.TestCase):
     def test_dspark_profile_without_tokens_uses_the_kit_default(self):
         # The documented `long` profile omits dspark_tokens: the Mia kit's
         # own default (k=3, measured optimum) applies. 0 encodes that.
-        data = fixture_registry_dict()
-        data["profiles"]["long"].pop("dspark_tokens")
-        reg = parse_registry(data)
+        reg = parse_registry(fixture_registry_dict())
         self.assertEqual(reg.profile("long").dspark_tokens, 0)
         self.assertEqual(reg.profile("long").spec_method, "dspark")
 

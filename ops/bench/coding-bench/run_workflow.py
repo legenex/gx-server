@@ -18,7 +18,7 @@ harness executes ONLY what the allowlist permits:
     commands: pytest | python3 (in-repo scripts, -m pytest, -m unittest)
               git (status/diff/log/add/commit)
     cwd: pinned to the sandbox; relative paths only; no "..", no absolute
-    paths, no shell metacharacters (no ; | & > < ` $ \ chaining), no rm,
+    paths, no shell metacharacters (no ; | & > < ` $ backslash chaining), no rm,
     no curl/wget, no sudo — anything else is refused and fed back to the
     model so it can retry.
 

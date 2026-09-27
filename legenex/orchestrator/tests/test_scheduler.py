@@ -58,10 +58,11 @@ class TestAdmission(SchedCase):
         self.assertEqual(decision["position"], 1)
 
     def test_set_capacity_promotes_the_queue(self):
-        self.submit("r1")
-        self.submit("r2")
-        self.submit("r3")
-        self.assertEqual(self.submit("r3")["state"], S.DECISION_QUEUED)
+        # Distinct projects: the per-project active cap (2) would otherwise
+        # hold r3 back even with free global slots.
+        self.submit("r1", project="pa")
+        self.submit("r2", project="pb")
+        self.assertEqual(self.submit("r3", project="pc")["state"], S.DECISION_QUEUED)
         self.sched.set_capacity(4)
         self.assertEqual(self.sched.status()["active"], 3)
         self.assertEqual(self.sched.status()["queued"], 0)
@@ -70,7 +71,8 @@ class TestAdmission(SchedCase):
         small = self.make(capacity=1, global_queued_cap=2)
         small.submit({"id": "a1"})
         self.assertEqual(small.submit({"id": "a2"})["state"], S.DECISION_QUEUED)
-        decision = small.submit({"id": "a3"})
+        self.assertEqual(small.submit({"id": "a3"})["state"], S.DECISION_QUEUED)
+        decision = small.submit({"id": "a4"})
         self.assertEqual(decision["state"], S.DECISION_REJECTED)
         self.assertIn("global queue full", decision["reason"])
         self.assertEqual(decision["position"], 3)
@@ -79,7 +81,10 @@ class TestAdmission(SchedCase):
         small = self.make(capacity=1, per_project_queued_cap=2)
         small.submit({"id": "a1", "project": "p1"})
         small.submit({"id": "a2", "project": "p1"})
-        self.assertEqual(small.submit({"id": "a3", "project": "p1"})["state"], S.DECISION_REJECTED)
+        small.submit({"id": "a3", "project": "p1"})
+        decision = small.submit({"id": "a4", "project": "p1"})
+        self.assertEqual(decision["state"], S.DECISION_REJECTED)
+        self.assertIn("project 'p1' queue full", decision["reason"])
         # Another project is unaffected: the cap is per project.
         self.assertEqual(small.submit({"id": "b1", "project": "p2"})["state"], S.DECISION_QUEUED)
 
@@ -116,10 +121,10 @@ class TestPriorities(SchedCase):
         self.assertIn("inter", active)
         self.assertNotIn("normal", active)
         self.assertNotIn("low", active)
-        self.sched.record_finished("inter", {})
-        # critical-review beats orchestrator beats normal-worker beats background
+        # Submit the orchestrator-priority request BEFORE freeing the next
+        # slot, so the promotion order is observable.
         self.submit("orch", priority="orchestrator")
-        self.sched.record_finished("hold2", {})
+        self.sched.record_finished("inter", {})
         active = {r["id"] for r in self.sched.status()["records"] if r["state"] == "active"}
         self.assertIn("orch", active)
         self.assertNotIn("normal", active)
@@ -178,10 +183,11 @@ class TestLifecycleOfRecords(SchedCase):
     def test_cancel_queued_removes_immediately(self):
         self.submit("r1")
         self.submit("r2")
-        outcome = self.sched.cancel("r2", "operator asked")
+        self.assertEqual(self.submit("r3")["state"], S.DECISION_QUEUED)
+        outcome = self.sched.cancel("r3", "operator asked")
         self.assertTrue(outcome["cancelled"])
         self.assertEqual(outcome["state"], S.STATE_CANCELLED)
-        self.assertIsNone(self.sched.get("r2"))
+        self.assertIsNone(self.sched.get("r3"))
 
     def test_cancel_active_marks_cancelling_and_finish_finalises_cancelled(self):
         self.submit("r1")
@@ -199,11 +205,12 @@ class TestLifecycleOfRecords(SchedCase):
         self.submit("r1")
         self.sched.record_error("r1", "transient")
         outcome = self.sched.retry("r1")
-        self.assertTrue(outcome["retried"] if "retried" in outcome else outcome.get("state") in (S.DECISION_ACTIVE, S.DECISION_QUEUED))
+        self.assertIn(outcome.get("state"), (S.DECISION_ACTIVE, S.DECISION_QUEUED))
         rec = self.sched.get("r1")
         self.assertEqual(rec["state"], S.STATE_ACTIVE)
         self.assertEqual(rec["error"], "")
-        self.assertIsNone(rec["start_ts"] or rec["done_ts"])
+        self.assertIsNone(rec["done_ts"])
+        self.assertIsNotNone(rec["start_ts"], "a retried record is re-admitted, not resurrected mid-flight")
 
     def test_retry_unknown_id_fails_clearly(self):
         outcome = self.sched.retry("ghost")
@@ -327,8 +334,12 @@ class TestPersistence(SchedCase):
             small.submit({"id": f"r{i}"})
             small.record_finished(f"r{i}", {})
         lines = (self.dir / "history.jsonl").read_text().splitlines()
+        # The FILE is a ring too: compacted back to the cap.
         self.assertLessEqual(len(lines), 5)
         self.assertLessEqual(len(small.history(limit=100)), 5)
+        # A restart re-seeds the in-memory ring from the durable JSONL.
+        reborn = self.make(capacity=1, history_cap=5)
+        self.assertEqual(len(reborn.history(limit=100)), len(lines))
 
     def test_status_shape_for_the_dashboard(self):
         self.submit("r1", project="proj")

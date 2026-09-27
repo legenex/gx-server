@@ -165,6 +165,11 @@ class UIConfig:
     repo_root: Path = field(default_factory=lambda: Path(_env("GX_REPO_ROOT", str(_REPO_DEFAULT))))
     static_dir: Path = field(default_factory=lambda: Path(_env("GX_UI_STATIC_DIR", str(_UI_DIR / "web"))))
     docs_dir: Path = field(default_factory=lambda: Path(_env("GX_UI_DOCS_DIR", str(_UI_DIR / "docs"))))
+    #: The registry (schema 2). A field (not a property) so tests can point
+    #: it at a fixture.
+    registry_path: Path = field(
+        default_factory=lambda: Path(_env("GX_REGISTRY_PATH", str(_REPO_DEFAULT / "legenex/models/registry.json")))
+    )
 
     #: Mode 0700 directory holding the password store (mode 0600).
     secret_dir: Path = field(
@@ -251,18 +256,15 @@ class UIConfig:
     def lifecycle_dir(self) -> Path:
         return self.repo_root / "legenex" / "lifecycle"
 
-    @property
-    def registry_path(self) -> Path:
-        return self.repo_root / "legenex" / "models" / "registry.json"
-
-    @property
-    def mia_dir(self) -> Path:
-        """The Mia runtime submodule (pins: git commit; live: rev-parse)."""
-        return self.repo_root / "mia-dsv41"
-
-    @property
-    def bench_dir(self) -> Path:
-        return self.repo_root / "ops" / "bench"
+    #: The Mia runtime submodule (pins: git commit; live: rev-parse). A field
+    #: so tests can point it at a fixture.
+    mia_dir: Path = field(
+        default_factory=lambda: Path(_env("GX_MIA_DIR", str(_REPO_DEFAULT / "mia-dsv41")))
+    )
+    #: The benchmark suite root (ops/bench). A field for the same reason.
+    bench_dir: Path = field(
+        default_factory=lambda: Path(_env("GX_BENCH_DIR", str(_REPO_DEFAULT / "ops" / "bench")))
+    )
 
     @property
     def password_file(self) -> Path:
