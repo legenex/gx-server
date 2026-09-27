@@ -72,8 +72,8 @@ test('overview: single-model facts, both nodes, queue and quick actions', async 
   }
   await expect(main.locator('.badge', { hasText: 'uncensored' }).first()).toBeVisible();
   await expect(main.locator('.badge', { hasText: 'production' }).first()).toBeVisible();
-  // queue from the scheduler stub
-  await expect(main.getByText(/queued 2 · active 1/)).toBeVisible();
+  // queue from the scheduler stub (1 queued, 1 active record)
+  await expect(main.getByText(/queued 1 · active 1/)).toBeVisible();
   // both rails with registry fabric IPs
   await expect(main.getByText('192.168.100.10')).toBeVisible();
   await expect(main.getByText('192.168.101.11')).toBeVisible();
