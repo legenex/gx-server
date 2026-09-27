@@ -1,0 +1,25 @@
+{
+  "captured": "2026-09-27T15:25:00+02:00",
+  "note": "post-cleanup state; see CLEANUP-EVIDENCE-20260927.md",
+  "gx10-01": {
+    "disk_root_gb": {
+      "total": 916,
+      "used": 359,
+      "avail": 511
+    },
+    "srv_models_gb": 0
+  },
+  "gx10-02": {
+    "disk_root_gb": {
+      "total": 916,
+      "used": 245,
+      "avail": 625
+    },
+    "srv_models_gb": 0
+  },
+  "download_in_progress": {
+    "target": "/srv/models/dsv41",
+    "expected_total_gib": 387,
+    "log": "/srv/logs/dsv41-download.log"
+  }
+}
