@@ -191,8 +191,7 @@ export default {
       h('p', { class: 'lead' }, 'One model — DeepSeek V4.1 Flash EXL3 — behind two aliases. '
         + 'gx-max serves the uncensored production pack directly; gx-auto lets the scheduler pick '
         + 'profile and reasoning per request. Registry schema 2 is the single source of truth.'),
-      spinner(),
-      h('div', { class: 'lifecycle-holder' }),
+      h('div', { class: 'lifecycle-holder' }, spinner()),
       h('h2', {}, 'Packs & aliases'),
       h('div', { class: 'model-list' }),
       h('div', { class: 'profile-holder' }),
