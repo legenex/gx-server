@@ -1,9 +1,14 @@
 """Runtime configuration, resolved once from the environment.
 
 No secret is stored in this module. Upstream credentials (LiteLLM master key,
-llama-swap key, media key) are read from the process environment at call time
--- the systemd unit loads them from the ignored `legenex/gateway/.env`, the
-same file the orchestrator uses, so no second copy of any secret exists.
+orchestrator API key) are read from the process environment at call time --
+the systemd unit loads them from the ignored `legenex/gateway/.env`, the same
+file the orchestrator uses, so no second copy of any secret exists.
+
+V4.1 (DeepSeek V4.1 Flash rebuild, 2026-09-27): the media / music / voice /
+call / live / playground upstreams are PERMANENTLY RETIRED and their config
+entries are gone. The cluster is one model (DeepSeek V4.1 Flash EXL3, served
+by the Mia runtime through the orchestrator) with aliases gx-max and gx-auto.
 """
 
 from __future__ import annotations
@@ -24,8 +29,6 @@ PLACEHOLDER_SECRETS = frozenset({"", "CHANGEME", "not-required", "none", "change
 #: Environment variables whose values must never reach a browser or a log.
 SECRET_ENV_VARS = (
     "LITELLM_MASTER_KEY",
-    "GX_SWAP_API_KEY",
-    "GX_MEDIA_API_KEY",
     "GX_ORCHESTRATOR_API_KEY",
     "POSTGRES_PASSWORD",
     "LITELLM_UI_PASSWORD",
@@ -77,6 +80,79 @@ def _resolve_hosts(raw: str) -> tuple[str, ...]:
     return tuple(dict.fromkeys(hosts))
 
 
+#: Allowed roots for the file manager (ARCHITECTURE-V41.md section 7).
+#: STRICTLY this list: every target is resolved + realpath'd against it.
+FILE_ALLOWED_ROOTS: tuple[str, ...] = (
+    "/home/legenex/Documents/Projects",
+    "/home/legenex/Documents/Backups",
+    "/home/legenex/Documents/Archive",
+    "/srv/models",
+    "/srv/cache",
+    "/srv/logs",
+)
+
+#: Never deletable, never trashable, never purgeable: the protected backups
+#: and the gx-backup repository (mission brief "Protected" list). Paths inside
+#: the allowed roots that match these are read-only in the file manager.
+FILE_PROTECTED_PATHS: tuple[str, ...] = (
+    "/home/legenex/Documents/Backups/GX",
+    "/home/legenex/Documents/Projects/gx-backup",
+)
+
+#: System prefixes the file manager never touches, even inside allowed roots.
+FILE_FORBIDDEN_PREFIXES: tuple[str, ...] = ("/", "/etc", "/boot", "/usr", "/bin", "/sbin", "/var", "/proc", "/sys", "/dev", "/run")
+
+
+def log_sources(repo_root: Path, srv_logs: Path, state_root: Path) -> tuple[dict, ...]:
+    """The read-only log stream inventory (config-driven, no per-feature code).
+
+    Each source: {id, label, node, kind, target, group}. `kind` is one of
+    file | glob | docker | journal. Sources whose files do not exist yet
+    (scheduler history, mia / dsv41 logs) appear with an honest "log file
+    does not exist (yet)" error until the writer creates them.
+    """
+    return (
+        {"id": "orchestrator", "label": "gx-orchestrator", "node": "node1", "kind": "file",
+         "target": str(srv_logs / "gx-orchestrator.log"), "group": "Control plane"},
+        {"id": "scheduler-history", "label": "Scheduler request history (JSONL)", "node": "node1", "kind": "file",
+         "target": str(state_root / "scheduler" / "history.jsonl"), "group": "Scheduler"},
+        {"id": "scheduler-queue", "label": "Scheduler queue state", "node": "node1", "kind": "file",
+         "target": str(state_root / "scheduler" / "queue.json"), "group": "Scheduler"},
+        {"id": "lifecycle", "label": "gx-max lifecycle events", "node": "node1", "kind": "file",
+         "target": str(srv_logs / "gx-max-lifecycle.log"), "group": "gx-max"},
+        {"id": "rank0", "label": "gx-max rank 0 (gx10-01)", "node": "node1", "kind": "file",
+         "target": str(srv_logs / "gx-max-rank0.log"), "group": "gx-max"},
+        {"id": "rank1", "label": "gx-max rank 1 (gx10-02)", "node": "node2", "kind": "file",
+         "target": "/home/legenex-02/gx-max-rank1.log", "group": "gx-max"},
+        {"id": "mia", "label": "Mia runtime (dsv41, latest)", "node": "node1", "kind": "glob",
+         "target": str(srv_logs / "dsv41-*.log"), "group": "gx-max"},
+        {"id": "litellm", "label": "LiteLLM gateway", "node": "node1", "kind": "docker",
+         "target": "gx-litellm", "group": "Control plane"},
+        {"id": "open-webui", "label": "OpenWebUI (user app, unmanaged)", "node": "node1", "kind": "docker",
+         "target": "open-webui", "group": "Apps"},
+        {"id": "backup", "label": "GX backup", "node": "node1", "kind": "journal",
+         "target": "gx-backup.service", "group": "Backup"},
+        {"id": "git-autosync", "label": "Git autosync (gx10-01)", "node": "node1", "kind": "file",
+         "target": str(srv_logs / "gx-git-sync" / "node1-autosync.log"), "group": "Git"},
+        {"id": "git-push-failures", "label": "Git push failures (gx10-01)", "node": "node1", "kind": "file",
+         "target": str(srv_logs / "gx-git-sync" / "push-failures.log"), "group": "Git"},
+        {"id": "git-reconcile", "label": "Git reconcile (gx10-02)", "node": "node2", "kind": "file",
+         "target": str(srv_logs / "gx-git-sync" / "node2-reconcile.log"), "group": "Git"},
+        {"id": "audit-node1", "label": "Daily integrity audit (gx10-01)", "node": "node1", "kind": "file",
+         "target": str(srv_logs / "gx-git-sync" / "audit-latest.log"), "group": "Git"},
+        {"id": "audit-node2", "label": "Daily integrity audit (gx10-02)", "node": "node2", "kind": "file",
+         "target": str(srv_logs / "gx-git-sync" / "audit-latest.log"), "group": "Git"},
+        {"id": "hostwatch-node1", "label": "hostwatch (gx10-01)", "node": "node1", "kind": "file",
+         "target": str(srv_logs / "gx-hostwatch.log"), "group": "Host"},
+        {"id": "hostwatch-node2", "label": "hostwatch (gx10-02)", "node": "node2", "kind": "file",
+         "target": str(srv_logs / "gx-hostwatch.log"), "group": "Host"},
+        {"id": "control-ui", "label": "control UI service", "node": "node1", "kind": "file",
+         "target": str(srv_logs / "gx-control-ui" / "control-ui.log"), "group": "Control plane"},
+        {"id": "control-ui-audit", "label": "control UI audit trail", "node": "node1", "kind": "file",
+         "target": str(srv_logs / "gx-control-ui" / "audit.log"), "group": "Control plane"},
+    )
+
+
 @dataclass(frozen=True)
 class UIConfig:
     #: Bind addresses. Loopback plus this host's Tailscale address: reachable
@@ -97,9 +173,11 @@ class UIConfig:
     state_dir: Path = field(
         default_factory=lambda: Path(_env("GX_UI_STATE_DIR", "/srv/projects/gx-cluster/state/control-ui"))
     )
-    log_dir: Path = field(default_factory=lambda: Path(_env("GX_UI_LOG_DIR", "/srv/logs/gx-control-ui")))
+    log_dir: Path = field(
+        default_factory=lambda: Path(_env("GX_UI_LOG_DIR", "/srv/logs/gx-control-ui"))
+    )
 
-    #: Shared runtime state written by the lifecycle scripts.
+    #: Shared runtime state written by the orchestrator / lifecycle.
     guard_dir: Path = field(
         default_factory=lambda: Path(_env("GX_GUARD_STATE_DIR", "/srv/projects/gx-cluster/state/guard"))
     )
@@ -107,55 +185,50 @@ class UIConfig:
         default_factory=lambda: Path(_env("GX_STATE_ROOT", "/srv/projects/gx-cluster/state"))
     )
     srv_logs: Path = field(default_factory=lambda: Path(_env("GX_LOG_DIR", "/srv/logs")))
-    #: Permanent media library (D-034), outside Git.
-    media_dir: Path = field(default_factory=lambda: Path(_env("GX_MEDIA_LIBRARY", "/srv/projects/gx-cluster/media")))
-    #: Hugging Face read token for the Model Manager (0600, outside Git).
+    #: Hugging Face read token for revision checks (0600, outside Git).
     hf_token_file: Path = field(
         default_factory=lambda: Path(_env("GX_HF_TOKEN_FILE", "/srv/projects/gx-cluster/secrets/hf/token"))
+    )
+    #: Where projects live (Projects / Tasks pages scan this, depth 2).
+    projects_root: Path = field(
+        default_factory=lambda: Path(_env("GX_PROJECTS_ROOT", "/home/legenex/Documents/Projects"))
+    )
+    #: Allowed roots + protected paths for the file manager (section 7).
+    file_roots: tuple[str, ...] = FILE_ALLOWED_ROOTS
+    file_protected: tuple[str, ...] = FILE_PROTECTED_PATHS
+    trash_root: Path = field(
+        default_factory=lambda: Path(_env("GX_TRASH_ROOT", "/srv/cache/trash"))
+    )
+    #: Watchdog incidents (written by the separate watchdog writer; read here).
+    watchdog_incidents: Path = field(
+        default_factory=lambda: Path(_env("GX_WATCHDOG_INCIDENTS",
+                                          "/srv/projects/gx-cluster/state/watchdog/incidents.jsonl"))
     )
 
     # --- upstreams (all internal; the browser never talks to these) -------
     orchestrator_base: str = field(default_factory=lambda: _env("GX_UI_ORCH_BASE", "http://127.0.0.1:18900"))
     litellm_base: str = field(default_factory=lambda: _env("GX_UI_LITELLM_BASE", "http://127.0.0.1:4000"))
-    node1_swap_base: str = field(default_factory=lambda: _env("GX_NODE1_SWAP_BASE", "http://127.0.0.1:28080"))
-    #: Fabric address, never Tailscale (L-3).
-    node2_swap_base: str = field(default_factory=lambda: _env("GX_NODE2_SWAP_BASE", "http://192.168.100.11:28080"))
-    media_base: str = field(default_factory=lambda: _env("GX_UI_MEDIA_BASE", "http://192.168.100.11:18800"))
-    gxmax_base: str = field(default_factory=lambda: _env("GX_UI_GXMAX_BASE", "http://127.0.0.1:30000"))
-    #: gx-voice supervisor on gx10-02 (fabric only, L-3) and its bearer key file (0600). Build V3 VOI.
-    voice_base: str = field(default_factory=lambda: _env("GX_UI_VOICE_BASE", "http://192.168.100.11:18830"))
-    voice_key_file: Path = field(
-        default_factory=lambda: Path(_env("GX_VOICE_KEY_FILE", "/srv/projects/gx-cluster/secrets/gx-voice/api-key"))
-    )
-    #: gx-music supervisor on gx10-02 (fabric only, L-3) and its bearer key file (0600).
-    music_base: str = field(default_factory=lambda: _env("GX_UI_MUSIC_BASE", "http://192.168.100.11:18820"))
-    #: Build V3 supervisors on gx10-02 (fabric only). Keys: <secrets_root>/<alias>/api-key.
-    #: `voice_base` is declared once, above, with `voice_key_file` beside it — it used to
-    #: be declared twice in this class, and the second definition silently won.
-    call_base: str = field(default_factory=lambda: _env("GX_UI_CALL_BASE", "http://192.168.100.11:18840"))
-    live_base: str = field(default_factory=lambda: _env("GX_UI_LIVE_BASE", "http://192.168.100.11:18850"))
-    music_key_file: Path = field(
-        default_factory=lambda: Path(_env("GX_MUSIC_KEY_FILE", "/srv/projects/gx-cluster/secrets/gx-music/api-key"))
-    )
+    #: The Mia runtime's OpenAI API (loopback only, never public). Probed for
+    #: health while gx-max is READY; unreachable while it is down.
+    mia_base: str = field(default_factory=lambda: _env("GX_UI_MIA_BASE", "http://127.0.0.1:8888"))
+    #: AgentOS Control Center (a user app, not cluster-managed). The adapter
+    #: reports {"connected": false, ...} honestly until it answers.
+    agentos_base: str = field(default_factory=lambda: _env("GX_UI_AGENTOS_BASE", "http://127.0.0.1:4173"))
 
     #: What clients should use; shown in docs and code snippets only.
     public_gateway_url: str = field(
         default_factory=lambda: _env("GX_UI_PUBLIC_GATEWAY", "http://100.105.214.61:4000/v1")
-    )
-
-    #: GX-Playground (D-037): the creative app on port 8090 that proxies to this backend.
-    public_playground_url: str = field(
-        default_factory=lambda: _env("GX_UI_PUBLIC_PLAYGROUND", "http://100.105.214.61:8090/")
     )
     public_control_url: str = field(
         default_factory=lambda: _env("GX_UI_PUBLIC_CONTROL", "http://100.105.214.61:8088/")
     )
 
     node2_ssh: str = field(default_factory=lambda: _env("GX_NODE2_SSH", "legenex-02@gx10-02"))
-    node2_repo: str = field(
-        default_factory=lambda: _env("GX_NODE2_REPO", "/home/legenex-02/Documents/Projects/Server/gx-cluster")
+    node2_repo: Path = field(
+        default_factory=lambda: Path(_env("GX_NODE2_REPO", "/home/legenex-02/Documents/Projects/Server/gx-cluster"))
     )
     github_url: str = field(default_factory=lambda: _env("GX_GITHUB_URL", "https://github.com/legenex/gx-server.git"))
+    #: Fabric peers (fallback when the registry is not at schema 2 yet).
     fabric_peers: tuple[str, ...] = ("192.168.100.11", "192.168.101.11")
     fabric_local: tuple[str, ...] = ("192.168.100.10", "192.168.101.10")
 
@@ -179,6 +252,19 @@ class UIConfig:
         return self.repo_root / "legenex" / "lifecycle"
 
     @property
+    def registry_path(self) -> Path:
+        return self.repo_root / "legenex" / "models" / "registry.json"
+
+    @property
+    def mia_dir(self) -> Path:
+        """The Mia runtime submodule (pins: git commit; live: rev-parse)."""
+        return self.repo_root / "mia-dsv41"
+
+    @property
+    def bench_dir(self) -> Path:
+        return self.repo_root / "ops" / "bench"
+
+    @property
     def password_file(self) -> Path:
         return self.secret_dir / "auth.json"
 
@@ -195,33 +281,12 @@ class UIConfig:
         return self.secret_dir / "acceptance.json"
 
     @property
-    def proxy_token_file(self) -> Path:
-        """Shared with gx-playground (same user): lets the Playground proxy pass
-        the real client address. Created by this service at start (0600)."""
-        return self.secret_dir / "proxy-token"
-
-    @property
     def acceptance_password_file(self) -> Path:
         return self.secret_dir / "acceptance-password"
 
-    # --- realtime tunnel (Build V3, plt.md section 1) --------------------
-    #: node-2 WebSocket services the Playground may tunnel to. Fixed here,
-    #: never chosen by a client. Fabric addresses only (L-3).
-    rt_call_target: str = field(default_factory=lambda: _env("GX_RT_CALL_TARGET", "192.168.100.11:18840"))
-    rt_live_target: str = field(default_factory=lambda: _env("GX_RT_LIVE_TARGET", "192.168.100.11:18850"))
-    secrets_root: Path = field(
-        default_factory=lambda: Path(_env("GX_SECRETS_ROOT", "/srv/projects/gx-cluster/secrets"))
-    )
-    #: Structured metric lines (gxcommon.metrics) written on gx10-01.
-    metrics_dir: Path = field(default_factory=lambda: Path(_env("GX_METRICS_DIR", "/srv/logs/gx-metrics")))
-
-    def realtime_targets(self) -> dict:
-        from .realtime import Target
-        out = {}
-        for svc, raw in (("call", self.rt_call_target), ("live", self.rt_live_target)):
-            if raw:
-                out[svc] = Target.parse(raw, self.secrets_root / f"gx-{svc}" / "api-key")
-        return out
+    def log_source_list(self) -> tuple[dict, ...]:
+        """The log stream inventory for this deployment (see log_sources)."""
+        return log_sources(self.repo_root, self.srv_logs, self.gx_state_root)
 
     def secret(self, name: str) -> str | None:
         value = os.environ.get(name)

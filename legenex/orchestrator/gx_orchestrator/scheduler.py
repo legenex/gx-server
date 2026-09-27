@@ -107,9 +107,13 @@ class Record:
     ready_event: "threading.Event | None" = field(default=None, repr=False, compare=False)
 
     def as_dict(self) -> dict[str, Any]:
-        out = asdict(self)
-        out.pop("ready_event", None)
-        return out
+        # Manual (not dataclasses.asdict): the ready_event carries a lock and
+        # must never be copied or persisted.
+        return {
+            f: getattr(self, f)
+            for f in self.__dataclass_fields__
+            if f != "ready_event"
+        }
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "Record":
@@ -223,13 +227,50 @@ class Scheduler:
         log.info("scheduler restore: %d queued record(s) recovered", len(self._order))
 
     def _append_history(self, entry: dict[str, Any]) -> None:
-        """Append one finished record to the JSONL ring buffer (best effort)."""
+        """Append one finished record to the JSONL ring buffer (best effort).
+
+        The FILE is the durable ring: once it holds more than `history_cap`
+        lines it is compacted (atomic rewrite keeping the newest cap), so it
+        can never grow without bound.
+        """
         try:
             self._history_path.parent.mkdir(parents=True, exist_ok=True)
             with self._history_path.open("a", encoding="utf-8") as fh:
                 fh.write(json.dumps(entry, separators=(",", ":"), default=str) + "\n")
+            self._compact_history_if_needed()
         except OSError:
             log.debug("scheduler history append failed", exc_info=True)
+
+    def _compact_history_if_needed(self) -> None:
+        try:
+            with self._history_path.open(encoding="utf-8") as fh:
+                lines = fh.readlines()
+        except OSError:
+            return
+        if len(lines) <= self._history_cap:
+            return
+        keep = lines[-self._history_cap:]
+        tmp = self._history_path.with_suffix(".tmp")
+        try:
+            tmp.write_text("".join(keep), encoding="utf-8")
+            os.replace(tmp, self._history_path)
+        except OSError:
+            log.debug("scheduler history compaction failed", exc_info=True)
+
+    def _load_history_file(self) -> None:
+        """Seed the in-memory ring from the durable JSONL at startup so
+        /scheduler/history answers across a control-plane restart."""
+        try:
+            lines = self._history_path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return
+        for line in lines[-self._history_cap:]:
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(entry, dict):
+                self._history.append(entry)
 
     def _notify(self) -> None:
         """Wake drain() waiters (and any condition waiters) safely."""

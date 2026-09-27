@@ -467,7 +467,13 @@ def _infer_intent(
     validation: int,
     burst_hit: str,
 ) -> tuple[str, bool]:
-    """Content-based intent inference. Deterministic, order matters."""
+    """Content-based intent inference. Deterministic; order matters:
+
+    conversational -> validation evidence -> burst shape -> hard-debugging
+    -> debugging words -> architecture words -> pure-reasoning (proofs,
+    derivations, formal verification) -> implementation (the default work
+    shape; balanced is the AgentOS default profile for a reason).
+    """
     if not task.strip() and not continuation:
         # Nothing to read: a bare capability probe rides the interactive shape.
         return INTENT_INTERACTIVE, True
@@ -481,17 +487,20 @@ def _infer_intent(
         return INTENT_VALIDATION, True
     if burst_hit:
         return INTENT_BURST, True
-    if hard_debug >= DEBUG_HARD_THRESHOLD or (
-        reasoning >= REASONING_DEBUG_THRESHOLD and _ACTION_VERB.search(task)
-        and re.search(r"\b(debug|diagnose|troubleshoot|investigate|root[- ]cause|why)\b", task, re.IGNORECASE)
-    ):
+    if hard_debug >= DEBUG_HARD_THRESHOLD:
         return INTENT_DEBUGGING, True
     if reasoning >= REASONING_DEBUG_THRESHOLD and re.search(
-        r"\b(design|architect|architecture|trade[- ]offs?|structure|system design)\b", task, re.IGNORECASE
+        r"\b(debug|diagnose|troubleshoot|investigate|root[- ]cause|why (does|is|do))\b",
+        task, re.IGNORECASE,
     ):
+        return INTENT_DEBUGGING, True
+    if re.search(r"\barchitect(ure|ing|ed|ed)?\b|\bsystem design\b|\btrade[- ]offs?\b",
+                 task, re.IGNORECASE):
         return INTENT_ARCHITECTURE, True
-    # Default work shape: agentic/coding implementation, plain questions
-    # included -- balanced is the AgentOS default profile for a reason.
+    if reasoning >= REASONING_DEBUG_THRESHOLD and not _ACTION_VERB.search(task):
+        # A pure proof / derivation / formal-verification ask with no coding
+        # verb: review-shaped thinking, not implementation.
+        return INTENT_VALIDATION, True
     return INTENT_IMPLEMENTATION, True
 
 

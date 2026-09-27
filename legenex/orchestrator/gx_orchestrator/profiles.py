@@ -116,7 +116,7 @@ class ReasoningSpec:
         integer 1-100 is allowed for custom levels. Anything else is a
         configuration/protocol error, never a silent default.
         """
-        if isinstance(level, bool):
+        if level is None or isinstance(level, bool):
             raise RegistryError(f"invalid reasoning level: {level!r}")
         if isinstance(level, int):
             lo, hi = self.numeric_range
@@ -125,7 +125,9 @@ class ReasoningSpec:
                     f"reasoning level {level} outside the numeric range [{lo}, {hi}]"
                 )
             return {"reasoning_effort": level}
-        text = str(level).strip().lower()
+        if not isinstance(level, str):
+            raise RegistryError(f"invalid reasoning level: {level!r}")
+        text = level.strip().lower()
         if text in self.mapping:
             return dict(self.mapping[text])
         # Accept a numeric string ("75") for callers that pass headers verbatim.
@@ -313,6 +315,9 @@ def _parse_reasoning(raw: Mapping[str, Any]) -> ReasoningSpec:
 def _parse_profile(name: str, raw: Mapping[str, Any]) -> ProfileSpec:
     where = f"registry.profiles.{name}"
     if "bounded" in raw and raw.get("bounded"):
+        # The documented bounded `custom` profile carries only its ranges and
+        # the default reasoning level; the serving-shape fields are optional
+        # (absent means the kit's own defaults apply).
         seq_bounds = _require(raw, "max_num_seqs", where)
         len_bounds = _require(raw, "max_model_len", where)
         if (
@@ -323,7 +328,7 @@ def _parse_profile(name: str, raw: Mapping[str, Any]) -> ProfileSpec:
         return ProfileSpec(
             name=name,
             max_num_seqs=int(seq_bounds[0]),
-            spec_method=str(_require(raw, "spec_method", where)),
+            spec_method=str(raw.get("spec_method") or "dspark"),
             dspark_tokens=int(raw.get("dspark_tokens") or 0),
             max_model_len=int(len_bounds[0]),
             reasoning_default=str(_require(raw, "reasoning_default", where)),
@@ -334,9 +339,9 @@ def _parse_profile(name: str, raw: Mapping[str, Any]) -> ProfileSpec:
     spec_method = _require_str(raw, "spec_method", where)
     if spec_method not in ("dspark", "none"):
         raise RegistryError(f"{where}: spec_method must be 'dspark' or 'none', got {spec_method!r}")
+    # dspark_tokens is OPTIONAL: the documented `long` profile omits it and the
+    # Mia kit's own default (k=3, the measured optimum) applies. 0 means that.
     dspark = int(raw.get("dspark_tokens") or 0)
-    if spec_method == "dspark" and dspark < 1:
-        raise RegistryError(f"{where}: dspark profile needs dspark_tokens >= 1")
     return ProfileSpec(
         name=name,
         max_num_seqs=_require_int(raw, "max_num_seqs", where),

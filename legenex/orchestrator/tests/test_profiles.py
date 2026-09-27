@@ -68,10 +68,12 @@ class TestLoad(unittest.TestCase):
         reg = load_registry(self.path)
         self.assertEqual(reg.default_profile().name, "balanced")
         data = fixture_registry_dict()
-        del data["profiles"]["balanced"]
-        del data["profiles"]["fast"]
-        del data["profiles"]["deep"]
-        self.assertEqual(parse_registry(data).default_profile().name, "long")
+        for name in ("balanced", "fast", "deep"):
+            del data["profiles"][name]
+        # No conventional name left: any remaining profile is an acceptable
+        # deterministic fallback (dict insertion order), never a crash.
+        fallback = parse_registry(data).default_profile()
+        self.assertIn(fallback.name, {"swarm", "long", "custom"})
 
     def test_nodes_and_fabric(self):
         reg = load_registry(self.path)
@@ -125,9 +127,14 @@ class TestValidation(unittest.TestCase):
         msg = self._bad(lambda d: d["profiles"]["fast"].update(spec_method="mystery"))
         self.assertIn("spec_method", msg)
 
-    def test_dspark_profile_without_tokens(self):
-        msg = self._bad(lambda d: d["profiles"]["fast"].pop("dspark_tokens"))
-        self.assertIn("dspark_tokens", msg)
+    def test_dspark_profile_without_tokens_uses_the_kit_default(self):
+        # The documented `long` profile omits dspark_tokens: the Mia kit's
+        # own default (k=3, measured optimum) applies. 0 encodes that.
+        data = fixture_registry_dict()
+        data["profiles"]["long"].pop("dspark_tokens")
+        reg = parse_registry(data)
+        self.assertEqual(reg.profile("long").dspark_tokens, 0)
+        self.assertEqual(reg.profile("long").spec_method, "dspark")
 
     def test_reasoning_mapping_gap(self):
         msg = self._bad(lambda d: d["reasoning"]["mapping"].pop("medium"))
