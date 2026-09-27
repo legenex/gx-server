@@ -80,7 +80,7 @@ test('overview: single-model facts, both nodes, queue and quick actions', async 
   // quick actions exist and are wired to the audited action set
   for (const label of ['Start gx-max (profile)', 'Restart gx-max (profile)', 'Stop gx-max (graceful release)',
     'Drain gx-max']) {
-    await expect(main.getByRole('button', { name: label })).toBeEnabled();
+    await expect(main.getByRole('button', { name: label, exact: true })).toBeEnabled();
   }
   await axeCheck(page, 'overview');
 });
