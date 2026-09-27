@@ -126,9 +126,9 @@ test('requests: history rows, honest privacy note, filters, cancel/retry wiring'
   await expect(history.getByText('req-queued-1')).toBeVisible();
   // privacy note is shown verbatim
   await expect(main).toContainText('prompt bodies are never stored');
-  // a queued row offers Cancel; a done row does not
+  // a queued row offers Cancel; a done row's Cancel is disabled (live table shows it greyed)
   await expect(main.locator('button[data-cancel="req-queued-1"]').first()).toBeEnabled();
-  await expect(main.locator('button[data-cancel="req-done-0"]')).toHaveCount(0);
+  await expect(main.locator('button[data-cancel="req-done-0"]').first()).toBeDisabled();
   // an errored row offers Retry
   await expect(main.locator('button[data-retry="req-err-1"]').first()).toBeEnabled();
   // state filter narrows the table
