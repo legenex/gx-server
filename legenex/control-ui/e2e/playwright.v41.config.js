@@ -6,6 +6,8 @@
 import { randomBytes } from 'node:crypto';
 import { defineConfig, devices } from '@playwright/test';
 
+const here = import.meta.dirname; // ESM: package.json sets "type": "module"
+
 const e2ePassword = process.env.GX_E2E_PASSWORD || `E2e-${randomBytes(12).toString('hex')}`;
 process.env.GX_E2E_PASSWORD = e2ePassword;
 const port = Number(process.env.GX_E2E_PORT_V41 || 18091);
@@ -13,7 +15,7 @@ const outputDir = process.env.GX_E2E_OUTPUT_DIR || 'test-results-v41';
 
 export default defineConfig({
   outputDir,
-  testDir: __dirname,
+  testDir: here,
   testMatch: /offline\.v41\.spec\.js/,
   timeout: 120_000,
   expect: { timeout: 20_000 },
@@ -24,7 +26,7 @@ export default defineConfig({
   webServer: {
     command: `python3 fixture_server_v41.py ${port}`,
     url: `http://127.0.0.1:${port}/api/health`,
-    cwd: __dirname,
+    cwd: here,
     reuseExistingServer: false,
     timeout: 30_000,
     env: { GX_E2E_PASSWORD: e2ePassword, GX_UI_ACCESS_LOG: '0' },
