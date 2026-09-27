@@ -193,9 +193,17 @@ class LifecycleWiringTests(unittest.TestCase):
         for name in ("gx-max-stop.sh", "gx-max-unwind.sh", "restore-normal.sh"):
             self.assertIn("gx_n2_hold_clear gxmax", (self.here / name).read_text(), name)
 
-    def test_restore_starts_the_music_supervisor_only(self):
+    def test_restore_starts_the_control_plane_only(self):
+        # V4.1: music/media/llama-swap residents were retired with the
+        # pre-V4.1 stack; restore-normal must start the CONTROL plane only
+        # (gateway compose, orchestrator) and must not resurrect retired
+        # residents or a music supervisor.
         text = (self.here / "restore-normal.sh").read_text()
-        self.assertIn("gx_music_supervisor_ensure", text)
+        self.assertIn("docker-compose.gateway.yml", text)
+        self.assertIn("gx-orchestrator", text)
+        self.assertNotIn("gx_music_supervisor_ensure", text)
+        self.assertNotIn("docker-compose.node02.yml", text)
+        self.assertNotIn("docker-compose.media.yml", text)
         helper = (self.here / "node2-holds.sh").read_text()
         self.assertNotIn("/v1/music/load", helper)
 
