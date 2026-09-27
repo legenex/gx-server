@@ -64,3 +64,16 @@ Raw logs: /srv/logs/fabric-nccl-{20260927,bw-20260927}.log
   acceptance, vision preserved. Serving notes: MAX_MODEL_LEN 262144 validated,
   KV pool 1GiB, GPU_MEM_UTIL 0.85, MAX_NUM_BATCHED_TOKENS 2048,
   VLLM_SPARSE_INDEXER_MAX_LOGITS_MB=256 REQUIRED.
+
+## 2026-09-27 — Hostinger KVM4 (srv1906439) live verification (read-only SSH)
+- Access: ssh hermes-vps (hermes@191.215.40.202, key agentos_vps) — BatchMode OK.
+- REALITY vs mission brief: Ubuntu 24.04.4, **2 vCPU, 7.8 Gi RAM, 96 GB root with
+  84G used (13G free, 88%)** — NOT 4 vCPU/15GiB/193G. Disk is the constraint.
+- Tailscale IS installed + active: 100.70.255.106 (docs were right; mission brief stale).
+- Running: hermes-dashboard (127.0.0.1:3001 node app), hermes-gateway (0.0.0.0:9119,
+  127.0.0.1:8642), postgres on 127.0.0.1:5432 + :5433, ports 80/443 served (root-managed,
+  no nginx access as hermes), buzz relay. DashFlo: dashflo-update.service FAILED user unit;
+  no DashFlo container visible as hermes (docker access inconclusive).
+- Deploy implications: control-plane stack must be small (13G free), avoid 3001/9119/8642/
+  5432/5433/80/443; hermes account only (root = human-gated break-glass).
+- DashFlo untouched per mission §41; user removes it separately.
