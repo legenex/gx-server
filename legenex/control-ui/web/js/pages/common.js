@@ -1,3 +1,5 @@
+// Shared renderers for the V4.1 pages: node cards, model tiles, git block,
+// services table and the confirmed-action runner.
 import { api, runAction, waitJob } from '../api.js';
 import {
   h, kv, num, meter, levelBadge, stateBadge, duration, short, confirmDialog, toast, ago, table,
@@ -29,11 +31,8 @@ export function nodeCard(n) {
         ['Hottest thermal zone', n.cpu_max_c !== null && n.cpu_max_c !== undefined ? `${num(n.cpu_max_c, 1)} °C` : '—'],
         ['Uptime', duration(n.uptime_seconds)],
         ['Hostwatch', n.hostwatch && n.hostwatch.ok ? `${n.hostwatch.status} (${n.hostwatch.detail}) · ${duration(n.hostwatch.age_seconds)} ago` : 'unavailable'],
-        ['Admission lock', stateBadge(n.guard_lock)],
+        ['Admission lock', stateBadge(n.guard_lock || 'unknown')],
         ['Tailscale', n.tailscale_ok ? stateBadge('ok', 'running') : stateBadge('error', 'down')],
-        ['Model workloads', n.workloads && n.workloads.length
-          ? h('span', {}, n.workloads.map((w) => stateBadge(w.state, `${w.name}`)))
-          : h('span', { class: 'muted' }, 'none')],
       ]),
     );
     if (n.problems && n.problems.length) {
@@ -48,11 +47,14 @@ export function nodeCard(n) {
     ...body);
 }
 
+// One tile per registry card / alias from /api/models models[].
 export function modelTile(m) {
-  return h('a', { class: `model-tile state-${m.state}`, href: `#/models/${m.alias}` },
-    h('span', { class: 'model-name' }, m.alias),
+  return h('a', { class: `model-tile state-${m.state}`, href: '#/model' },
+    h('span', { class: 'model-name' }, m.id || m.alias),
     stateBadge(m.state),
-    h('span', { class: 'muted small model-detail' }, m.detail || m.state_detail || ''));
+    h('span', { class: 'muted small model-detail' }, m.state_detail || ''),
+    m.uncensored ? h('span', { class: 'badge badge-warn' }, 'uncensored') : null,
+    m.production ? h('span', { class: 'badge badge-ok' }, 'production') : null);
 }
 
 export function gitBlock(git) {
@@ -85,8 +87,9 @@ export function servicesTable(services) {
   ]), { caption: 'Services' });
 }
 
-// Runs a model/system operation with confirmation and live job output.
-export async function operate(spec, { onDone, outputEl } = {}) {
+// Runs a named action with confirmation and live job output. `args` may carry
+// the action's declared extra arguments (e.g. {profile} for gxmax_start).
+export async function operate(spec, { onDone, outputEl, args = {} } = {}) {
   let confirm;
   if (spec.needs_confirm) {
     const res = await confirmDialog({
@@ -101,7 +104,7 @@ export async function operate(spec, { onDone, outputEl } = {}) {
     confirm = spec.confirm_phrase ? res.phrase : true;
   }
   try {
-    const job = await runAction(spec.name, confirm);
+    const job = await runAction(spec.name, confirm, args);
     toast(`Started: ${spec.label}`, 'ok');
     const final = await waitJob(job.id, (j) => {
       if (outputEl) {
@@ -120,13 +123,21 @@ export async function operate(spec, { onDone, outputEl } = {}) {
   }
 }
 
+// Admission locks + residency ledger (shape owned by the orchestrator; shown
+// defensively, nothing invented when a file is absent or unreadable).
 export function lockLedger(ov) {
   const rows = [];
   for (const node of ['node1', 'node2']) {
     const ledger = (ov.ledger || {})[node] || {};
     const names = Object.keys(ledger).filter((k) => !k.startsWith('_'));
-    rows.push([node === 'node1' ? 'gx10-01' : 'gx10-02', stateBadge((ov.locks || {})[node] || 'unknown'),
-      names.length ? names.map((k) => `${k} (${ledger[k].class}, ${ledger[k].estimated_gib} GiB)`).join(', ') : 'empty']);
+    const summary = names.length
+      ? names.map((k) => {
+        const v = ledger[k];
+        const est = v && typeof v === 'object' && v.estimated_gib !== undefined ? ` (${v.estimated_gib} GiB)` : '';
+        return `${k}${est}`;
+      }).join(', ')
+      : 'empty';
+    rows.push([node === 'node1' ? 'gx10-01' : 'gx10-02', stateBadge((ov.locks || {})[node] || 'unknown'), summary]);
   }
   return table(['Node', 'Admission lock', 'Residency ledger'], rows, { caption: 'Locks and ledger' });
 }

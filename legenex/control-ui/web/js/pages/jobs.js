@@ -7,63 +7,53 @@ let root;
 let eventsEl;
 let follow = true;
 
-const ACQUIRE_STEPS = [
-  ['queued', 'Queued'], ['preflight', 'Preflight'], ['draining', 'Draining'], ['admission', 'Admission'],
-  ['loading_rank1', 'Loading rank 1'], ['loading_rank0', 'Loading rank 0'], ['warming', 'Warming / weights'],
-  ['ready', 'Ready'], ['serving', 'Serving'],
-];
-const RELEASE_STEPS = [
-  ['draining_requests', 'Draining requests'], ['stopping_ranks', 'Stopping ranks'],
-  ['memory_recovery', 'Memory recovery'], ['restoring', 'Restoring workloads'], ['released', 'Released'],
-];
-
-function stepper(steps, current, reached, failed) {
-  const idx = steps.findIndex(([k]) => k === current);
-  return h('ol', { class: 'stepper' }, steps.map(([key, label], i) => {
-    let cls = 'todo';
-    if (reached.has(key) || (idx >= 0 && i < idx)) cls = 'done';
-    if (key === current) cls = failed ? 'failed' : 'current';
-    return h('li', { class: `step step-${cls}`, 'aria-current': key === current ? 'step' : null },
-      h('span', { class: 'step-dot', 'aria-hidden': 'true' }), label);
-  }));
+// Lifecycle phases come from the orchestrator's own event stream; the page
+// renders whatever actually happened instead of a hardcoded step list.
+function phaseTrack(job) {
+  const phases = (job && job.phases) || [];
+  if (!phases.length) return null;
+  return h('ol', { class: 'phase-track', 'aria-label': 'Lifecycle phases' },
+    phases.map((p) => h('li', { class: `phase ${p.phase === 'ready' || p.phase === 'serving' || p.phase === 'released' ? 'done' : 'active'}` },
+      p.phase)));
 }
 
 function render(d) {
   const gx = d.gxmax || {};
   const job = d.gxmax_active_job;
   const last = (d.gxmax_history || [])[0];
-  const showing = job || last;
-  const reached = new Set(((showing && showing.phases) || []).map((p) => p.phase));
-  const isRelease = showing && String(showing.kind).startsWith('release');
-  let current = gx.phase;
-  if (gx.state === 'acquiring' && gx.waiters && !reached.size) current = 'queued';
 
   const lifecycle = card('gx-max lifecycle',
     kv([
       ['State', stateBadge(gx.state)],
       ['Phase', `${gx.phase || '—'}${gx.phase_seconds ? ` (for ${duration(gx.phase_seconds)})` : ''}`],
+      ['Profile', gx.profile || '—'],
       ['Waiting requests (queue)', String(gx.waiters ?? 0)],
       ['Last error', gx.last_error || 'none'],
     ]),
-    h('h3', {}, isRelease ? 'Release' : 'Acquire'),
-    stepper(isRelease ? RELEASE_STEPS : ACQUIRE_STEPS, current, reached, gx.phase === 'failed'),
     job ? kv([
       ['Active job', job.kind],
       ['Started', clock(job.started)],
       ['Elapsed', duration(job.elapsed_seconds)],
-    ]) : h('p', { class: 'muted' }, 'No gx-max job is running.'));
+    ]) : h('p', { class: 'muted' }, 'No gx-max job is running.'),
+    phaseTrack(job || last));
+
+  const queue = d.queue || {};
+  lifecycle.prepend(h('p', { class: 'muted small' }, queue.available === false
+    ? `Scheduler queue: unavailable: ${queue.reason || 'orchestrator did not answer'}`
+    : `Scheduler queue: queued ${queue.queued ?? '—'} · active ${queue.active ?? '—'}`));
 
   const history = card('gx-max job history',
-    table(['Job', 'Started', 'Elapsed', 'Startup', 'Outcome', 'Phases', 'Error'],
+    table(['Job', 'Started', 'Elapsed', 'Outcome', 'Phases', 'Error'],
       (d.gxmax_history || []).map((j) => [
         j.kind, clock(j.started), duration(j.elapsed_seconds),
-        j.startup_seconds ? `${j.startup_seconds} s` : '—',
-        stateBadge(j.outcome === 'ready' || j.outcome === 'released' ? 'succeeded' : (j.outcome === 'failed' ? 'failed' : 'warn'), j.outcome),
-        (j.phases || []).map((p) => p.phase).join(' → '),
+        stateBadge(j.outcome === 'ready' || j.outcome === 'released' ? 'succeeded'
+          : (j.outcome === 'failed' ? 'failed' : 'unknown'), j.outcome),
+        ((j.phases || []).map((p) => p.phase)).join(' → '),
         j.error ? h('span', { class: 'text-crit small' }, j.error.slice(0, 300)) : '',
-      ]), { caption: 'gx-max job history', empty: 'No gx-max job recorded since the orchestrator history was introduced.' }));
+      ]), { caption: 'gx-max job history', empty: 'No gx-max job recorded yet.' }));
 
-  const uiJobs = card('Control-UI operations',
+  const uiJobs = card('Control-UI operations (ActionRunner)',
+    h('p', { class: 'muted small' }, 'Every operation is audited to /srv/logs/gx-control-ui/audit.log.'),
     table(['Operation', 'User', 'Started', 'Elapsed', 'State', ''], (d.ui_jobs || []).map((j) => {
       const btn = h('button', { class: 'btn btn-ghost btn-sm', type: 'button' }, 'Output');
       btn.addEventListener('click', async () => {
@@ -83,7 +73,7 @@ function render(d) {
 }
 
 export default {
-  title: 'Jobs / Queue',
+  title: 'Jobs / Actions',
   interval: 3,
   mount(el) {
     root = el;
@@ -92,7 +82,8 @@ export default {
     followBox.addEventListener('change', () => { follow = followBox.checked; });
     eventsEl = h('pre', { class: 'log-view', tabindex: '0', 'aria-label': 'gx-max lifecycle output' });
     root.append(
-      h('p', { class: 'lead' }, 'Jobs for gx-mini, gx-code, gx-auto, gx-max, the gateway, OpenWebUI, AgentOS and backup. Orchestrator events are live, not simulated.'),
+      h('p', { class: 'lead' }, 'The ActionRunner jobs and the gx-max lifecycle. Lifecycle changes go only '
+        + 'through the orchestrator; orchestrator events are relayed here live, not simulated.'),
       h('div', { class: 'jobs-top' }),
       card('gx-max lifecycle output (live)',
         h('label', { class: 'inline' }, followBox, ' follow new lines'), eventsEl),

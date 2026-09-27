@@ -35,7 +35,7 @@
     <header class="topbar">
       <button class="icon-btn nav-toggle" id="nav-toggle" aria-controls="sidenav" aria-expanded="false"
               aria-label="Toggle navigation">&#9776;</button>
-      <a class="brand" href="#/dashboard"><span class="brand-mark" aria-hidden="true">GX</span><span class="brand-text">Cluster Control</span></a>
+      <a class="brand" href="#/overview"><span class="brand-mark" aria-hidden="true">GX</span><span class="brand-text">Cluster Control</span></a>
       <div class="topbar-status" id="overall-status" role="status" aria-live="polite"></div>
       <div class="topbar-right">
         <span class="refresh-note muted small" id="refresh-note"></span>
@@ -47,19 +47,24 @@
     </header>
     <nav id="sidenav" class="sidenav" aria-label="Main">
       <ul>
-        <li><a href="#/dashboard" data-page="dashboard"><span aria-hidden="true">&#9673;</span> Dashboard</a></li>
-        <li><a href="#/models" data-page="models"><span aria-hidden="true">&#9670;</span> Models</a></li>
-        <li><a href="#/jobs" data-page="jobs"><span aria-hidden="true">&#9776;</span> Jobs</a></li>
+        <li><a href="#/overview" data-page="overview"><span aria-hidden="true">&#9673;</span> Overview</a></li>
+        <li><a href="#/model" data-page="model"><span aria-hidden="true">&#9670;</span> Model</a></li>
+        <li><a href="#/performance" data-page="performance"><span aria-hidden="true">&#9654;</span> Performance</a></li>
+        <li><a href="#/requests" data-page="requests"><span aria-hidden="true">&#8803;</span> Requests</a></li>
+        <li><a href="#/agents" data-page="agents"><span aria-hidden="true">&#9679;</span> Agents</a></li>
+        <li><a href="#/tasks" data-page="tasks"><span aria-hidden="true">&#9744;</span> Tasks</a></li>
+        <li><a href="#/projects" data-page="projects"><span aria-hidden="true">&#9618;</span> Projects</a></li>
+        <li><a href="#/files" data-page="files"><span aria-hidden="true">&#128193;</span> Files</a></li>
+        <li><a href="#/storage" data-page="storage"><span aria-hidden="true">&#9635;</span> Storage</a></li>
         <li><a href="#/logs" data-page="logs"><span aria-hidden="true">&#9636;</span> Logs</a></li>
-        <li><a href="#/cluster" data-page="cluster"><span aria-hidden="true">&#8646;</span> Machines</a></li>
-        <li><a href="#/backup" data-page="backup"><span aria-hidden="true">&#9635;</span> Backup &amp; Recovery</a></li>
-        <li><a href="#/connections" data-page="connections"><span aria-hidden="true">&#9883;</span> Connections</a></li>
+        <li><a href="#/network" data-page="network"><span aria-hidden="true">&#8646;</span> Network</a></li>
+        <li><a href="#/updates" data-page="updates"><span aria-hidden="true">&#8635;</span> Updates</a></li>
         <li><a href="#/settings" data-page="settings"><span aria-hidden="true">&#9881;</span> Settings</a></li>
-        <li class="nav-more"><a href="#/resources" data-page="resources">Resource Control</a></li>
-        <li class="nav-more"><a href="#/storage" data-page="storage">Storage</a></li>
-        <li class="nav-more"><a href="#/docs" data-page="docs">Docs</a></li>
+        <li><a href="#/recovery" data-page="recovery"><span aria-hidden="true">&#9850;</span> Recovery</a></li>
+        <li><a href="#/jobs" data-page="jobs"><span aria-hidden="true">&#9776;</span> Jobs / Actions</a></li>
+        <li><a href="#/keys" data-page="keys"><span aria-hidden="true">&#9883;</span> API Keys</a></li>
       </ul>
-      <p class="nav-foot muted small">Two independent 128 GB nodes.<br>Text / coding / agent cluster.</p>
+      <p class="nav-foot muted small">One model — DeepSeek V4.1 Flash EXL3.<br>Two 128 GB nodes · gx-max + gx-auto.</p>
     </nav>
     <main id="main" class="content" tabindex="-1"></main>
   </div>

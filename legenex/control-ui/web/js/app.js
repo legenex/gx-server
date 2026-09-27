@@ -1,26 +1,30 @@
 import { api, ApiError, onUnauthenticated, setCsrf } from './api.js';
 import { clear, h, levelBadge, toast, errorBox, spinner } from './dom.js';
-import dashboard from './pages/dashboard.js';
-import models from './pages/models.js';
-import runtime from './pages/runtime.js';
-import cluster from './pages/cluster.js';
-import jobs from './pages/jobs.js';
-import logs from './pages/logs.js';
-import playground from './pages/playground.js';
-import docs from './pages/docs.js';
-import settings from './pages/settings.js';
-import creative from './pages/creative.js';
-import manager from './pages/manager.js';
-import keys from './pages/keys.js';
-import resources from './pages/resources.js';
+import overview from './pages/overview.js';
+import model from './pages/model.js';
+import performance from './pages/performance.js';
+import requests from './pages/requests.js';
+import agents from './pages/agents.js';
+import tasks from './pages/tasks.js';
+import projects from './pages/projects.js';
+import files from './pages/files.js';
 import storage from './pages/storage.js';
-import setup from './pages/setup.js';
-import backup from './pages/backup.js';
+import logs from './pages/logs.js';
+import network from './pages/network.js';
+import updates from './pages/updates.js';
+import recovery from './pages/recovery.js';
+import jobs from './pages/jobs.js';
+import keys from './pages/keys.js';
+import settings from './pages/settings.js';
 
+// The V4.1 page set. The retired pre-V4.1 pages (per-tier model manager,
+// playground, creative/media, cluster/runtime, backup, docs, setup) are gone:
+// their backend routes answer 410 Gone, so no route may keep them.
 const PAGES = {
-  dashboard, models, resources, storage, manager, keys, setup, connections: setup, runtime, cluster, jobs, logs, playground, docs,
-  settings, backup, create: creative, library: creative,
+  overview, model, performance, requests, agents, tasks, projects, files,
+  storage, logs, network, updates, recovery, jobs, keys, settings,
 };
+const DEFAULT_PAGE = 'overview';
 const $ = (id) => document.getElementById(id);
 
 const state = {
@@ -95,7 +99,7 @@ function initLogin() {
       $('login-pass').value = '';
       state.user = res.user;
       setCsrf(res.csrf);
-      if (!location.hash || location.hash === '#/') location.hash = '#/dashboard';
+      if (!location.hash || location.hash === '#/') location.hash = `#/${DEFAULT_PAGE}`;
       showApp();
     } catch (err) {
       showLogin(err instanceof ApiError ? err.message : 'Sign-in failed');
@@ -161,9 +165,9 @@ function route() {
   const hash = location.hash.replace(/^#\/?/, '');
   const [rawName, ...rest] = hash.split('/');
   const name = rawName.split('?')[0];
-  const pageName = PAGES[name] ? name : 'dashboard';
+  const pageName = PAGES[name] ? name : DEFAULT_PAGE;
   if (!PAGES[name]) {
-    history.replaceState(null, '', '#/dashboard');
+    history.replaceState(null, '', `#/${DEFAULT_PAGE}`);
   }
   stopPolling();
   if (state.inflight) state.inflight.abort();

@@ -91,8 +91,12 @@ export const api = {
   post: (path, body, opts) => request('POST', path, body, opts),
 };
 
-export async function runAction(name, confirm) {
-  return api.post(`/api/actions/${encodeURIComponent(name)}`, confirm === undefined ? {} : { confirm });
+export async function runAction(name, confirm, args = {}) {
+  // The server refuses any body key other than `confirm` and the action's
+  // declared args, so extra keys surface as a 400 instead of being ignored.
+  const body = { ...args };
+  if (confirm !== undefined) body.confirm = confirm;
+  return api.post(`/api/actions/${encodeURIComponent(name)}`, body);
 }
 
 export async function waitJob(id, onUpdate, { interval = 2000, signal } = {}) {
@@ -104,16 +108,42 @@ export async function waitJob(id, onUpdate, { interval = 2000, signal } = {}) {
   }
 }
 
-// Raw-body upload (images/videos for editing). The CSRF token is sent as a
-// header like every other state-changing request; the file never touches
-// any third party.
-export async function upload(path, file, { title, onProgress } = {}) {
+// Live SSE stream (/api/stream): queue, lifecycle and telemetry events every
+// ~2 s. SSE may be absent (older backend, buffering proxy) and must be
+// treated as a pure ENHANCEMENT: pages keep their normal polling refresh as
+// the fallback, so a stream that never opens changes nothing.
+export function openStream(handlers = {}) {
+  if (typeof EventSource !== 'function') return null;
+  let es;
+  try {
+    es = new EventSource('/api/stream');
+  } catch {
+    return null;
+  }
+  for (const kind of ['queue', 'lifecycle', 'telemetry']) {
+    es.addEventListener(kind, (ev) => {
+      if (!handlers[kind]) return;
+      try {
+        const parsed = JSON.parse(ev.data);
+        handlers[kind](parsed && parsed.data !== undefined ? parsed.data : parsed, parsed);
+      } catch { /* one malformed event never breaks the page */ }
+    });
+  }
+  // Any stream failure (auth, absent endpoint, proxy) falls back to polling.
+  es.onerror = () => { try { es.close(); } catch { /* already gone */ } };
+  return { close: () => { try { es.close(); } catch { /* already gone */ } } };
+}
+
+// Raw-body upload. The CSRF token is sent as a header like every other
+// state-changing request; the file never touches any third party.
+export async function upload(path, file, { title, onProgress, headers = {} } = {}) {
   if (!csrf) await refreshCsrf();
   const send = (token) => new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open('POST', path);
     xhr.withCredentials = true;
     xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
+    for (const [k, v] of Object.entries(headers)) xhr.setRequestHeader(k, v);
     if (token) xhr.setRequestHeader('X-CSRF-Token', token);
     if (title) xhr.setRequestHeader('X-Title', encodeURIComponent(title).slice(0, 600));
     xhr.upload.onprogress = (ev) => { if (onProgress && ev.lengthComputable) onProgress(ev.loaded / ev.total); };
@@ -140,4 +170,17 @@ export async function upload(path, file, { title, onProgress } = {}) {
     }
     throw err;
   }
+}
+
+// The file manager's streamed upload: the server reads the target directory
+// and filename from X-Path / X-Filename headers (both URL-encoded) and
+// streams the raw body to disk, capped at 512 MiB server-side.
+export async function uploadFile(dir, file, { onProgress } = {}) {
+  return upload('/api/files/upload', file, {
+    onProgress,
+    headers: {
+      'X-Path': encodeURIComponent(dir).slice(0, 600),
+      'X-Filename': encodeURIComponent(file.name).slice(0, 400),
+    },
+  });
 }
