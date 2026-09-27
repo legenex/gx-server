@@ -142,8 +142,8 @@ fi
 n2_retry "docker ps -a --filter 'name=^/${GXMAX_RANK1_NAME}\$' --format '{{.Names}}' | xargs -r docker rm -f >/dev/null 2>&1; if [ -f \$HOME/.gx-guard/rank1-deadman.pid ]; then kill \$(cat \$HOME/.gx-guard/rank1-deadman.pid) >/dev/null 2>&1; rm -f \$HOME/.gx-guard/rank1-deadman.pid; fi; true" >/dev/null 2>&1 || true
 
 # --------------------------------------------- 5+6. reconcile both ledgers --
-gx_guard_release node1 "${GXMAX_RANK0_NAME}" >/dev/null 2>&1 || warn "node1 ledger release returned non-zero"
-gx_guard_release node2 "${GXMAX_RANK1_NAME}" >/dev/null 2>&1 || warn "node2 ledger release returned non-zero"
+gx_guard_release node1 gx-max-rank0 >/dev/null 2>&1 || warn "node1 ledger release returned non-zero"
+gx_guard_release node2 gx-max-rank1 >/dev/null 2>&1 || warn "node2 ledger release returned non-zero"
 led1="$(gx_guard_status node1 2>/dev/null || echo '?')"
 led2="$(gx_guard_status node2 2>/dev/null || echo '?')"
 case "${led1}" in *gx-max*) fail "node1 ledger still lists a gx-max entry: ${led1}" ;; *) ok "node1 ledger clean: ${led1}" ;; esac

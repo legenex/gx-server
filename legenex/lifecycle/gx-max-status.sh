@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
-# gx-max-status.sh — report the real state of the two-node engine.
+# gx-max-status.sh (V4.1) — report the real state of the one two-node engine.
+# The containers are the Mia kit's: dsv41-exl3-head on node 1,
+# dsv41-exl3-worker on node 2. Health means /health AND /v1/models
+# advertising the served model id -- a proxy answering without the model is
+# a config fault, not a healthy engine.
 set -uo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=/dev/null
@@ -10,20 +14,22 @@ r0=$(docker inspect -f '{{.State.Status}}' "${GXMAX_RANK0_NAME}" 2>/dev/null | t
 r1=$(n2 "docker inspect -f '{{.State.Status}}' ${GXMAX_RANK1_NAME} 2>/dev/null" 2>/dev/null | tr -d '[:space:]')
 
 echo "=== gx-max status ==="
-printf 'rank0 (node1)   : %s\n' "${r0:-absent}"
-printf 'rank1 (node2)   : %s\n' "${r1:-absent}"
+printf 'head  (node1, %s) : %s\n' "${GXMAX_RANK0_NAME}" "${r0:-absent}"
+printf 'worker(node2, %s) : %s\n' "${GXMAX_RANK1_NAME}" "${r1:-absent}"
 
 if gxmax_healthy; then
-  echo "http health     : OK (200)"
-  model=$(curl -fsS -m 5 "http://127.0.0.1:${GXMAX_PORT}/v1/models" 2>/dev/null \
-    | python3 -c 'import sys,json; print(json.load(sys.stdin)["data"][0]["id"])' 2>/dev/null)
-  printf 'served model    : %s\n' "${model:-?}"
-  printf 'in flight       : %s\n' "$(gxmax_inflight)"
+  echo "http health      : OK (200)"
 else
-  echo "http health     : DOWN"
+  echo "http health      : DOWN"
 fi
+if gxmax_serves_model; then
+  echo "served model id  : ${GXMAX_SERVED_MODEL_ID} (verified)"
+else
+  echo "served model id  : NOT verified (expected ${GXMAX_SERVED_MODEL_ID})"
+fi
+printf 'in flight        : %s\n' "$(gxmax_inflight)"
 
-printf 'MemAvailable    : node1=%sGiB node2=%sGiB\n' \
+printf 'MemAvailable     : node1=%sGiB node2=%sGiB\n' \
   "$(awk '/MemAvailable/{print int($2/1048576)}' /proc/meminfo)" \
   "$(n2 "awk '/MemAvailable/{print int(\$2/1048576)}' /proc/meminfo" 2>/dev/null || echo '?')"
 
