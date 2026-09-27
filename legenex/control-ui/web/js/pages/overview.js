@@ -3,7 +3,7 @@
 // queue + lifecycle badges up; polling remains the source of truth.
 import { api, openStream } from '../api.js';
 import {
-  h, clear, card, kv, levelBadge, stateBadge, table, errorBox, bytes, spinner,
+  h, clear, card, kv, levelBadge, stateBadge, table, errorBox, spinner,
 } from '../dom.js';
 import { nodeCard, modelTile, gitBlock, servicesTable, lockLedger, operate } from './common.js';
 

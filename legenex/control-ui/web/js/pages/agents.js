@@ -3,7 +3,7 @@
 // metrics (state/AGENTOS-MAP.md) — this page never fabricates either.
 import { api } from '../api.js';
 import {
-  h, clear, card, stateBadge, table, errorBox, spinner, ago,
+  h, clear, card, table, errorBox, spinner, ago,
 } from '../dom.js';
 
 let root;
