@@ -1,21 +1,24 @@
 # ==============================================================================
-# gx cluster — GATEWAY STACK (NODE 1 / gx10-01 only)
+# gx cluster — GATEWAY STACK (NODE 1 / gx10-01 only) — V4.1 rebuild 2026-09-27
 # ==============================================================================
 # Brings up, and only up:
 #   1. litellm            the single OpenAI-compatible gateway   (host :4000)
 #   2. litellm-db         Postgres for LiteLLM keys/usage/UI     (host :15432)
-#   3. llama-swap-node01  model process lifecycle manager        (host :28080)
-#                         + publishes gx-mini's proven :19001
+#
+# llama-swap is RETIRED (2026-09-27). The old model stack (gx-mini, gx-code,
+# gx-fast, gx-reason and every old checkpoint) is deleted from both nodes.
+# Model lifecycle is owned by the orchestrator on :18900, which drives the
+# Mia DeepSeek V4.1 Flash EXL3 kit (submodule mia-dsv41) across both nodes.
+# Nothing in this file starts, stops or touches a model — the retired
+# llama-swap services (and their configs) live in git history under tag
+# pre-deepseek-v41-rebuild-20260927.
 #
 # WHAT THIS FILE DELIBERATELY DOES NOT DO
 # ---------------------------------------
-#   * It does NOT start any model. llama-swap has no `preload`; models are
-#     cold-started on the first request that needs them.
-#   * It does NOT start, stop or touch gx-max. The SGLang TP=2 job across both
-#     nodes (containers gx-max-rank0 / gx-max-rank1) belongs to the lead's
-#     orchestrator on :18900. Nothing here references :30000.
-#   * It does NOT run node 2's llama-swap. That is a separate compose file on
-#     gx10-02 using legenex/gateway/llama-swap/node02.yaml.
+#   * It does NOT start any model or runtime. The orchestrator owns the
+#     DOWN->ACQUIRING->READY->RELEASING lifecycle; there is no boot autoload.
+#   * It does NOT touch the host's :8888 (the Mia kit's OpenAI API is
+#     loopback-only and belongs to the orchestrator, never to the gateway).
 #
 # NO ROOT REQUIRED
 # ----------------
@@ -23,22 +26,7 @@
 #   plus `systemctl --user` for autostart. There is no sudo, no host package
 #   install, no privileged container, no host network mode, no kernel or netplan
 #   change. `docker compose up -d` from an unprivileged shell is sufficient.
-#
-# GPU
-# ---
-#   None of these three services needs a GPU. llama-swap only spawns containers.
-#   That matters here: gx10-01 has NO `nvidia` docker runtime (docker info lists
-#   runc only), so a `deploy.resources.reservations.devices: [{driver: nvidia}]`
-#   block would fail outright. Spawned model containers get GPUs via CDI
-#   (--device nvidia.com/gpu=all) from inside the llama-swap configs.
-#
-# SECURITY BOUNDARY — READ THIS
-# -----------------------------
-#   llama-swap mounts /var/run/docker.sock. That is root-equivalent on this host.
-#   It is unavoidable for a container that spawns model containers, and it is
-#   exactly why llama-swap's published port is bound to 127.0.0.1 by default and
-#   why its inference API requires GX_SWAP_API_KEY. Do not expose :28080 to the
-#   LAN. If it must be reachable off-box, bind it to the Tailscale address.
+#   (The docker-socket mount the old llama-swap service needed is GONE with it.)
 #
 # USAGE
 #   cp .env.sample .env && $EDITOR .env      # fill in every REQUIRED value
@@ -96,20 +84,22 @@ services:
       # intentionally NOT referenced from config.yaml.
       UI_USERNAME: ${LITELLM_UI_USERNAME:?LITELLM_UI_USERNAME is required}
       UI_PASSWORD: ${LITELLM_UI_PASSWORD:?LITELLM_UI_PASSWORD is required}
-      # --- upstream credentials ---
-      GX_SWAP_API_KEY: ${GX_SWAP_API_KEY:?GX_SWAP_API_KEY is required}
+      # --- upstream credential ---
+      # Bearer key the orchestrator on :18900 requires (gx-max + gx-auto).
       GX_ORCHESTRATOR_API_KEY: ${GX_ORCHESTRATOR_API_KEY:-not-required}
-      GX_MEDIA_API_KEY: ${GX_MEDIA_API_KEY:-not-required}
-      # gx-voice (D-040): the node-2 supervisor's bearer key, from
-      # /srv/projects/gx-cluster/secrets/gx-voice/api-key via .env.
-      GX_VOICE_API_KEY: ${GX_VOICE_API_KEY:-not-required}
       LITELLM_LOG: ${LITELLM_LOG_LEVEL:-INFO}
-      # D-039 budget hook: metrics file location inside the container.
+      # D-039/V4.1 budget hook: metrics file location inside the container.
       GX_TEXT_METRICS_LOG: /var/log/gx-text/gateway-text.jsonl
+      # Registry + runtime coordinates for the hook's context guard (served
+      # window per alias). Best-effort reads; safe defaults in the hook.
+      GX_REGISTRY: ${GX_REGISTRY:-/srv/projects/gx-cluster/state/registry.json}
+      GX_MAX_BASE: ${GX_MAX_BASE:-http://127.0.0.1:8888/v1}
+      GX_MAX_MODEL_ID: ${GX_MAX_MODEL_ID:-DeepSeek-v4.1-Flash-EXL3}
     volumes:
       - ./litellm/config.yaml:/app/config.yaml:ro
-      # D-039: context-budget pre-call hook + text latency metrics. Directory
-      # mounts (not single files) so a checkout update is picked up on restart.
+      # D-039: attribution forwarding + context-budget pre-call hook + text
+      # latency metrics. Directory mounts (not single files) so a checkout
+      # update is picked up on restart.
       - ./litellm/gx_hooks:/app/gx_hooks:ro
       - ../orchestrator/gx_orchestrator:/app/gx_lib/gx_orchestrator:ro
       - ${GX_TEXT_METRICS_DIR:-/srv/logs/gx-text}:/var/log/gx-text
@@ -122,7 +112,7 @@ services:
       - "1"
     healthcheck:
       # /health/liveliness does not touch upstreams, so it cannot trigger a
-      # model cold start. The official image is Python-based; urllib avoids
+      # model start. The official image is Python-based; urllib avoids
       # depending on curl being present.
       test:
         - "CMD"
@@ -143,8 +133,8 @@ services:
     # adjustable without root - see the host-resilience writeup) in a genuine
     # system-wide OOM. Small positive value: this container is memory-capped
     # at 2g already and matters operationally, so it is a much lower kill
-    # priority than the model tiers (700/900/950 - see node01.yaml,
-    # node02.yaml, gx-max.conf).
+    # priority than the model runtime containers (which carry their own
+    # much higher scores inside the Mia kit).
     oom_score_adj: ${GX_LITELLM_OOM_SCORE_ADJ:-100}
     logging: *default-logging
     networks: [gx_gateway]
@@ -181,70 +171,6 @@ services:
     mem_limit: ${GX_PG_MEM_LIMIT:-1g}
     # See the litellm service above for the host-resilience rationale.
     oom_score_adj: ${GX_PG_OOM_SCORE_ADJ:-100}
-    logging: *default-logging
-    networks: [gx_gateway]
-
-  # ==========================================================================
-  # 3. LLAMA-SWAP (node 1) — model process lifecycle
-  # ==========================================================================
-  # container_name is load-bearing: legenex/gateway/llama-swap/node01.yaml spawns
-  # model containers with `--network container:gx-llama-swap-node01`. Rename one
-  # and you must rename the other (macro `swap_netns`).
-  llama-swap-node01:
-    # The upstream llama-swap image has no docker CLI, so it cannot spawn model
-    # containers. The repo's Dockerfile adds it; build it once with:
-    #   docker compose -f docker-compose.gateway.yml build llama-swap-node01
-    image: ${GX_LLAMA_SWAP_IMAGE:-gx-llama-swap:latest}
-    build:
-      context: ../../llama-swap
-      dockerfile: llama-swap.Dockerfile
-    container_name: gx-llama-swap-node01
-    restart: unless-stopped
-    ports:
-      # Control API + admin UI. Loopback only — see the SECURITY BOUNDARY note.
-      - "${GX_SWAP_BIND:-127.0.0.1}:${GX_SWAP_PORT:-28080}:8080"
-      # gx-mini's proven direct endpoint. Spawned model containers share this
-      # container's network namespace, so publishing 19001 here is what makes
-      # http://127.0.0.1:19001/v1 work on the host exactly as it did before.
-      - "${GX_MINI_BIND:-127.0.0.1}:${GX_MINI_PORT:-19001}:19001"
-      - "${GX_CODE_BIND:-127.0.0.1}:${GX_CODE_PORT:-19011}:19011"
-    entrypoint:
-      - /usr/bin/llama-swap
-      - -config
-      - /app/config.yaml
-      - -listen
-      - 0.0.0.0:8080
-    environment:
-      # Consumed by node01.yaml as ${env.GX_SWAP_API_KEY}. If unset, llama-swap
-      # refuses to start — fail closed.
-      GX_SWAP_API_KEY: ${GX_SWAP_API_KEY:?GX_SWAP_API_KEY is required}
-    volumes:
-      - ./llama-swap/node01.yaml:/app/config.yaml:ro
-      # env-files for spawned model containers (values contain JSON quotes)
-      - ./llama-swap/env:/app/env:ro
-      # Required to spawn/stop model containers. Root-equivalent — see the
-      # SECURITY BOUNDARY note at the top of this file.
-      - /var/run/docker.sock:/var/run/docker.sock
-      # Read-only view of the model tree, so llama-swap (and any launcher
-      # script) can inspect weights and configs without being able to alter them.
-      - ${GX_MODELS_ROOT:-/srv/models}:/models:ro
-    healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
-    security_opt:
-      - no-new-privileges:true
-    # llama-swap itself is a small Go proxy. The memory the MODELS use is not
-    # accounted here — spawned containers are siblings, not children — which is
-    # exactly why the budget is enforced inside node01.yaml's routing groups.
-    mem_limit: ${GX_SWAP_MEM_LIMIT:-512m}
-    # See the litellm service above for the host-resilience rationale. Note
-    # this only covers llama-swap's OWN small footprint; the model containers
-    # it spawns as siblings carry their own oom-score-adj set inside
-    # node01.yaml (700/900 - much higher, i.e. killed well before this).
-    oom_score_adj: ${GX_SWAP_OOM_SCORE_ADJ:-100}
     logging: *default-logging
     networks: [gx_gateway]
 

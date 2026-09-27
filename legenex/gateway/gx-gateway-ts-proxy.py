@@ -4,8 +4,8 @@
 Docker keeps the gateway on loopback (boot-safe). This process binds the
 host Tailscale IPv4:4000 and forwards to 127.0.0.1:4000.
 
-GET /v1/models and GET /models are filtered to the four public logical
-modes. Internal worker aliases remain callable (gx-max dual-worker).
+GET /v1/models and GET /models are filtered to the two public aliases
+(gx-max, gx-auto) of the DeepSeek V4.1 rebuild (registry schema 2).
 """
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ import sys
 import time
 
 UPSTREAM = ("127.0.0.1", 4000)
-PUBLIC_MODELS = ("gx-mini", "gx-code", "gx-auto", "gx-max")
+PUBLIC_MODELS = ("gx-max", "gx-auto")
 
 
 def tailscale_ipv4(timeout: float = 120.0) -> str:

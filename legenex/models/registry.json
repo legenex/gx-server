@@ -1,794 +1,194 @@
 {
-  "_about": "Alias -> model bindings for gx-cluster (D-030..D-034). Source of truth for the Control UI model cards and the Model Manager. Facts are from the pinned Hugging Face revision and live measurements (TEST_RESULTS.md section 18); runtime flags live in legenex/gateway/llama-swap/node0{1,2}.yaml, legenex/lifecycle/gx-max.conf and legenex/media/workflows/. Written by the Model Manager on assignment; reviewed in Git. Each alias's 'identity' block holds the verified facts about the repository it names; the Open WebUI identity sync (D-038) uses them only while identity.repository and identity.revision match the alias's current binding.",
-  "schema": 1,
-  "aliases": {
-    "gx-mini": {
-      "repository": "HauhauCS/Qwen3.5-4B-Uncensored-HauhauCS-Aggressive",
-      "revision": "c09cdbcdb1fefad6d335809d445621b5f5ba0c6e",
-      "files": [
-        "Qwen3.5-4B-Uncensored-HauhauCS-Aggressive-Q4_K_M.gguf",
-        "mmproj-Qwen3.5-4B-Uncensored-HauhauCS-Aggressive-BF16.gguf"
-      ],
-      "node": "gx10-01",
-      "path": "/srv/models/gguf/Qwen3.5-4B-Uncensored-HauhauCS-Aggressive",
-      "runtime": "llama.cpp (legenex/llama-cpp-spark) via llama-swap",
-      "binding": {
-        "file": "legenex/gateway/llama-swap/node01.yaml",
-        "macros": [
-          "gx_mini_model",
-          "gx_mini_mmproj"
-        ]
+  "_about": "GX Cluster V4.1 registry (schema 2) — the single source of truth for nodes, the Mia runtime, model packs, public aliases, serving profiles and reasoning levels. Dashboard, orchestrator and gateway must read from this file; no hardcoded model/node names in code. Contract: docs/ARCHITECTURE-V41.md section 2. Loader/validator: legenex/models/registry.py. Facts are pinned to the revisions below and to state/MIA-RUNTIME.md (verified 2026-09-27). Supersedes the schema-1 alias table of the retired L-6/L-10 stack (gx-mini/gx-code/gx-fast/gx-reason, llama-swap, SGLang); that content lives in git history under tag pre-deepseek-v41-rebuild-20260927.",
+  "schema": 2,
+  "cluster": {
+    "name": "legenex-dual-gx10",
+    "head": "gx10-01",
+    "worker": "gx10-02"
+  },
+  "nodes": {
+    "gx10-01": {
+      "role": "head",
+      "user": "legenex",
+      "lan_ip": "10.60.21.37",
+      "tailscale_ip": "100.105.214.61",
+      "fabric": {
+        "rail1": "192.168.100.10",
+        "rail2": "192.168.101.10"
       },
-      "family": "Qwen3.5 (hybrid Gated DeltaNet + attention)",
-      "parameters": "4B dense",
-      "active_parameters": null,
-      "quantization": "GGUF Q4_K_M + BF16 vision projector",
-      "context": 32768,
-      "max_output": 8192,
-      "vision": true,
-      "tools": true,
-      "reasoning": "thinking model; thinking disabled at the gateway for speed",
-      "uncensored": "yes: HauhauCS 'Aggressive' refusal removal (card: 0/465 refusals)",
-      "licence": "apache-2.0",
-      "startup": "resident: preloaded when llama-swap starts, never unloaded (ttl 0)",
-      "memory": "about 10 GiB on gx10-01",
-      "measured": "52 tok/s decode, 0.1 s warm TTFT, vision and tool calls correct (2026-09-17)",
-      "previous": {
-        "repository": "Qwen3.5-4B Q4_K_M GGUF (source repository not recorded in this project)",
-        "path": "/srv/models/gguf/Qwen3.5-4B",
-        "status": "superseded 2026-09-17; still on gx10-01 (3.2 GiB) as the rollback. Storage & Cleanup lists it for review",
-        "on_disk": true
-      },
-      "identity": {
-        "repository": "HauhauCS/Qwen3.5-4B-Uncensored-HauhauCS-Aggressive",
-        "revision": "c09cdbcdb1fefad6d335809d445621b5f5ba0c6e",
-        "base_model": "Qwen/Qwen3.5-4B",
-        "derivation": "a community fine-tune by HauhauCS (refusal removal, 'Aggressive' variant) of Qwen/Qwen3.5-4B",
-        "parameters": "about 4 billion (4B dense)",
-        "weights": "GGUF Q4_K_M quantized language model plus a BF16 vision projector (mmproj); not full precision",
-        "modalities": "text and image input, text output, tool calls",
-        "files_sha256": {
-          "Qwen3.5-4B-Uncensored-HauhauCS-Aggressive-Q4_K_M.gguf": "79e28ecacf84e75b6056cf4059636d435aa9eb67795780f7b7dbc7d32a962741",
-          "mmproj-Qwen3.5-4B-Uncensored-HauhauCS-Aggressive-BF16.gguf": "a1e32e86ea99aa7a56f3dcfe7e63c1d0be9439d31fd07087099f15bc0fda0f22"
-        },
-        "verified": "2026-09-17: both sha256 values equal the Hugging Face LFS hashes at this revision; the running llama-server reports this model_path and 2 slots x 65536 tokens; the model card says 'Based on Qwen3.5-4B' and '4B dense parameters'",
-        "base_parameters": "about 4 billion (4B dense)"
-      }
+      "hcas": ["rocep1s0f0", "roceP2p1s0f0"],
+      "ssh": "gx10-01"
     },
-    "gx-code": {
-      "repository": "0xKitkat/Ornith-1.5-35B-A3B-Uncensored-GGUF",
-      "revision": "ab0eed77c73880afda789a3914003db2273fd64a",
-      "files": [],
-      "node": "gx10-01 + gx10-02",
-      "path": "/srv/models/gguf/Ornith-1.5-35B-A3B-Uncensored",
-      "runtime": "llama.cpp (legenex/llama-cpp-spark) via llama-swap, one worker per node",
-      "binding": {
-        "file": "legenex/gateway/llama-swap/node01.yaml",
-        "macros": ["gx_code"]
+    "gx10-02": {
+      "role": "worker",
+      "user": "legenex-02",
+      "lan_ip": "10.60.21.41",
+      "tailscale_ip": "100.73.238.4",
+      "fabric": {
+        "rail1": "192.168.100.11",
+        "rail2": "192.168.101.11"
       },
-      "family": "Ornith 1.5-35B-A3B",
-      "parameters": "~35B total, ~3B active (MoE)",
-      "quantization": "GGUF Q5_K_M + BF16 vision projector",
-      "context": 65536,
-      "max_output": 16384,
+      "hcas": ["rocep1s0f0", "roceP2p1s0f0"],
+      "ssh": "10.60.21.41"
+    }
+  },
+  "fabric": {
+    "notes": "NCCL traffic uses BOTH ConnectX-7 rails (192.168.100.x / 192.168.101.x) with a PER-NIC GID index; the all-zero GID entry dies ~60 s into a run with ibv_modify_qp errno 61 (state/EVIDENCE.md). GID index 3 is the proven pin. Tailscale is management/SSH only and must never appear in a model or NCCL path.",
+    "nccl": {
+      "NCCL_IB_GID_INDEX": "3",
+      "NCCL_IB_HCA": "=rocep1s0f0,roceP2p1s0f0",
+      "NCCL_SOCKET_IFNAME": "enP7s7",
+      "rails": ["rail1", "rail2"]
+    }
+  },
+  "runtimes": {
+    "mia-dsv41": {
+      "kind": "mia-2x-gb10-exl3",
+      "submodule": "mia-dsv41",
+      "commit": "6f7d1590ad49a2b8995188e45d7b9db31e677452",
+      "image": "ghcr.io/miaai-lab/deepseek-v4.1-flash-exl3-2x-dgx-sparks:2.9bpw",
+      "api": "http://127.0.0.1:8888/v1",
+      "served_model_id": "DeepSeek-v4.1-Flash-EXL3",
+      "start": "./start.sh",
+      "stop": "./stop.sh",
+      "status": "./start.sh status",
+      "notes": "vLLM-based 2x DGX Spark EXL3 kit, TP=2, nnodes=2, master port 29521. OpenAI API on head :8888 is LOOPBACK ONLY — never public. Lifecycle owned by the orchestrator (DOWN->ACQUIRING->READY->RELEASING), no boot autoload. Weights sync WEIGHT_SYNC=rsync over LAN SSH."
+    }
+  },
+  "models": {
+    "dsv41-flash-exl3-stock": {
+      "source": "Mia-AiLab/DeepSeek-V4.1-Flash-EXL3-2.9bpw",
+      "revision": "64ba41b6c916a587db06eae2e19b7845f7be6e6b",
+      "path": "/srv/models/dsv41/model",
+      "uncensored": false,
+      "engram_dir": "/srv/models/dsv41/engram-src",
+      "quant": "exl3-2.9bpw-mul1",
       "vision": true,
       "tools": true,
-      "uncensored": "yes",
-      "licence": "apache-2.0",
-      "startup": "resident on both nodes (ttl 0)",
-      "memory": "about 48 GiB cgroup cap per worker",
+      "max_context": 600000,
       "identity": {
-        "repository": "0xKitkat/Ornith-1.5-35B-A3B-Uncensored-GGUF",
-        "revision": "ab0eed77c73880afda789a3914003db2273fd64a",
-        "base_model": "Ornith-1.5-35B-A3B",
-        "derivation": "GGUF Q5_K_M quantization of Ornith-1.5-35B-A3B Uncensored",
-        "parameters": "~35B total, ~3B active (mixture of experts)",
-        "weights": "GGUF Q5_K_M plus BF16 vision projector; not full precision",
-        "modalities": "text and image input, text output, tool calls",
-        "verified": "2026-09-23: live gx-code-01 and gx-code-02 llama.cpp workers",
-        "base_parameters": "35B total, about 3B active per token"
-      }
-    },
-    "gx-fast": {
-      "repository": "kyaky/Qwen3.6-35B-A3B-Uncensored-NVFP4",
-      "revision": "33d5cf837389a8f972913090d81da47886e08877",
-      "files": [
-        "model.safetensors"
-      ],
-      "node": "gx10-01",
-      "path": "/srv/models/vllm/Qwen3.6-35B-A3B-Uncensored-NVFP4",
-      "runtime": "vLLM 0.28 (jstarkg/vllm-gb10-flashnext:0.28-sm121-r6) via llama-swap",
-      "binding": {
-        "file": "legenex/gateway/llama-swap/node01.yaml",
-        "macros": [
-          "gx_fast_model_dir"
-        ]
-      },
-      "family": "Qwen3.6 MoE (qwen3_5_moe; hybrid attention)",
-      "parameters": "35B total",
-      "active_parameters": "3B (8 of 256 experts)",
-      "quantization": "compressed-tensors: NVFP4 W4A16 routed experts, FP8 block attention and shared experts, BF16 vision tower",
-      "context": 131072,
-      "max_output": 32768,
-      "vision": true,
-      "tools": true,
-      "reasoning": "thinking model; off by default at the gateway, on per request (reasoning_content)",
-      "uncensored": "yes: gentle abliteration + fine-tune + DPO (kyaky)",
-      "licence": "apache-2.0",
-      "startup": "resident: preloaded with gx-mini (ttl 0); cold load about 4 minutes",
-      "memory": "about 41-49 GiB on gx10-01; gx-mini + gx-fast leave 46-48 GiB MemAvailable",
-      "measured": "55 tok/s decode, 0.08 s warm TTFT, tool calls and vision correct (2026-09-17)",
-      "previous": {
-        "repository": "nvidia/Qwen3.6-35B-A3B-NVFP4",
-        "revision": "1355db6a052410cfd62085d94b58866fd0f2c3c5",
-        "path": "/srv/models/vllm/Qwen3.6-35B-A3B-NVFP4",
-        "status": "deleted by the user (2026-09-17, B-026 resolved); no rollback on disk",
-        "on_disk": false
-      },
-      "identity": {
-        "repository": "kyaky/Qwen3.6-35B-A3B-Uncensored-NVFP4",
-        "revision": "33d5cf837389a8f972913090d81da47886e08877",
-        "base_model": "Qwen/Qwen3.6-35B-A3B",
-        "derivation": "a community fine-tune by kyaky (abliteration, fine-tune and DPO) of Qwen/Qwen3.6-35B-A3B",
-        "parameters": "35B total, about 3B active per token (mixture of experts)",
-        "weights": "NVFP4 (W4A16) routed experts with FP8 attention and shared experts; not full precision",
-        "modalities": "text and image input, text output, tool calls, optional thinking",
-        "verified": "2026-09-17: repository, revision and base_model read from the live Hugging Face API (cardData.base_model)",
-        "base_parameters": "35B total, about 3B active per token"
-      }
-    },
-    "gx-reason": {
-      "repository": "wyattearp/Qwen3.8-27B-Uncensored-NVFP4",
-      "revision": "91ec573a3d8e660b78b7161395e4a5b6247c2c8b",
-      "files": [],
-      "node": "gx10-02",
-      "path": "/srv/models/vllm/Qwen3.8-27B-Uncensored-NVFP4",
-      "runtime": "vLLM 0.28 via llama-swap on gx10-02",
-      "binding": {
-        "file": "legenex/gateway/llama-swap/node02.yaml",
-        "macros": [
-          "gx_reason_model_dir",
-          "gx_reason_host_dir"
-        ]
-      },
-      "family": "Qwen3.8 dense",
-      "parameters": "27B dense",
-      "active_parameters": null,
-      "quantization": "NVFP4 (compressed-tensors)",
-      "context": 65536,
-      "max_output": 16384,
-      "vision": true,
-      "tools": true,
-      "reasoning": "yes (reasoning separated from content)",
-      "uncensored": "YES: uncensored fine-tune of Qwen3.8-27B, quantized to NVFP4",
-      "licence": "apache-2.0",
-      "startup": "on demand, unloads after 20 minutes idle; cold start about 6.5 minutes",
-      "memory": "about 55 GiB on gx10-02 (measured 2026-09-18)",
-      "measured": "cold load 392 s; decode about 9 tok/s; multi-step reasoning, coding, tools and vision all correct (2026-09-18)",
-      "identity": {
-        "repository": "wyattearp/Qwen3.8-27B-Uncensored-NVFP4",
-        "revision": "91ec573a3d8e660b78b7161395e4a5b6247c2c8b",
-        "base_model": "JonathanColetti/Qwen3.8-27B-Uncensored",
-        "derivation": "NVFP4 (compressed-tensors) quantization of JonathanColetti/Qwen3.8-27B-Uncensored, itself an uncensored fine-tune of Qwen3.8-27B",
-        "parameters": "27B dense",
-        "weights": "NVFP4 via compressed-tensors; not full precision",
+        "repository": "Mia-AiLab/DeepSeek-V4.1-Flash-EXL3-2.9bpw",
+        "revision": "64ba41b6c916a587db06eae2e19b7845f7be6e6b",
+        "base_model": "deepseek-ai/DeepSeek-V4.1-Flash",
+        "arch": "DeepseekV41ForCausalLM",
+        "quantization": "EXL3 2.9bpw (mul1, K=5)",
+        "parameters": "DeepSeek V4.1 Flash (MoE + DSpark MTP draft experts in checkpoint)",
         "modalities": "text and image input, text output, tool calls, reasoning",
-        "verified": "2026-09-18: repository, revision and base_model read from the live Hugging Face API; all 22 files verified on disk against the pinned revision (.gx-manifest.json, 26.61 GiB, 14 sha256-checked)",
-        "base_parameters": "27B dense"
+        "licence": "mit",
+        "vision_tags": ["multimodal", "vision", "ocr-verified"],
+        "weights": "39 EXL3 shards, about 197 GiB; Engram tables NEVER quantized and never copied into the EXL3 tree (FP8 e4m3fn, deepseek-ai/DeepSeek-V4.1-Flash shards 47+48 at engram_dir)",
+        "verified": "2026-09-27: repository and revision verified against the live Hugging Face API; arch/quant/license/vision from the model card at this revision (state/MIA-RUNTIME.md)"
       }
     },
-    "gx-max": {
-      "repository": "0xKitkat/Ornith-1.5-35B-A3B-Uncensored-GGUF",
-      "revision": "ab0eed77c73880afda789a3914003db2273fd64a",
-      "files": [],
-      "node": "gx10-01 + gx10-02",
-      "path": "/srv/models/gguf/Ornith-1.5-35B-A3B-Uncensored",
-      "runtime": "gx-orchestrator dual-worker (solver gx-code-01, reviewer gx-code-02)",
-      "binding": {
-        "file": "legenex/lifecycle/gx-max.conf",
-        "macros": [
-          "GXMAX_MODEL_DIR",
-          "GXMAX_QUANT_CELL"
-        ]
-      },
-      "family": "DeepSeek-V4-Flash-0731 (43-layer MoE, 256 routed + 1 shared expert, DSpark MTP head)",
-      "parameters": "284B total (SGLang cookbook: Flash 284B)",
-      "active_parameters": "6 routed + 1 shared expert per token (the repository does not state a count)",
-      "quantization": "native DeepSeek FP8 (attention, shared experts) + FP4/MXFP4 routed experts; config and tensor index byte-identical to deepseek-ai/DeepSeek-V4-Flash-0731 (the '-NVFP4' in the repo name is the publisher's label)",
-      "context": 327680,
-      "max_output": 65536,
-      "vision": false,
-      "tools": true,
-      "reasoning": "yes (thinking, reasoning_content)",
-      "uncensored": "yes: dealign.ai 'CRACK' abliteration (card: HarmBench >=96% compliance, MMLU 86.7%, HumanEval pass@2 94.3%)",
-      "licence": "mit",
-      "startup": "explicit two-node takeover through the orchestrator only; never at boot",
-      "memory": "whole cluster (see gx-max.conf three-phase policy)",
-      "measured": "see TEST_RESULTS.md section 18",
-      "previous": {
-        "repository": "nvidia/DeepSeek-V4-Flash-0731-NVFP4",
-        "revision": "f1caa71142bd0be02f728c79f75042ac1e461579",
-        "path": "/srv/models/deepseek/DeepSeek-V4-Flash-0731-NVFP4",
-        "status": "deleted on both nodes by the user (2026-09-17, B-026 resolved); a rollback to it needs a fresh download of this pinned revision to both nodes",
-        "on_disk": false
-      },
-      "identity": {
-        "repository": "0xKitkat/Ornith-1.5-35B-A3B-Uncensored-GGUF",
-        "revision": "ab0eed77c73880afda789a3914003db2273fd64a",
-        "base_model": "Ornith-1.5-35B-A3B",
-        "derivation": "dual-worker workflow: solver gx-code-01 on gx10-01, reviewer gx-code-02 on gx10-02, same Ornith Q5_K_M workers as gx-code",
-        "parameters": "~35B total, ~3B active (mixture of experts) on each worker",
-        "weights": "GGUF Q5_K_M plus BF16 vision projector; not full precision",
-        "modalities": "text input and output, tool calls",
-        "verified": "2026-09-23: live dual-worker gx-max via gx-orchestrator",
-        "base_parameters": "35B total, about 3B active per token"
-      }
-    },
-    "gx-auto": {
-      "repository": null,
-      "runtime": "gx-orchestrator deterministic classifier (D-030, D-039 context budgeting) -> LiteLLM",
-      "node": "gx10-01",
-      "context": 98304,
-      "max_output": 32768,
+    "dsv41-flash-exl3-uncensored": {
+      "source": "dealignai/DeepSeek-V4.1-Flash-UNCENSORED-EXL3-2.9bpw",
+      "revision": "8a27b35fc5b145fa05ee965c7d7b243b047915f7",
+      "path": "/srv/models/dsv41/uncensored",
+      "uncensored": true,
+      "engram_dir": "/srv/models/dsv41/engram-src",
+      "quant": "exl3-2.9bpw-mul1",
       "vision": true,
       "tools": true,
-      "reasoning": "depends on the tier chosen",
-      "uncensored": "every tier it can pick is uncensored",
-      "startup": "always available while the orchestrator runs; uses gx-max only when it is already READY",
-      "measured": "Kilo-shaped requests: presence check -> gx-mini, repo work -> gx-fast, hard debugging -> gx-reason (10/10, 2026-09-17)"
-    },
-    "gx-image": {
-      "runtime": "ComfyUI 0.35.0 behind gx-media-router 2.3 on gx10-02",
-      "node": "gx10-02",
-      "vision": false,
-      "tools": false,
-      "uncensored": "yes: no content filter in the pipeline; NSFW-capable adapter on by default for generation (strength 0.6), optional for edits",
-      "startup": "on demand; the first generation loads weights; the router frees other media models first",
-      "measured": "1024x1024 generation 29 s; instruction edit 31 s; variation 16 s (2026-09-17)",
-      "components": [
-        {
-          "role": "generation checkpoint",
-          "kind": "checkpoint",
-          "repository": "Comfy-Org/Qwen-Image_ComfyUI (Qwen-Image-2512; revision not recorded at download, MODELS.md)",
-          "file": "image/diffusion_models/qwen_image_2512_fp8_e4m3fn.safetensors",
-          "licence": "apache-2.0",
-          "image_model": "qwen-image-2512"
-        },
-        {
-          "role": "generation speed LoRA",
-          "kind": "lora",
-          "repository": "Qwen-Image-2512 Lightning 4-step LoRA (source revision not recorded at download)",
-          "file": "image/loras/Qwen-Image-2512-Lightning-4steps-V1.0-fp32.safetensors",
-          "licence": "apache-2.0"
-        },
-        {
-          "role": "generation uncensored adapter",
-          "kind": "lora",
-          "repository": "perpetual3x/Tumblr-NudeShot-NSFW-LoRA-v1",
-          "revision": "f8e7f2a115870639d14a5713ad6437a414a0189e",
-          "file": "image/loras/tumblr.safetensors",
-          "base_match": "exact (Qwen/Qwen-Image-2512)",
-          "licence": "non-commercial"
-        },
-        {
-          "role": "edit checkpoint",
-          "kind": "checkpoint",
-          "repository": "Comfy-Org/Qwen-Image-Edit_ComfyUI (Qwen-Image-Edit-2511)",
-          "revision": "7d41107b653d3039be20972fb82398b01b3213eb",
-          "file": "image/diffusion_models/qwen_image_edit_2511_fp8mixed.safetensors",
-          "licence": "apache-2.0",
-          "image_model": "qwen-image-edit-2511"
-        },
-        {
-          "role": "edit speed LoRA",
-          "kind": "lora",
-          "repository": "lightx2v/Qwen-Image-Edit-2511-Lightning",
-          "revision": "d74eba145674fd7e31b949324e148e21e7118abd",
-          "file": "image/loras/Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
-          "base_match": "exact (Qwen/Qwen-Image-Edit-2511)",
-          "licence": "apache-2.0"
-        },
-        {
-          "role": "edit uncensored adapter (optional)",
-          "kind": "lora",
-          "repository": "ScottzillaSystems/qwen-image-edit-plus-nsfw-lora",
-          "revision": "66e89e998dd4ea1a359c4bf0dd5e17d2f0b06ef0",
-          "file": "image/loras/qwen-image-edit-plus-nsfw-lora.safetensors",
-          "base_match": "NOT exact: byte-identical to a Qwen-Image (original) LoRA; loads on 2511 by key; off unless requested",
-          "licence": "openrail++"
-        },
-        {
-          "role": "VisionmasterPro_V3 checkpoint (SDXL UNet, diffusers format)",
-          "kind": "checkpoint",
-          "image_model": "visionmaster-pro-v3",
-          "label": "VisionmasterPro_V3",
-          "repository": "votepurchase/pornmasterPro_noobV3VAE",
-          "revision": "75f59d136b165d48f3e678bb057af99f7cf1a71e",
-          "file": "image/diffusion_models/pornmasterPro_noobV3VAE/unet.safetensors",
-          "source_file": "unet/diffusion_pytorch_model.safetensors",
-          "bytes": 10270077736,
-          "sha256": "16fd4046cde36ae85b28361a6a16402c0bc3a63f6338b44828bb7e945ae8f5da",
-          "dtype": "F32 (cast by ComfyUI at load)",
-          "prediction_type": "epsilon (scheduler_config.json)",
-          "base_match": "SDXL / NoobAI eps; upstream Civitai model 1045588 version 1767015 (Pornmaster Pro noob V3 VAE)",
-          "licence": "creativeml-openrail-m",
-          "manifest": "/srv/models/image/pornmasterPro_noobV3VAE/.gx-manifest.json (gx10-02)"
-        },
-        {
-          "role": "VisionmasterPro_V3 text encoder 1 (CLIP-L)",
-          "kind": "text_encoder",
-          "image_model": "visionmaster-pro-v3",
-          "repository": "votepurchase/pornmasterPro_noobV3VAE",
-          "revision": "75f59d136b165d48f3e678bb057af99f7cf1a71e",
-          "file": "image/text_encoders/pornmasterPro_noobV3VAE/clip_l.safetensors",
-          "source_file": "text_encoder/model.safetensors",
-          "bytes": 492265168,
-          "sha256": "911844f911fd5234569d78977ce87047037e46a9c3574465f65b70892562d2f6",
-          "licence": "creativeml-openrail-m"
-        },
-        {
-          "role": "VisionmasterPro_V3 text encoder 2 (CLIP-G)",
-          "kind": "text_encoder",
-          "image_model": "visionmaster-pro-v3",
-          "repository": "votepurchase/pornmasterPro_noobV3VAE",
-          "revision": "75f59d136b165d48f3e678bb057af99f7cf1a71e",
-          "file": "image/text_encoders/pornmasterPro_noobV3VAE/clip_g.safetensors",
-          "source_file": "text_encoder_2/model.safetensors",
-          "bytes": 2778702264,
-          "sha256": "7556aaa76d818f0db543230f7cefc68284be543c7f31623e6a2286ce150340ce",
-          "licence": "creativeml-openrail-m"
-        },
-        {
-          "role": "VisionmasterPro_V3 VAE",
-          "kind": "vae",
-          "image_model": "visionmaster-pro-v3",
-          "repository": "votepurchase/pornmasterPro_noobV3VAE",
-          "revision": "75f59d136b165d48f3e678bb057af99f7cf1a71e",
-          "file": "image/vae/pornmasterPro_noobV3VAE/vae.safetensors",
-          "source_file": "vae/diffusion_pytorch_model.safetensors",
-          "bytes": 334643268,
-          "sha256": "98a14dc6fe8d71c83576f135a87c61a16561c9c080abba418d2cc976ee034f88",
-          "licence": "creativeml-openrail-m"
-        },
-        {
-          "role": "text encoder",
-          "kind": "text_encoder",
-          "file": "shared/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors"
-        },
-        {
-          "role": "VAE",
-          "kind": "vae",
-          "file": "shared/vae/qwen_image_vae.safetensors"
-        },
-        {
-          "role": "workflows",
-          "kind": "comfyui_workflow",
-          "file": "legenex/media/workflows/qwen-image-2512-uncensored, qwen-image-2512-lightning, qwen-image-2512-quality, qwen-image-edit-2511, qwen-image-edit-2511-masked, qwen-image-edit-2511-transform, sdxl-visionmaster-pro-v3, sdxl-visionmaster-pro-v3-img2img, sdxl-visionmaster-pro-v3-inpaint"
-        }
-      ],
-      "variants": [
-        {
-          "id": "qwen-image-2512",
-          "label": "Qwen Image 2512",
-          "family": "qwen-image",
-          "repository": "Comfy-Org/Qwen-Image_ComfyUI",
-          "revision": "not recorded at download (MODELS.md)",
-          "licence": "apache-2.0",
-          "base": "Qwen-Image-2512 fp8_e4m3fn + Lightning 4-step LoRA",
-          "resolution": "512x512 to 1664x928; default 1328x1328",
-          "capabilities": [
-            "text-to-image",
-            "quality fast/standard/hd",
-            "negative prompt",
-            "NSFW adapter on by default (0.6)"
-          ],
-          "workflows": [
-            "qwen-image-2512-uncensored",
-            "qwen-image-2512-lightning",
-            "qwen-image-2512-quality"
-          ],
-          "default": "generation",
-          "status": "in use",
-          "measured": "1024x1024 in 26.2 s on 2026-09-17 (router job image-c087349dec2743b1, qwen-image-2512-lightning)"
-        },
-        {
-          "id": "qwen-image-edit-2511",
-          "label": "Qwen Image Edit 2511",
-          "family": "qwen-image",
-          "repository": "Comfy-Org/Qwen-Image-Edit_ComfyUI",
-          "revision": "7d41107b653d3039be20972fb82398b01b3213eb",
-          "licence": "apache-2.0",
-          "base": "Qwen-Image-Edit-2511 fp8mixed + Lightning 4-step LoRA",
-          "resolution": "follows the source, fitted to the router's edit target",
-          "capabilities": [
-            "instruction edit",
-            "masked edit",
-            "variation",
-            "7 edit modes",
-            "edit quality fast/quality",
-            "NSFW adapter off by default for edits"
-          ],
-          "workflows": [
-            "qwen-image-edit-2511",
-            "qwen-image-edit-2511-masked",
-            "qwen-image-edit-2511-transform"
-          ],
-          "default": "editing and variations",
-          "status": "in use",
-          "measured": "not measured since the Build V3 edit fix; see the IMG live acceptance"
-        },
-        {
-          "id": "visionmaster-pro-v3",
-          "label": "VisionmasterPro_V3",
-          "family": "sdxl",
-          "repository": "votepurchase/pornmasterPro_noobV3VAE",
-          "revision": "75f59d136b165d48f3e678bb057af99f7cf1a71e",
-          "licence": "creativeml-openrail-m",
-          "base": "SDXL / NoobAI, epsilon prediction, diffusers format (UNet + CLIP-L + CLIP-G + VAE)",
-          "resolution": "832x1216 default; at most about 1.6 megapixels",
-          "capabilities": [
-            "text-to-image",
-            "image-to-image",
-            "masked inpainting",
-            "negative prompt",
-            "NoobAI quality tags",
-            "no instruction following"
-          ],
-          "workflows": [
-            "sdxl-visionmaster-pro-v3",
-            "sdxl-visionmaster-pro-v3-img2img",
-            "sdxl-visionmaster-pro-v3-inpaint"
-          ],
-          "default": "",
-          "status": "downloaded and verified on gx10-02; never loaded by ComfyUI yet",
-          "measured": "not measured; the first load is case src_vm of the IMG live acceptance"
-        }
-      ]
-    },
-    "gx-video": {
-      "runtime": "ComfyUI 0.35.0 behind gx-media-router 2.3 on gx10-02 (asynchronous jobs)",
-      "node": "gx10-02",
-      "vision": false,
-      "tools": false,
-      "uncensored": "yes: rzgar uncensored LightX2V 4-step LoRAs on both experts",
-      "startup": "on demand; the router frees other media models first",
-      "measured": "3.06 s 640x640 clips, 49 distinct frames: text-to-video 45 s, image-to-video 70 s, keyframe video edit 75-90 s (2026-09-17)",
-      "components": [
-        {
-          "role": "text-to-video experts",
-          "kind": "checkpoint",
-          "repository": "Wan 2.2 T2V-A14B fp8 (same file names as Comfy-Org/Wan_2.2_ComfyUI_Repackaged; revision not recorded at download)",
-          "file": "video/diffusion_models/wan2.2_t2v_{high,low}_noise_14B_fp8_scaled.safetensors",
-          "licence": "apache-2.0"
-        },
-        {
-          "role": "image-to-video experts",
-          "kind": "checkpoint",
-          "repository": "Comfy-Org/Wan_2.2_ComfyUI_Repackaged",
-          "revision": "c4f60d30c55a624e35427060fdd217579a6c1d77",
-          "file": "video/diffusion_models/wan2.2_i2v_{high,low}_noise_14B_fp8_scaled.safetensors",
-          "licence": "apache-2.0"
-        },
-        {
-          "role": "uncensored 4-step LoRAs",
-          "kind": "lora",
-          "repository": "rzgar/Wan2.2_LightX2V_4Step_Uncensored",
-          "revision": "adc4ca92246994f55628e2aceef736f0a90443a8",
-          "file": "video/loras/Wan2.2_LightX2V_{high,low}_n54vv.safetensors",
-          "base_match": "Wan2.2 A14B T2V and I2V (card: both; key and shape check passed)",
-          "licence": "apache-2.0"
-        },
-        {
-          "role": "keyframe editor (video edit)",
-          "kind": "checkpoint",
-          "repository": "Comfy-Org/Qwen-Image-Edit_ComfyUI (Qwen-Image-Edit-2511)",
-          "file": "image/diffusion_models/qwen_image_edit_2511_fp8mixed.safetensors"
-        },
-        {
-          "role": "text encoder",
-          "kind": "text_encoder",
-          "file": "shared/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors"
-        },
-        {
-          "role": "VAE",
-          "kind": "vae",
-          "file": "shared/vae/wan_2.1_vae.safetensors"
-        },
-        {
-          "role": "workflows",
-          "kind": "comfyui_workflow",
-          "file": "legenex/media/workflows/wan22-t2v-a14b-uncensored, wan22-i2v-a14b-uncensored, wan22-v2v-keyframe-edit, wan22-v2v-a14b-light, wan22-v2v-a14b-uncensored"
-        }
-      ]
-    },
-    "gx-music": {
-      "node": "gx10-02",
-      "task": "music-generation",
-      "runtime": "ACE-Step 1.5 REST server (acestep.api_server) in gx-music-engine:acestep15-ca1e85f-t214, behind the gx-music supervisor (legenex/music)",
-      "runtime_repository": "https://github.com/ace-step/ACE-Step-1.5",
-      "runtime_revision": "ca1e85fe9430179831e6bc6be790c332190a3866",
-      "image": "gx-music-engine:acestep15-ca1e85f-t214",
-      "repository": "ACE-Step/acestep-v15-xl-turbo",
-      "revision": "d4a0b288b83ebb7e25a8c0b32c573c22e134e8ee",
-      "path": "/srv/models/music/acestep/checkpoints/acestep-v15-xl-turbo",
-      "family": "ACE-Step 1.5 XL (turbo, 8 steps, no CFG)",
-      "licence": "MIT (ACE-Step 1.5)",
-      "uncensored": null,
-      "memory": "24-28 GiB on gx10-02 while loaded; admission estimate 32 GiB + 30 GiB reserve",
-      "measured": "cold load 82-92 s; 12 s instrumental in 4.2 s; 30 s track in 11-46 s; bit-identical same-seed output with fixed metadata (Stage A, 2026-09-17)",
-      "startup": "supervisor starts at boot; the engine loads on the first job and unloads after 10 minutes idle",
-      "capabilities": [
-        "text2music",
-        "description (LM writes the song)",
-        "style tags",
-        "structured lyrics",
-        "instrumental",
-        "vocal language",
-        "duration 10-600 s",
-        "BPM",
-        "key",
-        "time signature",
-        "seed",
-        "batch 1-4",
-        "inference steps 1-20",
-        "ODE/SDE",
-        "LM planning",
-        "LM temperature",
-        "LM CFG",
-        "LM top-p",
-        "enhance prompt",
-        "reference audio",
-        "remix / cover",
-        "repaint (edit a section)",
-        "extend",
-        "WAV / FLAC / MP3, 48 kHz stereo"
-      ],
-      "not_supported": [
-        "extract",
-        "lego",
-        "complete (need ACE-Step XL base, not installed)",
-        "DiT CFG / guidance (turbo is distilled)"
-      ],
-      "components": [
-        {
-          "kind": "checkpoint",
-          "role": "DiT (music model)",
-          "repository": "ACE-Step/acestep-v15-xl-turbo",
-          "revision": "d4a0b288b83ebb7e25a8c0b32c573c22e134e8ee",
-          "file": "music/acestep/checkpoints/acestep-v15-xl-turbo"
-        },
-        {
-          "kind": "checkpoint",
-          "role": "5 Hz language model (song planner)",
-          "repository": "ACE-Step/acestep-5Hz-lm-4B",
-          "revision": "0a3ec94b557aea7d508da38b31cfe7341f6ff737",
-          "file": "music/acestep/checkpoints/acestep-5Hz-lm-4B"
-        },
-        {
-          "kind": "component",
-          "role": "VAE and Qwen3-Embedding-0.6B text encoder",
-          "repository": "ACE-Step/Ace-Step1.5",
-          "revision": "19671f406d603126926c1b7e2adc169acbcade22",
-          "file": "music/acestep/checkpoints/{vae,Qwen3-Embedding-0.6B}"
-        }
-      ],
-      "service": {
-        "port": 18820,
-        "unit": "gx-music.service",
-        "container": "gx-music",
-        "health": "http://192.168.100.11:18820/health"
-      }
-    },
-    "gx-voice": {
-      "node": "gx10-02",
-      "task": "text-to-speech",
-      "runtime": "Qwen3-TTS 1.7B (transformers) in gx-voice-engine, behind the gx-voice supervisor (legenex/voice), port 18830",
-      "image": "gx-voice-engine",
-      "repository": "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice",
-      "revision": "0c0e3051f131929182e2c023b9537f8b1c68adfe",
-      "path": "/srv/models/voice/Qwen3-TTS-12Hz-1.7B-CustomVoice",
-      "family": "Qwen3-TTS 12 Hz 1.7B",
-      "licence": "apache-2.0",
-      "uncensored": null,
-      "memory": "9.45 GiB peak on a cold load, 6.5 GiB resident with one variant (measured 2026-09-17); admission estimate 12 GiB",
-      "measured": "cold start 35.0 s (3.5 s container + 31.5 s variant), warm variant switch 26-29 s, first audio 6.0-8.7 s, RTF 0.72-1.00; MemAvailable returned fully after unload (2026-09-17)",
-      "startup": "supervisor starts at boot; the engine loads on the first job and unloads when idle",
-      "capabilities": [
-        "tts",
-        "preset voices",
-        "custom voice",
-        "voice design",
-        "authorized reference voice cloning",
-        "saved voices",
-        "emotion/style instructions",
-        "dialogue segments",
-        "multiple takes",
-        "seed",
-        "speed",
-        "WAV/FLAC/MP3"
-      ],
-      "components": [
-        {
-          "kind": "checkpoint",
-          "role": "preset and saved-voice synthesis (CustomVoice)",
-          "repository": "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice",
-          "revision": "0c0e3051f131929182e2c023b9537f8b1c68adfe",
-          "file": "voice/Qwen3-TTS-12Hz-1.7B-CustomVoice"
-        },
-        {
-          "kind": "checkpoint",
-          "role": "voice design from a description (VoiceDesign)",
-          "repository": "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign",
-          "revision": "5ecdb67327fd37bb2e042aab12ff7391903235d3",
-          "file": "voice/Qwen3-TTS-12Hz-1.7B-VoiceDesign"
-        },
-        {
-          "kind": "checkpoint",
-          "role": "reference-prompt cloning (Base)",
-          "repository": "Qwen/Qwen3-TTS-12Hz-1.7B-Base",
-          "revision": "fd4b254389122332181a7c3db7f27e918eec64e3",
-          "file": "voice/Qwen3-TTS-12Hz-1.7B-Base"
-        },
-        {
-          "kind": "component",
-          "role": "12 Hz speech tokenizer",
-          "repository": "Qwen/Qwen3-TTS-Tokenizer-12Hz",
-          "revision": "7dd38ad4e9bad454aae9cd937d0cd577604fe229",
-          "file": "voice/Qwen3-TTS-Tokenizer-12Hz"
-        },
-        {
-          "kind": "component",
-          "role": "reference-audio transcription for cloning",
-          "repository": "openai/whisper-large-v3-turbo",
-          "revision": "41f01f3fe87f28c78e2fbf8b568835947dd65ed9",
-          "file": "voice/whisper-large-v3-turbo"
-        }
-      ],
-      "measured_footprint": {
-        "node": "gx10-02",
-        "cold_gib": 9.45,
-        "resident_gib": 6.5,
-        "startup_s": 35.0,
-        "measured": "2026-09-17",
-        "evidence": "/srv/logs/acceptance/build-v3/voi/footprint-20260917T191026Z/summary.json"
+      "max_context": 262144,
+      "serving_notes": {
+        "gpu_mem_util": 0.85,
+        "kv_bytes": 1073741824,
+        "max_num_batched_tokens": 2048,
+        "vllm_sparse_indexer_max_logits_mb": 256
       },
-      "service": {
-        "port": 18830,
-        "unit": "gx-voice.service",
-        "container": "gx-voice-engine",
-        "health": "http://192.168.100.11:18830/health"
-      }
-    },
-    "gx-call": {
-      "node": "gx10-02",
-      "task": "realtime-voice-conversation",
-      "runtime": "NVIDIA NemotronLabs VoiceChat 11B in gx-call-engine:voicechat-097dfe9-t215, behind the gx-call supervisor (legenex/call), port 18840",
-      "runtime_repository": "https://github.com/NVIDIA-NeMo/Speech",
-      "runtime_revision": "097dfe9e2f55baf653b83035868bdc89849f1b47",
-      "image": "gx-call-engine:voicechat-097dfe9-t215",
-      "repository": "nvidia/NVIDIA-NemotronLabs-VoiceChat-11B",
-      "revision": "a4c40ca5b4fe77db13e9840ca4a2b91becf030c8",
-      "path": "/srv/models/voicechat/NVIDIA-NemotronLabs-VoiceChat-11B",
-      "family": "NemotronLabs VoiceChat 11B",
-      "licence": "openmdw-1.1",
-      "uncensored": null,
-      "memory": "34.5 GiB resident on gx10-02 while a call is up (measured 2026-09-18); admission estimate 48 GiB + 30 GiB reserve",
-      "measured": "cold load 74-104 s; first audio 1.2 s after the caller stops speaking; the engine unloads cleanly and MemAvailable returns (2026-09-18)",
-      "startup": "supervisor starts at boot; the engine loads when a call session opens and unloads when idle",
-      "capabilities": [
-        "realtime speech-to-speech",
-        "turn taking",
-        "interruptions",
-        "tool calls",
-        "call agents",
-        "transcripts",
-        "dispositions",
-        "recordings"
-      ],
-      "components": [
-        {
-          "kind": "checkpoint",
-          "role": "speech-to-speech conversation model",
-          "repository": "nvidia/NVIDIA-NemotronLabs-VoiceChat-11B",
-          "revision": "a4c40ca5b4fe77db13e9840ca4a2b91becf030c8",
-          "file": "voicechat/NVIDIA-NemotronLabs-VoiceChat-11B"
-        }
-      ],
-      "depends_on": [
-        {
-          "role": "text backbone the VoiceChat engine loads with the speech model",
-          "repository": "nvidia/NVIDIA-Nemotron-Nano-9B-v2",
-          "revision": "6533e8de2c68e4536bf7c411d7a3ce5734111476",
-          "file": "voicechat/hf-cache"
-        }
-      ],
-      "measured_footprint": {
-        "node": "gx10-02",
-        "resident_gib": 34.5,
-        "startup_s": 104.0,
-        "first_audio_s": 1.2,
-        "measured": "2026-09-18"
-      },
-      "service": {
-        "port": 18840,
-        "unit": "gx-call.service",
-        "container": "gx-call-engine",
-        "health": "http://192.168.100.11:18840/health"
-      }
-    },
-    "gx-live": {
-      "node": "gx10-02",
-      "task": "realtime-omnimodal-conversation",
-      "runtime": "transformers 4.51.0 remote code (MiniCPMO) on torch 2.14.0+cu130, SDPA bfloat16 (no flash-attn on sm_121), in gx-live-engine:minicpmo45-503e754-t214, behind the gx-live supervisor (legenex/live), port 18850",
-      "image": "gx-live-engine:minicpmo45-503e754-t214",
-      "repository": "openbmb/MiniCPM-o-4_5",
-      "revision": "503e754207c94da6bb26850b4469f367c9ea3582",
-      "path": "/srv/models/live/MiniCPM-o-4_5",
-      "family": "MiniCPM-o 4.5",
-      "licence": "apache-2.0",
-      "uncensored": null,
-      "memory": "not measured yet",
-      "measured": "cold load 34 GiB / 31 GiB resident / 102 s startup on gx10-02 (probe 1, 2026-09-17); half-duplex streaming speech 1.5-1.9x realtime, ASR 1.4 s for 4 s of speech",
-      "startup": "supervisor starts at boot; the engine loads when a live session opens and unloads when idle",
-      "capabilities": [
-        "realtime speech conversation",
-        "barge-in",
-        "live camera vision",
-        "image understanding",
-        "ASR",
-        "tool calls",
-        "delegation to the text aliases"
-      ],
-      "notes": [
-        "Native full-duplex (as_duplex) is not realtime on GB10 (1.5-1.6 s per 1 s unit while speaking); the shipped mode is VAD turn-taking with barge-in over a full-duplex transport. See coordination/build-v3/liv.md."
-      ],
-      "components": [
-        {
-          "kind": "checkpoint",
-          "role": "omni-modal conversation model",
-          "repository": "openbmb/MiniCPM-o-4_5",
-          "revision": "503e754207c94da6bb26850b4469f367c9ea3582",
-          "file": "live/MiniCPM-o-4_5"
-        }
-      ],
-      "measured_footprint": {
-        "node": "gx10-02",
-        "cold_gib": 34.0,
-        "resident_gib": 30.0,
-        "startup_s": 128.0,
-        "measured": "2026-09-17",
-        "evidence": "/srv/logs/acceptance/build-v3/liv/acceptance"
-      },
-      "quantization": "none (bf16)",
-      "languages": [
-        "en",
-        "zh"
-      ],
-      "protocol": "gx-live.v1",
-      "concurrent_sessions": 1,
-      "service": {
-        "port": 18850,
-        "unit": "gx-live.service",
-        "container": "gx-live-engine",
-        "health": "http://192.168.100.11:18850/health"
+      "identity": {
+        "repository": "dealignai/DeepSeek-V4.1-Flash-UNCENSORED-EXL3-2.9bpw",
+        "revision": "8a27b35fc5b145fa05ee965c7d7b243b047915f7",
+        "base_model": "deepseek-ai/DeepSeek-V4.1-Flash",
+        "arch": "DeepseekV41ForCausalLM",
+        "quantization": "EXL3 2.9bpw (mostly EXL3 I16)",
+        "parameters": "105.2B",
+        "modalities": "multimodal; text and image input, text output, tool calls, reasoning",
+        "licence": "mit",
+        "vision_tags": ["multimodal", "vision"],
+        "weights": "39 EXL3 shards, 210.67 GiB used storage; still needs the native Engram 47+48 source at engram_dir",
+        "verified": "2026-09-27: sha 8a27b35fc5b145fa05ee965c7d7b243b047915f7, MIT, multimodal, deepseek_v41 arch read from the live Hugging Face API; uncensoring verified behaviorally by ops/uncensor-verify"
       }
     }
   },
-  "workflow_models": {
-    "qwen-image-2512-uncensored": "gx-image",
-    "qwen-image-2512-lightning": "gx-image",
-    "qwen-image-2512-quality": "gx-image",
-    "qwen-image-edit-2511": "gx-image",
-    "qwen-image-edit-2511-masked": "gx-image",
-    "qwen-image-edit-2511-transform": "gx-image",
-    "sdxl-visionmaster-pro-v3": "gx-image",
-    "sdxl-visionmaster-pro-v3-img2img": "gx-image",
-    "sdxl-visionmaster-pro-v3-inpaint": "gx-image",
-    "wan22-t2v-a14b-uncensored": "gx-video",
-    "wan22-t2v-a14b-lightning": "gx-video",
-    "wan22-i2v-a14b-uncensored": "gx-video",
-    "wan22-v2v-keyframe-edit": "gx-video",
-    "wan22-v2v-a14b-light": "gx-video",
-    "wan22-v2v-a14b-uncensored": "gx-video"
+  "aliases": {
+    "gx-max": {
+      "model": "dsv41-flash-exl3-uncensored",
+      "runtime": "mia-dsv41",
+      "mode": "direct",
+      "description": "Explicit DeepSeek V4.1 Flash (uncensored)"
+    },
+    "gx-auto": {
+      "model": "dsv41-flash-exl3-uncensored",
+      "runtime": "mia-dsv41",
+      "mode": "auto",
+      "description": "Profile/reasoning auto-selection"
+    }
+  },
+  "profiles": {
+    "fast": {
+      "max_num_seqs": 1,
+      "spec_method": "dspark",
+      "dspark_tokens": 3,
+      "max_model_len": 600000,
+      "reasoning_default": "medium",
+      "target": "single interactive"
+    },
+    "balanced": {
+      "max_num_seqs": 2,
+      "spec_method": "dspark",
+      "dspark_tokens": 3,
+      "max_model_len": 600000,
+      "reasoning_default": "medium",
+      "target": "AgentOS default, 2 gens"
+    },
+    "swarm": {
+      "max_num_seqs": 4,
+      "spec_method": "none",
+      "max_model_len": 262144,
+      "reasoning_default": "low",
+      "target": "many logical agents, 4 gens"
+    },
+    "deep": {
+      "max_num_seqs": 2,
+      "spec_method": "dspark",
+      "dspark_tokens": 3,
+      "max_model_len": 600000,
+      "reasoning_default": "max",
+      "target": "architecture/review, 1-2 streams"
+    },
+    "long": {
+      "max_num_seqs": 1,
+      "spec_method": "dspark",
+      "max_model_len": 600000,
+      "reasoning_default": "high",
+      "target": "large repo context, TTFT warn"
+    },
+    "custom": {
+      "bounded": true,
+      "max_num_seqs": [1, 4],
+      "max_model_len": [8192, 600000],
+      "reasoning_default": "high",
+      "target": "advanced, bounded"
+    }
+  },
+  "reasoning": {
+    "levels": ["none", "minimal", "low", "medium", "high", "xhigh", "max"],
+    "mapping": {
+      "none": {"enable_thinking": false},
+      "minimal": {"enable_thinking": false},
+      "low": {"reasoning_effort": 50},
+      "medium": {"reasoning_effort": 62},
+      "high": {"reasoning_effort": 75},
+      "xhigh": {"reasoning_effort": 90},
+      "max": {"reasoning_effort": 100}
+    },
+    "numeric_range": [1, 100]
+  },
+  "capabilities": {
+    "vision": true,
+    "tools": true,
+    "structured_output": true,
+    "reasoning": true
   }
 }

@@ -1,20 +1,16 @@
 # ==============================================================================
-# LiteLLM — the single OpenAI-compatible gateway for the gx cluster
+# LiteLLM — the single OpenAI-compatible gateway for the gx cluster (V4.1)
 # ==============================================================================
-# Runs on NODE 1 (gx10-01), container port 4000.
-# Public logical modes (the only aliases operators and apps should pick):
+# Runs on NODE 1 (gx10-01), container port 4000. Public aliases, the ONLY two:
 #
-#   gx-mini    gx-code    gx-auto    gx-max
+#   gx-max    gx-auto
 #
-# gx-code-01 and gx-code-02 are internal workers required by gx-code load-
-# balancing and by gx-max dual-worker (solver + reviewer). They stay in this
-# file so the orchestrator can address a specific node. They are not primary
-# user-facing modes.
-#
-# Retired from the gateway (source remains in git): gx-fast, gx-reason,
-# gx-image, gx-video, gx-voice, gx-music. llama-swap on node 2 still accepts
-# the historical upstream id "gx-reason" as an alias of gx-code; do not
-# rename that llama-swap alias without updating the gx-code-02 block below.
+# Both resolve to the lead's orchestrator on :18900, which owns the request
+# queue, profile/reasoning selection and the DeepSeek V4.1 Flash EXL3 runtime
+# (Mia kit, served model id DeepSeek-v4.1-Flash-EXL3, OpenAI loopback :8888).
+# The retired L-6/L-10 alias set (gx-mini, gx-code, gx-fast, gx-reason and the
+# media aliases) is deleted; its history lives under git tag
+# pre-deepseek-v41-rebuild-20260927.
 #
 # ------------------------------------------------------------------------------
 # SECRETS
@@ -23,34 +19,30 @@
 # NO secret, and no credential-bearing URL, may ever appear in this file.
 # See legenex/gateway/.env.sample for the variables and how to generate them.
 #
+# Virtual keys (rpms / parallel-request caps / model budgets per consumer, e.g.
+# hermes, open-webui, gx-computer) are managed in the LiteLLM DATABASE via the
+# admin UI, deliberately NOT in this file. Trim each key's model list to
+# {gx-max, gx-auto} when this file is first deployed.
+#
 # ------------------------------------------------------------------------------
 # WHERE EACH ALIAS ACTUALLY GOES
 # ------------------------------------------------------------------------------
-#   gx-mini     -> node 1 llama-swap  http://gx-llama-swap-node01:8080/v1   (compose DNS)
-#   gx-code     -> node 1 llama-swap gx-code + node 2 llama-swap (fabric)
-#   gx-code-01  -> node 1 llama-swap  http://gx-llama-swap-node01:8080/v1
-#   gx-code-02  -> node 2 llama-swap  http://192.168.100.11:28080/v1        (RoCE fabric A)
-#   gx-max      -> orchestrator http://host.docker.internal:18900/v1 (dual-worker)
-#   gx-auto     -> orchestrator http://host.docker.internal:18900/v1
+#   gx-max  -> orchestrator http://host.docker.internal:18900/v1  (mode direct)
+#   gx-auto -> orchestrator http://host.docker.internal:18900/v1  (mode auto)
 #
-# host.docker.internal resolves to the host gateway (docker-compose.gateway.yml
-# sets extra_hosts: host-gateway). From the HOST's point of view the orchestrator
-# is 127.0.0.1:18900; from inside this container 127.0.0.1 would be the container
-# itself, which is why the alias is required. Same endpoint, correct addressing.
-#
-# Model traffic to node 2 goes over the ConnectX/RoCE fabric (192.168.100.x)
-# ONLY. Tailscale carries management/SSH and must never appear in this file.
+# The orchestrator accepts BOTH alias names as the model id and maps them to
+# the served model id DeepSeek-v4.1-Flash-EXL3 (registry
+# legenex/models/registry.json, schema 2). host.docker.internal resolves to
+# the host gateway (docker-compose.gateway.yml sets extra_hosts: host-gateway).
 #
 # ------------------------------------------------------------------------------
-# gx-max SAFETY
+# NO SILENT FALLBACK — READ THIS
 # ------------------------------------------------------------------------------
-# gx-max default is dual-worker (solver gx-code-01 + reviewer gx-code-02) via
-# the orchestrator. Optional DeepSeek SGLang TP=2 remains on disk as
-# GX_MAX_MODE=deepseek and must still never be pointed at :30000 from here.
-# gx-max has NO fallbacks. If the cluster cannot serve it, the request must FAIL
-# — silently answering from a different model would be worse than an error.
+# There is exactly ONE model family. If the cluster cannot serve a request, it
+# must FAIL with an error — silently answering from a different model would be
+# worse than an error, and gx-max must never fall back to the stock pack.
 # Enforced globally below: num_retries 0, fallbacks [], context_window_fallbacks
-# [], content_policy_fallbacks [].
+# [], content_policy_fallbacks []. Do not add entries to any of these lists.
 # ==============================================================================
 
 general_settings:
@@ -58,6 +50,11 @@ general_settings:
   # Required. Every API call needs Authorization: Bearer <this key> (or a
   # virtual key minted from it). Sourced from the environment only.
   master_key: os.environ/LITELLM_MASTER_KEY
+
+  # LiteLLM proxy database (keys, budgets, usage, admin UI sessions). Assembled
+  # from POSTGRES_* by docker-compose.gateway.yml; prompt/completion bodies are
+  # never stored (turn_off_message_logging below).
+  database_url: os.environ/DATABASE_URL
 
   # Admin UI credentials are supplied to the container as UI_USERNAME /
   # UI_PASSWORD environment variables and are intentionally NOT referenced here,
@@ -74,107 +71,22 @@ general_settings:
   store_model_in_db: false
 
   # --- health ---------------------------------------------------------------
-  # Background health checks are OFF. LiteLLM probing every model would make
-  # llama-swap cold-start every model at once and exhaust unified memory.
+  # Background health checks are OFF. LiteLLM probing the orchestrator would
+  # add queue noise and can wake the two-node runtime for no user request.
   # /health/liveliness and /health/readiness still work (they do not touch
   # upstreams); /health is authenticated.
   background_health_checks: false
   health_check_interval: 0
   health_check_details: false
 
-  # --- rate limiting / back-pressure ----------------------------------------
-  # Single shared semaphore across the whole proxy. Excess requests are rejected
-  # with 429 rather than queued into a cold-start stampede.
-  global_max_parallel_requests: 32
-  max_request_size_mb: 160
-  max_response_size_mb: 160
-
 model_list:
 
   # ===========================================================================
-  # gx-mini — small, fast, multimodal, uncensored. Node 1, llama.cpp, resident.
+  # gx-max — explicit DeepSeek V4.1 Flash (uncensored), mode "direct".
   # ===========================================================================
-  # HauhauCS/Qwen3.5-4B-Uncensored-HauhauCS-Aggressive @ c09cdbcdb1fe, Q4_K_M
-  # + BF16 mmproj (D-030). Verified 2026-09-17: ~52 tok/s, vision, tools.
-  # llama-swap preloads it (ttl 0); it survives heavy-model swaps.
-  - model_name: gx-mini
-    litellm_params:
-      model: openai/gx-mini
-      api_base: "http://gx-llama-swap-node01:8080/v1"
-      api_key: os.environ/GX_SWAP_API_KEY
-      drop_params: true
-      # llama.cpp's STREAMING tool-call parser intermittently fails on complex
-      # tool calls; its non-streaming parser is reliable. fake_stream makes
-      # LiteLLM call llama.cpp non-streaming and fake-stream the buffered result.
-      fake_stream: true
-      extra_body:
-        chat_template_kwargs: {"enable_thinking": false}
-    model_info:
-      # llama.cpp --ctx-size 65536 --parallel 2 -> 32768 per request slot (verified live via
-      # /props and /slots, 2026-09-26; B-032). 24576 in + 8192 out = 32768.
-      max_input_tokens: 24576
-      max_output_tokens: 8192
-      supports_vision: true
-      supports_function_calling: true
-
-  # ===========================================================================
-  # gx-code — primary coding workers (independent, one per node)
-  # ===========================================================================
-  # Ornith-1.5-35B-A3B Q5_K_M llama.cpp on both nodes. LiteLLM load-balances
-  # the gx-code alias across gx-code-01 (gx10-01) and gx-code-02 (gx10-02).
-  # gx-code-01 / gx-code-02 exist so gx-max dual-worker can pin solver and
-  # reviewer. They are not primary operator modes.
-  - model_name: gx-code
-    litellm_params:
-      model: openai/gx-code
-      api_base: "http://gx-llama-swap-node01:8080/v1"
-      api_key: os.environ/GX_SWAP_API_KEY
-      drop_params: true
-    model_info:
-      max_input_tokens: 49152
-      max_output_tokens: 16384
-      supports_function_calling: true
-      supports_vision: true
-  - model_name: gx-code
-    litellm_params:
-      model: openai/gx-code
-      api_base: "http://192.168.100.11:28080/v1"
-      api_key: os.environ/GX_SWAP_API_KEY
-      drop_params: true
-      timeout: 2400
-    model_info:
-      max_input_tokens: 49152
-      max_output_tokens: 16384
-      supports_function_calling: true
-      supports_vision: true
-  - model_name: gx-code-01
-    litellm_params:
-      model: openai/gx-code
-      api_base: "http://gx-llama-swap-node01:8080/v1"
-      api_key: os.environ/GX_SWAP_API_KEY
-      drop_params: true
-    model_info:
-      max_input_tokens: 49152
-      max_output_tokens: 16384
-  - model_name: gx-code-02
-    litellm_params:
-      model: openai/gx-code
-      api_base: "http://192.168.100.11:28080/v1"
-      api_key: os.environ/GX_SWAP_API_KEY
-      drop_params: true
-      timeout: 2400
-    model_info:
-      max_input_tokens: 49152
-      max_output_tokens: 16384
-
-  # ===========================================================================
-  # gx-max — dual-worker solver + reviewer (default GX_MAX_MODE=dual-worker).
-  # ===========================================================================
-  # MUST go through the orchestrator on :18900. Dual-worker uses gx-code-01
-  # as solver and gx-code-02 as reviewer. Optional DeepSeek SGLang TP=2 is
-  # GX_MAX_MODE=deepseek and still must never be pointed at :30000 from here.
-  #
-  # NO FALLBACKS. Ever. A failed gx-max request returns an error.
+  # Plain pass-through to the orchestrator: no routing logic lives here, the
+  # orchestrator enqueues the request with the caller's (or default) profile
+  # and reasoning. NO FALLBACKS — a failed gx-max request returns an error.
   - model_name: gx-max
     litellm_params:
       model: openai/gx-max
@@ -184,57 +96,70 @@ model_list:
       include_reasoning: true
       supports_reasoning: true
       merge_reasoning_content_in_choices: true
+      # Queued + served end to end: a long architecture-grade generation can
+      # legitimately take tens of minutes behind the scheduler.
       timeout: 3600
       num_retries: 0
-      # Dual-worker is non-streaming; fake_stream lets OpenWebUI show the finished answer.
-      fake_stream: true
     model_info:
-      max_input_tokens: 49152
+      # Registry model dsv41-flash-exl3-uncensored, max_context 262144.
+      # The orchestrator applies the final context budget, so this is the
+      # advertised window minus a sane output allowance.
+      max_input_tokens: 245760
       max_output_tokens: 16384
+      mode: direct
+      uncensored: true
+      supports_vision: true
       supports_function_calling: true
+      supports_reasoning: true
+      description: Explicit DeepSeek V4.1 Flash (uncensored)
 
   # ===========================================================================
-  # gx-auto — tier routing. Node 1.
+  # gx-auto — profile/reasoning auto-selection, mode "auto".
   # ===========================================================================
-  # The routing LOGIC is the lead's, inside the orchestrator on :18900. This
-  # gateway deliberately implements none of it — no complexity hook, no
-  # auto_router, no semantic router. gx-auto is a plain pass-through so there is
-  # exactly one place where tier selection happens.
+  # Same single upstream; the orchestrator's autoroute maps intent headers
+  # (X-GX-Intent, forwarded by the gx_budget_hook) to (profile, reasoning).
+  # This gateway deliberately implements none of that logic — there is
+  # exactly one place where selection happens.
   - model_name: gx-auto
     litellm_params:
       model: openai/gx-auto
       api_base: "http://host.docker.internal:18900/v1"
       api_key: os.environ/GX_ORCHESTRATOR_API_KEY
       drop_params: true
+      include_reasoning: true
+      supports_reasoning: true
+      merge_reasoning_content_in_choices: true
       timeout: 3600
+      num_retries: 0
     model_info:
-      # gx-auto advertises gx-code's window. The orchestrator routes each
-      # request to a tier that HOLDS it and clamps max_tokens so input +
-      # output + margin fits that tier's window.
-      max_input_tokens: 49152
+      max_input_tokens: 245760
       max_output_tokens: 16384
-      supports_function_calling: true
+      mode: auto
+      uncensored: true
       supports_vision: true
+      supports_function_calling: true
+      supports_reasoning: true
+      description: Profile/reasoning auto-selection
 
 litellm_settings:
   drop_params: true
   set_verbose: false
 
-  # --- D-039: context budgeting + text latency metrics ----------------------
-  # gx-mini / gx-code: max_tokens is clamped so input + output +
-  # margin fits the served window, and an input that cannot fit is refused
-  # at once (400 context_length_exceeded, x-should-retry: false). Uses the
-  # orchestrator's budget module (mounted read-only). Also appends one
-  # privacy-safe timing line per text request to /srv/logs/gx-text/.
+  # --- attribution + context guard + text latency metrics -------------------
+  # gx_hooks.gx_budget_hook: forwards X-GX-* attribution headers to the
+  # orchestrator, applies a context-budget guard for the two aliases using the
+  # orchestrator's budget module (mounted read-only at /app/gx_lib), and
+  # appends one privacy-safe timing line per request (never prompt text).
   callbacks: ["gx_hooks.gx_budget_hook.proxy_handler_instance"]
 
-  # Long enough for a cold start of a large model behind llama-swap.
+  # Long enough for a queued + served request; the per-deployment `timeout`
+  # above is the one that matters per alias.
   request_timeout: 1800
 
   # --- NEVER silently substitute a model ------------------------------------
-  # This is the rule that protects gx-max, and it is applied to every alias:
-  # a failure surfaces as an error to the caller instead of being answered by a
-  # different model. Do not add entries to any of these lists.
+  # Applied to every alias: a failure surfaces as an error to the caller
+  # instead of being retried into the same (or, worse, a different) upstream.
+  # Do not add entries to any of these lists. See NO SILENT FALLBACK above.
   num_retries: 0
   fallbacks: []
   context_window_fallbacks: []
@@ -244,23 +169,28 @@ litellm_settings:
 
   # --- privacy-safe logging -------------------------------------------------
   # Prompts and completions are never written to logs or the spend database.
-  # Only metadata (model, token counts, latency, status) is retained.
+  # Only metadata (model, token counts, latency, status, attribution) is kept.
   turn_off_message_logging: true
   redact_user_api_key_info: true
 
-  # Guard against runaway repetition on long code/numeric generation.
-  # (Carried forward from the single-Spark base stack; DGX Spark community
-  # recommendation, forums.developer.nvidia.com/t/374423.)
-  repetition_penalty: 1.02
+  # --- concurrency ----------------------------------------------------------
+  # Requests QUEUE in the orchestrator's scheduler now (per-profile
+  # max_num_seqs, strict priority, round-robin across projects), so the
+  # gateway may hold more in-flight requests and let the scheduler enforce
+  # admission. 16 (raised from the old 8): still bounded so the gateway
+  # itself never becomes a second, dumber queue in front of the real one —
+  # the orchestrator is the single admission authority.
+  global_max_parallel_requests: 16
+  max_request_size_mb: 160
+  max_response_size_mb: 160
 
 router_settings:
   routing_strategy: simple-shuffle
   # Reinforces the no-silent-substitution rule at the router layer.
   num_retries: 0
-  # Do not park a model in cooldown after a failure — each alias is a single
-  # distinct upstream, so a cooldown only turns one failure into a burst of
-  # 429 "No deployments available" (seen 2026-09-17: `cooldown_time: 0` alone
-  # still cooled gx-reason down for 5 s after one failed start). D-039.
+  # Do not park a deployment in cooldown after a failure — each alias is a
+  # single distinct upstream, so a cooldown only turns one failure into a
+  # burst of 429 "No deployments available" (seen 2026-09-17; D-039).
   disable_cooldowns: true
   allowed_fails: 1000
   cooldown_time: 0
