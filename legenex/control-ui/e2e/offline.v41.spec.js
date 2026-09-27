@@ -70,8 +70,8 @@ test('overview: single-model facts, both nodes, queue and quick actions', async 
   for (const name of ['dsv41-flash-exl3-stock', 'dsv41-flash-exl3-uncensored', 'gx-max', 'gx-auto']) {
     await expect(main.locator('.model-tile .model-name').getByText(name, { exact: true })).toHaveCount(1);
   }
-  await expect(main.getByText('UNCENSORED')).toBeVisible();
-  await expect(main.getByText('PRODUCTION')).toBeVisible();
+  await expect(main.locator('.badge', { hasText: 'uncensored' }).first()).toBeVisible();
+  await expect(main.locator('.badge', { hasText: 'production' }).first()).toBeVisible();
   // queue from the scheduler stub
   await expect(main.getByText(/queued 2 · active 1/)).toBeVisible();
   // both rails with registry fabric IPs
