@@ -61,3 +61,31 @@ log tail). Next steps on resume: Phase 16-17 tests + benchmark, then Phase 18-20
 - All 6 workers green; e2e legacy retired; restore-normal.sh V4.1 (38 tests OK);
   dashboard backend live on :8088; orchestrator (new code) live on :18900 with
   scheduler; LiteLLM still running OLD config (recreate with new compose at P3).
+
+
+## 2026-09-27 19:0x — Gate A retry #3: headless via systemd unit (kit defaults)
+- Evidence: two resident-session boots failed on vLLM's free-memory check
+  (101.45 GiB free vs 103.38 needed @0.85; 102.2 vs 107.03 @0.88 earlier). The
+  user's console session (VS Code + kilo + droid ~8G) makes the head ~2G short
+  at every utilization that still fits KV. Worker rank loads FINE (torch_alloc
+  96.3G; NFS backend works: worker streamed weights over fabric, ~90s).
+- Action: restored kit defaults in mia-dsv41/.env (GPU_MEM_UTIL=0.88,
+  DSV41_BOOT_MARGIN_GIB=12 default; WEIGHT_SYNC=nfs + NFS_CLIENTS=192.168.100.11
+  stay — NFS backend proven, worker needs no local copy) and launched
+  `systemctl --user start gx-dsv41-bootstrap.service` (unit runs the same
+  dsv41-baseline-launch.sh headless: terminates ONLY the wayland session,
+  waits for >=104.5G, boots, writes /srv/logs/dsv41-baseline-READY/-FAILED).
+- THE GRAPHICAL SESSION WILL DIE (this Droid process with it). Expected. Resume
+  the mission after: check `ls /srv/logs/dsv41-baseline-*` and
+  `grep -a "runner\|dsv41-exl3" /srv/logs/dsv41-first-launch.log | tail`.
+- Weights are all staged; boot should take ~25 min (NFS load fast on worker,
+  head loads from page cache).
+- ON READY (Gate A continues): quick benchmark (ops/bench/run_bench.py
+  --suite quick --endpoint http://127.0.0.1:8888), record tok/s; then stop via
+  mia-dsv41/stop.sh + verify MemAvailable returns both nodes; then
+  systemctl --user start gx-dsv41-bootstrap.service again to prove clean
+  restart. THEN restart stopped services (litellm stays, wiki dashboards,
+  agentos, pageflo, gigpilot, financialos, open-webui, gx-computer).
+- Stopped services/containers to restart after READY: nick-wiki-dashboard,
+  agentos-control-center, agentos-supervisor (systemctl --user start);
+  gigpilot x5, financialos x3, pageflo x2, open-webui, gx-computer (docker start).
