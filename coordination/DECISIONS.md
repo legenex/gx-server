@@ -1600,3 +1600,53 @@ passes, ~5-minute outage — needs a window), B-035 locked-rows amendment,
 Cloudflare Always-Use-HTTPS/HSTS zone toggle + Access decision, Nous
 provider-side revocation (interactive login), and transcript cleanup after
 the swap rotation.
+
+## D-046 — Open WebUI / Computer restored after DeepSeek V4.1 drain; aliases reconciled to gx-max/gx-auto (2026-09-28)
+
+**Context.** `chat.legenex.co` returned Cloudflare 502 and `:8000` was blank.
+Root cause: `ops/dsv41-prestart-drain.sh` (part of the DeepSeek V4.1 Flash
+rebuild mission, see `state/DECISIONS.md` D-M1) stopped `open-webui` and
+`gx-computer` at 11:33 to free head-node memory for gx-max's boot; gx-max was
+cleanly released at 14:46 but the two app containers were never restarted.
+`cloudflared` was healthy throughout and correctly proxying to `:3000` — the
+502 was simply nothing listening.
+
+**Decided/done (within the locked table; L-1..L-10 already superseded for
+the alias count by the user-approved mission brief, D-M1 — nothing further
+changed here).**
+
+1. **Data verified untouched before any write:** `PRAGMA integrity_check` ok;
+   4 users, 59 chats, 277 messages, 1 memory, 3 files, 1 folder, 1 note;
+   canonical Nick Allen (`b7e76ad1-f055-45ba-8cdb-9ea80a0e2519`) unchanged.
+   Fresh backup:
+   `backups/open-webui/20260928T195959Z-pre-restart-after-dsv41-drain/`.
+2. **Both apps recreated from their existing external volumes**
+   (`open-webui`, `gx_computer_data` — neither was deleted, only the
+   containers had been removed): `docker compose -f
+   /opt/open-webui/compose.yaml up -d` and `docker compose -f
+   legenex/computer/docker-compose.computer.yml up -d`. Counts identical
+   post-recreate and after a subsequent restart. `chat.legenex.co` → 200
+   with the D-045 hardened headers; Computer → 200 on both `:8000`
+   endpoints; single Nick Allen identity, `GX-Cluster` workspace at
+   `/projects/gx-cluster`, read-only overlays intact.
+3. **Open WebUI reconciled to the live two-alias architecture.** Discovered
+   live (not from stale docs) that `gx-mini`/`gx-code` no longer exist as
+   LiteLLM aliases and `gx-llama-swap-node01` is gone — a deliberate,
+   already-committed, user-approved part of the DeepSeek V4.1 rebuild
+   (D-M1, git tag `pre-deepseek-v41-rebuild-20260927`). Rather than
+   resurrect the retired backend unilaterally, presented it to the user as
+   a material architecture conflict; user chose to reconcile. Open WebUI's
+   `openai.api_configs["0"].model_ids` trimmed to `[gx-auto, gx-max]`;
+   `model` rows for `gx-mini`/`gx-code` set `is_active=0` (deactivated, not
+   deleted — same pattern as the pre-existing `gx-fast`/`gx-reason` rows).
+4. **gx-max reboot for live verification** approved by the user with full
+   knowledge that `legenex/lifecycle/gx-max-start.sh` unconditionally
+   re-runs the same prestart drain before admission (non-bypassable), so
+   Open WebUI/Computer were stopped again for the boot and brought back up
+   afterward. See `state/HANDOFF.md` for the boot outcome and
+   `CURRENT_STATE.md` LATEST UPDATE for the full writeup.
+
+**Not decided here:** whether to ever restore gx-mini/gx-code (a real
+infra rebuild — `gx-llama-swap-node01` and its gx10-02 counterpart would
+need to come back) is left open; the user explicitly deferred it rather than
+approving it now.

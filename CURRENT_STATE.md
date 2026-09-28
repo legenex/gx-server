@@ -3,7 +3,59 @@
 **This file must always reflect reality.** If you are a new agent resuming this
 work, read this first, then ARCHITECTURE.md (what is locked), then BLOCKERS.md.
 
-## LATEST UPDATE — 2026-09-26, security cleanup completed (D-045)
+## LATEST UPDATE — 2026-09-28, Open WebUI + Computer restored after DeepSeek V4.1 drain (D-046)
+
+**Root cause (evidenced, not guessed).** The DeepSeek V4.1 Flash rebuild
+mission's `ops/dsv41-prestart-drain.sh` ran `docker stop open-webui` and
+`docker stop gx-computer` at 11:33 to free head-node memory for gx-max's
+boot (see `state/HANDOFF.md`, `state/gx-max-lifecycle.log` — 11:11:42 shows
+open-webui/gx-computer among the containers that made the first boot attempt
+fail on headroom). gx-max was cleanly released at 14:46 (`stop.sh`, not a
+crash), but nobody restarted the two app containers afterward. `cloudflared`
+stayed up throughout, correctly proxying `chat.legenex.co` → `localhost:3000`
+— hence the Cloudflare 502 (nothing listening) and the blank page on `:8000`.
+
+**Data integrity, before touching anything.** `PRAGMA integrity_check` = ok.
+Counts identical to the last known-good fingerprint: 4 users, 59 chats, 277
+messages (derived from `chat.history.messages`), 1 memory, 3 files, 1 folder,
+1 note. Canonical Nick Allen (`b7e76ad1-f055-45ba-8cdb-9ea80a0e2519`, admin)
+unchanged. Fresh backup taken before recreating anything:
+`/srv/projects/gx-cluster/backups/open-webui/20260928T195959Z-pre-restart-after-dsv41-drain/`
+(webui.db + counts.json + compose.yaml + image digest).
+
+**Repair.** `docker compose -f /opt/open-webui/compose.yaml up -d` (the
+external `open-webui` volume was untouched — only the container had been
+removed, not the volume) and `docker compose -f
+legenex/computer/docker-compose.computer.yml up -d`. Both external volumes
+(`open-webui`, `gx_computer_data`) reused as-is; no schema reset. Counts
+verified identical post-recreate and again after a container restart.
+`chat.legenex.co` → HTTP 200, real HTML, hardened response headers present
+(HSTS/nosniff/SAMEORIGIN/CORS pinned, matching the D-045 compose). Computer
+`http://100.105.214.61:8000` and `127.0.0.1:8000` → 200; single identity Nick
+Allen, workspace `GX-Cluster` at `/projects/gx-cluster`, read-only overlays
+(`legenex/control-ui` etc.) still enforced, `docs/` still writable.
+
+**Alias reconciliation (user decision, on discovering the conflict live).**
+`legenex/gateway/litellm/config.yaml` and `state/DECISIONS.md` D-M1 confirm
+gx-mini/gx-code were deliberately retired as part of the DeepSeek V4.1
+rebuild (git tag `pre-deepseek-v41-rebuild-20260927`; user-approved per the
+mission brief) — `gx-llama-swap-node01` no longer exists. This conflicted
+with the (now-stale) assumption that gx-mini/gx-code were still live. User
+chose to reconcile Open WebUI to the live two-alias reality rather than
+resurrect the retired backend: `openai.api_configs["0"].model_ids` trimmed
+from `[gx-auto, gx-mini, gx-code, gx-max]` to `[gx-auto, gx-max]`; `model`
+rows `gx-mini`/`gx-code` set `is_active=0` (same pattern already used for
+`gx-fast`/`gx-reason`) rather than deleted. Verified in the DB and via a
+container restart; data counts unchanged throughout.
+
+**gx-max verification.** On-demand acquire through a plain chat request does
+not auto-boot the model (immediate 503) — the real trigger is
+`legenex/lifecycle/gx-max-start.sh`, which unconditionally re-runs the same
+prestart drain before admission (non-bypassable by design). User approved a
+real boot for verification, accepting that Open WebUI/Computer would be
+stopped again for the drain and brought back up afterward.
+
+## UPDATE — 2026-09-26, security cleanup completed (D-045)
 
 Supersedes nothing below (the D-043 integration still stands, verified again
 after these changes: `verify.py --compaction` **38/38**, live, post-change).
