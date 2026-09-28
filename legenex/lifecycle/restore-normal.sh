@@ -69,4 +69,67 @@ curl -fsS -m 3 http://127.0.0.1:18900/health >/dev/null 2>&1 \
 # does not stay in "held" state.
 gx_n2_hold_clear gxmax || log "WARN: could not clear the node-2 gx-max hold"
 
+# ------------------------------------------------------ drained apps (B-039) --
+# ops/dsv41-prestart-drain.sh stops non-model consumers (open-webui,
+# gx-computer, and RDP units, runtime-masked so they cannot restart under
+# their own steam) to free MemAvailable for the gx-max load transient, and
+# records exactly what it touched in RESTORE_MARK. This V4.1 rewrite of
+# restore-normal.sh never consumed that marker, so those apps silently
+# stayed down after every gx-max release until someone noticed and restarted
+# them by hand (evidenced 2026-09-28: open-webui/gx-computer were down for
+# hours after a clean gx-max stop.sh release -- see CURRENT_STATE.md D-046
+# and coordination/BLOCKERS.md B-039). Consuming the marker here closes that
+# gap at its source instead of leaving it to be rediscovered every time.
+RESTORE_MARK="${RESTORE_MARK:-/srv/logs/dsv41-restore-after-boot.json}"
+if [ -f "${RESTORE_MARK}" ]; then
+  log "found drain restore marker ${RESTORE_MARK}; restoring what it stopped"
+  mapfile -t _drained_docker < <(python3 -c "
+import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+except Exception:
+    sys.exit(0)
+for name in d.get('docker', []):
+    print(name)
+" "${RESTORE_MARK}" 2>/dev/null)
+  for c in "${_drained_docker[@]:-}"; do
+    [ -n "${c}" ] || continue
+    if docker start "${c}" >/dev/null 2>&1; then
+      log "  restarted container ${c}"
+    else
+      log "  WARN: could not restart container ${c} (docker start failed; check it still exists)"
+    fi
+  done
+
+  mapfile -t _drained_units < <(python3 -c "
+import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+except Exception:
+    sys.exit(0)
+for name in d.get('units', []):
+    print(name)
+" "${RESTORE_MARK}" 2>/dev/null)
+  for u in "${_drained_units[@]:-}"; do
+    [ -n "${u}" ] || continue
+    # The drain runtime-masks these (systemctl --user mask --runtime) so
+    # nothing can start them mid-drain; undo exactly that, and no more --
+    # gnome-remote-desktop is socket/session-activated, restoring it to
+    # "unmasked" lets it start itself on the next real RDP connection rather
+    # than force-starting an interactive desktop service on its behalf.
+    if systemctl --user unmask --runtime "${u}" >/dev/null 2>&1; then
+      log "  unmasked ${u}"
+    else
+      log "  WARN: could not unmask ${u}"
+    fi
+  done
+
+  archived="${RESTORE_MARK}.applied-$(date -u +%Y%m%dT%H%M%SZ)"
+  mv -f "${RESTORE_MARK}" "${archived}" 2>/dev/null \
+    && log "  archived marker to ${archived}" \
+    || log "  WARN: could not archive ${RESTORE_MARK}"
+else
+  log "no drain restore marker present; nothing to restore beyond the control plane"
+fi
+
 log "normal operating state restored"
