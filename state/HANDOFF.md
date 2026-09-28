@@ -157,3 +157,34 @@ ON READY (Gate A continues):
 ON FAILED: read `tail /srv/logs/dsv41-first-launch.log`, fix narrowly, re-dispatch.
 GUI restore: console login at gdm (or reboot after stopping the model).
 
+## 2026-09-28 11:40 SAST — Gate A attempt #6 IN FLIGHT (SSH/VS Code, no RDP)
+
+Latest failed attempt (#5, 10:49) was NOT the env bug. Head CUDA check:
+Free 104.85 / 121.63 GiB vs GPU_MEM_UTIL 0.88 = 107.03 GiB. Runner thought
+already-headless (114.3 GiB) but GNOME/RDP/Chrome/PageFlo/Droid came back.
+Droid PID 1024481 was `docker compose up -d` in PageFlo during drain.
+
+Fixes now on disk (ops/ + ~/bin):
+- ops/dsv41-prestart-drain.sh: stop stale ranks via mia stop.sh, runtime-mask
+  gnome-remote-desktop, terminate wayland/x11 AND leftover closing sessions,
+  stop open-webui/gx-computer/pageflo, kill PageFlo host/dev/compose/buildx,
+  kill agent-browser chrome + droid, optional LiteLLM, wait for >=112 GiB
+  (target 116). Restore mark: /srv/logs/dsv41-restore-after-boot.json
+- ops/dsv41-baseline-launch.sh + ~/bin: full Gate A in the oneshot unit
+  (drain -> start -> 17*19 probe -> stop -> memory both nodes -> drain ->
+  start -> second probe). READY only if both probes return 323.
+- gx-max-start.sh calls the drain before admission.
+- GXMAX_CLEAN_START_MIN_AVAIL_GIB default 112.
+
+DISPATCHED 11:40:14: systemctl --user start gx-dsv41-bootstrap.service
+(disabled at boot). CUDA check PASSED this time: after init_device
+MemAvailable=108.81 GiB (need 107.03). load_model running, torch_alloc 69 GiB
+at t+10s. GPU_MEM_UTIL=0.88 KV=2684354560 unchanged.
+
+Disk for uncensored (do NOT delete stock until Gate A READY + commit):
+gx10-01 / 80G free (91%); stock model 197G + engram 196G. dealignai pack
+~197-210G needs reclaim of duplicates after Gate A evidence, not before.
+gx10-02 215G free. NFS weight backend stays.
+
+Do not restore PageFlo/open-webui/RDP while gx-max is starting or loaded.
+
