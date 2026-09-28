@@ -8,14 +8,14 @@ MIA="${MIA:-/home/legenex/Documents/Projects/Server/gx-cluster/mia-dsv41}"
 WORKER_SSH="${WORKER_SSH:-legenex-02@10.60.21.41}"
 TARGET_GIB="${DSV41_START_MEM_GIB:-116}"
 FLOOR_GIB="${DSV41_START_MEM_FLOOR_GIB:-112}"
-RESTORE_MARK="${RESTORE_MARK:-/srv/state/dsv41-restore-after-boot.json}"
+RESTORE_MARK="${RESTORE_MARK:-/srv/logs/dsv41-restore-after-boot.json}"
 LOG="${DSV41_DRAIN_LOG:-/srv/logs/dsv41-prestart-drain.log}"
 
 need() { awk '/^MemAvailable:/ { printf "%.1f", $2 / 1048576 }' /proc/meminfo; }
 ge() { awk -v a="$1" -v b="$2" 'BEGIN { exit !(a + 0 >= b + 0) }'; }
 log() { printf '[drain] %s %s\n' "$(date -Is)" "$*"; }
 
-mkdir -p /srv/state /srv/logs
+mkdir -p /srv/logs
 exec >>"$LOG" 2>&1
 
 STOPPED_DOCKER=()
@@ -81,6 +81,40 @@ if pgrep -f '/home/legenex/Documents/Projects/PageFlo/' >/dev/null 2>&1; then
   log "stopping PageFlo host dev processes"
   pkill -f '/home/legenex/Documents/Projects/PageFlo/' || true
   STOPPED_HOST+=(pageflo-dev)
+  sleep 1
+fi
+
+kill_pids() {
+  local p
+  for p in "$@"; do
+    [ -n "$p" ] || continue
+    [ "$p" = "$$" ] && continue
+    [ "$p" = "$PPID" ] && continue
+    kill "$p" 2>/dev/null || true
+  done
+}
+
+mapfile -t _compose_pids < <(pgrep -f '/usr/libexec/docker/cli-plugins/docker-compose|docker-buildx bake' || true)
+if [ "${#_compose_pids[@]}" -gt 0 ]; then
+  log "stopping docker compose/buildx pids: ${_compose_pids[*]}"
+  kill_pids "${_compose_pids[@]}"
+  STOPPED_HOST+=(pageflo-compose)
+  sleep 1
+fi
+
+mapfile -t _chrome_pids < <(pgrep -f 'user-data-dir=/tmp/agent-browser-chrome' || true)
+if [ "${#_chrome_pids[@]}" -gt 0 ]; then
+  log "stopping headless agent-browser chrome"
+  kill_pids "${_chrome_pids[@]}"
+  STOPPED_HOST+=(agent-browser-chrome)
+  sleep 1
+fi
+
+mapfile -t _droid_pids < <(pgrep -x droid || true)
+if [ "${#_droid_pids[@]}" -gt 0 ]; then
+  log "stopping droid pids: ${_droid_pids[*]}"
+  kill_pids "${_droid_pids[@]}"
+  STOPPED_HOST+=(droid)
   sleep 1
 fi
 
