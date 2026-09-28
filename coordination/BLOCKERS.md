@@ -1792,14 +1792,18 @@ applied (each needs the Cloudflare dashboard or an API token):
 3. `auth.jwt_expiry` from `4w` to something shorter, after Access is in place.
 4. Do not enable a `Secure` session cookie while `http://<tailnet-ip>:3000` is in use.
 
-## B-038 (S3) — orchestrator test-suite drift (pre-existing, not caused by D-044)
+## B-038 (S3) — CLOSED 2026-09-29 — orchestrator test-suite drift, resolved by the V4.1 rebuild's own fixture updates
 
-`orchestrator/tests` had 63 failing tests before this pass and has 54 now. They assert the retired
-gx-fast/gx-reason routing and the old SGLang default, and the fixtures predate
-`gxmax_mode`/`TextMetrics`. D-044 added and fixed the fixtures it needed and made the new
-authentication tests pass; the remaining failures compare identical to the baseline commit
-(`99f6b4a`) apart from tests that used to error before reaching their assertion. Control Center tests:
-21 failing, identical to the baseline.
+Originally: `orchestrator/tests` had 63 failing tests, then 54 after D-044 (asserting the retired
+gx-fast/gx-reason routing and the old SGLang default; fixtures predated `gxmax_mode`/`TextMetrics`).
+Control Center tests: 21 failing.
+
+**Closed, verified live 2026-09-29 during the swap/gx-max closeout (D-047):** both suites are now
+fully green — `cd legenex/orchestrator && python3 -m unittest discover -s tests -p "test_*.py"` →
+**247/247 OK**; `cd legenex/control-ui && python3 -m unittest discover -s tests` → **204/204 OK**.
+The DeepSeek V4.1 rebuild mission (git tag `pre-deepseek-v41-rebuild-20260927`) evidently updated
+these fixtures for the new architecture as part of that work; this pass only discovered and
+confirmed it, it did not do the fixing. No action needed.
 
 ## B-039 (S1) — RESOLVED 2026-09-28 23:09/23:14 — `/swapfile-sglang` recreated; root cause found (manual, not automated); fast detection added
 
