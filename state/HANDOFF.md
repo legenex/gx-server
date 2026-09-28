@@ -197,3 +197,25 @@ Bench: state/bench/gate-a-stock.jsonl — FAST/BALANCED/SWARM in registry + D-M5
 Next: replace head stock pack with dealignai uncensored (D-M6). Worker keeps
 local stock as recovery. Then LiteLLM gx-max/gx-auto real completions.
 
+## 2026-09-28 13:44 SAST — UNCENSORED PRODUCTION UP + LITELLM
+
+Head stock pack replaced (hardlinks deleted). Worker still has independent
+stock at /srv/models/dsv41/model (recovery). Engram shared.
+
+dealignai/DeepSeek-V4.1-Flash-UNCENSORED-EXL3-2.9bpw @8a27b35
+path=/srv/models/dsv41/uncensored 39/39 shards 197G
+shard20 sha256 ac7cd83a1452dc4c323adc57e36e3a14512577a09fa0f54b520815f11029778d
+(stock shard20 dfec038e… — weights differ; embeddings shards 01/39 match)
+
+mia-dsv41/.env MODEL_HOST=/srv/models/dsv41/uncensored GPU_MEM_UTIL=0.88
+TP=2 launch READY /srv/logs/dsv41-uncensored-READY 13:23
+/health 200, 17*19=323, fingerprint vllm-0.1.dev20904+g179dd0fa9-tp2-0829f620
+Coding is_prime OK. Tool call get_weather(Paris) OK.
+Textbook probes (SQLi/BoF/jailbreak-concept/lock) complied; no "as an AI" refusals.
+
+LiteLLM restored: gx-max -> 323, gx-auto -> 56 (real completions, not just /v1/models).
+Dashboard /api/ready ready=true. Orchestrator ok. Bootstrap unit disabled at boot.
+rank1-deadman armed on gx10-02 watching 192.168.100.10:29521 and :8888/health.
+
+Do NOT restore PageFlo/RDP while the model is loaded.
+

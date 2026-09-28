@@ -115,3 +115,16 @@ shard01 a4f64372b9b62839b74af245583d0bbfd716c183f1fa7b5c5efbf43ce1641e65
 shard39 eaa32d71ee333f78eec4b2974d830cd085357dec8359d93cb0fb08ad6e6d2934
 HF cache ~/.cache/huggingface/dsv41-exl3 is HARDLINKED to /srv/models/dsv41/model (nlink=2).
 Worker holds an independent local copy at /srv/models/dsv41/model (recovery rsync source).
+
+## 2026-09-28 — UNCENSORED PACK + LITELLM
+
+Downloaded dealignai/DeepSeek-V4.1-Flash-UNCENSORED-EXL3-2.9bpw revision
+8a27b35fc5b145fa05ee965c7d7b243b047915f7 -> /srv/models/dsv41/uncensored (197G, 39 shards).
+Head stock /srv/models/dsv41/model removed after Gate A (D-M6); worker copy kept.
+shard20 uncensored ac7cd83a… vs stock dfec038e… (not a filename-only swap).
+
+Uncensored TP=2 boot: start.sh rc=0, /health 200, 323, READY 13:23 SAST.
+Probes (thinking off): math 323; is_prime code; get_weather tool_call parsed;
+SQLi/BoF/jailbreak-concept/pin-tumbler textbook answers complied.
+LiteLLM :4000 ids gx-max,gx-auto. gx-max content 323. gx-auto content 56.
+rank1-deadman started on node2 13:44 SAST (DIST 192.168.100.10:29521, health :8888).
