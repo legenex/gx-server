@@ -154,6 +154,35 @@ class TestRoutingDecisions(OrchestratorHarness):
         self.assertEqual(self.upstream.last_request()["chat_template_kwargs"],
                          {"enable_thinking": False})
 
+    def test_auto_fast_default_disables_thinking_and_strips_tools(self):
+        status, headers, body = self.chat(_payload(
+            messages=[{"role": "user", "content": "What model are you running?"}],
+            tools=[{"type": "function", "function": {"name": "search_memories", "parameters": {}}},
+                   {"type": "function", "function": {"name": "list_memories", "parameters": {}}}],
+            max_tokens=8000,
+        ))
+        self.assertEqual(status, 200)
+        self.assertEqual(headers["X-GX-Profile"], "fast")
+        self.assertEqual(headers["X-GX-Reasoning"], "none")
+        sent = self.upstream.last_request()
+        self.assertEqual(sent["chat_template_kwargs"], {"enable_thinking": False})
+        self.assertNotIn("tools", sent)
+        self.assertEqual(sent.get("tool_choice"), "none")
+        self.assertEqual(sent["max_tokens"], 1024)
+
+    def test_direct_gx_max_does_not_strip_tools(self):
+        tools = [{"type": "function", "function": {"name": "search_memories", "parameters": {}}}]
+        status, headers, body = self.chat({
+            "model": "gx-max",
+            "messages": [{"role": "user", "content": "What model are you running?"}],
+            "tools": tools,
+            "max_tokens": 8000,
+        })
+        self.assertEqual(status, 200)
+        sent = self.upstream.last_request()
+        self.assertEqual(sent["tools"], tools)
+        self.assertEqual(sent["max_tokens"], 8000)
+
 
 class TestOverflowGate(OrchestratorHarness):
     def test_overflow_is_refused_before_any_acquisition(self):

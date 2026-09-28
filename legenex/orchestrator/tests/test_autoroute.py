@@ -34,7 +34,7 @@ class TestIntentHeader(unittest.TestCase):
 
     def test_intent_matrix(self):
         expected = {
-            "interactive": ("fast", "medium"),
+            "interactive": ("fast", "none"),
             "implementation": ("balanced", "medium"),
             "architecture": ("deep", "high"),
             "validation": ("deep", "max"),
@@ -91,10 +91,10 @@ class TestContextLengthRule(unittest.TestCase):
         self.assertEqual(d.reasoning, "medium")
 
     def test_long_context_keeps_the_intent_reasoning_level(self):
-        # interactive reasoning (medium) survives the long-context profile swap
+        # interactive reasoning (none) survives the long-context profile swap
         d = decide(chat("hi"), {"X-GX-Intent": "interactive"}, ctx=200_000)
         self.assertEqual(d.profile, "long")
-        self.assertEqual(d.reasoning, "medium")
+        self.assertEqual(d.reasoning, "none")
 
     def test_context_estimated_from_payload_when_not_supplied(self):
         payload = {"model": "gx-auto", "messages": [{"role": "user", "content": "x" * 400_000}]}
@@ -111,7 +111,51 @@ class TestInference(unittest.TestCase):
         d = decide(chat("hi"))
         self.assertEqual(d.intent, A.INTENT_INTERACTIVE)
         self.assertEqual(d.profile, "fast")
-        self.assertEqual(d.reasoning, "medium")
+        self.assertEqual(d.reasoning, "none")
+        self.assertFalse(d.allow_tools)
+
+    def test_simple_identity_question_is_fast(self):
+        d = decide(chat("What model are you running?"))
+        self.assertEqual(d.intent, A.INTENT_INTERACTIVE)
+        self.assertEqual(d.profile, "fast")
+        self.assertEqual(d.reasoning, "none")
+        self.assertFalse(d.allow_tools)
+        self.assertFalse(d.allow_memory_tools)
+
+    def test_simple_arithmetic_is_fast(self):
+        d = decide(chat("What is 17 * 19?"))
+        self.assertEqual(d.profile, "fast")
+        self.assertEqual(d.reasoning, "none")
+        self.assertFalse(d.allow_tools)
+
+    def test_ordinary_two_paragraph_question_is_fast(self):
+        q = (
+            "I have been thinking about how cities handle heat in summer. "
+            "Shade, water, and building materials all seem to matter.\n\n"
+            "Can you explain the main ideas in two short paragraphs?"
+        )
+        d = decide(chat(q))
+        self.assertEqual(d.intent, A.INTENT_INTERACTIVE)
+        self.assertEqual(d.profile, "fast")
+        self.assertEqual(d.reasoning, "none")
+
+    def test_attached_memory_tools_do_not_escalate_ordinary_chat(self):
+        d = decide(chat("What model are you running?", tools=[
+            {"type": "function", "function": {"name": "search_memories", "parameters": {}}},
+            {"type": "function", "function": {"name": "list_memory_paths", "parameters": {}}},
+            {"type": "function", "function": {"name": "read_file", "parameters": {}}},
+        ]))
+        self.assertEqual(d.profile, "fast")
+        self.assertFalse(d.allow_tools)
+
+    def test_explicit_memory_request_keeps_memory_tools(self):
+        d = decide(chat("What do you remember about my timezone?", tools=[
+            {"type": "function", "function": {"name": "search_memories", "parameters": {}}},
+        ]))
+        self.assertEqual(d.profile, "fast")
+        self.assertTrue(d.features.needs_tools)
+        self.assertTrue(d.allow_tools)
+        self.assertTrue(d.allow_memory_tools)
 
     def test_plain_coding_task_is_implementation(self):
         d = decide(chat("Fix the failing test in app.py"))
@@ -220,11 +264,12 @@ class TestLogDict(unittest.TestCase):
         for key in ("profile", "reasoning", "intent", "reason", "signals"):
             self.assertIn(key, out)
         self.assertEqual(out["profile"], "fast")
-        self.assertEqual(out["reasoning"], "medium")
+        self.assertEqual(out["reasoning"], "none")
+        self.assertFalse(out["allow_tools"])
 
     def test_summary_is_one_line(self):
         d = decide(chat("hi"))
-        self.assertIn("fast/medium", d.summary())
+        self.assertIn("fast/none", d.summary())
 
 
 class TestFingerprint(unittest.TestCase):
@@ -234,6 +279,52 @@ class TestFingerprint(unittest.TestCase):
         self.assertEqual(fp, A.request_fingerprint(dict(payload)))
         self.assertNotIn("secret", fp)
         self.assertEqual(len(fp), 16)
+
+
+class TestAutoPolicy(unittest.TestCase):
+    """FAST drops tools and caps output; BALANCED drops memory tools only."""
+
+    MEMORY = {"type": "function", "function": {"name": "search_memories", "parameters": {}}}
+    PATHS = {"type": "function", "function": {"name": "list_memory_paths", "parameters": {}}}
+    READ = {"type": "function", "function": {"name": "read_file", "parameters": {}}}
+
+    def test_fast_strips_all_tools_and_caps_output(self):
+        d = decide(chat("What model are you running?", tools=[self.MEMORY, self.READ], max_tokens=8000))
+        out = A.apply_auto_policy(chat("What model are you running?", tools=[self.MEMORY, self.READ], max_tokens=8000), d)
+        self.assertNotIn("tools", out)
+        self.assertEqual(out["tool_choice"], "none")
+        self.assertEqual(out["max_tokens"], A.FAST_MAX_OUTPUT)
+
+    def test_fast_sets_output_cap_when_missing(self):
+        d = decide(chat("hi"))
+        out = A.apply_auto_policy(chat("hi"), d)
+        self.assertEqual(out["max_tokens"], A.FAST_MAX_OUTPUT)
+
+    def test_balanced_keeps_coding_tools_strips_memory(self):
+        payload = chat("Fix the failing test in app.py", tools=[self.MEMORY, self.PATHS, self.READ])
+        d = decide(payload)
+        self.assertEqual(d.profile, "balanced")
+        self.assertTrue(d.allow_tools)
+        self.assertFalse(d.allow_memory_tools)
+        out = A.apply_auto_policy(payload, d)
+        names = [t["function"]["name"] for t in out["tools"]]
+        self.assertEqual(names, ["read_file"])
+
+    def test_deep_keeps_memory_tools(self):
+        payload = chat("Prove that the sorting routine is correct", tools=[self.MEMORY, self.READ])
+        d = decide(payload)
+        self.assertEqual(d.profile, "deep")
+        self.assertTrue(d.allow_memory_tools)
+        out = A.apply_auto_policy(payload, d)
+        names = [t["function"]["name"] for t in out["tools"]]
+        self.assertEqual(names, ["search_memories", "read_file"])
+
+    def test_gx_max_payload_shape_is_untouched_by_policy_helper_when_not_fast(self):
+        # apply_auto_policy is gx-auto only; a deep decision must not cap output.
+        payload = chat("Prove that the sorting routine is correct", max_tokens=8000)
+        d = decide(payload)
+        out = A.apply_auto_policy(payload, d)
+        self.assertEqual(out["max_tokens"], 8000)
 
 
 if __name__ == "__main__":

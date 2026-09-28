@@ -19,14 +19,19 @@ Inputs, in precedence order (ARCHITECTURE-V41 §3):
 
 Intent map (registry profiles; reasoning per intent):
 
-    interactive    -> fast / medium       (one stream, interactive latency)
-    implementation -> balanced / medium   (AgentOS default, 2 generations)
+    interactive    -> fast / none         (default: no thinking, no tools)
+    implementation -> balanced / medium   (coding/work; tools, no memory scan)
     architecture   -> deep / high         (1-2 streams, heavy reasoning)
     validation     -> deep / max           (review/audit work)
     debugging      -> deep / medium, max when the task shows hard-debugging
                       evidence (race conditions, deadlocks, flakiness...)
     burst          -> swarm / low          (many logical agents, throughput)
     long-context   -> long / high          (large prefill, TTFT warning)
+
+gx-auto defaults to FAST. Ordinary chat, identity, arithmetic and short
+questions stay there. Work verbs escalate to balanced; hard reasoning,
+architecture, debugging and review escalate to deep. Memory/search tools
+are forwarded only when the user actually asked to remember or recall.
 
 Feature extraction (envelope stripping, task-text isolation, reasoning
 indicators, tool-name scanning) is carried over verbatim in spirit from the
@@ -251,7 +256,7 @@ KNOWN_INTENTS: tuple[str, ...] = (
 #: authoritative for what each profile MEANS; this table only picks among
 #: registry profiles, so a registry edit moves the shapes, not the intents.
 INTENT_PROFILE: dict[str, tuple[str, str]] = {
-    INTENT_INTERACTIVE: ("fast", "medium"),
+    INTENT_INTERACTIVE: ("fast", "none"),
     INTENT_IMPLEMENTATION: ("balanced", "medium"),
     INTENT_ARCHITECTURE: ("deep", "high"),
     INTENT_DEBUGGING: ("deep", "medium"),
@@ -259,6 +264,10 @@ INTENT_PROFILE: dict[str, tuple[str, str]] = {
     INTENT_BURST: ("swarm", "low"),
     INTENT_LONG_CONTEXT: ("long", "high"),
 }
+
+#: FAST answers are short. OpenWebUI often sends a huge max_tokens; clamp it
+#: so decode stops instead of rambling.
+FAST_MAX_OUTPUT = 1024
 
 #: Above this approximate context (tokens) the `long` profile applies
 #: regardless of intent: prefill dominates and one stream is the right shape.
@@ -296,6 +305,29 @@ _ACTION_VERB = re.compile(
     r"investigate|diagnose|resolve|read|open|inspect|analy[sz]e|explain|design)\b",
     re.IGNORECASE,
 )
+#: Verbs that mean "do work", not ordinary chat. `explain`/`analyse` stay off
+#: this list so a two-paragraph question remains FAST.
+_WORK_VERB = re.compile(
+    r"\b(fix|implement|add|create|write|build|make|edit|modify|update|change|refactor|"
+    r"remove|delete|replace|migrate|convert|port|install|configure|deploy|debug|"
+    r"patch|generate|scaffold|document|lint|review|optimi[sz]e|rewrite|extend|"
+    r"investigate|diagnose|resolve|read|open|inspect)\b|"
+    r"\b(run|write|add|fix) tests?\b|\bunit tests?\b|\btest (the|this|my)\b",
+    re.IGNORECASE,
+)
+#: The user actually asked to remember, recall, or use tools. Ordinary
+#: questions must not explore memory just because the client attached tools.
+_TOOL_NEED = re.compile(
+    r"\b(remember|recall|memories)\b|"
+    r"\b(your|the|my) memory\b|"
+    r"\b(search|look up|look through|check|read|list) (your |the |my )?(memory|memories|notes)\b|"
+    r"\bwhat do you (remember|know about me)\b|"
+    r"\b(use|call|run) (a |the )?tools?\b|"
+    r"\b(search_memories|list_memories|list_memory_paths|read_memory_path)\b",
+    re.IGNORECASE,
+)
+_MEMORY_TOOL_NAME = re.compile(r"memor", re.IGNORECASE)
+_PROFILES_ALWAYS_MEMORY = frozenset({"deep", "long", "swarm"})
 
 
 def _tool_names(payload: Mapping[str, Any]) -> list[str]:
@@ -353,6 +385,7 @@ class RequestFeatures:
     burst_hit: str = ""
     coding_toolset: bool = False
     continuation: bool = False
+    needs_tools: bool = False
     indicators: tuple[str, ...] = ()
     signals: tuple[str, ...] = ()
 
@@ -368,6 +401,8 @@ class RouteDecision:
     reason: str
     profile_override: bool = False
     reasoning_override: bool = False
+    allow_tools: bool = True
+    allow_memory_tools: bool = False
 
     def as_log_dict(self) -> dict[str, Any]:
         f = self.features
@@ -379,6 +414,9 @@ class RouteDecision:
             "reason": self.reason,
             "profile_override": self.profile_override,
             "reasoning_override": self.reasoning_override,
+            "allow_tools": self.allow_tools,
+            "allow_memory_tools": self.allow_memory_tools,
+            "needs_tools": f.needs_tools,
             "approx_context_tokens": f.approx_context_tokens,
             "task_tokens": f.task_tokens,
             "reasoning_score": f.reasoning_score,
@@ -424,6 +462,7 @@ def extract_features(
     hard_debug, d_hits = _score(task, _COMPILED_HARD_DEBUG, density)
     validation, v_hits = _score(task, _COMPILED_VALIDATION, density)
     burst_hit = next((name for rx, name in _COMPILED_BURST if task and rx.search(task)), "")
+    needs_tools = bool(task and _TOOL_NEED.search(task))
 
     # Intent: header wins; otherwise infer from content.
     header_intent = intent_header.strip().lower()
@@ -441,6 +480,8 @@ def extract_features(
     signals += [f"validation:{h}" for h in v_hits]
     if burst_hit:
         signals.append(f"burst:{burst_hit}")
+    if needs_tools:
+        signals.append("needs_tools")
 
     return RequestFeatures(
         intent=intent,
@@ -453,6 +494,7 @@ def extract_features(
         burst_hit=burst_hit,
         coding_toolset=coding_toolset,
         continuation=continuation,
+        needs_tools=needs_tools,
         indicators=tuple(r_hits + d_hits + v_hits),
         signals=tuple(signals),
     )
@@ -471,8 +513,8 @@ def _infer_intent(
 
     conversational -> validation evidence -> burst shape -> hard-debugging
     -> debugging words -> architecture words -> pure-reasoning (proofs,
-    derivations, formal verification) -> implementation (the default work
-    shape; balanced is the AgentOS default profile for a reason).
+    derivations, formal verification) -> implementation (work verbs or an
+    agent tool loop) -> interactive (the gx-auto default: FAST, no thinking).
     """
     if not task.strip() and not continuation:
         # Nothing to read: a bare capability probe rides the interactive shape.
@@ -501,7 +543,11 @@ def _infer_intent(
         # A pure proof / derivation / formal-verification ask with no coding
         # verb: review-shaped thinking, not implementation.
         return INTENT_VALIDATION, True
-    return INTENT_IMPLEMENTATION, True
+    if continuation and coding_toolset:
+        return INTENT_IMPLEMENTATION, True
+    if task and _WORK_VERB.search(task):
+        return INTENT_IMPLEMENTATION, True
+    return INTENT_INTERACTIVE, True
 
 
 def decide(
@@ -552,6 +598,9 @@ def decide(
         reasoning = reasoning_override
         reason += "; reasoning overridden by X-GX-Reasoning"
 
+    allow_memory_tools = bool(features.needs_tools or profile in _PROFILES_ALWAYS_MEMORY)
+    allow_tools = not (profile == "fast" and not features.needs_tools)
+
     return RouteDecision(
         profile=profile,
         reasoning=reasoning,
@@ -560,4 +609,80 @@ def decide(
         reason=reason.lstrip(),
         profile_override=bool(profile_override),
         reasoning_override=bool(reasoning_override),
+        allow_tools=allow_tools,
+        allow_memory_tools=allow_memory_tools,
     )
+
+
+def _tool_items(payload: Mapping[str, Any], key: str) -> list[Any]:
+    items = payload.get(key)
+    return list(items) if isinstance(items, list) else []
+
+
+def _tool_name(item: Any) -> str:
+    if not isinstance(item, Mapping):
+        return ""
+    fn = item.get("function") if isinstance(item.get("function"), Mapping) else item
+    name = fn.get("name") if isinstance(fn, Mapping) else None
+    return name if isinstance(name, str) else ""
+
+
+def _strip_all_tools(body: dict[str, Any]) -> None:
+    body.pop("tools", None)
+    body.pop("functions", None)
+    body["tool_choice"] = "none"
+
+
+def _strip_memory_tools(body: dict[str, Any]) -> None:
+    had_tools = False
+    for key in ("tools", "functions"):
+        items = _tool_items(body, key)
+        if not items:
+            continue
+        had_tools = True
+        kept = [item for item in items if not _MEMORY_TOOL_NAME.search(_tool_name(item))]
+        if kept:
+            body[key] = kept
+        else:
+            body.pop(key, None)
+    if had_tools and not _tool_items(body, "tools") and not _tool_items(body, "functions"):
+        body["tool_choice"] = "none"
+
+
+def _cap_fast_output(body: dict[str, Any]) -> None:
+    present = False
+    for key in ("max_tokens", "max_completion_tokens"):
+        value = body.get(key)
+        if value is None:
+            continue
+        present = True
+        if isinstance(value, int) and not isinstance(value, bool) and value > FAST_MAX_OUTPUT:
+            body[key] = FAST_MAX_OUTPUT
+    if not present:
+        body["max_tokens"] = FAST_MAX_OUTPUT
+
+
+def apply_auto_policy(payload: Mapping[str, Any], decision: "RouteDecision | Mapping[str, Any]") -> dict[str, Any]:
+    """FAST/BALANCED tool and output policy. gx-max never calls this.
+
+    FAST: thinking is already off via reasoning=none; tools are dropped unless
+    the user asked for memory/tools; output is capped.
+    BALANCED: coding tools stay; memory tools drop unless requested.
+    DEEP/long/swarm: tools and memory stay.
+    """
+    body = dict(payload)
+    if isinstance(decision, RouteDecision):
+        profile = decision.profile
+        allow_tools = decision.allow_tools
+        allow_memory = decision.allow_memory_tools
+    else:
+        profile = str(decision.get("profile") or "")
+        allow_tools = bool(decision.get("allow_tools", True))
+        allow_memory = bool(decision.get("allow_memory_tools", False))
+    if not allow_tools:
+        _strip_all_tools(body)
+    elif not allow_memory:
+        _strip_memory_tools(body)
+    if profile == "fast":
+        _cap_fast_output(body)
+    return body

@@ -37,6 +37,7 @@ from dataclasses import asdict, dataclass, replace
 
 from . import budget as B
 from . import scheduler as SCHED
+from .autoroute import apply_auto_policy
 from .autoroute import decide as autoroute_decide
 from .autoroute import request_fingerprint
 from .config import CONFIG, Config
@@ -779,6 +780,9 @@ class Handler(BaseHTTPRequestHandler):
             self._send_error_json(400, str(err), "invalid_profile", NO_RETRY_HEADERS,
                                   **{"X-GX-Request-Id": request_id})
             return
+        # FAST: drop tools and cap output before the budget gate so prefill
+        # does not pay for unused memory/tool schemas. gx-max never does this.
+        payload = apply_auto_policy(payload, fields)
         record: dict[str, Any] = {
             "event": "decision",
             "ts": time.time(),
