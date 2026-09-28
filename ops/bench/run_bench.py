@@ -92,7 +92,10 @@ def _http_open(url: str, *, key: str = "", timeout: float = TIMEOUT_S, method: s
 def get_json(url: str, *, timeout: float = TIMEOUT_S) -> Any:
     try:
         with _http_open(url, timeout=timeout) as resp:
-            return json.loads(resp.read().decode("utf-8"))
+            raw = resp.read().decode("utf-8").strip()
+            if not raw:
+                return {}
+            return json.loads(raw)
     except Exception as exc:  # noqa: BLE001
         raise BenchError(f"GET {url}: {exc}") from None
 
