@@ -3,7 +3,116 @@
 **This file must always reflect reality.** If you are a new agent resuming this
 work, read this first, then ARCHITECTURE.md (what is locked), then BLOCKERS.md.
 
-## LATEST UPDATE — 2026-09-28, Open WebUI + Computer restored after DeepSeek V4.1 drain (D-046)
+## LATEST UPDATE — 2026-09-29 00:xx SAST, closeout: swap restored + root-caused, gx-max verified live, stale-config drift fixed (D-047, closes B-039)
+
+**Swap (B-039) — root cause found and fast-detection added, not just recreated.**
+`/swapfile-sglang` was already recreated (48G, active, in fstab, root:600) by the
+time this pass started; `journalctl`/`~/.bash_history` show the actual cause was
+**not** any script in this repo — `ops/dsv41-prestart-drain.sh` and every other
+automated path never touch swap. It was a deliberate, interactive, sudo-authenticated
+`swapoff && sed /etc/fstab && rm -f /swapfile-sglang` at 22:06:35 from a real TTY,
+immediately followed in the same shell history by testing the exact idempotent
+recreate snippet later staged as B-039's own suggested fix — evidence points to an
+earlier session reproducing the failure to validate the repair runbook, not a bug.
+Since no code path can be patched to prevent a human-authenticated `sudo rm`,
+what was added instead is fast **detection**: `legenex/host/gx-hostwatch.sh`
+(unprivileged, already running every 60s) now has a `check_swap()` step that
+alerts within one cycle if the swapfile ever goes missing or undersized again,
+instead of the previous gap where it was only ever caught on the next gx-max
+launch attempt. Full detail in `coordination/BLOCKERS.md` B-039.
+
+**gx-max booted through the real lifecycle, verified live, not just "container running."**
+`legenex/lifecycle/gx-max-start.sh` (thin wrapper around `mia-dsv41/start.sh`,
+vLLM TP=2, DeepSeek-V4.1-Flash-EXL3-2.9bpw) ran preflight → drain → admission →
+launch → health-verify with no bypass; READY at 23:25:14, ~9 min cold boot.
+Proven with real inference, not a health-check alone: direct engine call
+(`17*19=323`, correct `model` field, `system_fingerprint` tp2), gateway streaming
+(`curl -N` SSE, correct), gx-auto routing journal (real `context_limit:600000`,
+real token counts/tok-per-s), and gx-max/gx-auto/cptr-gx-cluster all answering
+correctly through the real production Open WebUI backend (as the canonical admin,
+via the same session-minting Open WebUI's own sign-in uses — see below) and
+through a real headless-Chrome browser against `https://chat.legenex.co` (disposable
+acceptance account, D-038 pattern, for gx-auto/gx-max; `cptr/gx-cluster` is
+deliberately admin-only per D-043 so was proven via the in-process admin path only).
+**Note on self-identity questions:** gx-max answered "0xKitkat/Ornith-1.5-35B..." and,
+on a repeat, "GPT-4" when asked its own underlying model name — reproduced with an
+identical answer pattern calling the vLLM engine directly (bypassing every layer of
+routing), so this is model self-confabulation (a known behavior of uncensored
+fine-tunes), not a routing or config bug. Arithmetic, the API `model` field, and
+`system_fingerprint` are the reliable signals and all check out.
+
+**Real browser finding, narrow, not blocking:** a near-instant single-token-ish reply
+(e.g. trivial arithmetic) can arrive with `</think>` and the visible answer in the
+*same* SSE delta; Open WebUI's frontend then appears to render nothing visible (the
+whole delta gets treated as reasoning). A realistic multi-chunk reply (asked the
+model to explain something in two sentences) rendered correctly ("Thought for 2
+seconds" then the real answer), and this is Open WebUI's own (0.11.4) frontend
+parsing, not something in this repo to patch. Left for a human to decide whether to
+raise upstream or work around; not a blocker for real conversational use.
+
+**OpenWebUI/Computer restore gap fixed at the source (not just restarted by hand).**
+`legenex/lifecycle/restore-normal.sh` was rewritten for V4.1 on 2026-09-27 and never
+learned about `ops/dsv41-prestart-drain.sh`'s `RESTORE_MARK` file — it restored only
+the node-1 control plane, so anything the drain stopped (open-webui, gx-computer,
+runtime-masked RDP units) silently stayed down after every gx-max release. This is
+the literal mechanism behind D-046's incident and, unfixed, would have repeated
+after this pass's own gx-max boot too. `restore-normal.sh` now reads the marker,
+restarts exactly what was drained (`docker start`, not a redeploy), unmasks the RDP
+units without force-starting them, and archives the marker after use. Verified live:
+running it (which this pass needed anyway, to bring the apps back up) restored both
+containers, `chat.legenex.co` → 200, data counts unchanged.
+
+**Data preservation, verified via read-only queries against the real production DB,
+matching the last known-good fingerprint exactly:** 4 users, 59 chats, 277 messages,
+1 memory, 3 files, 1 folder, 1 note; canonical Nick Allen
+(`b7e76ad1-f055-45ba-8cdb-9ea80a0e2519`, admin, 59 of the 59 chats) unchanged
+throughout, including after gx-max's boot/drain cycle and the provisioning fix below.
+
+**Computer was offering two retired models; compaction was pointed at a dead one —
+both were live production bugs until this pass, now fixed via the normal
+provisioning path.** `legenex/computer/tools/provision.py`'s `GX_COMPUTER_MODELS`/
+`MODEL_ORDER` still listed `gx-mini`/`gx-code` (retired 2026-09-27) — Computer's own
+`/api/chats/models` was actually offering them live, and selecting either would have
+failed since the gateway (`PUBLIC_ALIASES = (gx-max, gx-auto)`) no longer serves
+them. Separately, and more seriously, the **live** Open WebUI
+`chat.context_compaction.model` config was still `gx-mini` — any real conversation
+crossing the 20000-token threshold would have tried to summarise through a model
+that no longer exists. Fixed at the source (`GX_COMPUTER_MODELS = ["gx-auto"]`,
+`COMPACTION.CONTEXT_COMPACTION_MODEL = "gx-auto"`; gx-max stays deliberately excluded
+from Computer per D-043/D-044) and re-applied through `provision.py` (idempotent,
+sanctioned) rather than hand-patched — verified live afterward:
+`/api/chats/models` → `["gx-auto"]`, DB `chat.context_compaction.model` → `"gx-auto"`,
+data counts still unchanged.
+
+**`ops/git-sync/integrity-audit.sh` had three dead entries in its `CRITICAL` file
+list** (`docker-compose.node02.yml`, `llama-swap/node0{1,2}.yaml`) — files removed
+with the llama-swap retirement (`state/CLEANUP-EVIDENCE-20260927.md`) that the
+audit's own file list was never updated to drop, so it was failing on a correctly
+completed retirement rather than a real integrity problem. Removed from the list
+(not resurrected). Audit now: `PASS=16 WARN=2 FAIL=1` on gx10-01. The one remaining
+FAIL (`gx-litellm media key differs from .env`) and one of the two WARNs
+(`open-webui gx-* identity entries differ from the registry`) are **not** artifacts
+of this pass:
+* the media-key check is a symptom of the already-flagged, still-open **B-035**
+  drift (the live gateway now serves only `gx-max`/`gx-auto`; the media-router
+  wiring this check expects was dropped along with everything else B-035 already
+  described as undecided) — fixing it for real means resurrecting media routing or
+  formally retiring L-10's media aliases, either of which needs the human, not a
+  silent fix here;
+* the identity-registry check invokes `gx_control_ui.owui_identity`, whose source
+  no longer exists in the repo (only a stale `.pyc` survives in the abandoned
+  `.kilo/worktrees/spurious-temper/` worktree) — a pre-existing tooling gap, not a
+  live defect, and out of this pass's scope to reconstruct.
+The other WARN (0 uncommitted paths, "autosync pending?") was this pass's own edit
+to the audit script, settled by the next autosync cycle.
+
+**Git:** all of this pass's fixes (swap detection, restore-normal.sh,
+provision.py, integrity-audit.sh) went through the normal autosync pipeline —
+gx10-01 HEAD stayed equal to `origin/main` throughout, no manual push needed.
+
+**Independent review:** see the entry immediately below this one (or the next dated
+entry above it, if the review ran after this was written) for what an independent
+pass found and whether it was repaired.
 
 **Root cause (evidenced, not guessed).** The DeepSeek V4.1 Flash rebuild
 mission's `ops/dsv41-prestart-drain.sh` ran `docker stop open-webui` and
