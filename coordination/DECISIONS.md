@@ -1657,3 +1657,77 @@ need to come back) is left open; the user explicitly deferred it rather than
 approving it now. Also open: B-039 (root needed to recreate
 `/swapfile-sglang` on node1, and to confirm it on node2 too — this pass only
 checked node1).
+
+---
+
+## D-047 — Closeout: swap root-caused (not a bug), gx-max verified live, three stale-config regressions fixed (2026-09-29)
+
+**Context.** Resuming the closeout after `/swapfile-sglang` was recreated by a
+human. Task: verify it's durable, find why it disappeared, re-run the normal
+gx-max lifecycle, prove real inference end to end including a real production
+Open WebUI browser session, and close out anything else preventing daily use.
+
+**Decided/done.**
+
+1. **B-039 root cause, evidenced not guessed.** `journalctl` + `~/.bash_history`
+   show a deliberate, interactive, sudo-authenticated `swapoff && sed /etc/fstab
+   && rm -f /swapfile-sglang` at 22:06:35 on 2026-09-28, immediately followed in
+   the same history by testing the exact idempotent recreate snippet B-039 itself
+   suggests as the fix. No script in this repo touches swap at all. Conclusion:
+   an earlier session reproduced the failure to validate the repair runbook, not
+   a bug to patch. Since no code path can be closed against a human-authenticated
+   `sudo rm`, added fast detection instead: `legenex/host/gx-hostwatch.sh`
+   (unprivileged, 60s cycle) gained `check_swap()`, so a future disappearance is
+   caught in <=60s instead of only at the next gx-max launch attempt.
+2. **gx-max booted through `legenex/lifecycle/gx-max-start.sh` with no bypass**
+   (admission/swap checks intact), reached READY in ~9 min, and was proven live
+   with real inference at every layer (direct vLLM call, gateway SSE stream,
+   gx-auto's routing journal, and real production Open WebUI chat completions —
+   both server-side as the canonical admin and via a real headless-Chrome
+   browser against `https://chat.legenex.co`). Self-reported "what model are
+   you" answers are unreliable (reproduced the same confabulation calling the
+   engine directly, bypassing all routing) — arithmetic and the API `model`
+   field are what was actually checked.
+3. **Fixed `legenex/lifecycle/restore-normal.sh`**, not just restarted the
+   containers by hand: it never consumed `ops/dsv41-prestart-drain.sh`'s
+   `RESTORE_MARK`, so open-webui/gx-computer silently stayed down after every
+   gx-max release (the literal mechanism behind D-046's incident, otherwise due
+   to repeat after this pass's own gx-max boot). Now reads the marker, restarts
+   exactly what was drained, unmasks the RDP units without force-starting them.
+4. **Fixed two live bugs caused by the gx-mini/gx-code retirement never fully
+   propagating:** `legenex/computer/tools/provision.py`'s `GX_COMPUTER_MODELS`
+   still listed the retired models (Computer was offering two nonfunctional
+   models), and — more seriously — Open WebUI's **live**
+   `chat.context_compaction.model` config was still `gx-mini`, meaning any real
+   conversation crossing the 20000-token threshold would fail to compact.
+   Repointed both to `gx-auto` (gx-max stays deliberately excluded from
+   Computer, D-043/D-044) and re-applied through `provision.py` itself, not a
+   hand patch.
+5. **Removed three dead entries from `ops/git-sync/integrity-audit.sh`'s
+   `CRITICAL` list** (files already removed with the llama-swap retirement) —
+   the check was failing on a correctly completed retirement, not a real
+   problem. Not resurrected.
+6. **Explicitly left alone, human-decision items:** B-035 (gateway now serves
+   only gx-max/gx-auto; CLAUDE.md's L-10 table and the media-router wiring are
+   stale relative to that — the `GX_MEDIA_API_KEY` integrity-audit FAIL is a
+   symptom of this, not a new regression); a missing `gx_control_ui.owui_identity`
+   module (audit WARN only, pre-existing); B-038 (orchestrator test drift,
+   pre-existing); a narrow Open WebUI frontend quirk where a reply that arrives
+   as a single SSE chunk containing both `</think>` and the answer can render
+   with no visible text (realistic multi-chunk replies render correctly;
+   confirmed via a real browser test) — this is Open WebUI 0.11.4's own parsing,
+   not code in this repo.
+7. **Data preservation verified unchanged throughout** (read-only queries, not
+   assumed): 4 users, 59 chats, 277 messages, 1 memory, 3 files, 1 folder,
+   1 note; canonical Nick Allen (`b7e76ad1-f055-45ba-8cdb-9ea80a0e2519`) and his
+   59 chats unchanged before, during and after gx-max's boot/drain cycle and the
+   provisioning fix.
+
+**Also confirmed:** `/swapfile-sglang` on gx10-02 (SSH `legenex-02@gx10-02`) —
+48G, active, correct fstab entry, `mtime` **2026-09-14** (never touched, unlike
+node1's copy), confirming the deletion incident was isolated to a node1 shell
+session, matching the journal evidence. L-8 satisfied on both nodes.
+
+**Not done / needs a human:** the B-035 alias-count reconciliation (CLAUDE.md
+L-10 vs. the live 2-alias gateway); the `gx_control_ui.owui_identity` module
+gap.

@@ -1900,3 +1900,7 @@ sudo swapon /swapfile-sglang
 ```
 Then confirm `swapon --show` lists it and repeat the check on gx10-02 (D-M2/L-8 requires it on
 **both** nodes — this pass only checked node1, since node1 was where admission failed first).
+
+**2026-09-29 update:** gx10-02 confirmed separately (`ssh legenex-02@gx10-02`):
+`/swapfile-sglang` 48G, active in `swapon --show`, correct `fstab` entry,
+`mtime` 2026-09-14 (never touched) — see D-047 in `coordination/DECISIONS.md`.
