@@ -62,8 +62,12 @@ fi
 
 for s in $(loginctl list-sessions --no-legend 2>/dev/null | awk '$2==1000 {print $1}'); do
   T=$(loginctl show-session "$s" -p Type --value 2>/dev/null || true)
+  ST=$(loginctl show-session "$s" -p State --value 2>/dev/null || true)
   if [ "$T" = "wayland" ] || [ "$T" = "x11" ]; then
     log "terminating graphical session $s type=$T"
+    loginctl terminate-session "$s" || true
+  elif [ "$ST" = "closing" ]; then
+    log "terminating leftover closing session $s (stale IDE cgroup)"
     loginctl terminate-session "$s" || true
   fi
 done
