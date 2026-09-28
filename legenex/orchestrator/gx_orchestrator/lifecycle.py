@@ -200,13 +200,17 @@ def build_env_overlay(
     return env
 
 
-def default_ready_probe(api_base: str, model_id: str, *, timeout: float = 10.0) -> bool:
-    """READY means three facts, all verified live:
+def default_liveness_probe(api_base: str, model_id: str, *, timeout: float = 10.0) -> bool:
+    """Cheap, ongoing liveness: two facts, neither touching the generation queue.
 
     1. GET {api_base-without-/v1}/health answers 2xx.
     2. GET {api_base}/models lists `model_id` (a proxy up with the wrong
        model is a config fault, not a ready engine).
-    3. ONE real completion (17*19=323, thinking off, 32 tokens) succeeds.
+
+    Deliberately does NOT send a completion request (see `default_ready_probe`
+    for why that matters here): this is what `GxMaxLifecycle._reconcile()` polls
+    every `_RECONCILE_INTERVAL` seconds, including inline on real user request
+    paths, so it must never be able to queue behind real inference traffic.
     """
     base = api_base.rstrip("/")
     try:
@@ -219,10 +223,31 @@ def default_ready_probe(api_base: str, model_id: str, *, timeout: float = 10.0) 
         with urllib.request.urlopen(f"{base}/models", timeout=timeout) as resp:
             body = json.loads(resp.read().decode("utf-8", "replace"))
         ids = [str(m.get("id")) for m in body.get("data") or []]
-        if model_id not in ids:
-            return False
+        return model_id in ids
     except Exception:
         return False
+
+
+def default_ready_probe(api_base: str, model_id: str, *, timeout: float = 10.0) -> bool:
+    """READY means three facts, all verified live:
+
+    1-2. Everything `default_liveness_probe` checks (health, model id).
+    3. ONE real completion (17*19=323, thinking off, 32 tokens) succeeds.
+
+    This is deliberately more expensive than `default_liveness_probe`: it
+    competes for the same generation queue as real requests, so it belongs at
+    a boot-time/one-shot transition (an operator's acquire, or adopting an
+    engine at orchestrator startup) where nothing else is contending for that
+    queue yet -- never on the recurring background health check (B-1 finding,
+    2026-09-29 independent review: this probe reused for `_reconcile()`, which
+    real inference requests trigger inline, could legitimately queue behind
+    concurrent real traffic, time out, and get a perfectly healthy engine
+    marked DOWN -- so the *next* real user request was hard-refused with no
+    fallback. See `GxMaxLifecycle.__init__`'s `liveness_probe` parameter.)
+    """
+    if not default_liveness_probe(api_base, model_id, timeout=timeout):
+        return False
+    base = api_base.rstrip("/")
     payload = json.dumps({
         "model": model_id,
         "messages": [{"role": "user", "content": _PROBE_QUESTION}],
@@ -259,6 +284,7 @@ class GxMaxLifecycle:
         events_log: Path | None = None,
         history_path: Path | None = None,
         ready_probe: Callable[[], bool] | None = None,
+        liveness_probe: Callable[[], bool] | None = None,
         read_mem_gib: Callable[[str], "float | None"] | None = None,
         container_running: Callable[[str], bool] | None = None,
         drain_hook: Callable[[float], int] | None = None,
@@ -293,6 +319,12 @@ class GxMaxLifecycle:
 
         # Pluggable host facts -- fakes in tests, real I/O here.
         self._ready_probe = ready_probe or (lambda: default_ready_probe(api_base, model_id))
+        # Ongoing background health (_reconcile) uses this instead of _ready_probe:
+        # a caller that injects only `ready_probe` (every existing test) gets the
+        # exact same fake for both, unchanged; production (neither injected) gets
+        # the cheap health+model-id check instead of a real completion request
+        # competing with live user traffic for the generation queue.
+        self._liveness_probe = liveness_probe or ready_probe or (lambda: default_liveness_probe(api_base, model_id))
         self._read_mem_gib = read_mem_gib or _default_read_mem_gib
         self._container_running = container_running or _default_container_running
         #: drain_hook(seconds) waits for in-flight requests (the scheduler)
@@ -362,8 +394,10 @@ class GxMaxLifecycle:
             self._last_reconcile = time.time()
             observed = self._state
 
-        # Probe outside the lock: it does network I/O.
-        healthy = self._ready_probe()
+        # Probe outside the lock: it does network I/O. Cheap liveness only (health +
+        # model id) -- never the full ready_probe here, which sends a real completion
+        # that would compete with live user traffic for the same generation queue.
+        healthy = self._liveness_probe()
 
         with self._cv:
             if self._state is not observed:
