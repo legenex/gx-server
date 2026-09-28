@@ -9,55 +9,43 @@ flock -n 9 || exit 0
 LOG=/srv/logs/dsv41-first-launch.log
 MARK_OK=/srv/logs/dsv41-baseline-READY
 MARK_FAIL=/srv/logs/dsv41-baseline-FAILED
+REPO=/home/legenex/Documents/Projects/Server/gx-cluster
+DRAIN="$REPO/ops/dsv41-prestart-drain.sh"
 
-# Rotate the PREVIOUS attempt's outcome markers (explicit paths, no globs):
-# a new attempt must never leave a stale READY or FAILED next to its own.
 rm -f -- /srv/logs/dsv41-baseline-READY
 rm -f -- /srv/logs/dsv41-baseline-FAILED
 
 need()  { awk '/^MemAvailable:/ { printf "%.1f", $2 / 1048576 }' /proc/meminfo; }
+ge() { awk -v a="$1" -v b="$2" 'BEGIN { exit !(a + 0 >= b + 0) }'; }
 
 {
   echo "[runner] $(date -Is) headless transition + baseline launch starting"
 
-  # 1. Prerequisite: weights complete.
   sh=$(ls /srv/models/dsv41/model/model-*.safetensors 2>/dev/null | wc -l)
   if [ "$sh" -lt 39 ]; then echo "[runner] ERROR pack incomplete ($sh/39)"; echo "pack incomplete" > "$MARK_FAIL"; exit 1; fi
   for f in model-00047-of-00048.safetensors model-00048-of-00048.safetensors model.safetensors.index.json config.json; do
     [ -s "/srv/models/dsv41/engram-src/$f" ] || { echo "[runner] ERROR engram missing $f"; echo "engram incomplete" > "$MARK_FAIL"; exit 1; }
   done
 
-  # 2. Terminate ONLY the graphical session (wayland) — unless
-  #    GX_BOOT_KEEP_SESSION=1 (boot fitted within the resident session budget).
-  GRAPHICAL_SESSION=""
-  if [ "${GX_BOOT_KEEP_SESSION:-0}" != "1" ]; then
-    for s in $(loginctl list-sessions --no-legend 2>/dev/null | awk '$2==1000 {print $1}'); do
-      T=$(loginctl show-session "$s" -p Type --value 2>/dev/null)
-      if [ "$T" = "wayland" ] || [ "$T" = "x11" ]; then GRAPHICAL_SESSION="$s"; break; fi
-    done
-  fi
-  if [ -n "$GRAPHICAL_SESSION" ]; then
-    echo "[runner] terminating graphical session $GRAPHICAL_SESSION (headless transition)"
-    loginctl terminate-session "$GRAPHICAL_SESSION"
-  else
-    echo "[runner] no graphical session found (already headless?)"
+  echo "[runner] draining non-critical consumers + graphical/RDP"
+  if ! bash "$DRAIN"; then
+    echo "[runner] ERROR drain failed MemAvailable=$(need)"
+    echo "drain failed: $(need)" > "$MARK_FAIL"
+    exit 1
   fi
 
-  # 3. Wait for memory to free (target: weights 99.5 + margin 12 = 111.5).
-  for i in $(seq 1 60); do
-    AV=$(need); [ "$(echo "$AV >= 104.5" | bc)" = "1" ] && break; sleep 2
-  done
   AV=$(need); echo "[runner] MemAvailable now ${AV} GiB"
-  if [ "$(echo "$AV >= 104" | bc)" != "1" ]; then echo "[runner] ERROR memory did not free" ; echo "memory did not free after session kill: $AV" > "$MARK_FAIL"; exit 1; fi
+  if ! ge "$AV" "112"; then
+    echo "[runner] ERROR memory did not free"
+    echo "memory did not free after drain: $AV" > "$MARK_FAIL"
+    exit 1
+  fi
 
-  # 4. Launch the stock baseline (start.sh does: preflight, weight rsync to worker,
-  #    image ship, two-rank boot, health wait). This log is the full record.
-  cd /home/legenex/Documents/Projects/Server/gx-cluster/mia-dsv41 || { echo pack-dir-missing > "$MARK_FAIL"; exit 1; }
+  cd "$REPO/mia-dsv41" || { echo pack-dir-missing > "$MARK_FAIL"; exit 1; }
   ./start.sh
   RC=$?
   echo "[runner] start.sh exited rc=$RC"
 
-  # 5. Verify: containers, health endpoint, and one real completion probe.
   docker ps --format '{{.Names}} {{.Status}}' | grep -i dsv41
   sleep 5
   H=$(curl -s -m 10 http://127.0.0.1:8888/health)

@@ -54,6 +54,14 @@ mgmt_healthy_n1 || die "node1 management plane unhealthy (NetworkManager/tailsca
 n2 "systemctl is-active --quiet NetworkManager && tailscale status --peers=false >/dev/null 2>&1 && docker info >/dev/null 2>&1" \
   || die "node2 management plane unhealthy (NetworkManager/tailscale/docker)"
 
+DRAIN_SH="$(cd "${here}/../.." >/dev/null 2>&1 && pwd)/ops/dsv41-prestart-drain.sh"
+if [ -x "$DRAIN_SH" ]; then
+  log "=== pre-start drain (graphical/RDP + non-critical consumers) ==="
+  bash "$DRAIN_SH" || die "pre-start drain failed; MemAvailable too low for GPU_MEM_UTIL=0.88"
+else
+  log "WARN: drain script missing at ${DRAIN_SH}"
+fi
+
 # ---------------------------------------------------- admission (D-025) ----
 # One hard, non-bypassable check per node before anything is launched. The
 # decision itself lives in gx_orchestrator.resource_guard (one formula, used
