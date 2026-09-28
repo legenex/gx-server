@@ -1800,3 +1800,39 @@ gx-fast/gx-reason routing and the old SGLang default, and the fixtures predate
 authentication tests pass; the remaining failures compare identical to the baseline commit
 (`99f6b4a`) apart from tests that used to error before reaching their assertion. Control Center tests:
 21 failing, identical to the baseline.
+
+## B-039 (S1) — `/swapfile-sglang` (L-8) does not exist on node1; gx-max admission hard-refuses
+**Needs:** a human with sudo.
+
+2026-09-28 22:13: a gx-max boot attempt (via `legenex/lifecycle/gx-max-start.sh`, user-approved for
+live verification after the Open WebUI/Computer repair, D-046) was hard-refused at admission:
+
+```
+refused: /swapfile-sglang is not active on node1 (L-8); the load transient needs it
+mem_available_gib: 112.4, clean_start_min_avail_gib: 112.0, swap_free_gib: 14.1,
+min_swap_free_gib: 40.0, swapfile_active: false, startup_transient_gib: 117.0
+```
+
+`swapon --show` confirms only the default `/swap.img` (16G, 1.9G used) is active; `ls -la
+/swapfile-sglang` returns `No such file or directory` — the 48G file L-8 requires is not merely
+inactive, it does not exist on disk. `/etc/fstab` has no entry for it either. `sudo -n swapon
+/swapfile-sglang` fails (`a password is required`); creating a 48G swapfile (`fallocate`/`dd` +
+`mkswap` + `swapon`) needs root either way.
+
+This is a **hard, non-bypassable** refusal by design (`gx_orchestrator.resource_guard`) — it exists
+specifically to stop a load transient from OOM-killing the node, so do not attempt to work around it
+by lowering the guard's threshold or forcing admission. gx-max/gx-auto will correctly 503 ("model
+is down... raise X-GX-Priority: interactive... or use the lifecycle endpoint") until this is fixed.
+This morning's 13:23–13:44 run (before this file went missing, or before this specific attempt) did
+succeed, so this is a regression sometime between then and 22:13, not a pre-existing condition —
+worth checking whether something (disk cleanup, a reboot, the D-M6 disk-reclaim step) removed it.
+
+**Suggested fix (not applied — needs root), on gx10-01:**
+```
+sudo fallocate -l 48G /swapfile-sglang
+sudo chmod 600 /swapfile-sglang
+sudo mkswap /swapfile-sglang
+sudo swapon /swapfile-sglang
+```
+Then confirm `swapon --show` lists it and repeat the check on gx10-02 (D-M2/L-8 requires it on
+**both** nodes — this pass only checked node1, since node1 was where admission failed first).

@@ -1639,14 +1639,21 @@ changed here).**
    `openai.api_configs["0"].model_ids` trimmed to `[gx-auto, gx-max]`;
    `model` rows for `gx-mini`/`gx-code` set `is_active=0` (deactivated, not
    deleted — same pattern as the pre-existing `gx-fast`/`gx-reason` rows).
-4. **gx-max reboot for live verification** approved by the user with full
-   knowledge that `legenex/lifecycle/gx-max-start.sh` unconditionally
-   re-runs the same prestart drain before admission (non-bypassable), so
-   Open WebUI/Computer were stopped again for the boot and brought back up
-   afterward. See `state/HANDOFF.md` for the boot outcome and
-   `CURRENT_STATE.md` LATEST UPDATE for the full writeup.
+4. **gx-max reboot for live verification, attempted, blocked.** User approved
+   it knowing `gx-max-start.sh` unconditionally re-runs the prestart drain
+   (non-bypassable), so Open WebUI/Computer were stopped again. The drain
+   succeeded; admission then hard-refused: `/swapfile-sglang` (L-8, 48G)
+   does not exist on node1's disk at all (`swapon --show` only lists the
+   default 16G `/swap.img`; `swap_free_gib=14.1` vs the required 40.0).
+   New blocker **B-039** (needs sudo, not available here). Open
+   WebUI/Computer were brought back up immediately and re-verified
+   (identical counts/user, both 200) — this repair holds regardless of
+   gx-max's state. See `coordination/BLOCKERS.md` B-039 and
+   `CURRENT_STATE.md` LATEST UPDATE for full detail.
 
 **Not decided here:** whether to ever restore gx-mini/gx-code (a real
 infra rebuild — `gx-llama-swap-node01` and its gx10-02 counterpart would
 need to come back) is left open; the user explicitly deferred it rather than
-approving it now.
+approving it now. Also open: B-039 (root needed to recreate
+`/swapfile-sglang` on node1, and to confirm it on node2 too — this pass only
+checked node1).

@@ -219,3 +219,33 @@ rank1-deadman armed on gx10-02 watching 192.168.100.10:29521 and :8888/health.
 
 Do NOT restore PageFlo/RDP while the model is loaded.
 
+## 2026-09-28 22:00-22:15 SAST — Open WebUI/Computer restored; gx-max reboot attempt hit B-039
+
+gx-max was released (14:46, clean) hours before this and never reloaded, so it was NOT loaded when
+this happened. Separately from the mission: `chat.legenex.co` was down (Cloudflare 502) because the
+13:13 drain's `docker stop open-webui`/`gx-computer` were never followed by a restart. Repaired:
+both recreated from their existing external volumes (`open-webui`, `gx_computer_data` — untouched),
+data verified identical (4 users/59 chats/277 messages/1 memory/3 files/1 folder/1 note, canonical
+Nick Allen unchanged) before and after. Full writeup: `CURRENT_STATE.md` LATEST UPDATE, D-046.
+
+While doing that repair, discovered gx-mini/gx-code (deleted by this mission's D-M1) were still
+referenced in Open WebUI's connection config — user chose to reconcile Open WebUI to the live
+gx-max/gx-auto-only set rather than resurrect the retired llama-swap backend.
+
+User then asked for a real gx-max boot to verify it live (Definition of Done for the Open WebUI
+repair). Ran `gx-max-start.sh` — drain ran fine (stopped open-webui/gx-computer again, expected),
+but **admission hard-refused**: `/swapfile-sglang` (L-8, 48G) does not exist on node1's disk at all
+right now (`swapon --show` only shows the default 16G `/swap.img`; free swap 14.1 GiB vs the 40 GiB
+minimum the load transient needs). This is new since this morning's successful 13:23 boot — something
+between then and now removed it (worth checking: was it ever created with `fallocate` and did a
+disk-cleanup step, e.g. D-M6's stock-pack deletion, catch it by accident?). Logged as **B-039**
+(needs sudo, not available in this session). Open WebUI/Computer were brought back up immediately
+after the refusal — that repair holds independent of gx-max.
+
+**For whoever resumes next:** gx-max/gx-auto will keep 503ing ("model is down... raise
+X-GX-Priority: interactive... or use the lifecycle endpoint") until a human with sudo restores
+`/swapfile-sglang` on node1 (and confirms it on node2 — not checked this pass) per B-039's suggested
+fix. The model itself is not in question — this morning's 13:23-13:44 run already proved it end to
+end. Once the swapfile is back, `bash legenex/lifecycle/gx-max-start.sh` should work; expect it to
+drain open-webui/gx-computer again and bring them back up after.
+

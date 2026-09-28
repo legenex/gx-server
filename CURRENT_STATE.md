@@ -48,12 +48,23 @@ rows `gx-mini`/`gx-code` set `is_active=0` (same pattern already used for
 `gx-fast`/`gx-reason`) rather than deleted. Verified in the DB and via a
 container restart; data counts unchanged throughout.
 
-**gx-max verification.** On-demand acquire through a plain chat request does
-not auto-boot the model (immediate 503) — the real trigger is
-`legenex/lifecycle/gx-max-start.sh`, which unconditionally re-runs the same
-prestart drain before admission (non-bypassable by design). User approved a
-real boot for verification, accepting that Open WebUI/Computer would be
-stopped again for the drain and brought back up afterward.
+**gx-max verification — attempted, blocked (B-039).** On-demand acquire
+through a plain chat request does not auto-boot the model (immediate 503) —
+the real trigger is `legenex/lifecycle/gx-max-start.sh`, which unconditionally
+re-runs the same prestart drain before admission (non-bypassable by design).
+User approved a real boot for verification, accepting that Open WebUI/Computer
+would be stopped again. The drain ran fine and stopped both apps again, but
+admission then **hard-refused**: `/swapfile-sglang` (L-8, 48G required) does
+not exist on node1's disk at all right now (only the default 16G `/swap.img`
+is active; `swap_free_gib=14.1` vs `min_swap_free_gib=40.0` needed for the
+load transient). This needs root (`sudo`, not available to this session) to
+recreate and activate — see `coordination/BLOCKERS.md` B-039. Open
+WebUI/Computer were brought back up immediately after the refusal and
+re-verified (same counts, same canonical user, both 200). gx-max/gx-auto
+correctly 503 until B-039 is resolved by a human; this morning's 13:23–13:44
+run (before whatever removed the swapfile) already proved the model itself
+works end to end (real completions, tool calls, uncensor probes), so the gap
+is infrastructure (missing swapfile), not the model or the gateway wiring.
 
 ## UPDATE — 2026-09-26, security cleanup completed (D-045)
 
