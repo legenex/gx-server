@@ -236,7 +236,18 @@ def provision_owui(ident: dict, owui_key: str) -> None:
     managed_prompt = (HERE / "owui_folder_prompt.md").read_text().strip()
     new_files = files + ([] if any(e.get("id") == note_id for e in files)
                          else [{"type": "note", "id": note_id, "name": NOTE_TITLE}])
-    new_data = {"system_prompt": data.get("system_prompt") or managed_prompt, "files": new_files}
+    current_prompt = (data.get("system_prompt") or "").strip()
+    # Keep a customised folder prompt. Refresh the managed one when it is
+    # empty or the previous managed text (no memory/tool policy yet).
+    if not current_prompt:
+        folder_prompt = managed_prompt
+    elif current_prompt == managed_prompt:
+        folder_prompt = managed_prompt
+    elif current_prompt.startswith("This folder is the GX-Cluster project") and "Do not call memory" not in current_prompt:
+        folder_prompt = managed_prompt
+    else:
+        folder_prompt = current_prompt
+    new_data = {"system_prompt": folder_prompt, "files": new_files}
     if not folder:
         r = owui([{"call": ["POST", "/api/v1/folders/", {"name": FOLDER_NAME, "data": new_data}]}], ident["email"])[1]
         expect(r["status"] == 200, f"folder create failed: {r['status']}")
