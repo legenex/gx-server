@@ -62,6 +62,8 @@ SSH_TIMEOUT_S="${GX_HOSTWATCH_SSH_TIMEOUT_S:-3}"
 PSI_FULL_WARN_PCT="${GX_HOSTWATCH_PSI_FULL_WARN_PCT:-5}"   # avg10, %
 PSI_FULL_CRIT_PCT="${GX_HOSTWATCH_PSI_FULL_CRIT_PCT:-20}"
 SSH_PORT="${GX_HOSTWATCH_SSH_PORT:-22}"
+SWAPFILE_NAME="${GX_HOSTWATCH_SWAPFILE_NAME:-/swapfile-sglang}"
+SWAPFILE_MIN_GIB="${GX_HOSTWATCH_SWAPFILE_MIN_GIB:-47}"   # L-8: keep 48G, recover-node2.sh uses the same >=47 tolerance
 
 mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
 
@@ -213,6 +215,30 @@ check_memory() {
   fi
 }
 
+# ------------------------------------------------------------ 5. swapfile --
+# L-8 requires /swapfile-sglang present and active on both nodes; the gx-max
+# admission guard (resource_guard.py) hard-refuses without it, but that is
+# only checked at the moment someone tries to acquire gx-max - it can go
+# missing (accidental or deliberate `swapoff`+`rm`) and sit undetected for
+# hours. This check catches it within one cycle (<=60s) instead. Read-only:
+# `swapon --show` and /proc/swaps both work unprivileged.
+check_swap() {
+  local line size_raw
+  line=$(timeout 5 swapon --show=NAME,SIZE --noheadings 2>/dev/null | \
+    awk -v n="$SWAPFILE_NAME" '$1==n{print; exit}')
+  if [ -z "$line" ]; then
+    note CRIT swapfile missing "${SWAPFILE_NAME} not in 'swapon --show' - L-8 violated, gx-max admission will hard-refuse until 'sudo fallocate -l 48G ${SWAPFILE_NAME} && sudo chmod 600 ${SWAPFILE_NAME} && sudo mkswap ${SWAPFILE_NAME} && sudo swapon ${SWAPFILE_NAME}' is re-run (needs root)"
+    return
+  fi
+  size_raw=$(printf '%s\n' "$line" | awk '{print $2}')
+  if [[ "$size_raw" =~ ^([0-9.]+)G$ ]] && \
+     awk -v g="${BASH_REMATCH[1]}" -v m="$SWAPFILE_MIN_GIB" 'BEGIN{exit !(g>=m)}'; then
+    note OK swapfile ok "${SWAPFILE_NAME} present at ${size_raw} (>= ${SWAPFILE_MIN_GIB}G)"
+  else
+    note CRIT swapfile undersized "${SWAPFILE_NAME} present but reports ${size_raw}, expected >= ${SWAPFILE_MIN_GIB}G"
+  fi
+}
+
 # --------------------------------------------------------------- main --
 main() {
   log_line INFO run start "gx-hostwatch cycle beginning"
@@ -220,6 +246,7 @@ main() {
   check_tailscale
   check_responsiveness
   check_memory
+  check_swap
 
   local overall="ok"
   [ "$WARN_COUNT" -gt 0 ] && overall="degraded"

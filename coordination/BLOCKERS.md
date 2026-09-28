@@ -1801,7 +1801,71 @@ authentication tests pass; the remaining failures compare identical to the basel
 (`99f6b4a`) apart from tests that used to error before reaching their assertion. Control Center tests:
 21 failing, identical to the baseline.
 
-## B-039 (S1) — `/swapfile-sglang` (L-8) does not exist on node1; gx-max admission hard-refuses
+## B-039 (S1) — RESOLVED 2026-09-28 23:09/23:14 — `/swapfile-sglang` recreated; root cause found (manual, not automated); fast detection added
+
+**Status: RESOLVED.** `/swapfile-sglang` is back: 48G exactly (`51539607552` bytes),
+`swapon --show` lists it active at priority -3, `/etc/fstab` has exactly one entry
+for it (`/swapfile-sglang none swap sw 0 0`), permissions `600 root:root`, and the
+pre-existing `/swap.img` (16G, ~1.9G used) is untouched — no duplicate/stale
+entries. `free -h` confirms `Swap: 63Gi total, 1.9Gi used, 62Gi free`.
+
+**Root cause, evidenced from `journalctl` and `~/.bash_history` (not guessed):**
+this was **not** caused by `ops/dsv41-prestart-drain.sh`, any DeepSeek V4.1
+mission script, a systemd timer/job, or any code path in this repo — none of
+those touch swap at all (`dsv41-prestart-drain.sh` only stops
+containers/units/sessions to free `MemAvailable`; grepping the whole repo for
+`swapoff`/`rm.*swap`/`unlink.*swap` outside test fixtures returns nothing). The
+journal shows a deliberate, interactive, sudo-authenticated command sequence at
+**22:06:35** on 2026-09-28, from a real TTY (`pts/2`) with a password entered live
+(distinct from the *non-interactive* `sudo swapon` at 22:14:22 which correctly
+failed with "a password is required" — proving no unattended process could have
+done this):
+
+```
+sudo swapoff /swapfile-sglang
+sudo sed -i '\|/swapfile-sglang|d' /etc/fstab
+sudo rm -f /swapfile-sglang
+```
+
+`~/.bash_history` shows this was immediately preceded by inspection commands
+(`ls`/`stat`/`grep` on `/swapfile-sglang`, `/swap.img`, `/test.img`, and a grep of
+`mia-dsv41` for references to the swapfile) and immediately followed, a few lines
+later in the same history, by testing the exact idempotent recreate snippet later
+staged as B-039's own "suggested fix" (`if [ ! -f /swapfile-sglang ]; then sudo
+fallocate...; fi` etc.). The evidenced conclusion: an earlier session reproduced
+the missing-swapfile condition to validate the repair runbook, then the repo's
+own admission guard (`resource_guard.py`, correctly) hard-refused the next
+gx-max launch attempt at 22:13 before this was reverted. This is not a security
+incident and not a code bug — no automated path in this repo can delete
+`/swapfile-sglang`, and the existing admission guard did exactly its job
+(refused rather than silently proceeding).
+
+**Permanent prevention implemented (within what an unprivileged, no-sudo agent
+can actually enforce — see CLAUDE.md "No sudo on either node").** There is no
+code deletion path to patch, so "fix the automation" isn't applicable literally;
+what *is* new is fast, automatic **detection**: `legenex/host/gx-hostwatch.sh`
+(already running unprivileged every 60s via `gx-hostwatch.timer`) now has a
+`check_swap()` step that verifies `/swapfile-sglang` is present via `swapon
+--show` and >= 47 GiB, and emits a `CRIT`/`ALERT` line within one cycle
+(<=60s) if it is ever missing or undersized again — instead of the previous
+silent gap that was only ever caught the next time a human tried to launch
+gx-max (which is how this one sat undetected between 22:06 and 22:13, and
+would otherwise have sat there indefinitely once Open WebUI/Computer were
+restored and nobody attempted gx-max). Verified live: dry run correctly reports
+`check=swapfile status=ok` against the real file, and the real
+`gx-hostwatch.timer` cycle at 23:14:53 picked up the change automatically
+(oneshot unit invoked by path, no restart needed) and logged it to
+`/srv/logs/gx-hostwatch.log`. A genuinely un-bypassable prevention (e.g. an
+immutable bit, a root-owned pre-delete hook) needs root and is not something
+this session can add — flagged for a human if stronger prevention than
+fast-alerting is wanted.
+
+**Needs (nothing further to auto-resolve):** none. Original text preserved below
+for the record.
+
+---
+
+**Original entry (2026-09-28 22:13, before the fix above):**
 **Needs:** a human with sudo.
 
 2026-09-28 22:13: a gx-max boot attempt (via `legenex/lifecycle/gx-max-start.sh`, user-approved for
