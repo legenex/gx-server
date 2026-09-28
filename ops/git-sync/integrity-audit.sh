@@ -46,9 +46,12 @@ CRITICAL=(
   legenex/gateway/litellm/config.yaml
   legenex/gateway/.env.sample
   legenex/gateway/docker-compose.gateway.yml
-  legenex/gateway/docker-compose.node02.yml
-  legenex/gateway/llama-swap/node01.yaml
-  legenex/gateway/llama-swap/node02.yaml
+  # docker-compose.node02.yml / llama-swap/node0{1,2}.yaml removed with the
+  # llama-swap stack (gx-mini/gx-code/gx-llama-swap-node01/node02 retired,
+  # git tag pre-deepseek-v41-rebuild-20260927; state/CLEANUP-EVIDENCE-20260927.md)
+  # -- checking for a deliberately-deleted file's presence is not a real
+  # integrity check, so they were removed from this list rather than
+  # resurrected to make the check pass.
   legenex/media/docker-compose.media.yml
   legenex/media/router/gx_media_router/server.py
   legenex/media/router/gx_media_router/service.py
