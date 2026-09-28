@@ -3,7 +3,37 @@
 **This file must always reflect reality.** If you are a new agent resuming this
 work, read this first, then ARCHITECTURE.md (what is locked), then BLOCKERS.md.
 
-## LATEST UPDATE — 2026-09-29 00:xx SAST, closeout: swap restored + root-caused, gx-max verified live, stale-config drift fixed (D-047, closes B-039)
+## LATEST UPDATE — 2026-09-29 00:13 SAST, independent review found and D-048 fixed a live gx-max false-DOWN bug
+
+An independent reviewer (run per this closeout's own checklist) found gx-max
+**intermittently and falsely reporting "model is down" to real requests, live**
+— reproduced it (`ServiceUnavailableError`, no fallback) — and root-caused it to
+`GxMaxLifecycle._reconcile()` reusing the boot-time readiness probe (which
+sends a real completion request) for its recurring 10s background health
+check; under real concurrent load that probe request can queue behind live
+traffic and exceed its own timeout, marking a perfectly healthy engine DOWN
+and hard-refusing the next real user message. **Fixed** (`D-048` in
+`coordination/DECISIONS.md`): the recurring check now uses a cheap
+`/health` + `/v1/models` liveness probe that never touches the generation
+queue; the full probe stays only at boot-time transitions. 247/247 orchestrator
+tests still pass; deployed via `systemctl --user restart gx-orchestrator`
+(re-adopted the running engine cleanly); **re-reproduced the original failure
+condition on purpose post-fix** (6 concurrent real gx-max completions, slowest
+29.1s, all succeeded) and confirmed zero false-DOWN events since, where the
+same load pattern had produced 4 of them in the preceding 40 minutes.
+
+The same review's second finding — `CLAUDE.md`/`ARCHITECTURE.md`'s locked L-6
+row is now stale in every particular (says SGLang/NVFP4, live system is
+vLLM/EXL3 — a different engine and model family) and the approving decision
+for that change lives only in the untracked `state/DECISIONS.md`, not the
+git-tracked `coordination/DECISIONS.md` — was deliberately **not** self-fixed:
+changing a LOCKED row needs the human's explicit sign-off. See `B-035` in
+`coordination/BLOCKERS.md` for the full detail and the risk this poses to a
+future session that trusts the LOCKED table at face value.
+
+---
+
+## PREVIOUS UPDATE — 2026-09-29 00:13 SAST, closeout: swap restored + root-caused, gx-max verified live, stale-config drift fixed (D-047, closes B-039)
 
 **Swap (B-039) — root cause found and fast-detection added, not just recreated.**
 `/swapfile-sglang` was already recreated (48G, active, in fstab, root:600) by the

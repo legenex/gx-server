@@ -1701,22 +1701,55 @@ Remaining (re-audited 2026-09-26, D-045):
 ## B-035 (S3) — CLAUDE.md locked rows L-6 and L-10 no longer describe the live gateway
 
 **Status:** OPEN (locked decisions; only the human can amend them). **Found:**
-2026-09-26.
+2026-09-26; **drift confirmed much larger, 2026-09-29 (independent review during
+the D-047 closeout — see that entry in `coordination/DECISIONS.md`).**
 
 * **L-10** lists eleven public aliases. The live LiteLLM config
-  (`legenex/gateway/litellm/config.yaml`) serves `gx-mini`, `gx-code`,
-  `gx-auto` and `gx-max`, and its header says `gx-fast`, `gx-reason`,
-  `gx-image`, `gx-video`, `gx-voice` and `gx-music` are retired from the
-  gateway.
-* **L-6** says gx-max is SGLang TP=2 DeepSeek. The live default is the
-  orchestrator's dual worker (gx-code-01 + gx-code-02), with SGLang kept as
-  `GX_MAX_MODE=deepseek`.
-* No decision entry records either change.
+  (`legenex/gateway/litellm/config.yaml`) serves exactly **two**:
+  `gx-max`, `gx-auto`. As of the D-046/D-047 passes (2026-09-27/28), `gx-mini`
+  and `gx-code` were ALSO retired (git tag `pre-deepseek-v41-rebuild-20260927`)
+  — this list was `gx-mini, gx-code, gx-auto, gx-max` when this item was first
+  found on 2026-09-26; it has shrunk further since.
+* **L-6 is now wrong in every particular, not just the worker topology.** It
+  says gx-max is **SGLang**, TP=2, serving
+  **`dealignai/DeepSeek-V4-Flash-0731-CRACK-NVFP4`** and states "Never vLLM,
+  never another model family, never a silent downgrade." The live, currently
+  running, user-approved system (verified 2026-09-29) is **vLLM**, TP=2,
+  serving **`DeepSeek-V4.1-Flash-EXL3-2.9bpw`** (`mia-dsv41/`, quantization
+  `exl3`, not `nvfp4`) — a different engine AND a different model family, i.e.
+  exactly the two things L-6's own text says must never happen. This is not a
+  new, unauthorized drift: it is the user-approved DeepSeek V4.1 rebuild
+  (mission brief, git tag `pre-deepseek-v41-rebuild-20260927`), but the
+  approving decision record lives only in `state/DECISIONS.md` D-M1 —
+  per CLAUDE.md itself, "Runtime state lives outside the checkout," i.e. that
+  decision is **not git-tracked** and would not be visible to a fresh clone
+  from GitHub, or to a future session that (correctly, per CLAUDE.md's own
+  instructions) trusts the git-tracked LOCKED table as authoritative and
+  refuses to trust an unexplained live divergence from it.
+* No entry in the git-tracked `coordination/DECISIONS.md` records the
+  SGLang-to-vLLM / NVFP4-to-EXL3 change itself (D-046/D-047 both *reference*
+  it as already-approved via `state/DECISIONS.md` D-M1, but neither of them
+  *is* that approval).
+* **Risk, stated plainly:** CLAUDE.md says the LOCKED table "wins wherever
+  they conflict." A future session with only the git-tracked repo (no access
+  to, or no reason to trust, `state/`) could read L-6, see the live vLLM/EXL3
+  engine as a locked-constraint violation, and try to "fix" it back to
+  SGLang/NVFP4 — reverting real, working, user-approved production. This
+  closeout pass deliberately did **not** touch CLAUDE.md/ARCHITECTURE.md's
+  locked tables to fix this: changing a LOCKED row needs the human's explicit
+  sign-off (CLAUDE.md's own operating rule), and this pass's authorization was
+  to close out the swap/gx-max/OpenWebUI/Computer work, not to amend LOCKED
+  architecture. Flagged here, prominently, instead.
 * The Computer and Open WebUI docs describe the live gateway. `CLAUDE.md` is
   injected into Computer's system prompt, so agents there see both
   descriptions.
 
-**Action (human):** amend L-6 and L-10 or record why the live config differs.
+**Action (human):** amend L-6 and L-10 in `CLAUDE.md`/`ARCHITECTURE.md` to
+match the live, approved vLLM/EXL3/two-alias reality, and record the
+SGLang-to-vLLM engine/model-family change as a proper entry in the
+git-tracked `coordination/DECISIONS.md` (not only `state/DECISIONS.md`) —
+or explicitly decide to roll back to SGLang/NVFP4 if the drift was not, in
+fact, meant to be this total.
 
 
 ## B-036 (S2) — RESOLVED 2026-09-26 (D-045) — the master gateway key is still used by one legitimate off-box client (hermes agent VPS)

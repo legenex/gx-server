@@ -1731,3 +1731,63 @@ session, matching the journal evidence. L-8 satisfied on both nodes.
 **Not done / needs a human:** the B-035 alias-count reconciliation (CLAUDE.md
 L-10 vs. the live 2-alias gateway); the `gx_control_ui.owui_identity` module
 gap.
+
+---
+
+## D-048 — Fixed a live, load-triggered false-DOWN bug in gx-max's health reconcile (independent review finding, 2026-09-29)
+
+**Context.** An independent reviewer, run per D-047's own closeout checklist,
+found gx-max intermittently and falsely reporting "model is down" with no
+fallback, live: `/srv/logs/gx-max-lifecycle.log` showed repeated
+`engine vanished while READY; marked DOWN` / `adopted an engine started
+outside the orchestrator` cycles (4 times in ~40 min) while `dsv41-exl3-head`
+never actually stopped or crashed (vLLM's own logs and `docker ps` showed it
+continuously healthy). Reproduced live with a direct gateway call that hit the
+`ServiceUnavailableError... no fallback model group` refusal.
+
+**Root cause, confirmed by reading the code.**
+`legenex/orchestrator/gx_orchestrator/lifecycle.py`'s `default_ready_probe`
+does three things: `/health`, `/v1/models`, and **one real chat completion**
+(17*19, 32 tokens, 10s timeout) — appropriate as a one-time, thorough check
+when an engine first transitions to READY (boot adoption, `_await_ready`), but
+the SAME function was also the default for `GxMaxLifecycle._reconcile()`,
+which runs every 10s **and is invoked inline by `status()`, which real
+inference requests call**. Under real concurrent load (confirmed: a 6-way
+concurrent real request burst took up to 29s per request), the probe's own
+completion request legitimately queues behind live traffic on the same vLLM
+scheduler, so it can exceed its 10s timeout even though the engine is
+perfectly healthy — flipping the state to DOWN and hard-refusing the *next*
+real user request. Production code (`server.py`) never overrode the probe, so
+this was live in production, not a test-only theoretical.
+
+**Fix.** Split the probe: `default_liveness_probe()` (new) does only
+`/health` + `/v1/models` — neither touches vLLM's generation queue, so it
+cannot queue behind real traffic. `default_ready_probe()` now calls it first,
+then adds the completion check, unchanged in behavior for its existing
+callers (boot-time adoption, `_await_ready`). `GxMaxLifecycle` gained a
+`liveness_probe` constructor parameter used only by `_reconcile()`, defaulting
+to `liveness_probe or ready_probe or default_liveness_probe(...)` — every
+existing test that injects only `ready_probe` (all of them) gets the exact
+same fake for both, so behavior is unchanged in tests; production (which
+injects neither) gets the cheap probe for `_reconcile()` for the first time.
+
+**Verified, not assumed:**
+* `python3 -m unittest discover -s tests -p "test_*.py"` in
+  `legenex/orchestrator`: **247/247 OK**, unchanged.
+* `systemctl --user restart gx-orchestrator.service` to deploy the fix; came
+  back healthy and re-adopted the already-running gx-max engine without
+  touching the containers (confirmed via a real gateway completion
+  immediately after restart).
+* **Reproduced the original failure condition on purpose**, post-fix: fired 6
+  concurrent real `gx-max` chat completions through the real gateway
+  (`http://127.0.0.1:4000`), slowest at 29.1s, all 6 returned 200 with real
+  content. `gx-max-lifecycle.log` shows **zero** new `vanished`/`marked DOWN`
+  events for the rest of this session after the restart, despite that load —
+  the exact condition that produced 4 false-DOWN events in the 40 minutes
+  before the fix.
+
+**Not done:** did not add automated regression coverage in
+`orchestrator/tests` for the specific "reconcile must not queue behind
+concurrent traffic" scenario (would need a fake HTTP server with controllable
+latency); the fix is proven live but not test-locked. Left for a follow-up if
+wanted.
