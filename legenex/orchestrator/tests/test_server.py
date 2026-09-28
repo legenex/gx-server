@@ -169,6 +169,8 @@ class TestRoutingDecisions(OrchestratorHarness):
         self.assertNotIn("tools", sent)
         self.assertEqual(sent.get("tool_choice"), "none")
         self.assertEqual(sent["max_tokens"], 1024)
+        # FAST is a per-request policy; do not cycle the running engine profile.
+        self.assertEqual(self.lifecycle.acquire_calls[-1], "balanced")
 
     def test_direct_gx_max_does_not_strip_tools(self):
         tools = [{"type": "function", "function": {"name": "search_memories", "parameters": {}}}]
