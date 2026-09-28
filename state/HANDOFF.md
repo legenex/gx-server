@@ -89,3 +89,20 @@ log tail). Next steps on resume: Phase 16-17 tests + benchmark, then Phase 18-20
 - Stopped services/containers to restart after READY: nick-wiki-dashboard,
   agentos-control-center, agentos-supervisor (systemctl --user start);
   gigpilot x5, financialos x3, pageflo x2, open-webui, gx-computer (docker start).
+
+## 2026-09-28 — FINAL STATE: awaiting MANUAL bootstrap trigger (user decision)
+The mission process will NOT start the headless bootstrap itself (user cancelled
+the trigger three times). Everything is staged; trigger when ready with:
+
+    systemctl --user start gx-dsv41-bootstrap.service
+
+(from any SSH/terminal session on gx10-01; survives the session kill; NOT
+enabled at boot). The runner: verifies weights, terminates ONLY the graphical
+wayland session, waits for >=104.5G MemAvailable, runs mia-dsv41/start.sh
+(kit defaults: GPU_MEM_UTIL=0.88, margin 12, WEIGHT_SYNC=nfs,
+NFS_CLIENTS=192.168.100.11), verifies :8888/health + a 17*19=323 probe, and
+writes /srv/logs/dsv41-baseline-READY or -FAILED. Full log:
+/srv/logs/dsv41-first-launch.log. NOTE: a stale dsv41-baseline-FAILED marker
+from attempt #3 may sit next to the new one — trust the [runner] log tail.
+After READY: resume the mission (Gate A benchmarks, then dealignai per
+DECISIONS.md). Ranks are currently DOWN; worker holds no residual memory.
