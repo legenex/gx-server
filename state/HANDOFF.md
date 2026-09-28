@@ -106,3 +106,54 @@ writes /srv/logs/dsv41-baseline-READY or -FAILED. Full log:
 from attempt #3 may sit next to the new one — trust the [runner] log tail.
 After READY: resume the mission (Gate A benchmarks, then dealignai per
 DECISIONS.md). Ranks are currently DOWN; worker holds no residual memory.
+
+## 2026-09-28 ~09:3x — ENV BUG FIXED + stale runtime cleaned; bootstrap dispatched
+Attempt #4 root cause (worker.log, 23:45:25): TP rank 1 died in vLLM envs.py
+`int('')` on VLLM_SPARSE_INDEXER_MAX_LOGITS_MB. In start.sh launch_cluster(),
+the worker's docker run gets env in TWO passes: worker_nccl (kit default 256)
+then serve_env, and the serve_env loop emitted `-e VAR=''` for every blank
+host var — the empty override of 256 killed rank 1 AFTER the head rank had
+loaded 99.84 GiB / 39/39 shards / DSpark draft / 240s. The desktop-memory
+theory is CLOSED: headless boot loads fine.
+
+Fixes (all in canonical repo, commit follows):
+1. mia-dsv41/start.sh: serve_env loop now OMITS blank vars
+   (`[ -n "${!v:-}" ] && serve_env+=...`) — blank means "use kit default",
+   which rank 0 and rank 1 now both get (256 via nccl_common; also restores
+   DSV41_PREFILL_EMPTY_CACHE_MEMAVAIL_GIB=2.5 / DSV41_PREFILL_END_EMPTY_CACHE=0
+   on the worker). All other blank-forwarded vars are string/blank-tolerant
+   (inner scripts guard with `[ -n ... ]`; patches use `or`/strip guards).
+2. mia-dsv41/tests/test_serve_env_no_blank.py: regression — fails if any
+   serve_env var is emitted as `-e VAR=''`, pins the `:-256` default, and the
+   worker_nccl-before-serve_env ordering. PASS; test_numeric_config.py PASS.
+3. Runner ~/bin/dsv41-baseline-launch.sh (mirrored to ops/ in the repo):
+   now ROTATES previous markers at attempt start (explicit rm -f of the exact
+   READY/FAILED paths — no more stale-marker ambiguity) and additionally
+   verifies /v1/models lists DeepSeek-v4.1-Flash-EXL3 before writing READY.
+
+Cleanup evidence (via mia-dsv41/stop.sh, NOT raw docker kill):
+- gx10-01: dsv41-exl3-head removed; MemAvailable 4 -> 108 GiB (session still
+  resident; headless kill frees ~8 more); swap 6.4 -> 2 GiB.
+- gx10-02: worker container removed; 116 GiB available, swap 0.
+- dsv41-exl3-nfs exporter container stays up (normal kit lifecycle).
+- Only remaining GPU procs = gnome-remote-desktop (dies with the session).
+- Fabric verified: both rails ACTIVE, GID index 3 = RoCEv2 ffff:c0a8:640a/640b.
+- Weights intact: 39/39 EXL41 shards + engram 47/48 + index (NO re-download).
+
+DISPATCHED: `systemctl --user start gx-dsv41-bootstrap.service` (attempt #5).
+Expect READY/FAILED marker in /srv/logs/ after ~25-40 min (weights cached;
+image present both nodes; NFS sync path proven). The graphical session (and
+this Droid process with it) dies by design at dispatch.
+
+ON READY (Gate A continues):
+1. ops/bench/run_bench.py --suite quick --endpoint http://127.0.0.1:8888
+   (TTFT + decode tok/s; record in EVIDENCE.md).
+2. Stop via mia-dsv41/stop.sh; verify MemAvailable returns BOTH nodes.
+3. Restart via systemctl --user start gx-dsv41-bootstrap.service (proves clean
+   restart; markers rotate automatically now).
+4. Second real completion probe (runner does 17*19 automatically).
+5. THEN dealignai uncensored staging per DECISIONS.md D-M4 (drowzeys overlay
+   still gated 403 — do NOT retry repeatedly).
+ON FAILED: read `tail /srv/logs/dsv41-first-launch.log`, fix narrowly, re-dispatch.
+GUI restore: console login at gdm (or reboot after stopping the model).
+
