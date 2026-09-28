@@ -37,13 +37,20 @@ GX_COMPUTER_LIMITS = {"max_parallel_requests": 4, "rpm_limit": 120, "tpm_limit":
 # D-044: Computer's own gateway key never reaches gx-max (the two-node distributed model, which
 # takes over both nodes). gx-auto stays: the orchestrator never acquires gx-max on its behalf.
 # Local models cost nothing, so a spend budget would never bind; rate and concurrency limits do.
-GX_COMPUTER_MODELS = ["gx-auto", "gx-mini", "gx-code"]
-MODEL_ORDER = ["gx-auto", "gx-mini", "gx-code", "gx-max"]
+# gx-mini/gx-code were retired with the DeepSeek V4.1 rebuild (git tag
+# pre-deepseek-v41-rebuild-20260927; state/DECISIONS.md D-M1) -- PUBLIC_ALIASES is now just
+# (gx-max, gx-auto), and KeyManager.create()/update() reject any model not in it. gx-auto is
+# the only alias Computer is meant to expose (gx-max stays excluded, above), so this list is
+# just that one entry now, not a redesign.
+GX_COMPUTER_MODELS = ["gx-auto"]
+MODEL_ORDER = ["gx-auto"]
 FOLDER_NAME = "GX-Cluster"
 NOTE_TITLE = "GX-Cluster — project instructions"
-COMPACTION = {  # sized to the smallest REAL window: gx-mini = 65536 ctx / 2 slots = 32768 per request
+COMPACTION = {  # gx-mini (the old summariser) is retired; gx-auto is the live replacement.
+    # Thresholds are unchanged from the original gx-mini sizing -- retuning them for gx-auto's
+    # much larger real window is a separate decision, not part of un-breaking a dead reference.
     "ENABLE_CONTEXT_COMPACTION": True,
-    "CONTEXT_COMPACTION_MODEL": "gx-mini",
+    "CONTEXT_COMPACTION_MODEL": "gx-auto",
     "CONTEXT_COMPACTION_TOKEN_THRESHOLD": 20000,
     "CONTEXT_COMPACTION_TOKEN_CAP": 20000,
     "CONTEXT_COMPACTION_RETENTION_PERCENTAGE": 40,
