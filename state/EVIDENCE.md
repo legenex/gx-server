@@ -77,3 +77,41 @@ Raw logs: /srv/logs/fabric-nccl-{20260927,bw-20260927}.log
 - Deploy implications: control-plane stack must be small (13G free), avoid 3001/9119/8642/
   5432/5433/80/443; hermes account only (root = human-gated break-glass).
 - DashFlo untouched per mission §41; user removes it separately.
+
+## 2026-09-28 — STOCK GATE A PASS (reliable lifecycle)
+
+Attempt #6 via `systemctl --user start gx-dsv41-bootstrap.service` (disabled at boot).
+Drain: ops/dsv41-prestart-drain.sh (RDP masked, wayland killed, PageFlo/Droid/open-webui/gx-computer stopped).
+Pre-start MemAvailable: head 112.6 GiB, worker 117.1 GiB.
+CUDA check PASSED: after init_device 108.81 GiB free vs 107.03 required @ GPU_MEM_UTIL=0.88.
+KV_CACHE_MEMORY_BYTES=2684354560 unchanged. WEIGHT_SYNC=nfs NFS_CLIENTS=192.168.100.11.
+Served: DeepSeek-v4.1-Flash-EXL3 max_model_len=600000 TP=2 nnodes=2.
+Fingerprint: vllm-0.1.dev20904+g179dd0fa9-tp2-0829f620
+Image: sha256:a80eafcd4e340015a29e3a00de3fa89a034b84f80d0dc193823760acf2ea2b2b
+  ghcr.io/miaai-lab/deepseek-v4.1-flash-exl3-2x-dgx-sparks:2.9bpw
+Mia submodule: 7f69e73. Parent at commit time: see git log.
+Master: 192.168.100.10:29521 (ConnectX rail-1). PYNCCL all-reduce.
+
+Boot 1: /health HTTP 200; /v1/models DeepSeek-v4.1-Flash-EXL3;
+  prompt "Return only the result of 17 multiplied by 19." -> "323"
+Stop via mia-dsv41/stop.sh: head 117.1 GiB, worker 116.7 GiB; no stale rank containers.
+Boot 2: same health + 323. READY 2026-09-28T11:57:12+02:00 head=5.4 worker=6.6
+Marker: /srv/logs/dsv41-baseline-READY
+
+Quick+concurrency bench (state/bench/gate-a-stock.jsonl), 0 errors:
+| op | streams | TTFT ms | decode tok/s | aggregate tok/s | per-stream |
+| short_decode | 1 | 233 | 10.8 | — | — |
+| concurrency | 1 | 250 | 14.6 | 13.7 | [14.6] |
+| concurrency | 2 | 228 | 11.7 | 22.7 | [11.7, 11.9] |
+| concurrency | 4 | 261 | 12.0 | 21.4 | [12.0, 11.3, 11.3, 11.1] |
+smoke 17*19=323 PASS; tool_call PASS; coding is_prime+unittest PASS.
+MemAvailable low-water 4.5 GiB (model loaded). Swap used ~8 GiB head / ~3.5 GiB worker.
+4-wide stable but no throughput gain vs 2 (server MAX_NUM_SEQS=2).
+
+Stock manifest: state/stock-dsv41-manifest.txt
+config.json sha256 8b2cb821118c407a148bc86a5a280f4cf4c633c82b5273c529e60afc2c702eca
+index sha256 e35cb7c2f779a04e564accbdc6ddb01d775793255b2c6d8ca2b0492c21fc88f2
+shard01 a4f64372b9b62839b74af245583d0bbfd716c183f1fa7b5c5efbf43ce1641e65
+shard39 eaa32d71ee333f78eec4b2974d830cd085357dec8359d93cb0fb08ad6e6d2934
+HF cache ~/.cache/huggingface/dsv41-exl3 is HARDLINKED to /srv/models/dsv41/model (nlink=2).
+Worker holds an independent local copy at /srv/models/dsv41/model (recovery rsync source).

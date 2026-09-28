@@ -188,3 +188,12 @@ gx10-02 215G free. NFS weight backend stays.
 
 Do not restore PageFlo/open-webui/RDP while gx-max is starting or loaded.
 
+## 2026-09-28 11:57 SAST — STOCK GATE A COMPLETE
+
+READY /srv/logs/dsv41-baseline-READY
+boot1 + stop (head 117.1 / worker 116.7, no stale ranks) + boot2, both 17*19=323.
+Fingerprint vllm-0.1.dev20904+g179dd0fa9-tp2-0829f620. GPU_MEM_UTIL=0.88 KV=2.5GiB.
+Bench: state/bench/gate-a-stock.jsonl — FAST/BALANCED/SWARM in registry + D-M5.
+Next: replace head stock pack with dealignai uncensored (D-M6). Worker keeps
+local stock as recovery. Then LiteLLM gx-max/gx-auto real completions.
+

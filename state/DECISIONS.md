@@ -30,3 +30,18 @@ gx-max must be genuinely uncensored; no silent stock fallback. Full provenance
 recorded.
 
 - 2026-09-27 (fast-track P1, corrected): overlay gate still unaccepted (file resolve 403, gated=auto). Evidence-based path stays dealignai CRACK (ungated, drop-in, validated serving notes; HarmBench 99.4%, non-ethics MMLU -0.58pp, DSpark ~45%). Sequence: stock battery -> delete stock pack (disk) -> download dealignai 210G -> load -> uncensor-verify battery -> production select. If the user accepts the drowzeys gate later, the 650MB overlay is the cheaper alternative for a re-test.
+
+## D-M5 Profiles from Gate A measurement (2026-09-28)
+FAST: max_num_seqs=1, DSpark k=3. Measured TTFT 233ms, decode 14.6 tok/s.
+BALANCED: max_num_seqs=2, DSpark k=3. Measured ~11.8 tok/s/stream, aggregate 22.7.
+SWARM: keep max_num_seqs=2 (no aggregate gain at 4); orchestrator queues excess up to 4.
+  4 concurrent completed with 0 errors (agg 21.4) — stable, not faster.
+Do not load a second copy of the model.
+
+## D-M6 Disk: replace stock with dealignai after Gate A
+Head has 79G free. Stock 197G and HF cache are the SAME inodes (hardlink nlink=2);
+deleting cache alone frees 0 bytes. After Gate A evidence+manifest+commit, stop
+ranks, delete head /srv/models/dsv41/model AND the hardlinked cache copy, keep
+engram, download dealignai to /srv/models/dsv41/uncensored (~210G). Recovery:
+worker still has an independent local stock copy at /srv/models/dsv41/model;
+re-download Mia-AiLab/DeepSeek-V4.1-Flash-EXL3-2.9bpw if needed.

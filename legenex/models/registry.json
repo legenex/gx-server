@@ -132,7 +132,7 @@
       "dspark_tokens": 3,
       "max_model_len": 600000,
       "reasoning_default": "medium",
-      "target": "single interactive"
+      "target": "1 stream; measured 2026-09-28 stock Gate A: TTFT 233ms, decode 14.6 tok/s"
     },
     "balanced": {
       "max_num_seqs": 2,
@@ -140,14 +140,16 @@
       "dspark_tokens": 3,
       "max_model_len": 600000,
       "reasoning_default": "medium",
-      "target": "AgentOS default, 2 gens"
+      "target": "2 streams; measured 11.7+11.9 tok/s, aggregate 22.7 tok/s, 0 errors"
     },
     "swarm": {
-      "max_num_seqs": 4,
-      "spec_method": "none",
-      "max_model_len": 262144,
+      "max_num_seqs": 2,
+      "spec_method": "dspark",
+      "dspark_tokens": 3,
+      "max_model_len": 600000,
       "reasoning_default": "low",
-      "target": "many logical agents, 4 gens"
+      "queue_to": 4,
+      "target": "queue excess above 2; 4-wide measured stable (agg 21.4 tok/s, no extra throughput vs 2)"
     },
     "deep": {
       "max_num_seqs": 2,
