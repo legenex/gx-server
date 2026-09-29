@@ -116,10 +116,15 @@ class TestRoutingDecisions(OrchestratorHarness):
         self.assertEqual(status, 400)
         self.assertEqual(body["error"]["code"], "invalid_profile")
         self.assertEqual(len(self.upstream.requests), 0)
-        # a VALID override goes through
+        # a VALID override shapes the request but does not cycle the engine
         status, headers, body = self.chat(_payload(), headers={"X-GX-Profile": "fast"})
         self.assertEqual(status, 200)
         self.assertEqual(headers["X-GX-Profile"], "fast")
+        self.assertEqual(self.lifecycle.acquire_calls[-1], "balanced")
+        status, headers, body = self.chat(_payload(), headers={"X-GX-Profile": "deep"})
+        self.assertEqual(status, 200)
+        self.assertEqual(headers["X-GX-Profile"], "deep")
+        self.assertEqual(self.lifecycle.acquire_calls[-1], "balanced")
 
     def test_auto_reasoning_override_is_validated(self):
         status, _, body = self.chat(_payload(), headers={"X-GX-Reasoning": "ultra"})

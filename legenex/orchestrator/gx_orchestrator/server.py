@@ -686,14 +686,17 @@ class Handler(BaseHTTPRequestHandler):
         budget: B.ContextBudget = gate["budget"]
         kwargs: dict[str, Any] = gate["kwargs"]
 
-        # gx-auto FAST/BALANCED/DEEP is a per-request policy (reasoning, tools,
-        # output cap). The serving profile is an engine-level overlay; switching
-        # it while READY is a full drain+restart (~9 min). Never cycle the
-        # engine because autoroute picked "fast" for a short question. An
-        # explicit X-GX-Profile override still switches. gx-max is unchanged.
-        acquire_profile = profile_name
-        if alias == ALIAS_AUTO and not (decision_fields or {}).get("profile_override"):
+        # gx-auto FAST/BALANCED/DEEP/SWARM is a per-request policy (reasoning,
+        # tools, output cap, scheduler priority). The serving profile is an
+        # engine-level overlay; switching it while READY is a full drain+restart
+        # (~9 min). Never cycle the engine for gx-auto, including an explicit
+        # X-GX-Profile header -- that header only shapes the request. Engine
+        # profile changes are administrative (lifecycle acquire/restart) or
+        # gx-max. gx-max is unchanged.
+        if alias == ALIAS_AUTO:
             acquire_profile = self.lifecycle.current_profile or self.registry.default_profile().name
+        else:
+            acquire_profile = profile_name
 
         if not self._ensure_acquired(acquire_profile, attr, request_id):
             return
