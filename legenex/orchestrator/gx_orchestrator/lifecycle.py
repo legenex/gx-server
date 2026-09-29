@@ -287,6 +287,7 @@ class GxMaxLifecycle:
         liveness_probe: Callable[[], bool] | None = None,
         read_mem_gib: Callable[[str], "float | None"] | None = None,
         container_running: Callable[[str], bool] | None = None,
+        read_gid_table: Callable[[str, str], "dict[int, tuple[str, str]] | None"] | None = None,
         drain_hook: Callable[[float], int] | None = None,
         on_ready: Callable[[str, int], None] | None = None,
         extra_env: Mapping[str, str] | None = None,
@@ -327,6 +328,7 @@ class GxMaxLifecycle:
         self._liveness_probe = liveness_probe or ready_probe or (lambda: default_liveness_probe(api_base, model_id))
         self._read_mem_gib = read_mem_gib or _default_read_mem_gib
         self._container_running = container_running or _default_container_running
+        self._read_gid_table = read_gid_table or _default_read_gid_table
         #: drain_hook(seconds) waits for in-flight requests (the scheduler)
         #: and returns how many are still active. None => no drainable load.
         self._drain_hook = drain_hook
@@ -539,10 +541,44 @@ class GxMaxLifecycle:
             with self._cv:
                 self._waiters -= 1
 
+    def _resolve_gid_overlay(self, overlay: Mapping[str, str]) -> dict[str, str]:
+        """Per-rank RoCE v2 GID indices for the kit's HEAD_GID / WORKER_GID.
+
+        The kernel assigns the GID *index* of a fabric IPv4 and it is not
+        stable: after a link flap gx10-02's rocep1s0f0 re-populated with the
+        RoCE v2 entry at index 4 (index 3 an empty hole) while gx10-01 stayed
+        at 3, so one shared NCCL_IB_GID_INDEX=3 made the kit's preflight (and
+        NCCL QP setup) fail. NCCL_IB_GID_INDEX stays the preferred index; a
+        rank only deviates when it is not a populated RoCE v2 entry for that
+        rank's fabric IP. Never returns a blank value (a blank overlay key
+        would clobber the kit's own default). Anything unresolvable is left
+        to the kit's own preflight, which prints both GID tables.
+        """
+        kit_env = _read_kit_env(self._dir / ".env")
+        preferred = str(overlay.get("NCCL_IB_GID_INDEX") or "3")
+        out: dict[str, str] = {}
+        for node, key, ib_key, ip_key in (
+            ("node1", "HEAD_GID", "HEAD_CX7_IB", "HEAD_IP"),
+            ("node2", "WORKER_GID", "WORKER_CX7_IB", "WORKER_IP"),
+        ):
+            ib, ip = kit_env.get(ib_key, ""), kit_env.get(ip_key, "")
+            if not (ib and ip):
+                continue
+            idx = pick_roce_v2_gid(self._read_gid_table(node, ib), ip, preferred)
+            if idx is None:
+                log.warning("gx-max: no RoCE v2 GID for %s on %s/%s; leaving %s to the kit preflight",
+                            ip, node, ib, key)
+                continue
+            out[key] = str(idx)
+        if out:
+            log.info("gx-max: NCCL GID indices %s (preferred %s)", out, preferred)
+        return out
+
     def _do_acquire(self, profile: ProfileSpec) -> None:
         model = self._registry.production_model()
         runtime = self._registry.runtime(self._registry.alias("gx-max").runtime)
         overlay = build_env_overlay(profile, model, runtime, extra=self._extra_env)
+        overlay.update(self._resolve_gid_overlay(overlay))
 
         # Record the pre-start memory floor for the release-time check.
         self._pre_start_mem = {n: self._read_mem_gib(n) for n in ("node1", "node2")}
@@ -950,6 +986,77 @@ def _default_read_mem_gib(node: str) -> "float | None":
         return round(float(proc.stdout.strip()), 1) if proc.returncode == 0 else None
     except (OSError, subprocess.SubprocessError, ValueError):
         return None
+
+
+def _read_kit_env(path: Path) -> dict[str, str]:
+    """KEY=VALUE lines of the kit's .env (comments/blank lines skipped)."""
+    out: dict[str, str] = {}
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                k, _, v = line.partition("=")
+                out[k.strip()] = v.strip().strip("'\"")
+    except OSError:
+        pass
+    return out
+
+
+def pick_roce_v2_gid(
+    table: "Mapping[int, tuple[str, str]] | None", ipv4: str, preferred: str,
+) -> "int | None":
+    """Index of the RoCE v2 GID that carries `ipv4` (::ffff:a.b.c.d), or None.
+
+    `table` maps index -> (gid text, type text). The preferred index wins when
+    it qualifies; otherwise the lowest qualifying index.
+    """
+    if not table:
+        return None
+    try:
+        octets = [int(o) for o in ipv4.split(".")]
+        if len(octets) != 4 or any(not 0 <= o <= 255 for o in octets):
+            return None
+    except ValueError:
+        return None
+    tail = "%02x%02x:%02x%02x" % tuple(octets)
+
+    def ok(idx: int) -> bool:
+        gid, typ = table[idx]
+        return typ.strip() == "RoCE v2" and gid.strip().lower().endswith(":ffff:" + tail)
+
+    if preferred.isdigit() and int(preferred) in table and ok(int(preferred)):
+        return int(preferred)
+    return next((i for i in sorted(table) if ok(i)), None)
+
+
+_GID_DUMP = (
+    'b=/sys/class/infiniband/%s/ports/1; for i in $(seq 0 15); do '
+    'g=$(cat $b/gids/$i 2>/dev/null) || continue; '
+    't=$(cat $b/gid_attrs/types/$i 2>/dev/null) || continue; echo "$i|$g|$t"; done'
+)
+
+
+def _default_read_gid_table(node: str, ib_dev: str) -> "dict[int, tuple[str, str]] | None":
+    """GID table of one HCA port (read-only sysfs). node2 over SSH."""
+    if not re.fullmatch(r"[A-Za-z0-9_]+", ib_dev):
+        return None
+    from .config import CONFIG
+
+    script = _GID_DUMP % ib_dev
+    cmd = ["bash", "-c", script] if node == "node1" else [
+        "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", CONFIG.node2_ssh, script]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    table: dict[int, tuple[str, str]] = {}
+    for row in proc.stdout.splitlines():
+        parts = row.split("|")
+        if len(parts) == 3 and parts[0].isdigit():
+            table[int(parts[0])] = (parts[1], parts[2])
+    return table or None
 
 
 def _default_container_running(node: str) -> bool:

@@ -28,6 +28,7 @@ from gx_orchestrator.lifecycle import (  # noqa: E402
     State,
     build_env_overlay,
     default_ready_probe,
+    pick_roce_v2_gid,
 )
 from registry_fixtures import load_fixture_registry  # noqa: E402
 
@@ -162,6 +163,24 @@ class TestEnvOverlay(unittest.TestCase):
         self.assertNotIn("DSPARK_TOKENS", env)
 
 
+class TestPickRoceV2Gid(unittest.TestCase):
+    T = {0: ("fe80:0000:0000:0000:32c5:99ff:febe:3a40", "RoCE v2"),
+         2: ("0000:0000:0000:0000:0000:ffff:c0a8:640b", "IB/RoCE v1"),
+         4: ("0000:0000:0000:0000:0000:ffff:c0a8:640b", "RoCE v2")}
+
+    def test_skips_v1_and_link_local(self):
+        self.assertEqual(pick_roce_v2_gid(self.T, "192.168.100.11", "3"), 4)
+
+    def test_preferred_index_wins_when_valid(self):
+        t = dict(self.T); t[3] = ("0000:0000:0000:0000:0000:ffff:c0a8:640b", "RoCE v2")
+        self.assertEqual(pick_roce_v2_gid(t, "192.168.100.11", "3"), 3)
+
+    def test_wrong_ip_or_bad_input_is_none(self):
+        self.assertIsNone(pick_roce_v2_gid(self.T, "192.168.100.99", "3"))
+        self.assertIsNone(pick_roce_v2_gid(self.T, "not-an-ip", "3"))
+        self.assertIsNone(pick_roce_v2_gid(None, "192.168.100.11", "3"))
+
+
 class TestReadyProbe(unittest.TestCase):
     def test_probe_against_the_real_stub(self):
         pass  # exercised throughout LifecycleTestBase; see TestAcquire
@@ -273,6 +292,41 @@ class TestAcquire(LifecycleTestBase):
         self.assertEqual(env["SPEC_METHOD"], "dspark")
         self.assertEqual(env["NCCL_IB_GID_INDEX"], "3")
         self.assertEqual(env["SERVED_MODEL_NAME"], "DeepSeek-v4.1-Flash-EXL3")
+
+    def test_per_rank_gid_overlay_follows_each_nodes_table(self):
+        # Regression: gx10-02's RoCE v2 entry for its fabric IP moved to index 4
+        # (index 3 an empty hole) while gx10-01 stayed at 3; one shared "3"
+        # failed the kit preflight. Each rank must get its own populated index.
+        (self.dir / ".env").write_text(
+            "HEAD_IP=192.168.100.10\nWORKER_IP=192.168.100.11\n"
+            "HEAD_CX7_IB=rocep1s0f0\nWORKER_CX7_IB=rocep1s0f0\n")
+        z = "0000:0000:0000:0000:0000:0000:0000:0000"
+        tables = {
+            "node1": {2: ("0000:0000:0000:0000:0000:ffff:c0a8:640a", "IB/RoCE v1"),
+                      3: ("0000:0000:0000:0000:0000:ffff:c0a8:640a", "RoCE v2")},
+            "node2": {2: ("0000:0000:0000:0000:0000:ffff:c0a8:640b", "IB/RoCE v1"),
+                      3: (z, ""),
+                      4: ("0000:0000:0000:0000:0000:ffff:c0a8:640b", "RoCE v2")},
+        }
+        envfile = self.dir / "start-env"
+        self.write_start(f"#!/usr/bin/env bash\nenv | grep -E '^(HEAD_GID|WORKER_GID|NCCL_IB_GID_INDEX)=' > {envfile}\nexit 1\n")
+        self.write_stop()
+        lc = self.make(read_gid_table=lambda node, ib: tables[node])
+        with self.assertRaises(AcquisitionError):
+            lc.acquire(profile_name="fast", timeout=12)
+        env = dict(line.split("=", 1) for line in envfile.read_text().splitlines())
+        self.assertEqual((env["HEAD_GID"], env["WORKER_GID"]), ("3", "4"))
+
+    def test_unresolvable_gid_is_left_to_the_kit_never_blank(self):
+        (self.dir / ".env").write_text("HEAD_IP=192.168.100.10\nWORKER_IP=192.168.100.11\n"
+                                       "HEAD_CX7_IB=rocep1s0f0\nWORKER_CX7_IB=rocep1s0f0\n")
+        envfile = self.dir / "start-env"
+        self.write_start(f"#!/usr/bin/env bash\nenv | grep -E '^(HEAD_GID|WORKER_GID)=' > {envfile}; touch {envfile}\nexit 1\n")
+        self.write_stop()
+        lc = self.make(read_gid_table=lambda node, ib: None)
+        with self.assertRaises(AcquisitionError):
+            lc.acquire(profile_name="fast", timeout=12)
+        self.assertNotIn("GID=", envfile.read_text())
 
     def test_unknown_profile_is_a_clear_error(self):
         self.write_start("#!/usr/bin/env bash\nexit 0\n")
