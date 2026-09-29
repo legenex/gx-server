@@ -124,7 +124,39 @@ trap 'log "received SIGINT/SIGTERM; aborting"; exit 130' INT TERM
 log "=== starting the Mia kit (${GXMAX_RANK0_NAME} + ${GXMAX_RANK1_NAME}) ==="
 LAUNCHED=1   # the kit launches both containers itself; assume resident from here
 gxs_arm
+# --- per-rank RoCE v2 GID resolution ----------------------------------------
+# The GID *index* of a rank's fabric IPv4 is assigned by the kernel and is NOT
+# stable: after a link flap the worker's rocep1s0f0 table re-populated with the
+# RoCE v2 entry at index 4 (index 3 an empty hole), while the head's stayed at
+# 3. A single fixed NCCL_IB_GID_INDEX then fails the kit's preflight ("set
+# NCCL_IB_GID_INDEX ...") or hangs QP setup. So: keep the preferred index
+# (NCCL_IB_GID_INDEX, default 3) only where it is a populated RoCE v2 entry for
+# that rank's fabric IP; otherwise pick the index that is. Read-only sysfs.
+_mia_env() { sed -n "s/^$1=//p" "${GXMAX_MIA_DIR}/.env" 2>/dev/null | tail -1; }
+_roce_v2_gid_index() {  # <ib-dev> <ipv4> <preferred-index>; prints the index or nothing
+  local dev="$1" ip="$2" want="$3" base hex i g t
+  base="/sys/class/infiniband/${dev}/ports/1"
+  hex="$(printf '%02x%02x:%02x%02x' ${ip//./ })"
+  for i in "${want}" 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+    g="$(cat "${base}/gids/${i}" 2>/dev/null)" || continue
+    t="$(cat "${base}/gid_attrs/types/${i}" 2>/dev/null)" || continue
+    [ "${t}" = "RoCE v2" ] && [ "${g##*:ffff:}" = "${hex}" ] && { echo "${i}"; return 0; }
+  done
+  return 1
+}
+_want_gid="${NCCL_IB_GID_INDEX:-3}"
+_head_ib="$(_mia_env HEAD_CX7_IB)";  _head_ib="${_head_ib:-rocep1s0f1}"
+_work_ib="$(_mia_env WORKER_CX7_IB)"; _work_ib="${_work_ib:-rocep1s0f0}"
+_head_ip="$(_mia_env HEAD_IP)"; _work_ip="$(_mia_env WORKER_IP)"
+HEAD_GID_RESOLVED="$(_roce_v2_gid_index "${_head_ib}" "${_head_ip}" "${_want_gid}")" \
+  || die "no RoCE v2 GID for ${_head_ip} on head ${_head_ib} (GID table empty or link down)"
+WORKER_GID_RESOLVED="$(n2 "$(declare -f _roce_v2_gid_index); _roce_v2_gid_index '${_work_ib}' '${_work_ip}' '${_want_gid}'")" \
+  || die "no RoCE v2 GID for ${_work_ip} on worker ${_work_ib} (GID table empty or link down)"
+log "NCCL GID index: head ${_head_ib}=${HEAD_GID_RESOLVED} worker ${_work_ib}=${WORKER_GID_RESOLVED} (preferred ${_want_gid})"
+
 KIT_ENV=(SERVED_MODEL_NAME="${SERVED_MODEL_NAME}"
+         HEAD_GID="${HEAD_GID_RESOLVED}"
+         WORKER_GID="${WORKER_GID_RESOLVED}"
          MAX_NUM_SEQS="${MAX_NUM_SEQS}"
          SPEC_METHOD="${SPEC_METHOD}"
          MAX_MODEL_LEN="${MAX_MODEL_LEN}")
