@@ -1791,3 +1791,37 @@ injects neither) gets the cheap probe for `_reconcile()` for the first time.
 concurrent traffic" scenario (would need a fake HTTP server with controllable
 latency); the fix is proven live but not test-locked. Left for a follow-up if
 wanted.
+
+## D-049 — gx-max start failed on a shifted worker GID index; per-rank RoCE v2 GID resolution (2026-09-29)
+
+**Symptom:** every gx-max start died in the Mia kit preflight with
+`set NCCL_IB_GID_INDEX (same index both ranks) or HEAD_GID/WORKER_GID ...`.
+
+**Root cause (not a blank/overwritten env):** the orchestrator pinned one
+shared `NCCL_IB_GID_INDEX=3` for both ranks. The GID *index* is assigned by
+the kernel and is not stable: on gx10-02 `rocep1s0f0` the RoCE v2 entry for
+192.168.100.11 is now at **index 4** (index 3 an empty hole, index 2 is RoCE
+v1), while gx10-01 still has it at 3. The kit correctly refused index 3 on the
+worker. (The kit already defaulted to 3 and `:-` defaults survive blanks; no
+later layer was clobbering it.) Verified read-only on both nodes before any
+change. No network/RDMA config was touched (L-7).
+
+**Fix:** `GxMaxLifecycle._resolve_gid_overlay` (`lifecycle.py`) reads each
+rank's GID table (local sysfs / SSH, read-only), keeps the preferred index
+(3) where it is a populated RoCE v2 entry for that rank's fabric IP, otherwise
+picks the one that is, and passes `HEAD_GID` / `WORKER_GID` to the kit. It
+never emits a blank value; unresolvable ranks are left to the kit preflight.
+Unit tests: `TestPickRoceV2Gid`, per-rank overlay + never-blank tests;
+orchestrator suite 277/277 OK.
+
+**Verified live:** started via the orchestrator (`acquire`, profile
+`balanced`): head `NCCL_IB_GID_INDEX=3`, worker `=4`, `NCCL_IB_HCA=rocep1s0f0`
+both, `MAX_NUM_SEQS=2`, `/srv/models/dsv41/uncensored` mounted at `/model`,
+`/health` 200, real gx-max + gx-auto completions, FAST/DEEP/3-concurrent with
+0 container restarts, RDMA rx counters rising on rocep1s0f0.
+
+**Also found:** `gx-computer` was running with no published ports (Open WebUI
+connection #2 to `127.0.0.1:8000` refused); re-applied its tracked compose file.
+
+**Open:** `gx doctor`'s fabric check (`REQUIRED_GID_INDEX = 3`) would FAIL on a
+node whose RoCE v2 GID is not at 3; not changed here.
