@@ -7,13 +7,19 @@ may occupy the next active slot, and in what order.
 
 Fairness rules:
 
-* STRICT PRIORITY -- interactive(0) > critical-review(1) > orchestrator(2) >
-  normal-worker(3) > background(4). A lower-number priority queued behind a
-  higher-number active request is never promoted ahead of capacity; a
-  higher-priority submit is never demoted by earlier lower-priority submits.
+* STRICT PRIORITY -- interactive/FAST(0) > critical-review(1) >
+  orchestrator/BALANCED(2) > normal-worker/DEEP(3) > background/SWARM(4).
+  A higher-priority submit is never demoted by earlier lower-priority
+  submits. Active generations are never preempted.
+* No slot is reserved for FAST. If nothing higher-priority is waiting,
+  DEEP/BALANCED may fill every free sequence.
 * ROUND-ROBIN WITHIN PRIORITY across PROJECTS -- two projects both at
   priority 3 alternate, so one agent swarm cannot starve another project
-  even when it fills the queue first.
+  even when it fills the queue first. FIFO within a project.
+* AGEING -- a waiting DEEP/BALANCED request steps toward (but never past)
+  interactive so a FAST flood cannot starve long work indefinitely.
+* Per-project active caps skip a project only when another project can
+  use the slot; free capacity is never left idle on purpose.
 
 Persistence: the queue (queued + active records) is written to queue.json
 with an atomic tmp+rename on EVERY mutation, and restored at startup. Any
@@ -51,8 +57,23 @@ PRIORITIES: dict[str, int] = {
     "normal-worker": 3,
     "background": 4,
 }
+#: Logical gx-auto/gx-max modes accepted as X-GX-Priority aliases and as
+#: the default when the client omitted X-GX-Priority.
+_MODE_TO_PRIORITY: dict[str, str] = {
+    "fast": "interactive",
+    "interactive": "interactive",
+    "balanced": "orchestrator",
+    "deep": "normal-worker",
+    "long": "normal-worker",
+    "swarm": "background",
+    "background": "background",
+}
 DEFAULT_PRIORITY = "normal-worker"
 DEFAULT_PROJECT = "unknown"
+#: Seconds of queue wait per effective-rank step. Floor keeps aged DEEP
+#: behind a fresh FAST request.
+DEFAULT_AGEING_STEP = 60.0
+DEFAULT_AGEING_FLOOR = 1
 
 #: Record states. `cancelling` is an ACTIVE record whose cancel was requested:
 #: the relaying thread owns the socket, so it must observe the mark and stop.
@@ -78,7 +99,15 @@ _METRIC_KEYS = (
 
 def valid_priority(name: Any) -> str:
     text = str(name or "").strip().lower()
+    text = _MODE_TO_PRIORITY.get(text, text)
     return text if text in PRIORITIES else DEFAULT_PRIORITY
+
+
+def priority_from_mode(mode: Any) -> str:
+    """Map a logical serving mode (fast/balanced/deep/swarm/long) to a
+    canonical scheduler priority. Unknown modes keep DEFAULT_PRIORITY."""
+    text = str(mode or "").strip().lower()
+    return _MODE_TO_PRIORITY.get(text, DEFAULT_PRIORITY)
 
 
 @dataclass
@@ -121,11 +150,19 @@ class Record:
         known = {f for f in cls.__dataclass_fields__ if f != "ready_event"}
         return cls(**{k: v for k, v in data.items() if k in known})
 
-    def public(self) -> dict[str, Any]:
+    def public(self, now: "float | None" = None) -> dict[str, Any]:
         """Safe for /scheduler/status: the full record, no live objects."""
+        stamp = time.time() if now is None else now
         out = self.as_dict()
-        if self.enqueue_ts:
-            out["queued_seconds"] = round(max(0.0, (self.start_ts or time.time()) - self.enqueue_ts), 1)
+        out["logical_mode"] = self.profile
+        wait_end = self.start_ts if self.start_ts is not None else stamp
+        out["queued_seconds"] = round(max(0.0, wait_end - self.enqueue_ts), 1) if self.enqueue_ts else 0.0
+        out["queue_wait_seconds"] = out["queued_seconds"]
+        if self.start_ts:
+            run_end = self.done_ts if self.done_ts is not None else stamp
+            out["running_seconds"] = round(max(0.0, run_end - self.start_ts), 1)
+        else:
+            out["running_seconds"] = 0.0
         return out
 
 
@@ -148,6 +185,8 @@ class Scheduler:
         default_timeout: float = 600.0,
         history_cap: int = 5000,
         clock: Callable[[], float] = time.time,
+        ageing_step: float = DEFAULT_AGEING_STEP,
+        ageing_floor: int = DEFAULT_AGEING_FLOOR,
     ) -> None:
         self._queue_path = Path(queue_path)
         self._history_path = Path(history_path)
@@ -158,6 +197,8 @@ class Scheduler:
         self._default_timeout = default_timeout
         self._history_cap = history_cap
         self._clock = clock
+        self._ageing_step = float(ageing_step)
+        self._ageing_floor = max(0, int(ageing_floor))
 
         self._lock = threading.RLock()
         self._idle = threading.Condition(self._lock)
@@ -325,6 +366,23 @@ class Scheduler:
     def _queued_count(self) -> int:
         return sum(1 for r in self._records.values() if r.state is STATE_QUEUED)
 
+    def _effective_rank(self, rec: Record) -> int:
+        """Base priority rank, aged toward (but not past) ageing_floor."""
+        base = PRIORITIES.get(rec.priority, 99)
+        if base <= 0 or self._ageing_step <= 0:
+            return base
+        waited = max(0.0, self._clock() - rec.enqueue_ts)
+        steps = int(waited // self._ageing_step)
+        if steps <= 0:
+            return base
+        return max(self._ageing_floor, base - steps)
+
+    def _public_locked(self, rec: Record) -> dict[str, Any]:
+        out = rec.public(now=self._clock())
+        out["priority_rank"] = PRIORITIES.get(rec.priority, 99)
+        out["effective_rank"] = self._effective_rank(rec)
+        return out
+
     # ------------------------------------------------------------------ submit
     def submit(self, record: Mapping[str, Any]) -> dict[str, Any]:
         """Admit a request: active if a slot is free, else queued.
@@ -388,47 +446,54 @@ class Scheduler:
         return decision
 
     # ----------------------------------------------------------------- promote
+    def _pick_locked(self, *, respect_project_cap: bool) -> "Record | None":
+        """Next queued record: effective rank, then FIFO, then project RR.
+
+        When `respect_project_cap` is true, projects at their active cap are
+        skipped. The caller retries without the cap so a free slot is not
+        left idle when only over-cap work is waiting.
+        """
+        queued = [r for r in self._records.values() if r.state is STATE_QUEUED]
+        if not queued:
+            return None
+        ranks = sorted({self._effective_rank(r) for r in queued})
+        for rank in ranks:
+            candidates = [r for r in queued if self._effective_rank(r) == rank]
+            if respect_project_cap:
+                candidates = [
+                    r for r in candidates
+                    if self._active_of(r.project) < self._proj_active_cap
+                ]
+            if not candidates:
+                continue
+            candidates.sort(key=lambda r: (r.enqueue_ts, r.id))
+            start = self._rr.get(rank)
+            ordered = candidates
+            if start is not None:
+                for idx, cand in enumerate(candidates):
+                    if cand.project != start:
+                        ordered = candidates[idx:] + candidates[:idx]
+                        break
+            return ordered[0]
+        return None
+
     def _promote_locked(self) -> "list[str]":
-        """Fill free active slots. Strict priority first; within one priority
-        level, round-robin across projects so no project monopolises the
-        level. Projects at their active cap are skipped, not dropped."""
+        """Fill free active slots. Strict effective priority first; within
+        one rank, FIFO then round-robin across projects. Active records are
+        never preempted. Project caps yield when they would idle a slot."""
         promoted: list[str] = []
         while self._active_count() < self._capacity:
-            chosen: "Record | None" = None
-            best_prio = None
-            # Candidates ordered by priority; within a priority, rotate the
-            # starting project so consecutive slots go to different projects.
-            for prio in sorted(PRIORITIES.values()):
-                candidates = [
-                    r for r in self._records.values()
-                    if r.state is STATE_QUEUED
-                    and PRIORITIES.get(r.priority, 99) == prio
-                    and self._active_of(r.project) < self._proj_active_cap
-                ]
-                if not candidates:
-                    continue
-                # Round-robin: prefer a project other than the one that was
-                # served last at this priority level. If only that project has
-                # candidates, it is served again (correctly -- there is no one
-                # else to alternate with).
-                start = self._rr.get(prio)
-                ordered = candidates
-                if start is not None:
-                    for idx, cand in enumerate(candidates):
-                        if cand.project != start:
-                            ordered = candidates[idx:] + candidates[:idx]
-                            break
-                chosen = ordered[0]
-                best_prio = prio
-                break
+            chosen = self._pick_locked(respect_project_cap=True)
+            if chosen is None:
+                chosen = self._pick_locked(respect_project_cap=False)
             if chosen is None:
                 break
+            rank = self._effective_rank(chosen)
             chosen.state = STATE_ACTIVE
             chosen.start_ts = self._clock()
             assert chosen.ready_event is not None
             chosen.ready_event.set()
-            if best_prio is not None:
-                self._rr[best_prio] = chosen.project
+            self._rr[rank] = chosen.project
             promoted.append(chosen.id)
         return promoted
 
@@ -480,7 +545,7 @@ class Scheduler:
     def get(self, record_id: str) -> "dict[str, Any] | None":
         with self._lock:
             rec = self._records.get(record_id)
-            return rec.public() if rec else None
+            return self._public_locked(rec) if rec else None
 
     def is_cancelling(self, record_id: str) -> bool:
         with self._lock:
@@ -643,7 +708,7 @@ class Scheduler:
         oldest wait, and every live record's state."""
         now = self._clock()
         with self._lock:
-            live = [r.public() for r in self._records.values()]
+            live = [self._public_locked(r) for r in self._records.values()]
             queued = [r for r in live if r["state"] == STATE_QUEUED]
             active = [r for r in live if r["state"] in (STATE_ACTIVE, STATE_CANCELLING)]
             projects: dict[str, dict[str, int]] = {}
@@ -658,6 +723,8 @@ class Scheduler:
                 "capacity": self._capacity,
                 "active": len(active),
                 "queued": len(queued),
+                "active_sequences": len(active),
+                "waiting": len(queued),
                 "projects": projects,
                 "oldest_wait_seconds": round(now - oldest, 1) if oldest else 0.0,
                 "limits": {
@@ -665,6 +732,8 @@ class Scheduler:
                     "per_project_queued": self._proj_queued_cap,
                     "global_queued": self._global_queued_cap,
                     "default_timeout": self._default_timeout,
+                    "ageing_step_seconds": self._ageing_step,
+                    "ageing_floor": self._ageing_floor,
                 },
                 "records": live,
                 "generated_at": now,

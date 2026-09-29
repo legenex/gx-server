@@ -679,6 +679,8 @@ class Handler(BaseHTTPRequestHandler):
         share one well-tested relay path.
         """
         attr = _attribution(self.headers)
+        if not (self.headers.get("X-GX-Priority") or "").strip():
+            attr["priority"] = SCHED.priority_from_mode(profile_name)
         gate = self._gate_state
         assert gate is not None
         budget: B.ContextBudget = gate["budget"]

@@ -89,13 +89,24 @@ class TestAdmission(SchedCase):
         self.assertEqual(small.submit({"id": "b1", "project": "p2"})["state"], S.DECISION_QUEUED)
 
     def test_per_project_active_cap(self):
-        # capacity 4, per-project active cap 2: a third request from p1 queues
-        # even though global slots remain.
-        big = self.make(capacity=4)
-        self.assertEqual(big.submit({"id": "a1", "project": "p1"})["state"], S.DECISION_ACTIVE)
-        self.assertEqual(big.submit({"id": "a2", "project": "p1"})["state"], S.DECISION_ACTIVE)
-        self.assertEqual(big.submit({"id": "a3", "project": "p1"})["state"], S.DECISION_QUEUED)
-        self.assertEqual(big.submit({"id": "b1", "project": "p2"})["state"], S.DECISION_ACTIVE)
+        # Contended: two slots, cap 1. p1 and p2 each hold a slot; further
+        # work from the at-cap project stays queued while the other waits.
+        small = self.make(capacity=2, per_project_active_cap=1)
+        self.assertEqual(small.submit({"id": "a1", "project": "p1"})["state"], S.DECISION_ACTIVE)
+        self.assertEqual(small.submit({"id": "b1", "project": "p2"})["state"], S.DECISION_ACTIVE)
+        self.assertEqual(small.submit({"id": "a2", "project": "p1"})["state"], S.DECISION_QUEUED)
+        self.assertEqual(small.submit({"id": "b2", "project": "p2"})["state"], S.DECISION_QUEUED)
+        small.record_finished("a1", {})
+        active = {r["id"] for r in small.status()["records"] if r["state"] == "active"}
+        self.assertIn("a2", active)
+        self.assertNotIn("b2", active)
+
+    def test_project_cap_does_not_idle_a_free_slot(self):
+        small = self.make(capacity=2, per_project_active_cap=1)
+        self.assertEqual(small.submit({"id": "a1", "project": "p1"})["state"], S.DECISION_ACTIVE)
+        self.assertEqual(small.submit({"id": "a2", "project": "p1"})["state"], S.DECISION_ACTIVE)
+        self.assertEqual(small.status()["active"], 2)
+        self.assertEqual(small.status()["queued"], 0)
 
     def test_duplicate_id_is_rejected(self):
         self.submit("r1")
@@ -105,6 +116,17 @@ class TestAdmission(SchedCase):
         self.submit("r1", priority="made-up")
         rec = self.sched.get("r1")
         self.assertEqual(rec["priority"], "normal-worker")
+
+    def test_mode_aliases_canonicalize(self):
+        self.assertEqual(S.priority_from_mode("fast"), "interactive")
+        self.assertEqual(S.priority_from_mode("balanced"), "orchestrator")
+        self.assertEqual(S.priority_from_mode("deep"), "normal-worker")
+        self.assertEqual(S.priority_from_mode("long"), "normal-worker")
+        self.assertEqual(S.priority_from_mode("swarm"), "background")
+        self.assertEqual(S.valid_priority("FAST"), "interactive")
+        self.assertEqual(S.valid_priority("deep"), "normal-worker")
+        self.submit("r1", priority="fast")
+        self.assertEqual(self.sched.get("r1")["priority"], "interactive")
 
 
 class TestPriorities(SchedCase):
@@ -154,6 +176,110 @@ class TestPriorities(SchedCase):
         one.record_finished("normal", {})
         active = [r["id"] for r in one.status()["records"] if r["state"] == "active"]
         self.assertEqual(active, ["top"])
+
+    def test_fast_jumps_ahead_of_queued_deep(self):
+        one = self.make(capacity=1)
+        one.submit({"id": "hold", "priority": "normal-worker"})
+        one.submit({"id": "deep", "priority": "deep"})
+        one.submit({"id": "fast", "priority": "fast"})
+        one.submit({"id": "balanced", "priority": "balanced"})
+        one.record_finished("hold", {})
+        active = [r["id"] for r in one.status()["records"] if r["state"] == "active"]
+        queued = [r["id"] for r in one.status()["records"] if r["state"] == "queued"]
+        self.assertEqual(active, ["fast"])
+        self.assertIn("balanced", queued)
+        self.assertIn("deep", queued)
+        one.record_finished("fast", {})
+        active = [r["id"] for r in one.status()["records"] if r["state"] == "active"]
+        self.assertEqual(active, ["balanced"])
+        one.record_finished("balanced", {})
+        active = [r["id"] for r in one.status()["records"] if r["state"] == "active"]
+        self.assertEqual(active, ["deep"])
+
+    def test_fifo_within_same_priority_same_project(self):
+        one = self.make(capacity=1)
+        one.submit({"id": "a", "project": "p1", "priority": "normal-worker"})
+        one.submit({"id": "b", "project": "p1", "priority": "normal-worker"})
+        one.submit({"id": "c", "project": "p1", "priority": "normal-worker"})
+        order = []
+        for _ in range(3):
+            active = [r for r in one.status()["records"] if r["state"] == "active"]
+            self.assertEqual(len(active), 1)
+            order.append(active[0]["id"])
+            one.record_finished(active[0]["id"], {})
+        self.assertEqual(order, ["a", "b", "c"])
+
+    def test_no_preemption_of_active_deep(self):
+        one = self.make(capacity=1)
+        one.submit({"id": "deep", "priority": "deep"})
+        one.submit({"id": "fast", "priority": "fast"})
+        recs = {r["id"]: r["state"] for r in one.status()["records"]}
+        self.assertEqual(recs["deep"], "active")
+        self.assertEqual(recs["fast"], "queued")
+
+    def test_deep_may_use_every_slot_when_queue_empty(self):
+        self.submit("d1", priority="deep")
+        self.submit("d2", priority="deep")
+        snap = self.sched.status()
+        self.assertEqual(snap["active"], 2)
+        self.assertEqual(snap["queued"], 0)
+        self.assertEqual(snap["capacity"], 2)
+
+    def test_status_exposes_mode_wait_and_ranks(self):
+        self.submit("r1", priority="fast", profile="fast")
+        rec = self.sched.get("r1")
+        self.assertEqual(rec["logical_mode"], "fast")
+        self.assertEqual(rec["priority"], "interactive")
+        self.assertEqual(rec["priority_rank"], 0)
+        self.assertEqual(rec["effective_rank"], 0)
+        self.assertIn("queue_wait_seconds", rec)
+        self.assertIn("running_seconds", rec)
+        snap = self.sched.status()
+        self.assertEqual(snap["active_sequences"], 1)
+        self.assertEqual(snap["waiting"], 0)
+
+
+class TestAgeing(SchedCase):
+    def test_aged_deep_beats_fresh_balanced_but_not_fast(self):
+        clock = {"t": 1000.0}
+
+        def now():
+            return clock["t"]
+
+        one = self.make(capacity=1, clock=now, ageing_step=30.0, ageing_floor=1,
+                        default_timeout=10_000)
+        one.submit({"id": "hold", "priority": "interactive"})
+        one.submit({"id": "deep", "priority": "deep"})
+        clock["t"] += 90.0  # two ageing steps: rank 3 -> 1
+        self.assertEqual(one.get("deep")["effective_rank"], 1)
+        one.submit({"id": "balanced", "priority": "balanced"})
+        one.record_finished("hold", {})
+        active = [r["id"] for r in one.status()["records"] if r["state"] == "active"]
+        self.assertEqual(active, ["deep"])
+        one.submit({"id": "fast", "priority": "fast"})
+        recs = {r["id"]: r["state"] for r in one.status()["records"]}
+        self.assertEqual(recs["deep"], "active")
+        self.assertEqual(recs["fast"], "queued")
+        one.record_finished("deep", {})
+        active = [r["id"] for r in one.status()["records"] if r["state"] == "active"]
+        self.assertEqual(active, ["fast"])
+
+    def test_ageing_never_outranks_fresh_fast(self):
+        clock = {"t": 0.0}
+
+        def now():
+            return clock["t"]
+
+        one = self.make(capacity=1, clock=now, ageing_step=10.0, ageing_floor=1,
+                        default_timeout=10_000)
+        one.submit({"id": "hold", "priority": "interactive"})
+        one.submit({"id": "deep", "priority": "deep"})
+        clock["t"] += 10_000.0
+        self.assertEqual(one.get("deep")["effective_rank"], 1)
+        one.submit({"id": "fast", "priority": "fast"})
+        one.record_finished("hold", {})
+        active = [r["id"] for r in one.status()["records"] if r["state"] == "active"]
+        self.assertEqual(active, ["fast"])
 
 
 class TestLifecycleOfRecords(SchedCase):

@@ -223,6 +223,14 @@ class TestLifecycleGate(OrchestratorHarness):
         self.assertTrue(self.lifecycle.acquire_calls)  # acquisition was triggered
         self.assertEqual(self.lifecycle._state, State.READY)
 
+    def test_down_and_fast_auto_triggers_the_acquisition(self):
+        status, headers, body = self.chat(_payload(
+            messages=[{"role": "user", "content": "What is 17 * 19?"}]))
+        self.assertEqual(status, 200)
+        self.assertEqual(headers["X-GX-Profile"], "fast")
+        self.assertTrue(self.lifecycle.acquire_calls)
+        self.assertEqual(self.lifecycle._state, State.READY)
+
     def test_acquire_endpoint_errors(self):
         status, _, body = self.post("/lifecycle/gx-max/acquire", {"profile": "bogus"})
         self.assertEqual(status, 400)
@@ -314,6 +322,40 @@ class TestSchedulerEndpoints(OrchestratorHarness):
         attr = _attribution(H({}))
         self.assertEqual(attr["priority"], "normal-worker")
         self.assertEqual(attr["project"], "unknown")
+
+    def test_fast_auto_without_priority_header_is_interactive(self):
+        status, headers, body = self.chat(_payload(
+            messages=[{"role": "user", "content": "What is 17 * 19?"}]))
+        self.assertEqual(status, 200)
+        self.assertEqual(headers["X-GX-Profile"], "fast")
+        rid = headers["X-GX-Request-Id"]
+        self.wait_for_journal(rid, "completed")
+        hist = [h for h in self.scheduler.history() if h["id"] == rid]
+        self.assertTrue(hist)
+        self.assertEqual(hist[0]["priority"], "interactive")
+        self.assertEqual(hist[0]["profile"], "fast")
+
+    def test_deep_auto_without_priority_header_is_normal_worker(self):
+        status, headers, body = self.chat(_payload(messages=[
+            {"role": "user", "content": "think hard: review this architecture for risks"}]))
+        self.assertEqual(status, 200)
+        self.assertEqual(headers["X-GX-Profile"], "deep")
+        rid = headers["X-GX-Request-Id"]
+        self.wait_for_journal(rid, "completed")
+        hist = [h for h in self.scheduler.history() if h["id"] == rid]
+        self.assertTrue(hist)
+        self.assertEqual(hist[0]["priority"], "normal-worker")
+
+    def test_explicit_priority_header_wins_over_mode(self):
+        status, headers, body = self.chat(
+            _payload(messages=[{"role": "user", "content": "What is 17 * 19?"}]),
+            headers={"X-GX-Priority": "background"},
+        )
+        self.assertEqual(status, 200)
+        rid = headers["X-GX-Request-Id"]
+        self.wait_for_journal(rid, "completed")
+        hist = [h for h in self.scheduler.history() if h["id"] == rid]
+        self.assertEqual(hist[0]["priority"], "background")
 
 
 class TestStatusShapes(OrchestratorHarness):
