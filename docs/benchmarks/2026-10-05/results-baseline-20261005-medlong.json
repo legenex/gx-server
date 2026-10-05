@@ -1,0 +1,3560 @@
+{
+ "config": {
+  "base": "http://127.0.0.1:4000/v1",
+  "model": "gx-max",
+  "key_env": "GX10_GATEWAY_KEY",
+  "reasoning": "none",
+  "priority": "background",
+  "temperature": 0.0,
+  "max_tokens": 256,
+  "reps": 3,
+  "long_reps": 2,
+  "only": "medium,long",
+  "c8": false,
+  "metrics_url": "http://127.0.0.1:8888",
+  "worker_ssh": "gx10-02",
+  "timeout": 900,
+  "seed": 0,
+  "out": "results-baseline-20261005-medlong.json"
+ },
+ "headers": {
+  "X-GX-Project": "gxbench",
+  "X-GX-Agent": "baseline-bench",
+  "X-GX-Priority": "background",
+  "X-GX-Reasoning": "none"
+ },
+ "started": "2026-10-05T23:25:44+0200",
+ "phases": [
+  {
+   "name": "before",
+   "ts": 1791235551.3337302,
+   "vllm": {
+    "spec_draft": 70703.0,
+    "spec_accepted": 40441.0,
+    "running": 0.0,
+    "waiting": 0.0,
+    "kv_usage": 0.0,
+    "preemptions": 0.0
+   }
+  },
+  {
+   "name": "mid",
+   "ts": 1791235699.9900706,
+   "vllm": {
+    "spec_draft": 72803.0,
+    "spec_accepted": 41195.0,
+    "running": 0.0,
+    "waiting": 0.0,
+    "kv_usage": 0.0,
+    "preemptions": 0.0
+   }
+  },
+  {
+   "name": "after-immediate",
+   "ts": 1791235699.997736,
+   "vllm": {
+    "spec_draft": 72803.0,
+    "spec_accepted": 41195.0,
+    "running": 0.0,
+    "waiting": 0.0,
+    "kv_usage": 0.0,
+    "preemptions": 0.0
+   }
+  },
+  {
+   "name": "after+10s",
+   "ts": 1791235710.0038013,
+   "vllm": {
+    "spec_draft": 72806.0,
+    "spec_accepted": 41196.0,
+    "running": 2.0,
+    "waiting": 0.0,
+    "kv_usage": 0.04779317093268787,
+    "preemptions": 0.0
+   }
+  }
+ ],
+ "cases": {
+  "medium_2k": {
+   "runs": [
+    {
+     "ok": true,
+     "status": 200,
+     "queue_wait_ms": null,
+     "request_id": "24bef3e5-2e1b-47af-877a-48595330d98f",
+     "total_s": 12.60584614000254,
+     "ttft_s": 3.6406117910009925,
+     "chunks": 114,
+     "content_chars": 1188,
+     "reasoning_chars": 0,
+     "finish_reason": "length",
+     "usage": {
+      "completion_tokens": 256,
+      "prompt_tokens": 2130,
+      "total_tokens": 2386,
+      "completion_tokens_details": {
+       "reasoning_tokens": 256
+      },
+      "prompt_tokens_details": {
+       "cached_tokens": 0,
+       "created_cache_tokens": 0
+      }
+     },
+     "decode_tok_s": 28.44341786506103,
+     "e2e_tok_s": 20.30803780696854,
+     "vllm_at_start": {
+      "spec_draft": 70703.0,
+      "spec_accepted": 40441.0,
+      "running": 0.0,
+      "waiting": 0.0,
+      "kv_usage": 0.0,
+      "preemptions": 0.0
+     },
+     "t_start": 1791235563.9557405
+    },
+    {
+     "ok": true,
+     "status": 200,
+     "queue_wait_ms": null,
+     "request_id": "d0c67972-27af-439d-bb38-4d7163ce782f",
+     "total_s": 13.82428517700464,
+     "ttft_s": 3.549420220006141,
+     "chunks": 124,
+     "content_chars": 1135,
+     "reasoning_chars": 0,
+     "finish_reason": "length",
+     "usage": {
+      "completion_tokens": 256,
+      "prompt_tokens": 2130,
+      "total_tokens": 2386,
+      "completion_tokens_details": {
+       "reasoning_tokens": 256
+      },
+      "prompt_tokens_details": {
+       "cached_tokens": 0,
+       "created_cache_tokens": 0
+      }
+     },
+     "decode_tok_s": 24.817919902370882,
+     "e2e_tok_s": 18.518136505591713,
+     "vllm_at_start": {
+      "spec_draft": 71042.0,
+      "spec_accepted": 40583.0,
+      "running": 0.0,
+      "waiting": 0.0,
+      "kv_usage": 0.0,
+      "preemptions": 0.0
+     },
+     "t_start": 1791235580.7873952
+    },
+    {
+     "ok": true,
+     "status": 200,
+     "queue_wait_ms": null,
+     "request_id": "573f2d8b-dee6-4bff-b7d9-dfab0bbd4a15",
+     "total_s": 39.072496125001635,
+     "ttft_s": 3.6472085870045703,
+     "chunks": 136,
+     "content_chars": 1140,
+     "reasoning_chars": 0,
+     "finish_reason": "length",
+     "usage": {
+      "completion_tokens": 256,
+      "prompt_tokens": 2131,
+      "total_tokens": 2387,
+      "completion_tokens_details": {
+       "reasoning_tokens": 256
+      },
+      "prompt_tokens_details": {
+       "cached_tokens": 0,
+       "created_cache_tokens": 0
+      }
+     },
+     "decode_tok_s": 7.198253774363615,
+     "e2e_tok_s": 6.551923357570985,
+     "vllm_at_start": {
+      "spec_draft": 71435.0,
+      "spec_accepted": 40716.0,
+      "running": 0.0,
+      "waiting": 0.0,
+      "kv_usage": 0.0,
+      "preemptions": 0.0
+     },
+     "t_start": 1791235622.86663
+    }
+   ],
+   "summary": {
+    "n": 3,
+    "ok": 3,
+    "ttft_s_med": 3.641,
+    "decode_tok_s_med": 24.818,
+    "total_s_med": 13.824,
+    "e2e_tok_s_med": 18.518,
+    "prompt_tokens_med": 2130,
+    "completion_tokens_med": 256,
+    "queue_wait_ms": [
+     null,
+     null,
+     null
+    ]
+   }
+  },
+  "long_16k": {
+   "runs": [
+    {
+     "ok": true,
+     "status": 200,
+     "queue_wait_ms": null,
+     "request_id": "cc8806e9-26cb-4a1e-b1d0-056ce54dd660",
+     "total_s": 33.217280589997245,
+     "ttft_s": 24.553939245000947,
+     "chunks": 110,
+     "content_chars": 1173,
+     "reasoning_chars": 0,
+     "finish_reason": "length",
+     "usage": {
+      "completion_tokens": 256,
+      "prompt_tokens": 15894,
+      "total_tokens": 16150,
+      "completion_tokens_details": {
+       "reasoning_tokens": 256
+      },
+      "prompt_tokens_details": {
+       "cached_tokens": 0,
+       "created_cache_tokens": 0
+      }
+     },
+     "decode_tok_s": 29.43453849351089,
+     "e2e_tok_s": 7.706831969775682,
+     "vllm_at_start": {
+      "spec_draft": 72050.0,
+      "spec_accepted": 40928.0,
+      "running": 0.0,
+      "waiting": 0.0,
+      "kv_usage": 0.0,
+      "preemptions": 0.0
+     },
+     "t_start": 1791235659.0940402
+    },
+    {
+     "ok": true,
+     "status": 200,
+     "queue_wait_ms": null,
+     "request_id": "52c467a1-4086-4679-b34c-1f8c0964c2c4",
+     "total_s": 34.88644268599455,
+     "ttft_s": 23.75508391299809,
+     "chunks": 133,
+     "content_chars": 1158,
+     "reasoning_chars": 0,
+     "finish_reason": "length",
+     "usage": {
+      "completion_tokens": 256,
+      "prompt_tokens": 15894,
+      "total_tokens": 16150,
+      "completion_tokens_details": {
+       "reasoning_tokens": 256
+      },
+      "prompt_tokens_details": {
+       "cached_tokens": 0,
+       "created_cache_tokens": 0
+      }
+     },
+     "decode_tok_s": 22.90835439741101,
+     "e2e_tok_s": 7.338094121667879,
+     "vllm_at_start": {
+      "spec_draft": 72377.0,
+      "spec_accepted": 41074.0,
+      "running": 0.0,
+      "waiting": 0.0,
+      "kv_usage": 0.0,
+      "preemptions": 0.0
+     },
+     "t_start": 1791235696.9897032
+    }
+   ],
+   "summary": {
+    "n": 2,
+    "ok": 2,
+    "ttft_s_med": 24.155,
+    "decode_tok_s_med": 26.171,
+    "total_s_med": 34.052,
+    "e2e_tok_s_med": 7.522,
+    "prompt_tokens_med": 15894.0,
+    "completion_tokens_med": 256.0,
+    "queue_wait_ms": [
+     null,
+     null
+    ]
+   }
+  }
+ },
+ "rdma_before": {
+  "gx10-01": {
+   "rocep1s0f0.out_of_sequence": 0,
+   "rocep1s0f0.packet_seq_err": 0,
+   "rocep1s0f0.local_ack_timeout_err": 0,
+   "rocep1s0f0.out_of_buffer": 0,
+   "rocep1s0f0.roce_adp_retrans": 0,
+   "rocep1s0f0.req_transport_retries_exceeded": 0,
+   "rocep1s0f0.rnr_nak_retry_err": 0,
+   "rocep1s0f0.req_cqe_error": 0,
+   "rocep1s0f0.resp_cqe_error": 0,
+   "rocep1s0f0.xmit": 336877310894,
+   "roceP2p1s0f0.out_of_sequence": 0,
+   "roceP2p1s0f0.packet_seq_err": 0,
+   "roceP2p1s0f0.local_ack_timeout_err": 0,
+   "roceP2p1s0f0.out_of_buffer": 0,
+   "roceP2p1s0f0.roce_adp_retrans": 0,
+   "roceP2p1s0f0.req_transport_retries_exceeded": 0,
+   "roceP2p1s0f0.rnr_nak_retry_err": 0,
+   "roceP2p1s0f0.req_cqe_error": 0,
+   "roceP2p1s0f0.resp_cqe_error": 0,
+   "roceP2p1s0f0.xmit": 0
+  },
+  "gx10-02": {
+   "rocep1s0f0.out_of_sequence": 0,
+   "rocep1s0f0.packet_seq_err": 0,
+   "rocep1s0f0.local_ack_timeout_err": 0,
+   "rocep1s0f0.out_of_buffer": 0,
+   "rocep1s0f0.roce_adp_retrans": 0,
+   "rocep1s0f0.req_transport_retries_exceeded": 0,
+   "rocep1s0f0.rnr_nak_retry_err": 0,
+   "rocep1s0f0.req_cqe_error": 0,
+   "rocep1s0f0.resp_cqe_error": 0,
+   "rocep1s0f0.xmit": 1416690724464,
+   "roceP2p1s0f0.out_of_sequence": 0,
+   "roceP2p1s0f0.packet_seq_err": 0,
+   "roceP2p1s0f0.local_ack_timeout_err": 0,
+   "roceP2p1s0f0.out_of_buffer": 0,
+   "roceP2p1s0f0.roce_adp_retrans": 0,
+   "roceP2p1s0f0.req_transport_retries_exceeded": 0,
+   "roceP2p1s0f0.rnr_nak_retry_err": 0,
+   "roceP2p1s0f0.req_cqe_error": 0,
+   "roceP2p1s0f0.resp_cqe_error": 0,
+   "roceP2p1s0f0.xmit": 0
+  }
+ },
+ "rdma_after": {
+  "gx10-01": {
+   "rocep1s0f0.out_of_sequence": 0,
+   "rocep1s0f0.packet_seq_err": 0,
+   "rocep1s0f0.local_ack_timeout_err": 0,
+   "rocep1s0f0.out_of_buffer": 0,
+   "rocep1s0f0.roce_adp_retrans": 0,
+   "rocep1s0f0.req_transport_retries_exceeded": 0,
+   "rocep1s0f0.rnr_nak_retry_err": 0,
+   "rocep1s0f0.req_cqe_error": 0,
+   "rocep1s0f0.resp_cqe_error": 0,
+   "rocep1s0f0.xmit": 350867212713,
+   "roceP2p1s0f0.out_of_sequence": 0,
+   "roceP2p1s0f0.packet_seq_err": 0,
+   "roceP2p1s0f0.local_ack_timeout_err": 0,
+   "roceP2p1s0f0.out_of_buffer": 0,
+   "roceP2p1s0f0.roce_adp_retrans": 0,
+   "roceP2p1s0f0.req_transport_retries_exceeded": 0,
+   "roceP2p1s0f0.rnr_nak_retry_err": 0,
+   "roceP2p1s0f0.req_cqe_error": 0,
+   "roceP2p1s0f0.resp_cqe_error": 0,
+   "roceP2p1s0f0.xmit": 0
+  },
+  "gx10-02": {
+   "rocep1s0f0.out_of_sequence": 0,
+   "rocep1s0f0.packet_seq_err": 0,
+   "rocep1s0f0.local_ack_timeout_err": 0,
+   "rocep1s0f0.out_of_buffer": 0,
+   "rocep1s0f0.roce_adp_retrans": 0,
+   "rocep1s0f0.req_transport_retries_exceeded": 0,
+   "rocep1s0f0.rnr_nak_retry_err": 0,
+   "rocep1s0f0.req_cqe_error": 0,
+   "rocep1s0f0.resp_cqe_error": 0,
+   "rocep1s0f0.xmit": 1430734984180,
+   "roceP2p1s0f0.out_of_sequence": 0,
+   "roceP2p1s0f0.packet_seq_err": 0,
+   "roceP2p1s0f0.local_ack_timeout_err": 0,
+   "roceP2p1s0f0.out_of_buffer": 0,
+   "roceP2p1s0f0.roce_adp_retrans": 0,
+   "roceP2p1s0f0.req_transport_retries_exceeded": 0,
+   "roceP2p1s0f0.rnr_nak_retry_err": 0,
+   "roceP2p1s0f0.req_cqe_error": 0,
+   "roceP2p1s0f0.resp_cqe_error": 0,
+   "roceP2p1s0f0.xmit": 0
+  }
+ },
+ "system": {
+  "gx10-01": {
+   "n": 81,
+   "mem_used_gib_min_max": [
+    117.7,
+    118.9
+   ],
+   "mem_avail_gib_min": 2.8,
+   "swap_used_gib_max": 15.0,
+   "gpu_util_mean": 74.3,
+   "cpu_util_mean": 23.5,
+   "cpu_util_max": 39.2,
+   "first": {
+    "mem_used_gib": 118.1,
+    "mem_avail_gib": 3.5,
+    "swap_used_gib": 15.0,
+    "gpu_util": 6.0
+   },
+   "last": {
+    "mem_used_gib": 118.0,
+    "mem_avail_gib": 3.6,
+    "swap_used_gib": 14.9,
+    "gpu_util": 94.0
+   }
+  },
+  "gx10-02": {
+   "n": 81,
+   "mem_used_gib_min_max": [
+    116.0,
+    116.1
+   ],
+   "mem_avail_gib_min": 5.5,
+   "swap_used_gib_max": 5.4,
+   "gpu_util_mean": 71.3,
+   "cpu_util_mean": 11.9,
+   "cpu_util_max": 23.0,
+   "first": {
+    "mem_used_gib": 116.0,
+    "mem_avail_gib": 5.6,
+    "swap_used_gib": 5.4,
+    "gpu_util": 0.0
+   },
+   "last": {
+    "mem_used_gib": 116.1,
+    "mem_avail_gib": 5.5,
+    "swap_used_gib": 5.4,
+    "gpu_util": 96.0
+   }
+  }
+ },
+ "samples": [
+  {
+   "node": "gx10-01",
+   "ts": 1791235544.9712949,
+   "mem_used_gib": 118.1,
+   "mem_avail_gib": 3.5,
+   "swap_used_gib": 15.0,
+   "gpu_util": 6.0,
+   "gpu_w": 14.98,
+   "cpu_jiffies": [
+    2468667,
+    6609,
+    1639211,
+    84177509,
+    585513,
+    0,
+    104525,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235545.280591,
+   "mem_used_gib": 116.0,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 0.0,
+   "gpu_w": 12.41,
+   "cpu_jiffies": [
+    3264702,
+    24018,
+    3664769,
+    620357025,
+    361759,
+    0,
+    270820,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235547.01769,
+   "mem_used_gib": 118.2,
+   "mem_avail_gib": 3.4,
+   "swap_used_gib": 15.0,
+   "gpu_util": 3.0,
+   "gpu_w": 14.29,
+   "cpu_jiffies": [
+    2468832,
+    6609,
+    1639311,
+    84181188,
+    585513,
+    0,
+    104534,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235547.3152902,
+   "mem_used_gib": 116.1,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 0.0,
+   "gpu_w": 12.31,
+   "cpu_jiffies": [
+    3264744,
+    24018,
+    3664803,
+    620360993,
+    361761,
+    0,
+    270820,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235549.0620656,
+   "mem_used_gib": 118.2,
+   "mem_avail_gib": 3.4,
+   "swap_used_gib": 15.0,
+   "gpu_util": 6.0,
+   "gpu_w": 14.43,
+   "cpu_jiffies": [
+    2468993,
+    6609,
+    1639409,
+    84184846,
+    585514,
+    0,
+    104539,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235549.348894,
+   "mem_used_gib": 116.0,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 0.0,
+   "gpu_w": 12.3,
+   "cpu_jiffies": [
+    3264785,
+    24018,
+    3664833,
+    620364968,
+    361761,
+    0,
+    270820,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235551.0974133,
+   "mem_used_gib": 118.4,
+   "mem_avail_gib": 3.3,
+   "swap_used_gib": 15.0,
+   "gpu_util": 3.0,
+   "gpu_w": 14.32,
+   "cpu_jiffies": [
+    2469187,
+    6609,
+    1639566,
+    84188407,
+    585514,
+    0,
+    104547,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235551.3811872,
+   "mem_used_gib": 116.1,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 0.0,
+   "gpu_w": 12.31,
+   "cpu_jiffies": [
+    3264823,
+    24018,
+    3664864,
+    620368943,
+    361761,
+    0,
+    270820,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235553.15177,
+   "mem_used_gib": 118.4,
+   "mem_avail_gib": 3.2,
+   "swap_used_gib": 15.0,
+   "gpu_util": 92.0,
+   "gpu_w": 61.61,
+   "cpu_jiffies": [
+    2469636,
+    6609,
+    1639978,
+    84191216,
+    585680,
+    0,
+    104623,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235553.4210925,
+   "mem_used_gib": 116.1,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 96.0,
+   "gpu_w": 58.32,
+   "cpu_jiffies": [
+    3265124,
+    24018,
+    3665414,
+    620372051,
+    361763,
+    0,
+    270886,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235555.20154,
+   "mem_used_gib": 118.5,
+   "mem_avail_gib": 3.2,
+   "swap_used_gib": 15.0,
+   "gpu_util": 95.0,
+   "gpu_w": 61.89,
+   "cpu_jiffies": [
+    2470188,
+    6609,
+    1640196,
+    84194355,
+    585689,
+    0,
+    104640,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235555.4596863,
+   "mem_used_gib": 116.1,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 93.0,
+   "gpu_w": 55.01,
+   "cpu_jiffies": [
+    3265383,
+    24018,
+    3665535,
+    620375713,
+    361763,
+    0,
+    270890,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235557.258957,
+   "mem_used_gib": 118.1,
+   "mem_avail_gib": 3.5,
+   "swap_used_gib": 15.0,
+   "gpu_util": 90.0,
+   "gpu_w": 51.43,
+   "cpu_jiffies": [
+    2470875,
+    6609,
+    1640605,
+    84197167,
+    585722,
+    0,
+    104663,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235557.499911,
+   "mem_used_gib": 116.1,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 92.0,
+   "gpu_w": 47.59,
+   "cpu_jiffies": [
+    3265545,
+    24018,
+    3665669,
+    620379447,
+    361763,
+    0,
+    270897,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235559.3173158,
+   "mem_used_gib": 118.1,
+   "mem_avail_gib": 3.5,
+   "swap_used_gib": 15.0,
+   "gpu_util": 91.0,
+   "gpu_w": 51.39,
+   "cpu_jiffies": [
+    2471452,
+    6609,
+    1640949,
+    84200128,
+    585759,
+    0,
+    104686,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235559.5381947,
+   "mem_used_gib": 116.1,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 87.0,
+   "gpu_w": 47.1,
+   "cpu_jiffies": [
+    3265710,
+    24018,
+    3665800,
+    620383183,
+    361763,
+    0,
+    270904,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235561.3708904,
+   "mem_used_gib": 118.1,
+   "mem_avail_gib": 3.5,
+   "swap_used_gib": 15.0,
+   "gpu_util": 91.0,
+   "gpu_w": 51.6,
+   "cpu_jiffies": [
+    2472016,
+    6609,
+    1641274,
+    84203128,
+    585802,
+    0,
+    104702,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235561.582529,
+   "mem_used_gib": 116.1,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 88.0,
+   "gpu_w": 47.78,
+   "cpu_jiffies": [
+    3265875,
+    24018,
+    3665934,
+    620386934,
+    361763,
+    0,
+    270908,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235563.421449,
+   "mem_used_gib": 118.1,
+   "mem_avail_gib": 3.5,
+   "swap_used_gib": 15.0,
+   "gpu_util": 91.0,
+   "gpu_w": 51.73,
+   "cpu_jiffies": [
+    2472602,
+    6609,
+    1641605,
+    84206102,
+    585841,
+    0,
+    104722,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235563.6229084,
+   "mem_used_gib": 116.1,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 91.0,
+   "gpu_w": 48.07,
+   "cpu_jiffies": [
+    3266041,
+    24018,
+    3666072,
+    620390662,
+    361769,
+    0,
+    270913,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235565.459475,
+   "mem_used_gib": 118.9,
+   "mem_avail_gib": 2.8,
+   "swap_used_gib": 15.0,
+   "gpu_util": 2.0,
+   "gpu_w": 15.48,
+   "cpu_jiffies": [
+    2473086,
+    6609,
+    1641936,
+    84209161,
+    585856,
+    0,
+    104740,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235565.6578114,
+   "mem_used_gib": 116.1,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 0.0,
+   "gpu_w": 12.65,
+   "cpu_jiffies": [
+    3266099,
+    24018,
+    3666121,
+    620394593,
+    361769,
+    0,
+    270914,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235567.5351443,
+   "mem_used_gib": 118.6,
+   "mem_avail_gib": 3.0,
+   "swap_used_gib": 15.0,
+   "gpu_util": 5.0,
+   "gpu_w": 21.15,
+   "cpu_jiffies": [
+    2473433,
+    6609,
+    1642427,
+    84212101,
+    585965,
+    0,
+    104826,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235567.7062418,
+   "mem_used_gib": 116.1,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 0.0,
+   "gpu_w": 25.15,
+   "cpu_jiffies": [
+    3266237,
+    24018,
+    3666584,
+    620397956,
+    361769,
+    0,
+    270976,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235569.5851896,
+   "mem_used_gib": 118.3,
+   "mem_avail_gib": 3.4,
+   "swap_used_gib": 15.0,
+   "gpu_util": 93.0,
+   "gpu_w": 62.47,
+   "cpu_jiffies": [
+    2473957,
+    6609,
+    1642656,
+    84215278,
+    585967,
+    0,
+    104834,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235569.7569902,
+   "mem_used_gib": 116.0,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 95.0,
+   "gpu_w": 59.48,
+   "cpu_jiffies": [
+    3266525,
+    24018,
+    3666651,
+    620401675,
+    361771,
+    0,
+    270976,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235571.654714,
+   "mem_used_gib": 118.2,
+   "mem_avail_gib": 3.4,
+   "swap_used_gib": 15.0,
+   "gpu_util": 94.0,
+   "gpu_w": 51.79,
+   "cpu_jiffies": [
+    2474524,
+    6609,
+    1642973,
+    84218335,
+    585988,
+    0,
+    104851,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235571.7964947,
+   "mem_used_gib": 116.0,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 91.0,
+   "gpu_w": 47.82,
+   "cpu_jiffies": [
+    3266725,
+    24018,
+    3666814,
+    620405339,
+    361781,
+    0,
+    270982,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235573.7038555,
+   "mem_used_gib": 118.0,
+   "mem_avail_gib": 3.6,
+   "swap_used_gib": 15.0,
+   "gpu_util": 95.0,
+   "gpu_w": 56.28,
+   "cpu_jiffies": [
+    2475081,
+    6609,
+    1643315,
+    84221282,
+    586051,
+    0,
+    104872,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235573.838985,
+   "mem_used_gib": 116.0,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 91.0,
+   "gpu_w": 50.91,
+   "cpu_jiffies": [
+    3266907,
+    24020,
+    3666982,
+    620409017,
+    361781,
+    0,
+    270990,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235575.7630622,
+   "mem_used_gib": 117.7,
+   "mem_avail_gib": 3.9,
+   "swap_used_gib": 15.0,
+   "gpu_util": 90.0,
+   "gpu_w": 51.61,
+   "cpu_jiffies": [
+    2475678,
+    6610,
+    1643679,
+    84224210,
+    586090,
+    0,
+    104893,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235575.8823555,
+   "mem_used_gib": 116.0,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 85.0,
+   "gpu_w": 48.28,
+   "cpu_jiffies": [
+    3267094,
+    24020,
+    3667115,
+    620412733,
+    361781,
+    0,
+    270996,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235577.8225112,
+   "mem_used_gib": 117.8,
+   "mem_avail_gib": 3.9,
+   "swap_used_gib": 15.0,
+   "gpu_util": 94.0,
+   "gpu_w": 50.78,
+   "cpu_jiffies": [
+    2476258,
+    6610,
+    1644010,
+    84227204,
+    586129,
+    0,
+    104913,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235577.9190009,
+   "mem_used_gib": 116.0,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 91.0,
+   "gpu_w": 47.23,
+   "cpu_jiffies": [
+    3267283,
+    24020,
+    3667248,
+    620416434,
+    361783,
+    0,
+    271003,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235579.8805122,
+   "mem_used_gib": 117.8,
+   "mem_avail_gib": 3.8,
+   "swap_used_gib": 15.0,
+   "gpu_util": 91.0,
+   "gpu_w": 50.83,
+   "cpu_jiffies": [
+    2476886,
+    6610,
+    1644343,
+    84230135,
+    586177,
+    0,
+    104931,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235579.9593332,
+   "mem_used_gib": 116.0,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 90.0,
+   "gpu_w": 47.07,
+   "cpu_jiffies": [
+    3267473,
+    24020,
+    3667388,
+    620420135,
+    361783,
+    0,
+    271008,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235581.914152,
+   "mem_used_gib": 117.9,
+   "mem_avail_gib": 3.8,
+   "swap_used_gib": 15.0,
+   "gpu_util": 5.0,
+   "gpu_w": 15.42,
+   "cpu_jiffies": [
+    2477261,
+    6610,
+    1644569,
+    84233422,
+    586198,
+    0,
+    104941,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235581.9946275,
+   "mem_used_gib": 116.1,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 0.0,
+   "gpu_w": 13.02,
+   "cpu_jiffies": [
+    3267565,
+    24020,
+    3667459,
+    620424011,
+    361783,
+    0,
+    271011,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235583.9569976,
+   "mem_used_gib": 117.8,
+   "mem_avail_gib": 3.8,
+   "swap_used_gib": 15.0,
+   "gpu_util": 4.0,
+   "gpu_w": 15.35,
+   "cpu_jiffies": [
+    2477390,
+    6610,
+    1644753,
+    84236914,
+    586273,
+    0,
+    104969,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235584.0298076,
+   "mem_used_gib": 116.1,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 0.0,
+   "gpu_w": 13.04,
+   "cpu_jiffies": [
+    3267631,
+    24020,
+    3667693,
+    620427706,
+    361783,
+    0,
+    271040,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235586.0203965,
+   "mem_used_gib": 117.8,
+   "mem_avail_gib": 3.8,
+   "swap_used_gib": 15.0,
+   "gpu_util": 94.0,
+   "gpu_w": 61.71,
+   "cpu_jiffies": [
+    2477825,
+    6610,
+    1645082,
+    84240002,
+    586322,
+    0,
+    105026,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235586.070129,
+   "mem_used_gib": 116.1,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 96.0,
+   "gpu_w": 59.7,
+   "cpu_jiffies": [
+    3267932,
+    24020,
+    3668058,
+    620431041,
+    361784,
+    0,
+    271075,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235588.0652058,
+   "mem_used_gib": 117.8,
+   "mem_avail_gib": 3.8,
+   "swap_used_gib": 15.0,
+   "gpu_util": 96.0,
+   "gpu_w": 45.54,
+   "cpu_jiffies": [
+    2478329,
+    6610,
+    1645395,
+    84242773,
+    586605,
+    0,
+    105076,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235588.1102097,
+   "mem_used_gib": 116.1,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 96.0,
+   "gpu_w": 41.18,
+   "cpu_jiffies": [
+    3268233,
+    24020,
+    3668269,
+    620434518,
+    361784,
+    0,
+    271107,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235590.113992,
+   "mem_used_gib": 117.9,
+   "mem_avail_gib": 3.8,
+   "swap_used_gib": 15.0,
+   "gpu_util": 6.0,
+   "gpu_w": 29.04,
+   "cpu_jiffies": [
+    2478993,
+    6610,
+    1645851,
+    84244879,
+    587205,
+    0,
+    105142,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235590.144722,
+   "mem_used_gib": 116.1,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 92.0,
+   "gpu_w": 21.91,
+   "cpu_jiffies": [
+    3268539,
+    24020,
+    3668530,
+    620437895,
+    361786,
+    0,
+    271152,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235592.1789649,
+   "mem_used_gib": 117.9,
+   "mem_avail_gib": 3.7,
+   "swap_used_gib": 15.0,
+   "gpu_util": 92.0,
+   "gpu_w": 64.79,
+   "cpu_jiffies": [
+    2479472,
+    6611,
+    1646174,
+    84247725,
+    587445,
+    0,
+    105202,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235592.1873248,
+   "mem_used_gib": 116.1,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 96.0,
+   "gpu_w": 61.29,
+   "cpu_jiffies": [
+    3268834,
+    24020,
+    3668779,
+    620441319,
+    361786,
+    0,
+    271207,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235594.2204456,
+   "mem_used_gib": 117.9,
+   "mem_avail_gib": 3.7,
+   "swap_used_gib": 15.0,
+   "gpu_util": 5.0,
+   "gpu_w": 29.9,
+   "cpu_jiffies": [
+    2479991,
+    6611,
+    1646564,
+    84250036,
+    588006,
+    0,
+    105280,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235594.2217872,
+   "mem_used_gib": 116.1,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 95.0,
+   "gpu_w": 23.85,
+   "cpu_jiffies": [
+    3269142,
+    24020,
+    3669083,
+    620444650,
+    361786,
+    0,
+    271266,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235596.2668564,
+   "mem_used_gib": 116.1,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 95.0,
+   "gpu_w": 61.83,
+   "cpu_jiffies": [
+    3269442,
+    24020,
+    3669256,
+    620448192,
+    361792,
+    0,
+    271291,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235596.2834299,
+   "mem_used_gib": 118.0,
+   "mem_avail_gib": 3.6,
+   "swap_used_gib": 15.0,
+   "gpu_util": 94.0,
+   "gpu_w": 65.3,
+   "cpu_jiffies": [
+    2480467,
+    6611,
+    1646810,
+    84253155,
+    588078,
+    0,
+    105313,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235598.3088508,
+   "mem_used_gib": 116.1,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 91.0,
+   "gpu_w": 52.46,
+   "cpu_jiffies": [
+    3269643,
+    24020,
+    3669370,
+    620451917,
+    361792,
+    0,
+    271296,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235598.3383796,
+   "mem_used_gib": 118.1,
+   "mem_avail_gib": 3.5,
+   "swap_used_gib": 15.0,
+   "gpu_util": 92.0,
+   "gpu_w": 55.79,
+   "cpu_jiffies": [
+    2481056,
+    6611,
+    1647100,
+    84256173,
+    588121,
+    0,
+    105329,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235600.3497596,
+   "mem_used_gib": 116.1,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 96.0,
+   "gpu_w": 51.72,
+   "cpu_jiffies": [
+    3269803,
+    24020,
+    3669507,
+    620455648,
+    361794,
+    0,
+    271306,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235600.3895152,
+   "mem_used_gib": 118.2,
+   "mem_avail_gib": 3.4,
+   "swap_used_gib": 15.0,
+   "gpu_util": 91.0,
+   "gpu_w": 55.01,
+   "cpu_jiffies": [
+    2481680,
+    6611,
+    1647485,
+    84258991,
+    588192,
+    0,
+    105355,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235602.4001873,
+   "mem_used_gib": 116.1,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 96.0,
+   "gpu_w": 39.88,
+   "cpu_jiffies": [
+    3270052,
+    24020,
+    3670119,
+    620458764,
+    361798,
+    0,
+    271375,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235602.443476,
+   "mem_used_gib": 118.4,
+   "mem_avail_gib": 3.3,
+   "swap_used_gib": 15.0,
+   "gpu_util": 67.0,
+   "gpu_w": 43.41,
+   "cpu_jiffies": [
+    2482483,
+    6611,
+    1648115,
+    84261181,
+    588382,
+    0,
+    105454,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235604.4564927,
+   "mem_used_gib": 116.1,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 96.0,
+   "gpu_w": 60.85,
+   "cpu_jiffies": [
+    3270340,
+    24020,
+    3670185,
+    620462492,
+    361798,
+    0,
+    271375,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235604.4993148,
+   "mem_used_gib": 118.3,
+   "mem_avail_gib": 3.4,
+   "swap_used_gib": 15.0,
+   "gpu_util": 90.0,
+   "gpu_w": 64.64,
+   "cpu_jiffies": [
+    2482979,
+    6611,
+    1648298,
+    84264444,
+    588384,
+    0,
+    105465,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235606.503339,
+   "mem_used_gib": 116.1,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 95.0,
+   "gpu_w": 63.38,
+   "cpu_jiffies": [
+    3270650,
+    24020,
+    3670638,
+    620465695,
+    361802,
+    0,
+    271443,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235606.5555568,
+   "mem_used_gib": 118.3,
+   "mem_avail_gib": 3.3,
+   "swap_used_gib": 15.0,
+   "gpu_util": 92.0,
+   "gpu_w": 67.1,
+   "cpu_jiffies": [
+    2483496,
+    6611,
+    1648722,
+    84266990,
+    588720,
+    0,
+    105549,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235608.5455706,
+   "mem_used_gib": 116.1,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 90.0,
+   "gpu_w": 55.94,
+   "cpu_jiffies": [
+    3270904,
+    24020,
+    3670724,
+    620469403,
+    361803,
+    0,
+    271445,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235608.618299,
+   "mem_used_gib": 118.3,
+   "mem_avail_gib": 3.3,
+   "swap_used_gib": 15.0,
+   "gpu_util": 92.0,
+   "gpu_w": 59.02,
+   "cpu_jiffies": [
+    2483982,
+    6611,
+    1648937,
+    84270201,
+    588742,
+    0,
+    105561,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235610.5951784,
+   "mem_used_gib": 116.1,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 0.0,
+   "gpu_w": 35.0,
+   "cpu_jiffies": [
+    3271108,
+    24020,
+    3671301,
+    620472597,
+    361803,
+    0,
+    271515,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235610.697556,
+   "mem_used_gib": 118.3,
+   "mem_avail_gib": 3.3,
+   "swap_used_gib": 15.0,
+   "gpu_util": 86.0,
+   "gpu_w": 39.72,
+   "cpu_jiffies": [
+    2484591,
+    6613,
+    1649519,
+    84272625,
+    588960,
+    0,
+    105662,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235612.6421564,
+   "mem_used_gib": 116.1,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 96.0,
+   "gpu_w": 61.65,
+   "cpu_jiffies": [
+    3271396,
+    24020,
+    3671368,
+    620476302,
+    361803,
+    0,
+    271515,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235612.7557683,
+   "mem_used_gib": 118.3,
+   "mem_avail_gib": 3.3,
+   "swap_used_gib": 15.0,
+   "gpu_util": 91.0,
+   "gpu_w": 64.47,
+   "cpu_jiffies": [
+    2485049,
+    6613,
+    1649671,
+    84275970,
+    588962,
+    0,
+    105669,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235614.6932209,
+   "mem_used_gib": 116.1,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 96.0,
+   "gpu_w": 63.51,
+   "cpu_jiffies": [
+    3271692,
+    24020,
+    3671847,
+    620479536,
+    361804,
+    0,
+    271571,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235614.8123229,
+   "mem_used_gib": 118.3,
+   "mem_avail_gib": 3.3,
+   "swap_used_gib": 15.0,
+   "gpu_util": 95.0,
+   "gpu_w": 66.55,
+   "cpu_jiffies": [
+    2485609,
+    6613,
+    1650078,
+    84278690,
+    589129,
+    0,
+    105746,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235616.7343235,
+   "mem_used_gib": 116.1,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 87.0,
+   "gpu_w": 55.26,
+   "cpu_jiffies": [
+    3271943,
+    24020,
+    3671933,
+    620483243,
+    361804,
+    0,
+    271573,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235616.8579962,
+   "mem_used_gib": 118.3,
+   "mem_avail_gib": 3.3,
+   "swap_used_gib": 15.0,
+   "gpu_util": 74.0,
+   "gpu_w": 54.69,
+   "cpu_jiffies": [
+    2486109,
+    6614,
+    1650334,
+    84281789,
+    589185,
+    0,
+    105767,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235618.7767417,
+   "mem_used_gib": 116.1,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 89.0,
+   "gpu_w": 52.71,
+   "cpu_jiffies": [
+    3272178,
+    24020,
+    3672145,
+    620486827,
+    361804,
+    0,
+    271586,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235618.9206774,
+   "mem_used_gib": 117.9,
+   "mem_avail_gib": 3.7,
+   "swap_used_gib": 15.0,
+   "gpu_util": 93.0,
+   "gpu_w": 55.65,
+   "cpu_jiffies": [
+    2486734,
+    6614,
+    1650659,
+    84284719,
+    589236,
+    0,
+    105787,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235620.8164508,
+   "mem_used_gib": 116.1,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 89.0,
+   "gpu_w": 50.6,
+   "cpu_jiffies": [
+    3272340,
+    24020,
+    3672280,
+    620490557,
+    361806,
+    0,
+    271592,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235620.9811716,
+   "mem_used_gib": 117.9,
+   "mem_avail_gib": 3.7,
+   "swap_used_gib": 15.0,
+   "gpu_util": 92.0,
+   "gpu_w": 53.1,
+   "cpu_jiffies": [
+    2487332,
+    6614,
+    1651015,
+    84287642,
+    589295,
+    0,
+    105811,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235622.8592718,
+   "mem_used_gib": 116.1,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 90.0,
+   "gpu_w": 48.27,
+   "cpu_jiffies": [
+    3272509,
+    24020,
+    3672418,
+    620494286,
+    361806,
+    0,
+    271597,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235623.0232153,
+   "mem_used_gib": 117.9,
+   "mem_avail_gib": 3.7,
+   "swap_used_gib": 15.0,
+   "gpu_util": 93.0,
+   "gpu_w": 46.89,
+   "cpu_jiffies": [
+    2487954,
+    6614,
+    1651345,
+    84290542,
+    589336,
+    0,
+    105831,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235624.895362,
+   "mem_used_gib": 116.1,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 0.0,
+   "gpu_w": 13.35,
+   "cpu_jiffies": [
+    3272545,
+    24020,
+    3672450,
+    620498267,
+    361806,
+    0,
+    271597,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235625.060115,
+   "mem_used_gib": 118.0,
+   "mem_avail_gib": 3.6,
+   "swap_used_gib": 15.0,
+   "gpu_util": 3.0,
+   "gpu_w": 16.01,
+   "cpu_jiffies": [
+    2488145,
+    6614,
+    1651474,
+    84294118,
+    589336,
+    0,
+    105835,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235626.9519567,
+   "mem_used_gib": 116.1,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 0.0,
+   "gpu_w": 39.45,
+   "cpu_jiffies": [
+    3272717,
+    24020,
+    3672937,
+    620501593,
+    361806,
+    0,
+    271660,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235627.1275399,
+   "mem_used_gib": 117.9,
+   "mem_avail_gib": 3.7,
+   "swap_used_gib": 15.0,
+   "gpu_util": 92.0,
+   "gpu_w": 50.75,
+   "cpu_jiffies": [
+    2488502,
+    6614,
+    1651880,
+    84297061,
+    589465,
+    0,
+    105922,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235628.9939172,
+   "mem_used_gib": 116.1,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 96.0,
+   "gpu_w": 60.29,
+   "cpu_jiffies": [
+    3273002,
+    24020,
+    3673004,
+    620505290,
+    361808,
+    0,
+    271660,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235629.1836324,
+   "mem_used_gib": 118.0,
+   "mem_avail_gib": 3.7,
+   "swap_used_gib": 15.0,
+   "gpu_util": 93.0,
+   "gpu_w": 61.45,
+   "cpu_jiffies": [
+    2488978,
+    6614,
+    1652089,
+    84300220,
+    589505,
+    0,
+    105949,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235631.0403404,
+   "mem_used_gib": 116.1,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 95.0,
+   "gpu_w": 60.01,
+   "cpu_jiffies": [
+    3273317,
+    24020,
+    3673503,
+    620508429,
+    361808,
+    0,
+    271732,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235631.240472,
+   "mem_used_gib": 118.0,
+   "mem_avail_gib": 3.6,
+   "swap_used_gib": 15.0,
+   "gpu_util": 95.0,
+   "gpu_w": 63.89,
+   "cpu_jiffies": [
+    2489487,
+    6614,
+    1652482,
+    84303065,
+    589604,
+    0,
+    106026,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235633.0862672,
+   "mem_used_gib": 116.1,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 0.0,
+   "gpu_w": 39.01,
+   "cpu_jiffies": [
+    3273625,
+    24020,
+    3674004,
+    620511569,
+    361808,
+    0,
+    271804,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235633.2940135,
+   "mem_used_gib": 118.0,
+   "mem_avail_gib": 3.6,
+   "swap_used_gib": 15.0,
+   "gpu_util": 93.0,
+   "gpu_w": 47.87,
+   "cpu_jiffies": [
+    2490104,
+    6614,
+    1652948,
+    84305672,
+    589749,
+    0,
+    106118,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235635.1320343,
+   "mem_used_gib": 116.1,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 96.0,
+   "gpu_w": 60.66,
+   "cpu_jiffies": [
+    3273921,
+    24020,
+    3674072,
+    620515269,
+    361811,
+    0,
+    271804,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235635.3464944,
+   "mem_used_gib": 117.8,
+   "mem_avail_gib": 3.8,
+   "swap_used_gib": 15.0,
+   "gpu_util": 91.0,
+   "gpu_w": 61.53,
+   "cpu_jiffies": [
+    2490658,
+    6614,
+    1653176,
+    84308745,
+    589794,
+    0,
+    106142,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235637.178305,
+   "mem_used_gib": 116.1,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 95.0,
+   "gpu_w": 61.01,
+   "cpu_jiffies": [
+    3274233,
+    24020,
+    3674555,
+    620518414,
+    361811,
+    0,
+    271877,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235637.4212935,
+   "mem_used_gib": 118.2,
+   "mem_avail_gib": 3.4,
+   "swap_used_gib": 15.0,
+   "gpu_util": 94.0,
+   "gpu_w": 63.74,
+   "cpu_jiffies": [
+    2491425,
+    6614,
+    1653693,
+    84311257,
+    589886,
+    0,
+    106219,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235639.2254062,
+   "mem_used_gib": 116.1,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 95.0,
+   "gpu_w": 39.32,
+   "cpu_jiffies": [
+    3274554,
+    24023,
+    3675063,
+    620521542,
+    361813,
+    0,
+    271944,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235639.5003507,
+   "mem_used_gib": 118.3,
+   "mem_avail_gib": 3.3,
+   "swap_used_gib": 15.0,
+   "gpu_util": 96.0,
+   "gpu_w": 46.26,
+   "cpu_jiffies": [
+    2492244,
+    6614,
+    1654295,
+    84313556,
+    590028,
+    0,
+    106310,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235641.272893,
+   "mem_used_gib": 116.1,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 95.0,
+   "gpu_w": 61.44,
+   "cpu_jiffies": [
+    3274850,
+    24023,
+    3675126,
+    620525244,
+    361815,
+    0,
+    271945,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235641.5502965,
+   "mem_used_gib": 118.4,
+   "mem_avail_gib": 3.2,
+   "swap_used_gib": 15.0,
+   "gpu_util": 94.0,
+   "gpu_w": 61.68,
+   "cpu_jiffies": [
+    2492821,
+    6614,
+    1654587,
+    84316584,
+    590052,
+    0,
+    106331,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235643.3342102,
+   "mem_used_gib": 116.1,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 96.0,
+   "gpu_w": 60.0,
+   "cpu_jiffies": [
+    3275164,
+    24023,
+    3675625,
+    620528413,
+    361815,
+    0,
+    272012,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235643.611364,
+   "mem_used_gib": 118.2,
+   "mem_avail_gib": 3.4,
+   "swap_used_gib": 15.0,
+   "gpu_util": 93.0,
+   "gpu_w": 64.05,
+   "cpu_jiffies": [
+    2493615,
+    6614,
+    1655141,
+    84319039,
+    590106,
+    0,
+    106411,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235645.3791845,
+   "mem_used_gib": 116.1,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 95.0,
+   "gpu_w": 38.2,
+   "cpu_jiffies": [
+    3275472,
+    24023,
+    3676109,
+    620531550,
+    361819,
+    0,
+    272082,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235645.6561134,
+   "mem_used_gib": 118.4,
+   "mem_avail_gib": 3.2,
+   "swap_used_gib": 15.0,
+   "gpu_util": 5.0,
+   "gpu_w": 44.22,
+   "cpu_jiffies": [
+    2494422,
+    6614,
+    1655712,
+    84321329,
+    590230,
+    0,
+    106513,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235647.436162,
+   "mem_used_gib": 116.1,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 95.0,
+   "gpu_w": 60.86,
+   "cpu_jiffies": [
+    3275763,
+    24023,
+    3676177,
+    620535275,
+    361819,
+    0,
+    272082,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235647.7199705,
+   "mem_used_gib": 118.5,
+   "mem_avail_gib": 3.1,
+   "swap_used_gib": 15.0,
+   "gpu_util": 94.0,
+   "gpu_w": 64.85,
+   "cpu_jiffies": [
+    2494952,
+    6614,
+    1655915,
+    84324549,
+    590234,
+    0,
+    106522,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235649.48397,
+   "mem_used_gib": 116.1,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 95.0,
+   "gpu_w": 59.98,
+   "cpu_jiffies": [
+    3276066,
+    24023,
+    3676550,
+    620538558,
+    361819,
+    0,
+    272140,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235649.7827225,
+   "mem_used_gib": 118.4,
+   "mem_avail_gib": 3.2,
+   "swap_used_gib": 15.0,
+   "gpu_util": 95.0,
+   "gpu_w": 64.51,
+   "cpu_jiffies": [
+    2495765,
+    6615,
+    1656456,
+    84327008,
+    590296,
+    0,
+    106597,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235651.5326214,
+   "mem_used_gib": 116.1,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 93.0,
+   "gpu_w": 49.35,
+   "cpu_jiffies": [
+    3276287,
+    24023,
+    3676682,
+    620542260,
+    361820,
+    0,
+    272143,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235651.8325982,
+   "mem_used_gib": 118.5,
+   "mem_avail_gib": 3.1,
+   "swap_used_gib": 15.0,
+   "gpu_util": 85.0,
+   "gpu_w": 52.37,
+   "cpu_jiffies": [
+    2496509,
+    6615,
+    1656797,
+    84329832,
+    590311,
+    0,
+    106614,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235653.5778205,
+   "mem_used_gib": 116.1,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 89.0,
+   "gpu_w": 49.59,
+   "cpu_jiffies": [
+    3276462,
+    24023,
+    3676825,
+    620545990,
+    361820,
+    0,
+    272147,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235653.8807595,
+   "mem_used_gib": 118.5,
+   "mem_avail_gib": 3.1,
+   "swap_used_gib": 15.0,
+   "gpu_util": 93.0,
+   "gpu_w": 52.45,
+   "cpu_jiffies": [
+    2497208,
+    6615,
+    1657168,
+    84332643,
+    590344,
+    0,
+    106635,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235655.6167464,
+   "mem_used_gib": 116.1,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 85.0,
+   "gpu_w": 48.21,
+   "cpu_jiffies": [
+    3276652,
+    24023,
+    3676961,
+    620549694,
+    361822,
+    0,
+    272154,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235655.9512649,
+   "mem_used_gib": 118.5,
+   "mem_avail_gib": 3.2,
+   "swap_used_gib": 15.0,
+   "gpu_util": 92.0,
+   "gpu_w": 51.17,
+   "cpu_jiffies": [
+    2498035,
+    6615,
+    1657612,
+    84335291,
+    590375,
+    0,
+    106663,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235657.658491,
+   "mem_used_gib": 116.1,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 86.0,
+   "gpu_w": 49.17,
+   "cpu_jiffies": [
+    3276842,
+    24023,
+    3677101,
+    620553405,
+    361822,
+    0,
+    272159,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235658.01009,
+   "mem_used_gib": 118.6,
+   "mem_avail_gib": 3.0,
+   "swap_used_gib": 15.0,
+   "gpu_util": 93.0,
+   "gpu_w": 52.16,
+   "cpu_jiffies": [
+    2498851,
+    6615,
+    1657987,
+    84338001,
+    590413,
+    0,
+    106684,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235659.6955185,
+   "mem_used_gib": 116.1,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 0.0,
+   "gpu_w": 31.59,
+   "cpu_jiffies": [
+    3276989,
+    24023,
+    3677210,
+    620557186,
+    361824,
+    0,
+    272163,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235660.0428262,
+   "mem_used_gib": 118.4,
+   "mem_avail_gib": 3.2,
+   "swap_used_gib": 15.0,
+   "gpu_util": 5.0,
+   "gpu_w": 21.5,
+   "cpu_jiffies": [
+    2499427,
+    6615,
+    1658284,
+    84340996,
+    590432,
+    0,
+    106700,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235661.7281609,
+   "mem_used_gib": 116.1,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 0.0,
+   "gpu_w": 13.54,
+   "cpu_jiffies": [
+    3277029,
+    24023,
+    3677238,
+    620561157,
+    361824,
+    0,
+    272163,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235662.0903106,
+   "mem_used_gib": 118.4,
+   "mem_avail_gib": 3.2,
+   "swap_used_gib": 15.0,
+   "gpu_util": 3.0,
+   "gpu_w": 15.7,
+   "cpu_jiffies": [
+    2499746,
+    6615,
+    1658435,
+    84344473,
+    590433,
+    0,
+    106708,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235663.7728314,
+   "mem_used_gib": 116.1,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 95.0,
+   "gpu_w": 61.19,
+   "cpu_jiffies": [
+    3277271,
+    24023,
+    3677699,
+    620564380,
+    361827,
+    0,
+    272228,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235664.1566305,
+   "mem_used_gib": 118.5,
+   "mem_avail_gib": 3.1,
+   "swap_used_gib": 15.0,
+   "gpu_util": 94.0,
+   "gpu_w": 63.5,
+   "cpu_jiffies": [
+    2500424,
+    6615,
+    1658873,
+    84347072,
+    590569,
+    0,
+    106798,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235665.821317,
+   "mem_used_gib": 116.1,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 96.0,
+   "gpu_w": 44.35,
+   "cpu_jiffies": [
+    3277571,
+    24023,
+    3678165,
+    620567550,
+    361827,
+    0,
+    272291,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235666.2228446,
+   "mem_used_gib": 118.4,
+   "mem_avail_gib": 3.3,
+   "swap_used_gib": 15.0,
+   "gpu_util": 95.0,
+   "gpu_w": 47.47,
+   "cpu_jiffies": [
+    2501079,
+    6615,
+    1659351,
+    84349715,
+    590649,
+    0,
+    106884,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235667.8678737,
+   "mem_used_gib": 116.1,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 96.0,
+   "gpu_w": 59.6,
+   "cpu_jiffies": [
+    3277865,
+    24023,
+    3678229,
+    620571253,
+    361828,
+    0,
+    272291,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235668.2933676,
+   "mem_used_gib": 118.4,
+   "mem_avail_gib": 3.2,
+   "swap_used_gib": 15.0,
+   "gpu_util": 95.0,
+   "gpu_w": 63.78,
+   "cpu_jiffies": [
+    2501759,
+    6617,
+    1659626,
+    84352704,
+    590660,
+    0,
+    106901,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235669.9117785,
+   "mem_used_gib": 116.1,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 95.0,
+   "gpu_w": 61.01,
+   "cpu_jiffies": [
+    3278165,
+    24023,
+    3678679,
+    620574424,
+    361828,
+    0,
+    272347,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235670.3542533,
+   "mem_used_gib": 118.5,
+   "mem_avail_gib": 3.2,
+   "swap_used_gib": 15.0,
+   "gpu_util": 94.0,
+   "gpu_w": 63.47,
+   "cpu_jiffies": [
+    2502449,
+    6617,
+    1660049,
+    84355395,
+    590715,
+    0,
+    106968,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235671.96235,
+   "mem_used_gib": 116.1,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 54.0,
+   "gpu_w": 44.69,
+   "cpu_jiffies": [
+    3278467,
+    24023,
+    3679145,
+    620577596,
+    361830,
+    0,
+    272407,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235672.4198108,
+   "mem_used_gib": 118.5,
+   "mem_avail_gib": 3.2,
+   "swap_used_gib": 15.0,
+   "gpu_util": 94.0,
+   "gpu_w": 54.88,
+   "cpu_jiffies": [
+    2503099,
+    6617,
+    1660518,
+    84358071,
+    590786,
+    0,
+    107047,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235674.0126746,
+   "mem_used_gib": 116.1,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 95.0,
+   "gpu_w": 62.14,
+   "cpu_jiffies": [
+    3278757,
+    24023,
+    3679217,
+    620581306,
+    361830,
+    0,
+    272407,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235674.47703,
+   "mem_used_gib": 118.3,
+   "mem_avail_gib": 3.4,
+   "swap_used_gib": 15.0,
+   "gpu_util": 92.0,
+   "gpu_w": 54.19,
+   "cpu_jiffies": [
+    2503728,
+    6617,
+    1660944,
+    84360848,
+    590834,
+    0,
+    107115,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235676.0624275,
+   "mem_used_gib": 116.1,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 95.0,
+   "gpu_w": 61.31,
+   "cpu_jiffies": [
+    3279059,
+    24023,
+    3679689,
+    620584481,
+    361830,
+    0,
+    272469,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235676.5432522,
+   "mem_used_gib": 118.4,
+   "mem_avail_gib": 3.3,
+   "swap_used_gib": 15.0,
+   "gpu_util": 94.0,
+   "gpu_w": 65.36,
+   "cpu_jiffies": [
+    2504385,
+    6617,
+    1661209,
+    84363877,
+    590835,
+    0,
+    107151,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235678.1007693,
+   "mem_used_gib": 116.1,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 40.0,
+   "gpu_w": 44.26,
+   "cpu_jiffies": [
+    3279361,
+    24023,
+    3680154,
+    620587639,
+    361830,
+    0,
+    272530,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235678.6138449,
+   "mem_used_gib": 118.4,
+   "mem_avail_gib": 3.2,
+   "swap_used_gib": 15.0,
+   "gpu_util": 93.0,
+   "gpu_w": 64.74,
+   "cpu_jiffies": [
+    2505034,
+    6617,
+    1661662,
+    84366577,
+    590907,
+    0,
+    107234,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235680.1477342,
+   "mem_used_gib": 116.1,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 95.0,
+   "gpu_w": 62.34,
+   "cpu_jiffies": [
+    3279652,
+    24023,
+    3680222,
+    620591341,
+    361832,
+    0,
+    272530,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235680.6669574,
+   "mem_used_gib": 118.4,
+   "mem_avail_gib": 3.2,
+   "swap_used_gib": 15.0,
+   "gpu_util": 94.0,
+   "gpu_w": 47.11,
+   "cpu_jiffies": [
+    2505626,
+    6618,
+    1662168,
+    84369247,
+    590958,
+    0,
+    107317,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235682.194968,
+   "mem_used_gib": 116.1,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 96.0,
+   "gpu_w": 61.67,
+   "cpu_jiffies": [
+    3279948,
+    24023,
+    3680708,
+    620594503,
+    361832,
+    0,
+    272591,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235682.7119732,
+   "mem_used_gib": 118.2,
+   "mem_avail_gib": 3.4,
+   "swap_used_gib": 15.0,
+   "gpu_util": 94.0,
+   "gpu_w": 63.75,
+   "cpu_jiffies": [
+    2506221,
+    6618,
+    1662365,
+    84372379,
+    590959,
+    0,
+    107328,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235684.2412353,
+   "mem_used_gib": 116.1,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 96.0,
+   "gpu_w": 46.13,
+   "cpu_jiffies": [
+    3280251,
+    24023,
+    3681144,
+    620597732,
+    361834,
+    0,
+    272638,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235684.7666802,
+   "mem_used_gib": 118.2,
+   "mem_avail_gib": 3.5,
+   "swap_used_gib": 15.0,
+   "gpu_util": 95.0,
+   "gpu_w": 65.74,
+   "cpu_jiffies": [
+    2506699,
+    6618,
+    1662736,
+    84375328,
+    591039,
+    0,
+    107391,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235686.2788932,
+   "mem_used_gib": 116.1,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 96.0,
+   "gpu_w": 58.69,
+   "cpu_jiffies": [
+    3280523,
+    24023,
+    3681238,
+    620601411,
+    361834,
+    0,
+    272640,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235686.8116672,
+   "mem_used_gib": 117.9,
+   "mem_avail_gib": 3.7,
+   "swap_used_gib": 15.0,
+   "gpu_util": 94.0,
+   "gpu_w": 58.58,
+   "cpu_jiffies": [
+    2507209,
+    6618,
+    1662994,
+    84378429,
+    591067,
+    0,
+    107408,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235688.318869,
+   "mem_used_gib": 116.1,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 93.0,
+   "gpu_w": 48.74,
+   "cpu_jiffies": [
+    3280692,
+    24023,
+    3681388,
+    620605136,
+    361834,
+    0,
+    272648,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235688.8763828,
+   "mem_used_gib": 117.9,
+   "mem_avail_gib": 3.8,
+   "swap_used_gib": 15.0,
+   "gpu_util": 93.0,
+   "gpu_w": 51.92,
+   "cpu_jiffies": [
+    2507831,
+    6618,
+    1663368,
+    84381317,
+    591106,
+    0,
+    107430,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235690.3603175,
+   "mem_used_gib": 116.1,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 93.0,
+   "gpu_w": 49.01,
+   "cpu_jiffies": [
+    3280880,
+    24023,
+    3681531,
+    620608844,
+    361835,
+    0,
+    272652,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235690.923573,
+   "mem_used_gib": 117.9,
+   "mem_avail_gib": 3.7,
+   "swap_used_gib": 15.0,
+   "gpu_util": 89.0,
+   "gpu_w": 52.23,
+   "cpu_jiffies": [
+    2508434,
+    6618,
+    1663724,
+    84384214,
+    591142,
+    0,
+    107454,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235692.403479,
+   "mem_used_gib": 116.1,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 93.0,
+   "gpu_w": 49.2,
+   "cpu_jiffies": [
+    3281061,
+    24023,
+    3681675,
+    620612560,
+    361836,
+    0,
+    272658,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235692.98488,
+   "mem_used_gib": 117.9,
+   "mem_avail_gib": 3.7,
+   "swap_used_gib": 15.0,
+   "gpu_util": 91.0,
+   "gpu_w": 52.03,
+   "cpu_jiffies": [
+    2509030,
+    6618,
+    1664067,
+    84387193,
+    591184,
+    0,
+    107474,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235694.4458394,
+   "mem_used_gib": 116.1,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 91.0,
+   "gpu_w": 48.9,
+   "cpu_jiffies": [
+    3281248,
+    24023,
+    3681817,
+    620616267,
+    361838,
+    0,
+    272664,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235695.0440962,
+   "mem_used_gib": 118.0,
+   "mem_avail_gib": 3.6,
+   "swap_used_gib": 15.0,
+   "gpu_util": 93.0,
+   "gpu_w": 52.04,
+   "cpu_jiffies": [
+    2509790,
+    6618,
+    1664444,
+    84389945,
+    591229,
+    0,
+    107495,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235696.49019,
+   "mem_used_gib": 116.1,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 87.0,
+   "gpu_w": 48.51,
+   "cpu_jiffies": [
+    3281434,
+    24023,
+    3681959,
+    620619986,
+    361838,
+    0,
+    272670,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235697.091461,
+   "mem_used_gib": 117.8,
+   "mem_avail_gib": 3.8,
+   "swap_used_gib": 14.9,
+   "gpu_util": 91.0,
+   "gpu_w": 48.66,
+   "cpu_jiffies": [
+    2510380,
+    6618,
+    1664799,
+    84392821,
+    591274,
+    0,
+    107518,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235698.528347,
+   "mem_used_gib": 116.1,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 0.0,
+   "gpu_w": 13.89,
+   "cpu_jiffies": [
+    3281505,
+    24023,
+    3682011,
+    620623902,
+    361840,
+    0,
+    272672,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235699.1463754,
+   "mem_used_gib": 118.0,
+   "mem_avail_gib": 3.7,
+   "swap_used_gib": 14.9,
+   "gpu_util": 4.0,
+   "gpu_w": 15.79,
+   "cpu_jiffies": [
+    2510560,
+    6618,
+    1664932,
+    84396484,
+    591279,
+    0,
+    107523,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235700.5591784,
+   "mem_used_gib": 116.1,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 0.0,
+   "gpu_w": 13.69,
+   "cpu_jiffies": [
+    3281556,
+    24023,
+    3682043,
+    620627854,
+    361840,
+    0,
+    272672,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235701.1976035,
+   "mem_used_gib": 117.9,
+   "mem_avail_gib": 3.7,
+   "swap_used_gib": 14.9,
+   "gpu_util": 2.0,
+   "gpu_w": 22.88,
+   "cpu_jiffies": [
+    2510731,
+    6618,
+    1665119,
+    84399766,
+    591594,
+    0,
+    107552,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235702.5970452,
+   "mem_used_gib": 116.1,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 0.0,
+   "gpu_w": 47.03,
+   "cpu_jiffies": [
+    3281882,
+    24023,
+    3682258,
+    620631282,
+    361840,
+    0,
+    272707,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235703.231515,
+   "mem_used_gib": 117.9,
+   "mem_avail_gib": 3.7,
+   "swap_used_gib": 14.9,
+   "gpu_util": 64.0,
+   "gpu_w": 21.29,
+   "cpu_jiffies": [
+    2511204,
+    6618,
+    1665548,
+    84401972,
+    592291,
+    0,
+    107631,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235704.6473453,
+   "mem_used_gib": 116.1,
+   "mem_avail_gib": 5.6,
+   "swap_used_gib": 5.4,
+   "gpu_util": 96.0,
+   "gpu_w": 64.87,
+   "cpu_jiffies": [
+    3282198,
+    24025,
+    3682661,
+    620634475,
+    361843,
+    0,
+    272780,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235705.277842,
+   "mem_used_gib": 118.0,
+   "mem_avail_gib": 3.7,
+   "swap_used_gib": 14.9,
+   "gpu_util": 94.0,
+   "gpu_w": 67.28,
+   "cpu_jiffies": [
+    2511579,
+    6618,
+    1665734,
+    84405220,
+    592410,
+    0,
+    107657,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235706.6872728,
+   "mem_used_gib": 116.1,
+   "mem_avail_gib": 5.5,
+   "swap_used_gib": 5.4,
+   "gpu_util": 0.0,
+   "gpu_w": 37.13,
+   "cpu_jiffies": [
+    3282506,
+    24025,
+    3682845,
+    620637971,
+    361844,
+    0,
+    272816,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235707.3354843,
+   "mem_used_gib": 117.9,
+   "mem_avail_gib": 3.7,
+   "swap_used_gib": 14.9,
+   "gpu_util": 94.0,
+   "gpu_w": 27.42,
+   "cpu_jiffies": [
+    2512089,
+    6618,
+    1666177,
+    84407456,
+    593073,
+    0,
+    107739,
+    0
+   ]
+  },
+  {
+   "node": "gx10-02",
+   "ts": 1791235708.7302532,
+   "mem_used_gib": 116.1,
+   "mem_avail_gib": 5.5,
+   "swap_used_gib": 5.4,
+   "gpu_util": 96.0,
+   "gpu_w": 64.84,
+   "cpu_jiffies": [
+    3282805,
+    24025,
+    3683132,
+    620641361,
+    361844,
+    0,
+    272866,
+    0
+   ]
+  },
+  {
+   "node": "gx10-01",
+   "ts": 1791235709.3929384,
+   "mem_used_gib": 118.0,
+   "mem_avail_gib": 3.6,
+   "swap_used_gib": 14.9,
+   "gpu_util": 94.0,
+   "gpu_w": 64.93,
+   "cpu_jiffies": [
+    2512473,
+    6618,
+    1666313,
+    84410903,
+    593074,
+    0,
+    107746,
+    0
+   ]
+  }
+ ],
+ "rdma_delta": {
+  "gx10-01": {
+   "rocep1s0f0.out_of_sequence": 0,
+   "rocep1s0f0.packet_seq_err": 0,
+   "rocep1s0f0.local_ack_timeout_err": 0,
+   "rocep1s0f0.out_of_buffer": 0,
+   "rocep1s0f0.roce_adp_retrans": 0,
+   "rocep1s0f0.req_transport_retries_exceeded": 0,
+   "rocep1s0f0.rnr_nak_retry_err": 0,
+   "rocep1s0f0.req_cqe_error": 0,
+   "rocep1s0f0.resp_cqe_error": 0,
+   "rocep1s0f0.xmit": 13989901819,
+   "roceP2p1s0f0.out_of_sequence": 0,
+   "roceP2p1s0f0.packet_seq_err": 0,
+   "roceP2p1s0f0.local_ack_timeout_err": 0,
+   "roceP2p1s0f0.out_of_buffer": 0,
+   "roceP2p1s0f0.roce_adp_retrans": 0,
+   "roceP2p1s0f0.req_transport_retries_exceeded": 0,
+   "roceP2p1s0f0.rnr_nak_retry_err": 0,
+   "roceP2p1s0f0.req_cqe_error": 0,
+   "roceP2p1s0f0.resp_cqe_error": 0,
+   "roceP2p1s0f0.xmit": 0
+  },
+  "gx10-02": {
+   "rocep1s0f0.out_of_sequence": 0,
+   "rocep1s0f0.packet_seq_err": 0,
+   "rocep1s0f0.local_ack_timeout_err": 0,
+   "rocep1s0f0.out_of_buffer": 0,
+   "rocep1s0f0.roce_adp_retrans": 0,
+   "rocep1s0f0.req_transport_retries_exceeded": 0,
+   "rocep1s0f0.rnr_nak_retry_err": 0,
+   "rocep1s0f0.req_cqe_error": 0,
+   "rocep1s0f0.resp_cqe_error": 0,
+   "rocep1s0f0.xmit": 14044259716,
+   "roceP2p1s0f0.out_of_sequence": 0,
+   "roceP2p1s0f0.packet_seq_err": 0,
+   "roceP2p1s0f0.local_ack_timeout_err": 0,
+   "roceP2p1s0f0.out_of_buffer": 0,
+   "roceP2p1s0f0.roce_adp_retrans": 0,
+   "roceP2p1s0f0.req_transport_retries_exceeded": 0,
+   "roceP2p1s0f0.rnr_nak_retry_err": 0,
+   "roceP2p1s0f0.req_cqe_error": 0,
+   "roceP2p1s0f0.resp_cqe_error": 0,
+   "roceP2p1s0f0.xmit": 0
+  }
+ },
+ "finished": "2026-10-05T23:28:31+0200"
+}
