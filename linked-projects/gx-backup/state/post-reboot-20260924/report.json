@@ -1,0 +1,38 @@
+{
+  "steps": [
+    {
+      "at": "2026-09-24T21:01:20.602Z",
+      "step": "signed_in",
+      "user": "acceptance"
+    },
+    {
+      "at": "2026-09-24T21:01:20.658Z",
+      "step": "page",
+      "title": "Connections"
+    },
+    {
+      "at": "2026-09-24T21:01:22.864Z",
+      "step": "done",
+      "ok": true
+    }
+  ],
+  "ok": true,
+  "error": null,
+  "title": "Connections",
+  "has_public_url": true,
+  "has_internal_url": true,
+  "has_models": true,
+  "key_masked": true,
+  "reveal_present": true,
+  "copy_present": true,
+  "kilo_present": true,
+  "kilo_base": true,
+  "gateway_healthy": true,
+  "revealed": true,
+  "revealed_len": 54,
+  "revealed_suffix": "52cd",
+  "copy_enabled_after_reveal": true,
+  "copy_button_enabled": true,
+  "test_snippet": "Connection test\n\nUses the live gateway key on the server. Does not start gx-max.\n\nTest Gateway\nTest gx-mini\nTest gx-code\nTest gx-auto\n\nPASS PASS\n\nConnection test\nCheck\tResult\tDetail\ngateway reachable\tPASS\t127.0.0.1:4000 \u00b7 0 ms\nauth valid\tPASS\tHTTP 200 \u00b7 6 models from loopback \u00b7 3 ms\nmodels reachable\tPASS\tgx-mini gx-code gx-auto gx-max\nKilo Code\nOpen WebUI\nOpenAI-compatible clients\nKilo Code\n\nRecommended coding model: gx-code.\n\nsimple / trivial requests \u2192 gx-mini\ncoding, tools, debugging and substantial work \u2192 gx-code\n\ngx-auto never starts gx-max. Choose gx-max explicitly for the solver/reviewer workflow.\n\nKilo Code 7.7.9 installed on gx10-01 (CLI 7.5.14); steps verified against 7.7.9.\n\nConnection settings\nProvider\nOpenAI Compatible\nBase URL\nhttp://100.105.214.61:4000/v1\nCopy\nAPI key\nReveal on this page, then paste into Kilo\nRecommended model\ngx-code\nCopy\n\nAvailable alternatives:\n\ngx-mini\nCopy\ngx-auto\nCopy\ngx-max\nCopy\nManual setup (Kilo Code settings)\nOpen Kilo Code, then Settings (gear icon) > Providers.\nOn the Custom provider card (\"Add a custom provider by base URL.\") click Connect.\nProvider ID: gx-cluster\nDisplay name: GX Cluster\nProvider API: OpenAI Compatible\nBase URL: http://",
+  "gateway_test_ok": true
+}

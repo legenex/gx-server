@@ -1,0 +1,10 @@
+[Unit]
+Description=GX encrypted restic backup
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/gx backup
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7

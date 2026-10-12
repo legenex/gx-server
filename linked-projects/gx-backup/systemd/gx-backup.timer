@@ -1,0 +1,10 @@
+[Unit]
+Description=GX encrypted backup daily
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+Persistent=true
+RandomizedDelaySec=600
+
+[Install]
+WantedBy=timers.target

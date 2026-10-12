@@ -1,0 +1,51 @@
+[
+  {
+    "name": "dashboard",
+    "title": "Dashboard",
+    "hits": [],
+    "png": "/tmp/gx-ui-snaps/dashboard.png",
+    "chars": 3090
+  },
+  {
+    "name": "models",
+    "title": "Models",
+    "hits": [],
+    "png": "/tmp/gx-ui-snaps/models.png",
+    "chars": 5945
+  },
+  {
+    "name": "jobs",
+    "title": "Jobs / Queue",
+    "hits": [],
+    "png": "/tmp/gx-ui-snaps/jobs.png",
+    "chars": 2593
+  },
+  {
+    "name": "logs",
+    "title": "Logs",
+    "hits": [],
+    "png": "/tmp/gx-ui-snaps/logs.png",
+    "chars": 22145
+  },
+  {
+    "name": "cluster",
+    "title": "Cluster",
+    "hits": [],
+    "png": "/tmp/gx-ui-snaps/cluster.png",
+    "chars": 2161
+  },
+  {
+    "name": "backup",
+    "title": "Backup & Recovery",
+    "hits": [],
+    "png": "/tmp/gx-ui-snaps/backup.png",
+    "chars": 1422
+  },
+  {
+    "name": "settings",
+    "title": "Settings / System",
+    "hits": [],
+    "png": "/tmp/gx-ui-snaps/settings.png",
+    "chars": 4919
+  }
+]

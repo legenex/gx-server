@@ -1,0 +1,75 @@
+TITLE: Cluster
+HITS: none
+
+Cluster
+Two separate computers. Two independent 128 GB unified-memory systems (about 121 GiB usable each). They do NOT share memory: there is no 256 GB pool. Each node runs its own models inside its own memory. Only gx-max spans both, as two tensor-parallel ranks that exchange activations over the ConnectX-7 RoCE rails.
+Topology
+gx10-01
+128 GB unified memory
+70.1 GiB available
+swap 0.0 / 64.0 GiB
+6.17.0-1032-nvidia
+control · gx-mini · gx-code-01
+gx10-02
+128 GB unified memory
+91.0 GiB available
+swap 0.0 / 64.0 GiB
+6.17.0-1032-nvidia
+gx-code-02 · gx-max reviewer
+Rail 1 · 200 Gb/sec (2X NDR) · ACTIVE
+192.168.100.10 ↔ 192.168.100.11
+Rail 2 · 200 Gb/sec (2X NDR) · ACTIVE
+192.168.101.10 ↔ 192.168.101.11
+Tailscale — management only (connected)
+100.105.214.61 ↔ 100.73.238.4 · SSH OK
+gx10-01
+Role
+control / gateway / gx-mini / gx-code-01 / orchestrator
+State
+Healthy
+Management (Tailscale) IP
+100.105.214.61
+RoCE IPs
+192.168.100.10 · 192.168.101.10
+Kernel
+6.17.0-1032-nvidia 
+pinned
+Uptime
+35m 24s
+SSH
+local (control node)
+gx10-02
+Role
+gx-code-02 / gx-max reviewer
+State
+Healthy
+Management (Tailscale) IP
+100.73.238.4
+RoCE IPs
+192.168.100.11 · 192.168.101.11
+Kernel
+6.17.0-1032-nvidia 
+pinned
+Uptime
+36m 20s
+SSH
+OK · 2435 ms round trip
+RoCE rails (model + NCCL traffic only)
+RoCE rails
+Rail	Subnet	gx10-01 port	gx10-02 port	Link / RDMA	MTU	Peer TCP probe	Throughput now (node 1)	Cumulative RDMA tx / rx (node 1)
+Rail 1	192.168.100.0/24	enp1s0f0np0 rocep1s0f0	enp1s0f0np0 rocep1s0f0	
+ACTIVE / LinkUp 200 Gb/sec (2X NDR)	1500	open	measuring…	0 B / 0 B
+Rail 2	192.168.101.0/24	enP2p1s0f0np0 roceP2p1s0f0	enP2p1s0f0np0 roceP2p1s0f0	
+ACTIVE / LinkUp 200 Gb/sec (2X NDR)	1500	open	measuring…	0 B / 0 B
+
+Only the f0 port of each ConnectX-7 is cabled. The f1 ports report DOWN/Disabled by design. Rates are computed between two refreshes of the RDMA port counters (sysfs port_xmit_data / port_rcv_data).
+
+Management plane (Tailscale)
+gx10-01
+Running · 100.105.214.61
+gx10-02
+Running · 100.73.238.4
+Peer path gx10-01 → gx10-02
+gx10-02: online, direct
+Rule
+Tailscale carries management only (SSH, this UI, client access). Model and NCCL traffic use only the RoCE rails.

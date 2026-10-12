@@ -1,0 +1,249 @@
+Models
+
+Four logical modes: gx-mini, gx-code, gx-auto and gx-max. gx-code is two independent Ornith Q5_K_M workers (01 on gx10-01, 02 on gx10-02). gx-auto routes light work to mini and coding to gx-code. gx-max is dual-worker solver + reviewer on those two workers.
+
+Which model should I use? →
+gx-mini
+loaded
+
+loaded
+
+Load
+Unload
+Restart
+Purpose
+Always-on small uncensored helper on gx10-01.
+Type
+Text model
+Model
+junafinity/Ornith-1.5-9B-uncensored-GGUF-8bit
+Revision (pinned)
+10d5524ca2258decffa044ddf233b17fb239e838
+Family
+Ornith 1.5 / Qwen3.5-family hybrid
+Parameters
+9B dense
+Quantization
+GGUF Q8_0 + f16 vision projector
+Uncensored / abliterated
+yes
+Engine / runtime
+llama.cpp (legenex/llama-cpp-spark) via llama-swap
+Node(s)
+gx10-01
+Local path
+/srv/models/gguf/Ornith-1.5-9B-uncensored-Q8_0
+Context window
+65,536 tokens
+Max output
+8,192 tokens
+Vision
+yes
+Tool calling
+yes
+Reasoning output
+thinking model; thinking disabled at the gateway for speed
+Startup behaviour
+resident on gx10-01 (ttl 0, preloaded with llama-swap)
+Memory impact
+about 10 GiB on gx10-01
+Endpoint path
+LiteLLM gx-mini -> gx-llama-swap-node01 -> 127.0.0.1:19001
+Measured
+52 tok/s decode, 0.1 s warm TTFT, vision and tool calls correct (2026-09-17)
+Licence
+apache-2.0
+Last health check
+ready (loaded)
+Last real inference
+OK · 7d 7h ago · 281 ms — stream 14 chunks
+Last load
+OK · 3d 14h ago · 6.3 s — HTTP 200: {"status":"ok"}
+Last unload
+OK · 3d 14h ago — HTTP 200: OK
+Previous model
+Qwen3.5-4B Q4_K_M GGUF (source repository not recorded in this project) — superseded 2026-09-17; still on gx10-01 (3.2 GiB) as the rollback. Storage & Cleanup lists it for review
+Latency, context budget and routing
+gx-code
+loaded
+
+loaded
+
+Load
+Unload
+Restart
+Purpose
+Serious coding/reasoning. Independent Ornith Q5_K_M workers on both nodes, load-balanced as gx-code.
+Type
+Text model
+Model
+0xKitkat/Ornith-1.5-35B-A3B-Uncensored-GGUF
+Revision (pinned)
+ab0eed77c73880afda789a3914003db2273fd64a
+Family
+Ornith 1.5-35B-A3B
+Parameters
+~35B total, ~3B active (MoE)
+Quantization
+GGUF Q5_K_M + BF16 vision projector
+Uncensored / abliterated
+yes
+Engine / runtime
+llama.cpp (legenex/llama-cpp-spark) via llama-swap, one worker per node
+Node(s)
+gx10-01, gx10-02
+Local path
+/srv/models/gguf/Ornith-1.5-35B-A3B-Uncensored
+Context window
+65,536 tokens
+Max output
+16,384 tokens
+Vision
+yes
+Tool calling
+yes
+Reasoning output
+no
+Startup behaviour
+resident on both nodes (ttl 0, preloaded with llama-swap)
+Memory impact
+about 48 GiB cgroup cap per worker
+Endpoint path
+LiteLLM gx-code -> llama-swap gx-code on gx10-01 and gx10-02 (RoCE)
+Measured
+—
+Licence
+apache-2.0
+Last health check
+ready (gx-code workers on both nodes)
+Last real inference
+never recorded
+Last load
+never recorded
+Last unload
+never recorded
+Worker 01 (gx10-01)
+loaded
+Worker 02 (gx10-02)
+loaded
+Latency, context budget and routing
+gx-auto
+loaded
+
+routable now: gx-code, gx-mini
+
+Routing alias — nothing to load. It uses whichever tiers are available.
+Purpose
+Router: gx-mini for light work, gx-code for coding (queued, never silent-downgraded).
+Type
+Text model
+Model
+orchestrator router
+Revision (pinned)
+—
+Uncensored / abliterated
+every tier it can pick is uncensored
+Engine / runtime
+gx-orchestrator :18900
+Node(s)
+gx10-01
+Context window
+98,304 tokens
+Max output
+32,768 tokens
+Vision
+yes
+Tool calling
+yes
+Reasoning output
+depends on the tier chosen
+Startup behaviour
+always on; picks gx-mini or gx-code per request
+Memory impact
+none of its own — uses the chosen worker
+Endpoint path
+LiteLLM gx-auto -> gx-orchestrator :18900
+Measured
+greeting/summary -> gx-mini; coding/debug -> gx-code (queued, never silent-downgraded to mini)
+Last health check
+routable now: gx-code, gx-mini
+Last real inference
+OK · 7d 6h ago · 200982 ms — **Step 1:** Assume, for the sake of contradiction, that $\sqrt{2}$ is a rational number. **Step 2:** By definition, a rational number can be written as a fraction $\frac{a}{b}$, where $a$ and $b$ a
+Last load
+never recorded
+Last unload
+never recorded
+Latency, context budget and routing
+gx-max
+loaded
+
+dual-worker ready: solver gx-code-01 + reviewer gx-code-02
+
+Load
+Unload
+Restart
+Force release
+Purpose
+Hardest work: solver on gx-code-01, independent reviewer on gx-code-02.
+Type
+Text model
+Model
+0xKitkat/Ornith-1.5-35B-A3B-Uncensored-GGUF
+Revision (pinned)
+ab0eed77c73880afda789a3914003db2273fd64a
+Family
+DeepSeek-V4-Flash-0731 (43-layer MoE, 256 routed + 1 shared expert, DSpark MTP head)
+Parameters
+284B total (SGLang cookbook: Flash 284B)
+Active parameters (MoE)
+6 routed + 1 shared expert per token (the repository does not state a count)
+Quantization
+GGUF Q5_K_M (same Ornith 35B workers)
+Uncensored / abliterated
+yes: dealign.ai 'CRACK' abliteration (card: HarmBench >=96% compliance, MMLU 86.7%, HumanEval pass@2 94.3%)
+Engine / runtime
+gx-orchestrator dual-worker (gx-code-01 solver, gx-code-02 reviewer)
+Node(s)
+gx10-01, gx10-02
+Local path
+/srv/models/gguf/Ornith-1.5-35B-A3B-Uncensored
+Context window
+327,680 tokens
+Max output
+65,536 tokens
+Vision
+no
+Tool calling
+yes
+Reasoning output
+yes (thinking, reasoning_content)
+Startup behaviour
+uses the two gx-code workers; no SGLang acquire in the default mode
+Memory impact
+the two gx-code workers already resident
+Endpoint path
+LiteLLM gx-max -> gx-orchestrator :18900 (GX_MAX_MODE=dual-worker)
+Measured
+see TEST_RESULTS.md section 18
+Licence
+mit
+Last health check
+stopped (stopped)
+Last real inference
+OK · 7d 9h ago · 786 ms — stream 12 chunks
+Last load
+OK · 5d 21h ago · 604 s — ready
+Last unload
+OK · 7d 1h ago — released
+Previous model
+nvidia/DeepSeek-V4-Flash-0731-NVFP4 — deleted on both nodes by the user (2026-09-17, B-026 resolved); a rollback to it needs a fresh download of this pinned revision to both nodes
+Latency, context budget and routing
+Dual-worker workflow
+Mode
+dual-worker
+Solver
+gx-code-01 on gx10-01 · loaded
+Reviewer
+gx-code-02 on gx10-02 · loaded
+Workflow
+dual-worker ready: solver gx-code-01 + reviewer gx-code-02

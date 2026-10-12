@@ -1,0 +1,16 @@
+/* GXSUITE-T2 conventions: gx-* classes, no inline styles, BEM modifiers with -- */
+:root {
+  --gx-bg: #111;
+  --gx-fg: #eee;
+  --gx-ok: #3ddc97;
+  --gx-bad: #ff6b6b;
+}
+body { background: var(--gx-bg); color: var(--gx-fg); font-family: sans-serif; }
+.gx-header { display: flex; align-items: center; gap: 1rem; }
+.gx-title { font-size: 1.2rem; }
+.gx-card { border: 1px solid #333; padding: 1rem; border-radius: 8px; }
+.gx-btn { background: #222; color: var(--gx-fg); border: 1px solid #444; padding: 0.4rem 0.8rem; }
+.gx-muted { color: #888; }
+.gx-status-pill { border-radius: 999px; padding: 0.15rem 0.6rem; font-size: 0.8rem; }
+.gx-status-pill--ok { background: var(--gx-ok); color: #111; }
+.gx-status-pill--bad { background: var(--gx-bad); color: #111; }

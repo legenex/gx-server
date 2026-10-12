@@ -1,0 +1,212 @@
+{
+  "model": "Ornith-1.5-35B-A3B-Uncensored",
+  "quant": "Q5_K_M",
+  "runtime": "llama.cpp",
+  "pass": 5,
+  "partial": 1,
+  "fail": 0,
+  "score": "5/6 PASS, 1 PARTIAL, 0 FAIL",
+  "tasks": [
+    {
+      "task": "diagnose and repair a bug",
+      "id": "1",
+      "repo": "tests/ornith-suite/task1_bug",
+      "node": "GX10-01",
+      "model": "gx-code-01 / Ornith-1.5-35B-A3B-Uncensored",
+      "quant": "Q5_K_M",
+      "runtime": "llama.cpp",
+      "time_s": 3.54,
+      "tokens_per_sec": 44.91,
+      "usage": {
+        "completion_tokens": 159,
+        "prompt_tokens": 413,
+        "total_tokens": 572,
+        "prompt_tokens_details": {
+          "cached_tokens": 409
+        }
+      },
+      "files_changed": [
+        "stats.py"
+      ],
+      "tests_run": "pytest -q",
+      "tests_passed": true,
+      "first_attempt_passed": true,
+      "repair_round": false,
+      "human_rescue_required": false,
+      "edited_unnecessary_files": false,
+      "hallucinated_apis": false,
+      "claimed_success_incorrectly": false,
+      "verdict": "PASS",
+      "pytest_stdout": "\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m                                                                     [100%]\u001b[0m\n\u001b[32m\u001b[32m\u001b[1m4 passed\u001b[0m\u001b[32m in 0.00s\u001b[0m\u001b[0m",
+      "served": "gx-code-01"
+    },
+    {
+      "task": "frontend/UI following conventions",
+      "id": "2",
+      "repo": "tests/ornith-suite/task2_frontend",
+      "node": "GX10-02",
+      "model": "gx-code-02 / Ornith-1.5-35B-A3B-Uncensored",
+      "quant": "Q5_K_M",
+      "runtime": "llama.cpp",
+      "time_s": 6.19,
+      "tokens_per_sec": 55.86,
+      "usage": {
+        "completion_tokens": 346,
+        "prompt_tokens": 1163,
+        "total_tokens": 1509,
+        "prompt_tokens_details": {
+          "cached_tokens": 1159
+        }
+      },
+      "files_changed": [
+        "index.html",
+        "app.js"
+      ],
+      "tests_run": "pytest -q",
+      "tests_passed": true,
+      "first_attempt_passed": true,
+      "repair_round": false,
+      "human_rescue_required": false,
+      "edited_unnecessary_files": false,
+      "hallucinated_apis": false,
+      "claimed_success_incorrectly": false,
+      "verdict": "PASS",
+      "pytest_stdout": "\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m                                                                    [100%]\u001b[0m\n\u001b[32m\u001b[32m\u001b[1m5 passed\u001b[0m\u001b[32m in 0.01s\u001b[0m\u001b[0m",
+      "served": "gx-code-02"
+    },
+    {
+      "task": "backend/API implementation",
+      "id": "3",
+      "repo": "tests/ornith-suite/task3_backend",
+      "node": "GX10-01",
+      "model": "gx-code-01 / Ornith-1.5-35B-A3B-Uncensored",
+      "quant": "Q5_K_M",
+      "runtime": "llama.cpp",
+      "time_s": 6.05,
+      "tokens_per_sec": 45.43,
+      "usage": {
+        "completion_tokens": 275,
+        "prompt_tokens": 575,
+        "total_tokens": 850,
+        "prompt_tokens_details": {
+          "cached_tokens": 571
+        }
+      },
+      "files_changed": [
+        "api.py"
+      ],
+      "tests_run": "pytest -q",
+      "tests_passed": true,
+      "first_attempt_passed": true,
+      "repair_round": false,
+      "human_rescue_required": false,
+      "edited_unnecessary_files": false,
+      "hallucinated_apis": false,
+      "claimed_success_incorrectly": false,
+      "verdict": "PASS",
+      "pytest_stdout": "\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m                                                                      [100%]\u001b[0m\n\u001b[32m\u001b[32m\u001b[1m3 passed\u001b[0m\u001b[32m in 0.00s\u001b[0m\u001b[0m",
+      "served": "gx-code-01"
+    },
+    {
+      "task": "multi-file refactor",
+      "id": "4",
+      "repo": "tests/ornith-suite/task4_refactor",
+      "node": "GX10-02",
+      "model": "gx-code-02 / Ornith-1.5-35B-A3B-Uncensored",
+      "quant": "Q5_K_M",
+      "runtime": "llama.cpp",
+      "time_s": 3.58,
+      "tokens_per_sec": 54.76,
+      "usage": {
+        "completion_tokens": 196,
+        "prompt_tokens": 617,
+        "total_tokens": 813,
+        "prompt_tokens_details": {
+          "cached_tokens": 613
+        }
+      },
+      "files_changed": [
+        "tax.py",
+        "user.py",
+        "order.py"
+      ],
+      "tests_run": "pytest -q",
+      "tests_passed": true,
+      "first_attempt_passed": true,
+      "repair_round": false,
+      "human_rescue_required": false,
+      "edited_unnecessary_files": false,
+      "hallucinated_apis": false,
+      "claimed_success_incorrectly": false,
+      "verdict": "PASS",
+      "pytest_stdout": "\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m                                                                      [100%]\u001b[0m\n\u001b[32m\u001b[32m\u001b[1m3 passed\u001b[0m\u001b[32m in 0.01s\u001b[0m\u001b[0m",
+      "served": "gx-code-02"
+    },
+    {
+      "task": "diagnose and repair an integration failure",
+      "id": "5",
+      "repo": "tests/ornith-suite/task5_integration",
+      "node": "GX10-01",
+      "model": "gx-code-01 / Ornith-1.5-35B-A3B-Uncensored",
+      "quant": "Q5_K_M",
+      "runtime": "llama.cpp",
+      "time_s": 2.55,
+      "tokens_per_sec": 43.15,
+      "usage": {
+        "completion_tokens": 110,
+        "prompt_tokens": 386,
+        "total_tokens": 496,
+        "prompt_tokens_details": {
+          "cached_tokens": 382
+        }
+      },
+      "files_changed": [
+        "producer.py"
+      ],
+      "tests_run": "pytest -q",
+      "tests_passed": true,
+      "first_attempt_passed": true,
+      "repair_round": false,
+      "human_rescue_required": false,
+      "edited_unnecessary_files": false,
+      "hallucinated_apis": false,
+      "claimed_success_incorrectly": false,
+      "verdict": "PASS",
+      "pytest_stdout": "\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m                                                                       [100%]\u001b[0m\n\u001b[32m\u001b[32m\u001b[1m2 passed\u001b[0m\u001b[32m in 0.00s\u001b[0m\u001b[0m",
+      "served": "gx-code-01"
+    },
+    {
+      "task": "autonomous inspect-implement-test-repair-retest",
+      "id": "6",
+      "repo": "tests/ornith-suite/task6_autonomous",
+      "node": "GX10-02",
+      "model": "gx-code-02 / Ornith-1.5-35B-A3B-Uncensored",
+      "quant": "Q5_K_M",
+      "runtime": "llama.cpp",
+      "time_s": 1.95,
+      "tokens_per_sec": 52.21,
+      "usage": {
+        "completion_tokens": 102,
+        "prompt_tokens": 517,
+        "total_tokens": 619,
+        "prompt_tokens_details": {
+          "cached_tokens": 513
+        }
+      },
+      "files_changed": [
+        "ops.py"
+      ],
+      "tests_run": "pytest -q",
+      "tests_passed": true,
+      "first_attempt_passed": false,
+      "repair_round": true,
+      "human_rescue_required": false,
+      "edited_unnecessary_files": false,
+      "hallucinated_apis": false,
+      "claimed_success_incorrectly": false,
+      "verdict": "PARTIAL",
+      "pytest_stdout": "\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m                                                                     [100%]\u001b[0m\n\u001b[32m\u001b[32m\u001b[1m4 passed\u001b[0m\u001b[32m in 0.00s\u001b[0m\u001b[0m",
+      "served": "gx-code-02"
+    }
+  ]
+}

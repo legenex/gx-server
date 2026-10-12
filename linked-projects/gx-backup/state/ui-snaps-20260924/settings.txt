@@ -1,0 +1,170 @@
+TITLE: Settings / System
+HITS: none
+
+Settings / System
+Project
+Project version
+0.19.0
+Control UI version
+1.0.0
+Repository
+https://github.com/legenex/gx-server.git
+Checkout (gx10-01)
+/home/legenex/Documents/Projects/Server/gx-cluster
+Branch
+main
+Kernel pin
+6.17.0-1032-nvidia
+Running kernels
+gx10-01: 6.17.0-1032-nvidia ✓ · gx10-02: 6.17.0-1032-nvidia ✓
+Active UI sessions
+1
+GitHub sync
+All three HEADs match
+in sync
+gx10-01 HEAD
+821cd98938d2
+GitHub origin/main
+821cd98938d2
+gx10-02 HEAD
+821cd98938d2
+Last commit
+autosync(gx10-01): 2026-09-24 00:31:16 (2026-09-24T00:31:16+02:00)
+gx10-02 push
+disabled (pull-only)
+Uncommitted on gx10-01
+1
+gx10-01 watcher
+inactive / dead
+gx10-01 1-min fallback
+active / waiting
+gx10-01 daily audit
+active / waiting
+gx10-02 reconcile timer
+active / waiting
+gx10-02 daily audit
+active / waiting
+Actions
+
+Only these fixed operations exist. There is no shell, no upgrade and no kernel/firmware button. Each run is audited.
+
+Safe checks & maintenance
+Refresh health
+
+Clears every cache and re-probes the cluster now.
+
+Run integrity audit (both nodes)
+
+ops/git-sync/integrity-audit.sh on gx10-01 and gx10-02. Read-only.
+
+Run kernel-lock verifier (both nodes)
+
+legenex/host/kernel-lock/verify-kernel-lock.sh on both nodes. Read-only simulation; installs nothing.
+
+Reconcile gx10-02 from origin/main
+
+Starts gx10-02's pull-only reconcile unit (fetch, save drift evidence, reset to origin/main).
+
+Run hostwatch now (both nodes)
+
+One read-only host resilience check cycle on each node.
+
+Restart the control UI
+
+systemctl --user restart gx-control-ui.service. Sessions survive only until restart.
+
+Restart non-model infrastructure
+Restart LiteLLM gateway
+
+docker restart gx-litellm. Requests in flight through the gateway fail.
+
+Restart llama-swap (gx10-01)
+
+docker restart gx-llama-swap-node01. Stops gx-mini/gx-code-01; they reload on demand.
+
+Restart llama-swap (gx10-02)
+
+docker restart gx-llama-swap-node02 on gx10-02. Stops gx-code-02; it reloads on demand.
+
+Restart gx-orchestrator
+
+systemctl --user restart gx-orchestrator.service. Refused while gx-max is loading or releasing; a serving gx-max is re-adopted on start.
+
+Restore normal workloads
+
+Runs lifecycle/restore-normal.sh: brings the gateway, orchestrator and node 2 llama-swap back up. Loads no model.
+
+Configured endpoints
+Endpoints
+Endpoint	URL	Reachable from
+LiteLLM gateway (clients)	http://100.105.214.61:4000/v1	Tailscale + loopback
+LiteLLM (internal)	http://127.0.0.1:4000	loopback
+gx-orchestrator	http://127.0.0.1:18900	loopback + docker bridge
+llama-swap gx10-01	http://127.0.0.1:28080	loopback
+llama-swap gx10-02	http://192.168.100.11:28080	RoCE fabric
+Control UI	http://100.105.214.61:8088/	Tailscale + loopback
+OpenWebUI	http://127.0.0.1:3000	loopback + Tailscale
+AgentOS Control Center	http://127.0.0.1:4173	loopback
+User services & timers
+Units
+Node	Unit	State	Enabled
+gx10-01	gx-orchestrator.service	
+active / running	enabled
+gx10-01	gx-control-ui.service	
+active / running	enabled
+gx10-01	gx-hostwatch.timer	
+active / waiting	enabled
+gx10-01	gx-git-watch.service	
+inactive / dead	enabled
+gx10-01	gx-git-autosync.timer	
+active / waiting	enabled
+gx10-01	gx-git-daily-audit.timer	
+active / waiting	enabled
+gx10-01	agentos-control-center.service	
+inactive / dead	enabled
+gx10-01	agentos-supervisor.service	
+activating / auto-restart	enabled
+gx10-02	gx-hostwatch.timer	
+active / waiting	enabled
+gx10-02	gx-git-reconcile.timer	
+active / waiting	enabled
+gx10-02	gx-git-daily-audit.timer	
+active / waiting	enabled
+Timers on gx10-01
+Timer	Next	Last
+gx-hostwatch.timer	9/24/2026, 12:34:10 AM	9/24/2026, 12:33:10 AM
+gx-git-autosync.timer	9/24/2026, 12:34:20 AM	9/24/2026, 12:33:20 AM
+gx-backup.timer	9/24/2026, 3:35:11 AM	9/23/2026, 3:38:48 AM
+gx-git-daily-audit.timer	9/24/2026, 4:18:28 AM	9/23/2026, 4:21:04 AM
+Runtime directories
+Runtime directories
+Path	Purpose
+/srv/projects/gx-cluster/state/control-ui	control UI state (model results)
+/srv/projects/gx-cluster/secrets/control-ui	control UI password store (0700/0600)
+/srv/logs/gx-control-ui	control UI service + audit logs
+/srv/projects/gx-cluster/state/guard	admission locks and residency ledgers
+/srv/projects/gx-cluster/state/orchestrator	gx-max job history
+/srv/projects/gx-cluster/state/git-sync	Git sync role + lock
+/srv/logs	all service logs
+/srv/models	model weights (per node, not shared)
+Credential hygiene (values never shown)
+Credential hygiene
+Variable	State
+LITELLM_MASTER_KEY	
+set
+GX_SWAP_API_KEY	
+set
+GX_ORCHESTRATOR_API_KEY	
+not used (orchestrator is loopback-only)
+Control UI password
+
+The password is set from a terminal on gx10-01, never from the browser. Changing it signs out every session.
+
+Copy
+cd ~/Documents/Projects/Server/gx-cluster
+legenex/control-ui/scripts/gx-ui-passwd            # prompt for a new password
+legenex/control-ui/scripts/gx-ui-passwd --status   # show whether one is set
+Recent operations
+Recent operations
+Operation	User	Started	Elapsed	State
+No operations yet.
