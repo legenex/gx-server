@@ -1,0 +1,35 @@
+name: legenex-team-speech
+services:
+  speech:
+    image: ${SPEECH_IMAGE:?pinned build required}
+    restart: unless-stopped
+    init: true
+    user: '1000:1000'
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    cpus: 2
+    mem_limit: 3g
+    pids_limit: 128
+    ports: ['127.0.0.1:18835:18835']
+    environment:
+      SPEECH_MODELS: /models
+      SPEECH_KEY_FILE: /run/secrets/speech-key
+      HF_HUB_OFFLINE: '1'
+      OMP_NUM_THREADS: '2'
+      OPENBLAS_NUM_THREADS: '2'
+    volumes:
+      - /srv/models/team-speech:/models:ro
+      - /home/legenex-02/.config/legenex-team-speech/api-key:/run/secrets/speech-key:ro
+    # phonemizer copies the trusted system libespeak-ng into its temporary
+    # directory before dlopen; that specific backend requires executable tmpfs.
+    tmpfs: ['/tmp:size=512m,mode=1777,exec']
+    healthcheck:
+      test: ['CMD', 'python', '-c', 'import urllib.request;urllib.request.urlopen("http://127.0.0.1:18835/health", timeout=3)']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: json-file
+      options: {max-size: '10m', max-file: '3'}

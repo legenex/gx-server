@@ -1,0 +1,10 @@
+fastapi==0.143.1
+uvicorn==0.54.0
+python-multipart==0.0.32
+kokoro-onnx==0.6.1
+onnxruntime==1.31.0
+faster-whisper==1.2.1
+ctranslate2==4.8.3
+# faster-whisper 1.2.1 passes metadata_errors, removed by PyAV 17.
+av==16.1.0
+soundfile==0.14.0

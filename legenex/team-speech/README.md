@@ -1,0 +1,46 @@
+# Team speech backend
+
+A private, authenticated CPU service on GX10-02 for the team voice studio.
+It is independent of the existing gx-voice Qwen service and does not change
+gx-auto/gx-max, take CUDA memory, or modify the two-node inference runtime.
+Kokoro ONNX 0.6.1 uses the upstream pinned v1.0 model; faster-whisper 1.2.1
+uses Systran's base.en at immutable revision
+`3d3d5dee26484f91867d81cb899cfcf72b96be6c`.
+
+The upstream kokoro-onnx project is MIT licensed, Kokoro weights Apache 2.0;
+faster-whisper is MIT licensed. Models are downloaded separately from Git,
+Kokoro assets checked against published release SHA256s. Runtime model files
+are read-only and networking for model downloads is disabled by HF_HUB_OFFLINE.
+
+The image is built from the pinned Python multiarchitecture base and pinned
+Python requirements. Deployment supplies an immutable local image tag and
+records its image ID. Service limits: 2 CPU cores, 3 GiB memory, 128 tasks,
+one inference slot, no GPU access, 512 MiB temporary storage, rotated logs.
+Only loopback port 18835 is published. A separately authenticated private SSH
+tunnel transports the studio's requests from KVM2. Never publish this port.
+
+`GET /health` reveals only worker health. All inference/voices endpoints
+require a service bearer credential mounted read-only from the user's private
+configuration directory. It never lives in this repository. The studio has
+its own human and agent authentication and per-user asset/job ownership.
+
+`POST /v1/audio/speech`: JSON `input`, allowlisted preset `voice`, optional
+`speed`. Returns 24kHz PCM16 WAV. Text is limited to 6000 characters.
+`POST /v1/audio/transcriptions`: multipart WAV file, maximum 20MiB and ten
+minutes, at most stereo. Returns English text. Audio is temporary and removed
+after inference. Inference errors expose only error types, never input or keys.
+Concurrent inference returns 429 and must be retried through the studio queue.
+
+Voice cloning is unsupported by these selected models. The UI must clearly
+identify preset voices and cannot claim cloning or accept arbitrary reference
+recordings as a clone. Adding cloning requires a separate reviewed consent
+and ownership boundary with a supported backend.
+
+Primary sources:
+- https://github.com/thewh1teagle/kokoro-onnx
+- https://github.com/SYSTRAN/faster-whisper
+- https://huggingface.co/Systran/faster-whisper-base.en
+
+Source working copies remain on GX10-01. Deploy only packaged runtime files
+and pinned models to GX10-02; build a reviewed image there without changing
+the GX mirror checkout or its automatic reconciliation policy.
