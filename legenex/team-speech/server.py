@@ -14,6 +14,7 @@ import tempfile
 import threading
 import time
 from pathlib import Path
+from typing import Annotated
 
 from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import Response
@@ -151,7 +152,7 @@ def speech(body: Speech):
             media_type="audio/wav",
             headers={"Cache-Control": "no-store"},
         )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - native inference failures must not disclose user input
         # Inputs and service credentials never enter exception responses.
         raise HTTPException(
             503, "Speech inference failed: " + type(exc).__name__
@@ -164,7 +165,7 @@ def speech(body: Speech):
 
 
 @app.post("/v1/audio/transcriptions", dependencies=[Depends(authorize)])
-def transcription(file: UploadFile = File(...)):
+def transcription(file: Annotated[UploadFile, File()]):
     global STT
     if not SLOT.acquire(blocking=False):
         raise HTTPException(429, "Speech worker busy; retry later")
@@ -183,7 +184,7 @@ def transcription(file: UploadFile = File(...)):
                 or metadata.channels > 2
             ):
                 raise ValueError("invalid audio")
-        except Exception:
+        except (ValueError, RuntimeError):
             raise HTTPException(400, "Use a WAV recording under ten minutes") from None
         if STT is None:
             from faster_whisper import WhisperModel
@@ -204,7 +205,7 @@ def transcription(file: UploadFile = File(...)):
         return {"text": text, "language": info.language, "model": "whisper-base.en"}
     except HTTPException:
         raise
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - native inference failures must not disclose user audio
         raise HTTPException(
             503, "Transcription failed: " + type(exc).__name__
         ) from None

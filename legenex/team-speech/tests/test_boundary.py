@@ -28,7 +28,7 @@ def backend(tmp_path, monkeypatch):
 
 
 def test_unauthenticated_multipart_is_refused_before_parsing(backend):
-    module, client, headers = backend
+    module, client, _headers = backend
     response = client.post(
         "/v1/audio/transcriptions",
         content=b"not a multipart body",
@@ -76,7 +76,7 @@ def test_readiness_reports_missing_models_without_loading_them(backend):
 
 
 def test_watchdog_targets_only_this_isolated_process(backend, monkeypatch):
-    module, client, headers = backend
+    module, _client, _headers = backend
     events = []
 
     class Timer:
