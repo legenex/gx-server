@@ -9,6 +9,8 @@
 #   node1-autosync.sh once    one pass: commit if quiet, push if ahead, notify
 #   node1-autosync.sh push    push if ahead and notify (post-commit hook)
 #
+# A pass NEVER pushes unless main is checked out (another branch -- e.g. an AI OS
+# agent branch -- is never pushed to refs/heads/main, even when it is ahead).
 # A pass NEVER commits when:
 #   * this node's role is not "writer"
 #   * the branch is not main, or HEAD is detached
@@ -51,7 +53,15 @@ has_changes() { [ -n "$(g status --porcelain=v1 --untracked-files=all)" ]; }
 ahead_count() { g rev-list --count "${GX_SYNC_REMOTE}/${GX_SYNC_BRANCH}..HEAD" 2>/dev/null || echo 0; }
 
 do_push() {
-  local ahead out rc
+  local ahead out rc branch
+  # Only ever publish main from main. Another branch checked out here (an AI OS
+  # agent branch, an owner experiment) is never pushed to refs/heads/main, even
+  # when it is ahead of origin/main.
+  branch="$(g symbolic-ref --quiet --short HEAD 2>/dev/null || echo DETACHED)"
+  if [ "${branch}" != "${GX_SYNC_BRANCH}" ]; then
+    gxs_log "skip push: on '${branch}', autosync only pushes ${GX_SYNC_BRANCH}"
+    return 0
+  fi
   ahead="$(ahead_count)"
   # A remote-tracking ref that does not exist yet (first push) counts as ahead.
   g rev-parse --verify -q "${GX_SYNC_REMOTE}/${GX_SYNC_BRANCH}" >/dev/null || ahead=1

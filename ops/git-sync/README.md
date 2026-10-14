@@ -46,7 +46,9 @@ been touched for 45 seconds. Each commit is named
 A pass **does not commit** in any of these cases:
 
 * The node is not the writer.
-* The checkout is not on `main`.
+* The checkout is not on `main`. In that case the pass does not push either: another
+  checked-out branch (for example an AI OS agent branch) is never pushed to `main`,
+  even when it is ahead of `origin/main`.
 * A merge, rebase, cherry-pick, revert or bisect is in progress, or `index.lock` exists.
 
 A pass **commits nothing and unstages the change** in any of these cases:
@@ -133,7 +135,8 @@ It covers:
 * node-2 drift: the evidence is saved with secrets masked, the push URL is
   re-disabled, and ignored files are kept;
 * a fetch failure;
-* conflict markers.
+* conflict markers;
+* a non-`main` branch that is ahead is never pushed to `main` (S10).
 
 Expected result: `PASS=19 FAIL=0`.
 

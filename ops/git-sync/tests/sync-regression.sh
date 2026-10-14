@@ -222,5 +222,21 @@ else
   fail "S9" "conflict markers were committed"
 fi
 
+# S10 -------------------------------------------------------------------------
+# A non-main branch checked out in the writer (e.g. an AI OS agent branch) is
+# never pushed to origin/main, even when it is ahead.
+w checkout -q -b agent/s10-test
+echo "agent" > "${T}/writer/agent.txt"
+w add agent.txt && w -c user.name=t -c user.email=t@t commit -q -m "agent branch commit"
+before="$(origin_head)"
+writer push
+writer once
+if [ "$(origin_head)" = "${before}" ]; then
+  pass "S10 non-main branch never pushed to main"
+else
+  fail "S10" "origin/main moved to $(origin_head)"
+fi
+w checkout -q main
+
 printf '\n PASS=%d FAIL=%d\n' "${PASS}" "${FAIL}"
 exit "${FAIL}"
