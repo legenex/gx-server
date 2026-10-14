@@ -41,7 +41,9 @@ and packages runtime files, license and checksums. Copy that package to GX02
 without a Git checkout, then run its `install.py` as legenex-02. It verifies every
 package file, builds and checks the venv in a private partial directory, atomically
 publishes the complete immutable release (repairing relocated entrypoints), and
-installs a stage-only unit override. It never starts or enables production.
+installs only the explicit stage instance and its stage-only override. It never
+modifies a shared template or production instance, and never starts/enables
+production. The production transition installs its reviewed instance separately.
 
 Start `gx-team-speech-native@stage.service`, then run `check_inference.py` outside
 the sandbox. Run `check_isolation.py` through the launcher's exact Landlock argv
@@ -50,7 +52,9 @@ as its target. Capture real cgroup files and stage receipts. Remove canaries and
 disposable processes. Keep production Docker running throughout these checks.
 
 After independent approval, a transition must: hold new Voice jobs; point
-`current` at the reviewed release; start and enable native@production; verify its
+`current` at the reviewed release; explicitly install that release's reviewed
+unit as `gx-team-speech-native@production.service` (never via the stage installer);
+start and enable native@production; verify its
 UDS health; replace only the existing speech relay's local destination with
 `-R 127.0.0.1:14010:/run/user/1000/legenex-team-speech-production/backend.sock`;
 restart that relay; verify real KVM2 TTS/STT and isolation; disable the old Docker

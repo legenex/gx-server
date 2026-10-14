@@ -1,0 +1,2 @@
+# Unified patch context preserves upstream tabs and diff-prefix spaces.
+landrun-abi7.patch -whitespace

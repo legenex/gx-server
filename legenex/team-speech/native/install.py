@@ -82,9 +82,9 @@ try:
 finally:
     if partial.exists():
         shutil.rmtree(partial)
-unit = Path.home() / ".config/systemd/user/gx-team-speech-native@.service"
+unit = Path.home() / ".config/systemd/user/gx-team-speech-native@stage.service"
 unit.parent.mkdir(parents=True, exist_ok=True)
-shutil.copy2(release / unit.name, unit)
+shutil.copy2(release / "gx-team-speech-native@.service", unit)
 dropin = unit.parent / "gx-team-speech-native@stage.service.d/release.conf"
 dropin.parent.mkdir(exist_ok=True)
 dropin.write_text(
