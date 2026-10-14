@@ -14,6 +14,19 @@ def command(mode):
     runtime = Path("/run/user/1000/legenex-team-speech-" + mode)
     assert os.getuid() == 1000 and runtime.is_dir()
     key = home / ".config/legenex-team-speech/api-key"
+    # eSpeak's native data lookup is limited to 160 bytes. The committed SHA
+    # release path exceeds this; use a short alias to the SAME pinned data.
+    data = release / "venv/lib/python3.12/site-packages/espeakng_loader/espeak-ng-data"
+    alias = runtime / "espeak-ng-data"
+    if not (data / "phontab").is_file() or len(str(alias).encode()) >= 128:
+        raise RuntimeError("Pinned espeak data or bounded alias is unavailable")
+    if alias.is_symlink():
+        if alias.readlink() != data:
+            raise RuntimeError("Unexpected espeak data alias")
+    elif alias.exists():
+        raise RuntimeError("Espeak alias must be a service-owned symlink")
+    else:
+        alias.symlink_to(data, target_is_directory=True)
     args = [
         str(release / "landrun-abi7"),
         "--log-enable-subprocesses",
@@ -43,6 +56,7 @@ def command(mode):
         "SPEECH_MODELS": "/srv/models/team-speech",
         "SPEECH_KEY_FILE": str(key),
         "HF_HUB_OFFLINE": "1",
+        "ESPEAK_DATA_PATH": str(alias),
         "OMP_NUM_THREADS": "2",
         "OPENBLAS_NUM_THREADS": "2",
         "NUMBA_CACHE_DIR": str(runtime / "numba"),

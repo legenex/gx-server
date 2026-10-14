@@ -21,7 +21,9 @@ libraries/data, selected nonprivate proc/sys metadata, and this service's own ke
 Only its private RuntimeDirectory and /dev/null are writable. Launcher exec
 environment is reduced to fixed LANG/PATH before Landrun; the backend receives
 only explicitly allowlisted environment values, excluding manager credentials. Native inference
-loads the same offline local models. The process listens on a private Unix socket,
+loads the same offline local models. A fixed short private runtime symlink points
+to the same pinned wheel data for eSpeak's [160-byte path limit](https://github.com/espeak-ng/espeak-ng/issues/1004);
+no data or library replacement is used. Unexpected existing aliases fail closed. The process listens on a private Unix socket,
 not TCP. Standard systemd seccomp permits only AF_UNIX sockets and denies connect,
 ptrace and cross-process memory syscalls. This closes outbound IPv4/IPv6 TCP/UDP
 and pathname Unix connections; Landlock also confines external signals and
