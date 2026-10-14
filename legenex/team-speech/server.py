@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
@@ -31,6 +31,7 @@ if len(KEY) < 32:
     raise RuntimeError("speech service credential is missing or too short")
 SLOT = threading.Lock()
 BUSY_SINCE = None
+MAINTENANCE = False
 TTS = None
 STT = None
 VOICES = ["af_heart", "af_bella", "am_adam", "am_michael", "bf_emma", "bm_george"]
@@ -78,7 +79,7 @@ def start_deadline():
     global BUSY_SINCE
     BUSY_SINCE = time.monotonic()
     # A client timeout cannot interrupt native inference. Kill this isolated
-    # worker at the hard deadline; Docker restarts it and the studio records
+    # worker at the hard deadline; its supervisor restarts it and the studio records
     # the interrupted job as failed. Jobs are never automatically replayed.
     timer = threading.Timer(300, os._exit, args=(70,))
     timer.daemon = True
@@ -103,11 +104,28 @@ def health():
         "ok": True,
         "models_ready": ready,
         "runtime": "cpu",
-        "busy": SLOT.locked(),
+        "busy": SLOT.locked() and not MAINTENANCE,
+        "maintenance": MAINTENANCE,
         "tts_loaded": TTS is not None,
         "stt_loaded": STT is not None,
         "busy_seconds": round(time.monotonic() - BUSY_SINCE, 1) if BUSY_SINCE else 0,
     }
+
+
+@app.post("/maintenance", dependencies=[Depends(authorize)])
+def enter_maintenance():
+    """Atomically drain admission; only a process restart clears this barrier."""
+    global MAINTENANCE
+    if MAINTENANCE:
+        return {"ok": True, "maintenance": True, "busy": False}
+    if not SLOT.acquire(blocking=False):
+        return JSONResponse(
+            {"ok": False, "maintenance": False, "busy": True}, status_code=409
+        )
+    # Deliberately retain SLOT. Inference returns 429 until this process exits.
+    # There is no timer or HTTP endpoint that reopens admission after an ack.
+    MAINTENANCE = True
+    return {"ok": True, "maintenance": True, "busy": False}
 
 
 class Speech(BaseModel):

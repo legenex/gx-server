@@ -5,7 +5,11 @@ It is separate from the existing gx-voice Qwen service and uses no CUDA.
 The deployed Docker worker was found to trigger GX's exclusive-container guard.
 The [native staging path](native/README.md) addresses this conflict without
 changing gx-auto/gx-max admission rules or the two-node inference runtime.
-The Docker backend remains active until the native transition is reviewed.
+Production now uses the reviewed native backend (initial accepted source382a1af)
+through a private Unix socket and the existing restricted SSH relay. The old
+Docker boot unit is disabled and only its speech container is stopped; its pinned
+image/config remain available for explicit rollback. Text inference still depends
+on the unchanged canonical GX memory/admission guards.
 Kokoro ONNX 0.6.1 uses the upstream pinned v1.0 model; faster-whisper 1.2.1
 uses Systran's base.en at immutable revision
 `3d3d5dee26484f91867d81cb899cfcf72b96be6c`.

@@ -4,8 +4,13 @@ This is the reviewed alternative to the speech Docker deployment, which was
 found to block GX's exclusive-container admission check. It preserves the same
 server and complete Python lock, CPU models and private service key. It never
 changes the canonical GX guard, AppArmor, sysctls, other workloads or root access.
-The Docker backend stays authoritative until independent review and an explicit
-runtime transition. Staging alone does not establish GX model coexistence.
+The initial immutable production transition at source382a1af passed real KVM2
+TTS/STT and isolation. Its Docker rollback image/config remain retained, with the
+old boot unit disabled and only the speech container stopped. Subsequent releases
+require independent review and a separate explicit transition after staging.
+`ACCEPTANCE.json` records the initial pretransition isolation probe; final exact
+release receipts are retained in the private deployment repository. Staging alone
+does not establish GX model coexistence or text-generation success.
 
 GX02's user manager cannot apply mount namespace sandboxing. Existing bubblewrap
 also fails user-ID mapping; no privileged workaround is used. The native process
@@ -33,8 +38,14 @@ private socket as the same owner, with the unchanged app-scoped authentication.
 Actual systemd cgroup bounds are 3 GiB memory, zero swap, 200% CPU and 128 tasks.
 Temporary files live in the user's tmpfs RuntimeDirectory and count against the
 3 GiB cgroup limit; this is **not a separately enforced 512 MiB tmpfs quota**.
-The per-file limit is 512 MiB; HTTP inputs remain limited by the server. Recovery
-uses at most five starts per five minutes, with 20-second backoff. The existing
+The per-file limit is 512 MiB; HTTP inputs remain limited by the server. Authenticated `POST /maintenance` atomically acquires the same inference slot:
+409 if inference is active, otherwise an idempotent maintenance=true/busy=false
+ack. The slot stays held and both inference routes return429 until process
+restart. GET /health exposes the maintenance state. There is no force, expiry
+or HTTP reopen operation. Closed AI OS restart actions must require this ack
+and retain a pending recovery barrier when the old PID did not stop.
+
+Recovery uses at most five starts per five minutes, with 20-second backoff. The existing
 300-second inference deadline exits only this worker; requests are never replayed.
 
 `build_landrun.sh` makes a user-private source build with a checksum-verified,

@@ -91,3 +91,53 @@ def test_watchdog_targets_only_this_isolated_process(backend, monkeypatch):
     assert timer.daemon is True
     assert events == [(300, module.os._exit, (70,)), "started"]
     assert module.BUSY_SINCE is not None
+
+
+def test_maintenance_requires_authentication_and_does_not_lock_for_guests(backend):
+    module, client, _headers = backend
+    assert client.post("/maintenance", content=b"").status_code == 401
+    assert not module.MAINTENANCE and not module.SLOT.locked()
+
+
+def test_busy_inference_refuses_maintenance_without_interrupting_it(backend):
+    module, client, headers = backend
+    assert module.SLOT.acquire(blocking=False)
+    try:
+        response = client.post("/maintenance", content=b"", headers=headers)
+        assert response.status_code == 409
+        assert response.json() == {"ok": False, "maintenance": False, "busy": True}
+        assert module.SLOT.locked()
+        assert not module.MAINTENANCE
+        health = client.get("/health").json()
+        assert health["busy"] is True and health["maintenance"] is False
+    finally:
+        module.SLOT.release()
+
+
+def test_idle_maintenance_is_idempotent_and_blocks_both_inference_paths(backend):
+    module, client, headers = backend
+    for _ in range(2):
+        response = client.post("/maintenance", content=b"", headers=headers)
+        assert response.status_code == 200
+        assert response.json() == {"ok": True, "maintenance": True, "busy": False}
+    assert module.SLOT.locked()
+    health = client.get("/health").json()
+    assert health["maintenance"] is True and health["busy"] is False
+    assert (
+        client.post(
+            "/v1/audio/speech",
+            json={"input": "Synthetic maintenance test"},
+            headers=headers,
+        ).status_code
+        == 429
+    )
+    assert (
+        client.post(
+            "/v1/audio/transcriptions",
+            files={"file": ("synthetic.wav", b"not loaded", "audio/wav")},
+            headers=headers,
+        ).status_code
+        == 429
+    )
+    assert module.TTS is None and module.STT is None
+    assert module.SLOT.locked()  # The barrier is retained; no automatic reopening.
