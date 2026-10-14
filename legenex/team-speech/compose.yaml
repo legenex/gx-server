@@ -2,7 +2,7 @@ name: legenex-team-speech
 services:
   speech:
     image: ${SPEECH_IMAGE:?pinned build required}
-    restart: unless-stopped
+    restart: on-failure:5
     init: true
     user: '1000:1000'
     read_only: true

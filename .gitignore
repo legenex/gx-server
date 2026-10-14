@@ -128,6 +128,7 @@ node_modules/
 venv/
 *.lock
 !**/package-lock.json
+!legenex/team-speech/requirements.lock
 *-residency.json
 *.tsv
 tmp/

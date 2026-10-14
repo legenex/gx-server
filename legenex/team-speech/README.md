@@ -12,11 +12,14 @@ faster-whisper is MIT licensed. Models are downloaded separately from Git,
 Kokoro assets checked against published release SHA256s. Runtime model files
 are read-only and networking for model downloads is disabled by HF_HUB_OFFLINE.
 
-The image is built from the pinned Python multiarchitecture base and pinned
-Python requirements. Deployment supplies an immutable local image tag and
+The image is built from the pinned Python multiarchitecture base and a complete
+resolved Python dependency lock. Deployment supplies an immutable local image tag and
 records its image ID. Service limits: 2 CPU cores, 3 GiB memory, 128 tasks,
 one inference slot, no GPU access, 512 MiB temporary storage, rotated logs.
-Only loopback port 18835 is published. A separately authenticated private SSH
+The container stops after five consecutive failed starts; the enabled user
+unit brings up the pinned image on host boot. A native inference deadline kills
+only this isolated process after300seconds; client jobs fail explicitly and are
+never automatically replayed. Only loopback port 18835 is published. A separately authenticated private SSH
 tunnel transports the studio's requests from KVM2. Never publish this port.
 
 `GET /health` reveals only worker health. All inference/voices endpoints

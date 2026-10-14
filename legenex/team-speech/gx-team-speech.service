@@ -1,0 +1,17 @@
+[Unit]
+Description=Legenex team CPU speech backend
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=oneshot
+RemainAfterExit=true
+ExecStart=/usr/bin/docker compose --env-file %h/team-speech-runtime/.env -f %h/team-speech-runtime/compose.yaml up -d --no-build --pull never
+Restart=on-failure
+RestartSec=20
+TimeoutStartSec=90
+
+[Install]
+WantedBy=default.target
