@@ -1,0 +1,33 @@
+[Unit]
+Description=Legenex bounded native CPU speech (%i)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 %h/.local/lib/legenex-team-speech/current/launch.py %i
+WorkingDirectory=%h/.local/lib/legenex-team-speech/current
+RuntimeDirectory=legenex-team-speech-%i
+RuntimeDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=true
+CPUAccounting=true
+MemoryAccounting=true
+TasksAccounting=true
+CPUQuota=200%
+MemoryMax=3G
+MemorySwapMax=0
+TasksMax=128
+LimitFSIZE=512M
+RestrictAddressFamilies=AF_UNIX
+SystemCallFilter=~connect ptrace process_vm_readv process_vm_writev
+SystemCallErrorNumber=EPERM
+LockPersonality=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+Restart=on-failure
+RestartSec=20
+TimeoutStopSec=20
+[Install]
+WantedBy=default.target

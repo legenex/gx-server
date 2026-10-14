@@ -1,0 +1,14 @@
+diff --git a/internal/sandbox/sandbox.go b/internal/sandbox/sandbox.go
+index 2487567..32a45f6 100644
+--- a/internal/sandbox/sandbox.go
++++ b/internal/sandbox/sandbox.go
+@@ -47,8 +47,7 @@ const fullFSAccess = landlock.AccessFSSet(
+ 		syscall.AccessFSMakeSym |
+ 		syscall.AccessFSRefer |
+ 		syscall.AccessFSTruncate |
+-		syscall.AccessFSIoctlDev |
+-		syscall.AccessFSResolveUnix,
++		syscall.AccessFSIoctlDev,
+ )
+ 
+ // fullNetAccess is the union of every network access right supported by

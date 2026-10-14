@@ -1,8 +1,11 @@
 # Team speech backend
 
 A private, authenticated CPU service on GX10-02 for the team voice studio.
-It is independent of the existing gx-voice Qwen service and does not change
-gx-auto/gx-max, take CUDA memory, or modify the two-node inference runtime.
+It is separate from the existing gx-voice Qwen service and uses no CUDA.
+The deployed Docker worker was found to trigger GX's exclusive-container guard.
+The [native staging path](native/README.md) addresses this conflict without
+changing gx-auto/gx-max admission rules or the two-node inference runtime.
+The Docker backend remains active until the native transition is reviewed.
 Kokoro ONNX 0.6.1 uses the upstream pinned v1.0 model; faster-whisper 1.2.1
 uses Systran's base.en at immutable revision
 `3d3d5dee26484f91867d81cb899cfcf72b96be6c`.

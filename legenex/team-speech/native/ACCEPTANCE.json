@@ -1,0 +1,56 @@
+{
+  "inference": {
+    "transport": "private UDS",
+    "tts_seconds": 8.52,
+    "stt_seconds": 1.05,
+    "audio_bytes": 165548,
+    "audio_seconds": 3.448,
+    "transcription": "This is a synthetic bounded native speech acceptance test.",
+    "anonymous_inference_denied": true,
+    "ok": true
+  },
+  "isolation": {
+    "manager_env_canary_absent": true,
+    "proc_environ_canary_absent": true,
+    "private_home_canary_read_denied": true,
+    "code_write_denied": true,
+    "venv_write_denied": true,
+    "models_write_denied": true,
+    "ipv4_stream_socket_denied": true,
+    "ipv4_udp_socket_denied": true,
+    "ipv6_udp_socket_denied": true,
+    "outbound_unix_connect_denied": true,
+    "external_signal_denied": true,
+    "external_ptrace_denied": true,
+    "own_service_key_readable": true,
+    "private_runtime_writable": true,
+    "ok": true
+  },
+  "cgroup": {
+    "memory.max": "3221225472",
+    "memory.swap.max": "0",
+    "cpu.max": "200000 100000",
+    "pids.max": "128"
+  },
+  "observed": {
+    "MainPID": "1603862",
+    "ControlGroup": "/user.slice/user-1000.slice/user@1000.service/app.slice/app-gx\\x2dteam\\x2dspeech\\x2dnative.slice/gx-team-speech-native@stage.service",
+    "MemoryCurrent": "734887936",
+    "MemoryPeak": "805789696",
+    "CPUUsageNSec": "18596772000",
+    "TasksCurrent": "28"
+  },
+  "process_flags": {
+    "CapEff": "0000000000000000",
+    "NoNewPrivs": "1",
+    "Seccomp": "2"
+  },
+  "source_sha256": {
+    "server.py": "f0c3a729bd3b88802e8c7af69471a26be6d2d4714c953dd8ddbfbb4e737cb102",
+    "requirements.lock": "9dde404a8224ade17f3546c01ad2c41f6d11628d14e40fe894a000f03ffc5655",
+    "launch.py": "c3b3e3e6dc347b318a042aca88455578d7ec9b316d61ae4982889fa0a62552c9",
+    "landrun-abi7": "b3e9e67bee8099eb1de827af18ab1abedc880272f3eb60b17f0de9ca8baa9b97"
+  },
+  "docker_production_preserved": true,
+  "limits": "Stage proof only; production Docker remains running. No canonical GX inference admission or human/TLS acceptance implied. Temporary files count against3GiB cgroup memory, not separate512MiB tmpfs quota."
+}

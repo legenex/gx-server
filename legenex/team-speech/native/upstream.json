@@ -1,0 +1,10 @@
+{
+  "repository": "https://github.com/zouuup/landrun",
+  "commit": "62823c05e58ec22c1f91b4c8468318c1f97f2d32",
+  "version": "v0.1.17",
+  "license": "MIT",
+  "go_landlock": "v0.9.0",
+  "go_version": "go1.27.2",
+  "go_arm64_sha256": "94f3e30b8e374bc285e7dadc11e0865726b9bc6e85b841ccceaabc0214c6b7c8",
+  "policy": "Remove only unsupported ABI9 pathname UNIX right; strict ABI7 audit+IPC+FS+TCP with no best effort."
+}
