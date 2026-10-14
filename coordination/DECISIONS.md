@@ -1825,3 +1825,57 @@ connection #2 to `127.0.0.1:8000` refused); re-applied its tracked compose file.
 
 **Open:** `gx doctor`'s fabric check (`REQUIRED_GID_INDEX = 3`) would FAIL on a
 node whose RoCE v2 GID is not at 3; not changed here.
+
+## D-050 — gx-auto forwards agent tools on FAST; forcing tool_choice is honoured (2026-10-14)
+
+**Defect:** `gx-auto` never returned `tool_calls` to agents (Hermes / AgentOS).
+It answered in prose with `finish_reason=stop`, even for `tool_choice:
+"required"`, while `gx-max` called tools. Both aliases hit the same engine, so
+the difference was the gx-auto policy, not the model or the parser.
+
+**Root cause:** `autoroute.decide()` set `allow_tools = not (profile == "fast"
+and not needs_tools)`, so every turn classified as interactive/FAST had ALL
+tools removed and `tool_choice` forced to `"none"` unless the user's words
+matched `_TOOL_NEED` ("remember", "use a tool"...). Agent turns such as "what's
+the weather in Paris" are FAST, so the model never saw a tool. The module
+docstring only promised to withhold *memory* tools; the code withheld all of
+them (introduced in the 2026-09-29 FAST rework, autosync `910c3f8`).
+
+**Fix (`legenex/orchestrator/gx_orchestrator/autoroute.py`):**
+
+- FAST keeps every non-memory tool the caller attached (`agent_tools`).
+  Memory tools are still withheld unless the user asked for them, so the
+  Open WebUI behaviour that motivated the rework is unchanged.
+- A forcing `tool_choice` (`"required"`, `"any"`, a named function, or legacy
+  `function_call: {name}`) counts as `needs_tools` and keeps all tools.
+- FAST's 1024-token output cap applies only when no tools remain, so a
+  tool call's arguments are never truncated.
+- New journal fields `agent_tools` and `forced_tool`.
+
+Tests: `test_autoroute.py` pins the new contract (agent tools on a plain
+question, memory-only stripping, forcing tool_choice, no cap with tools).
+Orchestrator suite 283/283 OK (one earlier run had a single timing failure
+that did not reproduce in three reruns).
+
+**Verified live** after `systemctl --user restart gx-orchestrator` (done at an
+empty queue; the engine was re-adopted, not restarted): through LiteLLM,
+`gx-auto` with a `get_weather` tool returned a structured `tool_calls` entry
+and `finish_reason=tool_calls` in ~2 s for `tool_choice` auto and required,
+streaming and non-streaming. A tool-result continuation turn answered from the
+result; plain "hi" stays FAST (1.0 s).
+
+**gx-max latency (investigated, no config change):** gx-max and gx-auto share
+one engine with `max_num_seqs=2`. In the 36 h before the fix, BALANCED waited
+p50 0 s / p95 119 s / max 334 s. The cause is head-of-line blocking: agent
+sessions with 67–77k-token prompts and 6–8k-token outputs hold a slot for
+5–8 minutes, and when two run, even a 32-token request queues for 2–4
+minutes. The scheduler already serves FAST first, but never preempts active
+generations. Main heavy callers by LiteLLM key: `ai-os` (project agents,
+avg 38k prompt tokens, avg 70 s) and `hermes`. With gx-auto tool calling
+fixed, agents no longer need to be pinned to gx-max, which removes the
+manual gx-max pinning that added to that load.
+
+**Also found:** the `hermes` key still sends `model=gx-mini` (retired) every
+2 minutes from the new Hermes dashboard process; LiteLLM refuses it with a
+400 in milliseconds (no GPU cost). Source not yet identified; not
+resurrected.
