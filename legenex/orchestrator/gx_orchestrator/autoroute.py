@@ -19,7 +19,7 @@ Inputs, in precedence order (ARCHITECTURE-V41 §3):
 
 Intent map (registry profiles; reasoning per intent):
 
-    interactive    -> fast / none         (default: no thinking, no tools)
+    interactive    -> fast / none         (default: no thinking; agent tools kept)
     implementation -> balanced / medium   (coding/work; tools, no memory scan)
     architecture   -> deep / high         (1-2 streams, heavy reasoning)
     validation     -> deep / max           (review/audit work)
@@ -32,6 +32,11 @@ gx-auto defaults to FAST. Ordinary chat, identity, arithmetic and short
 questions stay there. Work verbs escalate to balanced; hard reasoning,
 architecture, debugging and review escalate to deep. Memory/search tools
 are forwarded only when the user actually asked to remember or recall.
+Every other tool the caller attached is forwarded on every profile: an agent
+(Hermes, AgentOS) that sends tools must be able to get structured tool_calls
+back from gx-auto. A forcing tool_choice ("required", "any" or a named
+function) keeps every tool, memory tools included, because stripping them
+would turn the caller's contract into an upstream error.
 
 Feature extraction (envelope stripping, task-text isolation, reasoning
 indicators, tool-name scanning) is carried over verbatim in spirit from the
@@ -327,6 +332,19 @@ _TOOL_NEED = re.compile(
     re.IGNORECASE,
 )
 _MEMORY_TOOL_NAME = re.compile(r"memor", re.IGNORECASE)
+
+
+def _tool_choice_forces(payload: Mapping[str, Any]) -> bool:
+    """True when the caller REQUIRES a tool call: tool_choice "required"/"any"
+    or a named function (OpenAI {"type": "function", "function": {...}}, or the
+    legacy function_call {"name": ...})."""
+    for key in ("tool_choice", "function_call"):
+        choice = payload.get(key)
+        if isinstance(choice, str) and choice.strip().lower() in {"required", "any"}:
+            return True
+        if isinstance(choice, Mapping) and (choice.get("function") or choice.get("name")):
+            return True
+    return False
 _PROFILES_ALWAYS_MEMORY = frozenset({"deep", "long", "swarm"})
 
 
@@ -386,6 +404,10 @@ class RequestFeatures:
     coding_toolset: bool = False
     continuation: bool = False
     needs_tools: bool = False
+    #: The caller attached at least one non-memory tool (an agent toolset).
+    agent_tools: bool = False
+    #: tool_choice requires a tool call; counts as needs_tools.
+    forced_tool: bool = False
     indicators: tuple[str, ...] = ()
     signals: tuple[str, ...] = ()
 
@@ -417,6 +439,8 @@ class RouteDecision:
             "allow_tools": self.allow_tools,
             "allow_memory_tools": self.allow_memory_tools,
             "needs_tools": f.needs_tools,
+            "agent_tools": f.agent_tools,
+            "forced_tool": f.forced_tool,
             "approx_context_tokens": f.approx_context_tokens,
             "task_tokens": f.task_tokens,
             "reasoning_score": f.reasoning_score,
@@ -462,7 +486,9 @@ def extract_features(
     hard_debug, d_hits = _score(task, _COMPILED_HARD_DEBUG, density)
     validation, v_hits = _score(task, _COMPILED_VALIDATION, density)
     burst_hit = next((name for rx, name in _COMPILED_BURST if task and rx.search(task)), "")
-    needs_tools = bool(task and _TOOL_NEED.search(task))
+    forced_tool = _tool_choice_forces(payload)
+    needs_tools = bool(task and _TOOL_NEED.search(task)) or forced_tool
+    agent_tools = any(not _MEMORY_TOOL_NAME.search(n) for n in names)
 
     # Intent: header wins; otherwise infer from content.
     header_intent = intent_header.strip().lower()
@@ -482,6 +508,10 @@ def extract_features(
         signals.append(f"burst:{burst_hit}")
     if needs_tools:
         signals.append("needs_tools")
+    if forced_tool:
+        signals.append("forced_tool")
+    if agent_tools:
+        signals.append("agent_tools")
 
     return RequestFeatures(
         intent=intent,
@@ -495,6 +525,8 @@ def extract_features(
         coding_toolset=coding_toolset,
         continuation=continuation,
         needs_tools=needs_tools,
+        agent_tools=agent_tools,
+        forced_tool=forced_tool,
         indicators=tuple(r_hits + d_hits + v_hits),
         signals=tuple(signals),
     )
@@ -599,7 +631,9 @@ def decide(
         reason += "; reasoning overridden by X-GX-Reasoning"
 
     allow_memory_tools = bool(features.needs_tools or profile in _PROFILES_ALWAYS_MEMORY)
-    allow_tools = not (profile == "fast" and not features.needs_tools)
+    # FAST drops tools only when nothing but memory tools was attached and
+    # the user did not ask for them; an agent toolset always goes through.
+    allow_tools = not (profile == "fast" and not features.needs_tools and not features.agent_tools)
 
     return RouteDecision(
         profile=profile,
@@ -665,8 +699,10 @@ def _cap_fast_output(body: dict[str, Any]) -> None:
 def apply_auto_policy(payload: Mapping[str, Any], decision: "RouteDecision | Mapping[str, Any]") -> dict[str, Any]:
     """FAST/BALANCED tool and output policy. gx-max never calls this.
 
-    FAST: thinking is already off via reasoning=none; tools are dropped unless
-    the user asked for memory/tools; output is capped.
+    FAST: thinking is already off via reasoning=none; memory tools are
+    dropped unless the user asked for them, agent tools are kept, and output
+    is capped only when no tools remain (a capped tool call would truncate
+    its arguments).
     BALANCED: coding tools stay; memory tools drop unless requested.
     DEEP/long/swarm: tools and memory stay.
     """
@@ -683,6 +719,6 @@ def apply_auto_policy(payload: Mapping[str, Any], decision: "RouteDecision | Map
         _strip_all_tools(body)
     elif not allow_memory:
         _strip_memory_tools(body)
-    if profile == "fast":
+    if profile == "fast" and not _tool_items(body, "tools") and not _tool_items(body, "functions"):
         _cap_fast_output(body)
     return body

@@ -146,7 +146,43 @@ class TestInference(unittest.TestCase):
             {"type": "function", "function": {"name": "read_file", "parameters": {}}},
         ]))
         self.assertEqual(d.profile, "fast")
+        # The agent tool stays available; memory tools are still withheld.
+        self.assertTrue(d.allow_tools)
+        self.assertFalse(d.allow_memory_tools)
+
+    def test_memory_only_tools_on_ordinary_chat_are_withheld(self):
+        d = decide(chat("What model are you running?", tools=[
+            {"type": "function", "function": {"name": "search_memories", "parameters": {}}},
+        ]))
+        self.assertEqual(d.profile, "fast")
         self.assertFalse(d.allow_tools)
+        self.assertFalse(d.features.agent_tools)
+
+    def test_agent_tools_on_a_plain_question_stay_fast_with_tools(self):
+        # Hermes asks an everyday question with its toolset attached: the shape
+        # stays FAST (no thinking) but the model must be able to call a tool.
+        d = decide(chat("What's the weather in Paris right now?", tools=[
+            {"type": "function", "function": {"name": "get_weather", "parameters": {}}},
+        ]))
+        self.assertEqual(d.profile, "fast")
+        self.assertEqual(d.reasoning, "none")
+        self.assertTrue(d.allow_tools)
+        self.assertTrue(d.features.agent_tools)
+
+    def test_forcing_tool_choice_keeps_every_tool(self):
+        for choice in ("required", "any", {"type": "function", "function": {"name": "search_memories"}}):
+            d = decide(chat("hi", tool_choice=choice, tools=[
+                {"type": "function", "function": {"name": "search_memories", "parameters": {}}},
+            ]))
+            self.assertTrue(d.features.forced_tool, choice)
+            self.assertTrue(d.features.needs_tools, choice)
+            self.assertTrue(d.allow_tools, choice)
+            self.assertTrue(d.allow_memory_tools, choice)
+
+    def test_auto_and_none_tool_choice_do_not_force(self):
+        for choice in ("auto", "none", None):
+            d = decide(chat("hi", tool_choice=choice))
+            self.assertFalse(d.features.forced_tool, choice)
 
     def test_explicit_memory_request_keeps_memory_tools(self):
         d = decide(chat("What do you remember about my timezone?", tools=[
@@ -282,18 +318,35 @@ class TestFingerprint(unittest.TestCase):
 
 
 class TestAutoPolicy(unittest.TestCase):
-    """FAST drops tools and caps output; BALANCED drops memory tools only."""
+    """FAST drops memory tools (and caps output when no tools remain);
+    BALANCED drops memory tools only; a forcing tool_choice keeps all."""
 
     MEMORY = {"type": "function", "function": {"name": "search_memories", "parameters": {}}}
     PATHS = {"type": "function", "function": {"name": "list_memory_paths", "parameters": {}}}
     READ = {"type": "function", "function": {"name": "read_file", "parameters": {}}}
 
-    def test_fast_strips_all_tools_and_caps_output(self):
-        d = decide(chat("What model are you running?", tools=[self.MEMORY, self.READ], max_tokens=8000))
-        out = A.apply_auto_policy(chat("What model are you running?", tools=[self.MEMORY, self.READ], max_tokens=8000), d)
+    def test_fast_memory_only_tools_are_stripped_and_output_capped(self):
+        payload = chat("What model are you running?", tools=[self.MEMORY, self.PATHS], max_tokens=8000)
+        out = A.apply_auto_policy(payload, decide(payload))
         self.assertNotIn("tools", out)
         self.assertEqual(out["tool_choice"], "none")
         self.assertEqual(out["max_tokens"], A.FAST_MAX_OUTPUT)
+
+    def test_fast_keeps_agent_tools_strips_memory_and_does_not_cap(self):
+        payload = chat("What model are you running?", tools=[self.MEMORY, self.READ],
+                       tool_choice="auto", max_tokens=8000)
+        d = decide(payload)
+        self.assertEqual(d.profile, "fast")
+        out = A.apply_auto_policy(payload, d)
+        self.assertEqual([t["function"]["name"] for t in out["tools"]], ["read_file"])
+        self.assertEqual(out["tool_choice"], "auto")
+        self.assertEqual(out["max_tokens"], 8000)
+
+    def test_fast_required_tool_choice_keeps_memory_tools(self):
+        payload = chat("hi", tools=[self.MEMORY], tool_choice="required")
+        out = A.apply_auto_policy(payload, decide(payload))
+        self.assertEqual([t["function"]["name"] for t in out["tools"]], ["search_memories"])
+        self.assertEqual(out["tool_choice"], "required")
 
     def test_fast_sets_output_cap_when_missing(self):
         d = decide(chat("hi"))
