@@ -3,7 +3,19 @@
 **This file must always reflect reality.** If you are a new agent resuming this
 work, read this first, then ARCHITECTURE.md (what is locked), then BLOCKERS.md.
 
-## LATEST UPDATE — 2026-09-29 00:13 SAST, independent review found and D-048 fixed a live gx-max false-DOWN bug
+## LATEST UPDATE — 2026-10-14 SAST, gx-auto tool calling fixed (D-050)
+
+`gx-auto` now forwards an agent's tools on the FAST profile and honours a
+forcing `tool_choice`; it returns structured `tool_calls` with
+`finish_reason=tool_calls` (~2 s, streaming and non-streaming, verified live
+through LiteLLM). Memory tools are still withheld from ordinary chat. gx-max
+latency spikes are 2-slot head-of-line blocking by long agent sessions, not a
+fault. Details and the open `gx-mini` 400 noise: `coordination/DECISIONS.md`
+D-050.
+
+---
+
+## PREVIOUS UPDATE — 2026-09-29 00:13 SAST, independent review found and D-048 fixed a live gx-max false-DOWN bug
 
 An independent reviewer (run per this closeout's own checklist) found gx-max
 **intermittently and falsely reporting "model is down" to real requests, live**
