@@ -81,7 +81,7 @@ SWAPFILE_NAME="${GX_HOSTWATCH_SWAPFILE_NAME:-/swapfile-sglang}"
 SWAPFILE_MIN_GIB="${GX_HOSTWATCH_SWAPFILE_MIN_GIB:-47}"   # L-8: keep 48G, recover-node2.sh uses the same >=47 tolerance
 DSV41_DIR="${GX_HOSTWATCH_DSV41_DIR:-$(cd "$(dirname "$(readlink -f "$0")")/../.." && pwd)/mia-dsv41}"
 DSV41_HEAD_CONTAINER="${GX_HOSTWATCH_DSV41_HEAD:-dsv41-exl3-head}"
-DSV41_KIT_MARGIN_FALLBACK_GIB=12   # only if mia-dsv41/start.sh's own default cannot be read
+DSV41_KIT_MARGIN_FALLBACK_GIB=12   # floor for the reminder threshold; also used if start.sh is unreadable
 
 mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
 
@@ -283,14 +283,15 @@ _dsv41_env() {
 
 # The kit's own default margin, read from start.sh's
 #   DSV41_BOOT_MARGIN_GIB="${DSV41_BOOT_MARGIN_GIB:-N}"
-# so this watchdog follows the kit instead of a copy; fallback if unreadable.
+# so this watchdog follows the kit instead of a copy; fallback if unreadable. The result never
+# drops below DSV41_KIT_MARGIN_FALLBACK_GIB: lowering start.sh's default must not silence the reminder.
 _dsv41_kit_margin() {
   local v
   # shellcheck disable=SC2016  # the ${...} is literal text to match, not an expansion
   v=$(sed -n 's/^[[:space:]]*DSV41_BOOT_MARGIN_GIB="\${DSV41_BOOT_MARGIN_GIB:-\([0-9][0-9.]*\)}".*/\1/p' \
     "$DSV41_DIR/start.sh" 2>/dev/null | head -1)
   [[ "$v" =~ ^[0-9]+(\.[0-9]+)?$ ]] || v="$DSV41_KIT_MARGIN_FALLBACK_GIB"
-  printf '%s' "$v"
+  awk -v a="$v" -v b="$DSV41_KIT_MARGIN_FALLBACK_GIB" 'BEGIN { print (a + 0 >= b + 0) ? a : b }'
 }
 
 # _cg_label CGROUP_DIR DOCKER_PS: a readable name for a cgroup; docker scopes
