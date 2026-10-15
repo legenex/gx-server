@@ -45,6 +45,7 @@ from .health import AliasState, ClusterHealth, TierStatus
 from .lifecycle import AcquisitionError, GxMaxLifecycle, LifecycleStatus, State
 from .profiles import Registry, RegistryError, load_registry
 from .sse import DeltaSplitter
+from .reasoning_guard import StreamGuard, guard_completion_body, thinking_requested
 from .scheduler import Scheduler
 from .upstream import UpstreamError, open_post
 
@@ -755,6 +756,7 @@ class Handler(BaseHTTPRequestHandler):
                 url, body, budget=budget, request_id=request_id, started=started,
                 alias=alias, profile_name=profile_name, reasoning=reasoning,
                 record_id=request_id, queue_wait_ms=queue_wait_ms,
+                thinking=thinking_requested(kwargs),
             )
         finally:
             self.lifecycle.end_use()
@@ -879,6 +881,8 @@ class Handler(BaseHTTPRequestHandler):
         reasoning: str = "",
         record_id: str = "",
         queue_wait_ms: "float | None" = None,
+        thinking: bool = True,
+        extra_response_headers: "dict[str, str] | None" = None,
     ) -> RelayOutcome:
         """Relay one request with its budget applied.
 
@@ -964,12 +968,17 @@ class Handler(BaseHTTPRequestHandler):
         # request was never queued, a direct-path serve).
         if queue_wait_ms is not None:
             extra_headers["x-gx-queue-wait-ms"] = str(queue_wait_ms)
+        if extra_response_headers:
+            extra_headers.update(extra_response_headers)
 
         with resp:
             if out.streamed:
-                self._relay_stream(resp, out, extra_headers, started, record_id)
+                self._relay_stream(resp, out, extra_headers, started, record_id, thinking=thinking)
             else:
                 data = resp.read()
+                if resp.status == 200:
+                    # Raw <think> reasoning never reaches `content` (D-053).
+                    data = guard_completion_body(data, thinking=thinking)
                 out.status = resp.status
                 out.elapsed_ms = (time.monotonic() - started) * 1000
                 self._send_bytes(resp.status, data, extra_headers)
@@ -1002,7 +1011,7 @@ class Handler(BaseHTTPRequestHandler):
             out.cached_tokens = int(m[-1])
 
     def _relay_stream(self, resp, out: RelayOutcome, headers: dict[str, str], started: float,
-                      record_id: str = "") -> None:
+                      record_id: str = "", *, thinking: bool = True) -> None:
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-cache")
@@ -1017,6 +1026,8 @@ class Handler(BaseHTTPRequestHandler):
         # Re-frame deltas that mix reasoning and content (D-052): LiteLLM's
         # reasoning merge drops the content of such a delta.
         splitter = DeltaSplitter()
+        # Before the splitter: move raw <think> text out of `content` (D-053).
+        guard = StreamGuard(thinking=thinking)
 
         def write(chunk: bytes) -> None:
             self.wfile.write(f"{len(chunk):X}\r\n".encode())
@@ -1033,7 +1044,7 @@ class Handler(BaseHTTPRequestHandler):
                     out.ttft_ms = round((time.monotonic() - started) * 1000, 1)
                 tail = (tail + chunk)[-8192:]
                 try:
-                    framed = splitter.feed(chunk)
+                    framed = splitter.feed(guard.feed(chunk))
                     if framed:
                         write(framed)
                 except (BrokenPipeError, ConnectionResetError):
@@ -1049,6 +1060,7 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as exc:  # noqa: BLE001 - upstream died mid-stream
             log.error("upstream stream failed after %d bytes: %r", len(tail), exc)
             out.error, out.error_code = repr(exc)[:300], "upstream_stream_error"
+            guard.abort()
             splitter.flush()  # a half-received event must not follow the error
             event = {"error": {"message": f"upstream stream failed: {exc!r}",
                                "type": "upstream_stream_error", "code": "upstream_stream_error"}}
@@ -1058,7 +1070,8 @@ class Handler(BaseHTTPRequestHandler):
                 client_gone = True
         if not client_gone:
             try:
-                rest = splitter.flush()
+                rest = b"" if out.error else splitter.feed(guard.flush())
+                rest += splitter.flush()
                 if rest:
                     write(rest)
                 self.wfile.write(b"0\r\n\r\n")
