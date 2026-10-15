@@ -1879,3 +1879,83 @@ manual gx-max pinning that added to that load.
 2 minutes from the new Hermes dashboard process; LiteLLM refuses it with a
 400 in milliseconds (no GPU cost). Source not yet identified; not
 resurrected.
+
+## D-051 — A stale GID pin in the kit .env overrode per-rank resolution; fail fast with the root cause, back off restarts (2026-10-15)
+
+**Symptom:** after the 2026-10-15 10:28 UTC reboot, every gx-max start died in
+the Mia kit preflight (`set NCCL_IB_GID_INDEX ... to populated indices`), so
+gx-max and gx-auto were down for about 9 hours. The dashboards showed only
+"model unavailable".
+
+**Root cause:** the untracked runtime `mia-dsv41/.env` had been edited at
+08:13Z to pin `HEAD_GID=3` / `WORKER_GID=4` (the D-049-era worker index). The
+kit runs `source .env` after the caller's env and does not preserve
+`HEAD_GID`/`WORKER_GID` from the CLI the way it preserves `GPU_MEM_UTIL` and
+the others. The pin therefore silently replaced the orchestrator's D-049
+per-rank resolution. After the reboot, gx10-02 `rocep1s0f0` carried its RoCE
+v2 IPv4 GID (`::ffff:192.168.100.11`) at index 3 again, with index 4 empty.
+Both nodes were verified read-only before any change: head and worker both
+had RoCE v2 IPv4 at gid3 on `rocep1s0f0` and `roceP2p1s0f0`. No network or
+RDMA configuration was touched.
+
+**Fix:**
+- **Live:** backed up `.env` (`.env.bak-20261015T194205Z-gidpin`) and removed
+  only the two pin lines. The orchestrator `acquire` then gave both ranks
+  `NCCL_IB_GID_INDEX=3` and loaded gx-max in 6 min 55 s.
+- **Code (`lifecycle.py`):** `_resolve_gid_overlay` now raises
+  `FabricConfigError` before anything is launched in two cases: the kit
+  `.env` pins a GID that disagrees with the live table (the error names the
+  file, key, pin and live index), or a rank has no RoCE v2 IPv4 GID (the error
+  names the node, HCA and IP, and renders the table). It waits up to 20 s for
+  a GID that is still populating after boot. A table that cannot be read is
+  still left to the kit preflight.
+- **Status:** gains `failure_kind` (`fabric_config` | `start_failed`),
+  `consecutive_failures` and `retry_after_seconds`.
+- **Restart backoff:** after a failed start, request-driven acquires return
+  the recorded error without relaunching. The backoff is 60 s doubling to a
+  900 s cap; a fabric fault uses a 30 s base because it launches nothing. An
+  explicit `POST /lifecycle/gx-max/acquire` or `/restart` bypasses it.
+  Previously every incoming request after a failure re-ran the two-node start.
+- **`gx-max-start.sh`:** the same pin check on the manual path.
+- **`gx doctor`:** the fabric check accepts the RoCE v2 IPv4 GID at any index.
+  This closes the D-049 open item.
+- **Canonical config:** `legenex/lifecycle/mia-dsv41.env.canonical` is the
+  tracked copy of the runtime file. A test keeps GID pins out of it.
+  RECOVERY.md §3c has the restore procedure.
+
+**Verified live:** real gx-auto and gx-max completions, streaming, a forced
+tool call (`get_weather`, `finish_reason=tool_calls`) and a tool-result round
+trip, all through LiteLLM `:4000`. Speech on gx10-02 stayed healthy.
+
+**Open:**
+- The submodule commit `7f69e73` (the carried kit patch) exists only in local
+  checkouts. No remote has it, so a fresh clone cannot check it out.
+- `DSV41_BOOT_MARGIN_GIB=6` is the existing production setting, recorded here
+  and not changed. Raising it back to 12 requires a headless head node, which
+  is an owner decision.
+
+
+## D-052 — Streamed gx-max lost the first answer token after reasoning; the orchestrator re-frames mixed deltas (2026-10-15)
+
+**Symptom:** through LiteLLM `:4000`, a streamed gx-max answer often began
+`<think>…</think>, 2, 3, 4, 5`, so the first answer token ("1") was missing.
+This was reproduced 2 times out of 3. Non-streamed answers and the engine's
+own stream were correct.
+
+**Root cause:** with dspark speculative decoding, the engine can emit several
+tokens in one step. One SSE delta therefore sometimes carries both the end of
+the reasoning and the first content token, for example
+`{"reasoning": ".", "content": "1"}`. When LiteLLM's
+`merge_reasoning_content_in_choices: true` (set on gx-max and gx-auto, which
+render `<think>` for chat UIs) meets such a delta, it emits `</think>` and
+drops that delta's content.
+
+**Fix:** `gx_orchestrator/sse.py` `DeltaSplitter` is applied in
+`_relay_stream`. It buffers the stream to SSE event boundaries and re-frames
+only a delta that has both a reasoning key and content: the reasoning part is
+sent first, then the content part (`finish_reason` and `usage` go on the
+last). Every other event passes through byte-for-byte, and JSON is parsed only
+when both keys appear in the event. A half-received event is discarded when
+the upstream dies mid-stream. The gateway configuration is unchanged. Tests:
+`tests/test_sse.py` covers arbitrary chunk boundaries, pass-through, and the
+`reasoning_content` key.

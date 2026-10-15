@@ -80,19 +80,28 @@ def make_fake_sys(
     active: bool = True,
     gid3_zero: bool = False,
     with_ports: bool = True,
+    roce_v2_at: int = 3,
 ) -> Path:
-    """Build a minimal /sys/class/infiniband-shaped tree."""
+    """Build a minimal /sys/class/infiniband-shaped tree (live gx10 layout:
+    link-local v1/v2 at 0/1, IPv4 RoCE v1 at 2, IPv4 RoCE v2 at `roce_v2_at`)."""
     hca = root / "rocep1s0f0" / "ports" / "1"
     hca.mkdir(parents=True)
     if with_ports:
         (hca / "state").write_text("4: ACTIVE\n" if active else "2: DOWN\n")
         gids = hca / "gids"
+        types = hca / "gid_attrs" / "types"
         gids.mkdir()
-        (gids / "0").write_text("0000:0000:0000:0000:0000:0000:0000:0000 fe80::scope\n")
-        if gid3_zero:
-            (gids / "3").write_text("0000:0000:0000:0000:0000:0000:0000:0000  scope\n")
-        else:
-            (gids / "3").write_text("fe80:0000:0000:0000:0a0a:0a0a:0a0a:0a0a  scope\n")
+        types.mkdir(parents=True)
+        zero = "0000:0000:0000:0000:0000:0000:0000:0000"
+        ll = "fe80:0000:0000:0000:32c5:99ff:febe:3a40"
+        v4 = "0000:0000:0000:0000:0000:ffff:c0a8:640b"
+        rows = {0: (ll, "IB/RoCE v1"), 1: (ll, "RoCE v2"), 2: (v4, "IB/RoCE v1"),
+                3: (zero, ""), 4: (zero, "")}
+        if not gid3_zero:
+            rows[roce_v2_at] = (v4, "RoCE v2")
+        for idx, (gid, typ) in rows.items():
+            (gids / str(idx)).write_text(gid + "\n")
+            (types / str(idx)).write_text(typ + "\n")
     return root / "rocep1s0f0"
 
 
@@ -112,13 +121,21 @@ class TestGidTable(unittest.TestCase):
         hca = make_fake_sys(self.tmp)
         ok, detail = gx._gid_table_ok(hca, 3)
         self.assertTrue(ok)
-        self.assertIn("gid3 ok", detail)
+        self.assertIn("RoCE v2 IPv4 at gid3", detail)
+
+    def test_roce_v2_moved_to_another_index_still_passes(self):
+        # D-049/D-051: the kernel moves the index; the orchestrator resolves it.
+        hca = make_fake_sys(self.tmp, roce_v2_at=4)
+        ok, detail = gx._gid_table_ok(hca, 3)
+        self.assertTrue(ok)
+        self.assertIn("gid4", detail)
+        self.assertIn("not the preferred 3", detail)
 
     def test_all_zero_gid3_fails(self):
         hca = make_fake_sys(self.tmp, gid3_zero=True)
         ok, detail = gx._gid_table_ok(hca, 3)
         self.assertFalse(ok)
-        self.assertIn("non-zero GID", detail)
+        self.assertIn("no RoCE v2 IPv4 GID", detail)
 
     def test_no_ports_fails(self):
         hca = self.tmp / "rocep1s0f0"

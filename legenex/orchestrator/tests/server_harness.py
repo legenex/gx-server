@@ -160,6 +160,7 @@ class FakeLifecycle:
         self._acquire_time = acquire_time
         self._acquire_error = acquire_error
         self.acquire_calls: list[str] = []
+        self.bypass_calls: list[bool] = []
         self.in_flight = 0
         self.begin_use_calls = 0
         self.event_lines: list[str] = []
@@ -183,8 +184,9 @@ class FakeLifecycle:
     def current_profile(self):
         return self._profile
 
-    def acquire(self, profile_name=None, timeout=None):
+    def acquire(self, profile_name=None, timeout=None, *, bypass_backoff=False):
         self.acquire_calls.append(profile_name or "")
+        self.bypass_calls.append(bypass_backoff)
         if self._acquire_time:
             time.sleep(self._acquire_time)
         if self._acquire_error:

@@ -252,6 +252,13 @@ class TestLifecycleGate(OrchestratorHarness):
         self.assertEqual(body["status"], "ready")
         self.assertEqual(self.lifecycle.acquire_calls, ["fast"])  # release + acquire(fast)
         self.assertEqual(self.lifecycle._state, State.READY)
+        # An operator restart is a deliberate retry: it skips the failure backoff.
+        self.assertEqual(self.lifecycle.bypass_calls, [True])
+
+    def test_explicit_acquire_bypasses_the_failure_backoff(self):
+        status, _, _ = self.post("/lifecycle/gx-max/acquire", {"profile": "fast"})
+        self.assertEqual(status, 200)
+        self.assertEqual(self.lifecycle.bypass_calls, [True])
 
     def test_drain_endpoint(self):
         status, _, body = self.post("/lifecycle/gx-max/drain", {"timeout": 0})

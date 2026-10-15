@@ -44,6 +44,7 @@ from .config import CONFIG, Config
 from .health import AliasState, ClusterHealth, TierStatus
 from .lifecycle import AcquisitionError, GxMaxLifecycle, LifecycleStatus, State
 from .profiles import Registry, RegistryError, load_registry
+from .sse import DeltaSplitter
 from .scheduler import Scheduler
 from .upstream import UpstreamError, open_post
 
@@ -490,9 +491,12 @@ class Handler(BaseHTTPRequestHandler):
                 # Unknown names are a 400, never a silent default profile.
                 self.registry.profile(profile)
             timeout = payload.get("timeout")
+            # An explicit operator acquire is a deliberate retry: it bypasses
+            # the request-driven failure backoff.
             self.lifecycle.acquire(
                 profile,
                 timeout=float(timeout) if isinstance(timeout, (int, float)) else None,
+                bypass_backoff=True,
             )
         except RegistryError as exc:
             self._send_error_json(400, str(exc), "invalid_profile", NO_RETRY_HEADERS)
@@ -512,7 +516,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
         self.lifecycle.release(force=bool(payload.get("force")))
         try:
-            self.lifecycle.acquire(profile)
+            self.lifecycle.acquire(profile, bypass_backoff=True)
         except AcquisitionError as exc:
             self._send_error_json(503, str(exc), "gx_max_unavailable")
             return
@@ -1010,6 +1014,9 @@ class Handler(BaseHTTPRequestHandler):
         tail = b""
         client_gone = False
         cancelled = False
+        # Re-frame deltas that mix reasoning and content (D-052): LiteLLM's
+        # reasoning merge drops the content of such a delta.
+        splitter = DeltaSplitter()
 
         def write(chunk: bytes) -> None:
             self.wfile.write(f"{len(chunk):X}\r\n".encode())
@@ -1026,7 +1033,9 @@ class Handler(BaseHTTPRequestHandler):
                     out.ttft_ms = round((time.monotonic() - started) * 1000, 1)
                 tail = (tail + chunk)[-8192:]
                 try:
-                    write(chunk)
+                    framed = splitter.feed(chunk)
+                    if framed:
+                        write(framed)
                 except (BrokenPipeError, ConnectionResetError):
                     client_gone = True
                     out.error, out.error_code = "client disconnected", "client_disconnected"
@@ -1040,6 +1049,7 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as exc:  # noqa: BLE001 - upstream died mid-stream
             log.error("upstream stream failed after %d bytes: %r", len(tail), exc)
             out.error, out.error_code = repr(exc)[:300], "upstream_stream_error"
+            splitter.flush()  # a half-received event must not follow the error
             event = {"error": {"message": f"upstream stream failed: {exc!r}",
                                "type": "upstream_stream_error", "code": "upstream_stream_error"}}
             try:
@@ -1048,6 +1058,9 @@ class Handler(BaseHTTPRequestHandler):
                 client_gone = True
         if not client_gone:
             try:
+                rest = splitter.flush()
+                if rest:
+                    write(rest)
                 self.wfile.write(b"0\r\n\r\n")
                 self.wfile.flush()
             except OSError:

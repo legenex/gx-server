@@ -58,6 +58,16 @@ class AcquisitionError(RuntimeError):
     """gx-max could not be brought up. Never downgrade silently -- raise."""
 
 
+class FabricConfigError(AcquisitionError):
+    """The RoCE v2 / GID configuration cannot work. Detected BEFORE any launch,
+    so nothing is resident and nothing needs unwinding (D-051)."""
+
+
+#: Failure classes reported in status `failure_kind` (operators, Odin, AgentOS).
+FAILURE_FABRIC = "fabric_config"
+FAILURE_START = "start_failed"
+
+
 #: Fine-grained, READ-ONLY progress within ACQUIRING / RELEASING. Derived from
 #: the section markers gx-max-start.sh / gx-max-stop.sh print around the Mia
 #: kit's own output, so it never influences a transition -- `State` stays the
@@ -121,6 +131,9 @@ class LifecycleStatus:
     idle_ttl: int = 0
     in_flight: int = 0
     profile: str = ""
+    failure_kind: str = ""
+    consecutive_failures: int = 0
+    retry_not_before: float = 0.0
 
     def as_dict(self) -> dict:
         now = time.time()
@@ -148,6 +161,15 @@ class LifecycleStatus:
             "ttl_remaining_seconds": ttl_remaining,
             # The serving profile (empty while DOWN/never-acquired).
             "profile": self.profile,
+            # Why the last acquisition failed ("" | fabric_config | start_failed),
+            # how many starts failed in a row, and how long request-driven
+            # acquisition stays suppressed (explicit /acquire bypasses it).
+            "failure_kind": self.failure_kind,
+            "consecutive_failures": self.consecutive_failures,
+            "retry_after_seconds": (
+                max(0, round(self.retry_not_before - now))
+                if self.retry_not_before > now else 0
+            ),
         }
 
 
@@ -293,6 +315,9 @@ class GxMaxLifecycle:
         extra_env: Mapping[str, str] | None = None,
         settle_seconds: float = 90.0,
         mem_return_wait_s: float = 60.0,
+        gid_settle_seconds: float = 20.0,
+        failure_backoff_base: float = 60.0,
+        failure_backoff_cap: float = 900.0,
     ) -> None:
         self._dir = Path(runtime_dir)
         # Observability only: a plain append-only log of every script line and
@@ -317,6 +342,14 @@ class GxMaxLifecycle:
         self._settle_seconds = settle_seconds
         #: How long to keep re-checking memory return after stop.sh exits.
         self._mem_return_wait_s = mem_return_wait_s
+        #: Right after boot a rank's RoCE v2 GID can still be unpopulated; wait
+        #: this long (bounded) for it before calling the fabric broken.
+        self._gid_settle_seconds = gid_settle_seconds
+        #: Request-driven acquisition backs off after failed starts so a fault
+        #: never turns every incoming request into a two-node relaunch:
+        #: base * 2^(n-1) seconds, capped. 0 disables (tests).
+        self._failure_backoff_base = failure_backoff_base
+        self._failure_backoff_cap = failure_backoff_cap
 
         # Pluggable host facts -- fakes in tests, real I/O here.
         self._ready_probe = ready_probe or (lambda: default_ready_probe(api_base, model_id))
@@ -344,6 +377,9 @@ class GxMaxLifecycle:
         self._in_flight = 0
         self._detail = ""
         self._last_error = ""
+        self._failure_kind = ""
+        self._fail_streak = 0
+        self._retry_not_before = 0.0
         self._profile = ""
         self._worker: threading.Thread | None = None
         self._stopping = threading.Event()
@@ -414,6 +450,11 @@ class GxMaxLifecycle:
             elif observed is State.DOWN and healthy:
                 log.info("gx-max: adopted an engine started outside the orchestrator")
                 self._last_used = time.time()
+                # A healthy engine supersedes any recorded start failure.
+                self._last_error = ""
+                self._failure_kind = ""
+                self._fail_streak = 0
+                self._retry_not_before = 0.0
                 self._profile = self._registry.default_profile().name
                 self._set_state(State.READY, "adopted an externally started engine")
                 self._set_phase(PHASE_SERVING)
@@ -437,6 +478,9 @@ class GxMaxLifecycle:
                 idle_ttl=self._idle_ttl,
                 in_flight=self._in_flight,
                 profile=self._profile,
+                failure_kind=self._failure_kind,
+                consecutive_failures=self._fail_streak,
+                retry_not_before=self._retry_not_before,
             )
 
     def is_ready(self) -> bool:
@@ -475,13 +519,23 @@ class GxMaxLifecycle:
             self._cv.notify_all()
 
     # ---------------------------------------------------------------- acquire
-    def acquire(self, profile_name: str | None = None, timeout: float | None = None) -> str:
+    def acquire(
+        self,
+        profile_name: str | None = None,
+        timeout: float | None = None,
+        *,
+        bypass_backoff: bool = False,
+    ) -> str:
         """Ensure the model is serving (in `profile_name` if given).
 
         Blocks until READY. Raises AcquisitionError on failure -- it must
         NEVER fall back to a different model. A profile switch while READY is
         a full drain + stop + start with the new profile's env overlay.
         Returns the serving profile name.
+
+        After a failed start, request-driven callers get the recorded error
+        straight away until the backoff expires (no restart storm); an
+        explicit operator acquire passes `bypass_backoff=True`.
         """
         profile = self._registry.profile(profile_name or self._registry.default_profile().name)
         deadline = time.time() + (timeout if timeout is not None else self._acquire_timeout)
@@ -514,9 +568,22 @@ class GxMaxLifecycle:
                         self._start_release(force=False, detail=f"switch to {profile.name}")
                         # Loop again; we are now DOWN (or RELEASING->DOWN soon).
 
+                    if (
+                        self._state is State.DOWN
+                        and not bypass_backoff
+                        and self._last_error
+                        and time.time() < self._retry_not_before
+                    ):
+                        wait_s = round(self._retry_not_before - time.time())
+                        raise self._failure_error(
+                            f"{self._last_error} [gx-max start failed {self._fail_streak or 1} "
+                            f"time(s); next automatic attempt in {wait_s}s]"
+                        )
+
                     if self._state is State.DOWN:
                         # We are the one who starts it.
                         self._last_error = ""
+                        self._failure_kind = ""
                         self._profile = profile.name
                         self._set_state(State.ACQUIRING, f"starting profile '{profile.name}'")
                         self._begin_job("acquire")
@@ -536,7 +603,7 @@ class GxMaxLifecycle:
                     self._cv.wait(timeout=min(remaining, 10.0))
 
                     if self._state is State.DOWN and self._last_error:
-                        raise AcquisitionError(self._last_error)
+                        raise self._failure_error(self._last_error)
         finally:
             with self._cv:
                 self._waiters -= 1
@@ -548,15 +615,25 @@ class GxMaxLifecycle:
         stable: after a link flap gx10-02's rocep1s0f0 re-populated with the
         RoCE v2 entry at index 4 (index 3 an empty hole) while gx10-01 stayed
         at 3, so one shared NCCL_IB_GID_INDEX=3 made the kit's preflight (and
-        NCCL QP setup) fail. NCCL_IB_GID_INDEX stays the preferred index; a
-        rank only deviates when it is not a populated RoCE v2 entry for that
-        rank's fabric IP. Never returns a blank value (a blank overlay key
-        would clobber the kit's own default). Anything unresolvable is left
-        to the kit's own preflight, which prints both GID tables.
+        NCCL QP setup) fail; after the 2026-10-15 reboot it moved back to 3.
+        NCCL_IB_GID_INDEX stays the preferred index; a rank only deviates
+        when it is not a populated RoCE v2 entry for that rank's fabric IP.
+        Never returns a blank value (a blank overlay key would clobber the
+        kit's own default).
+
+        Raises FabricConfigError -- before anything is launched -- when the
+        fabric provably cannot work: a rank has no RoCE v2 GID for its fabric
+        IP, or the kit's .env pins HEAD_GID/WORKER_GID to a different index.
+        The kit sources .env AFTER the caller's env, so such a pin silently
+        overrides this resolution (D-051: the stale WORKER_GID=4 pin that kept
+        gx-max down after the reboot). A table that cannot be read at all is
+        left to the kit's own preflight, which prints both GID tables.
         """
-        kit_env = _read_kit_env(self._dir / ".env")
+        kit_env_path = self._dir / ".env"
+        kit_env = _read_kit_env(kit_env_path)
         preferred = str(overlay.get("NCCL_IB_GID_INDEX") or "3")
         out: dict[str, str] = {}
+        problems: list[str] = []
         for node, key, ib_key, ip_key in (
             ("node1", "HEAD_GID", "HEAD_CX7_IB", "HEAD_IP"),
             ("node2", "WORKER_GID", "WORKER_CX7_IB", "WORKER_IP"),
@@ -564,21 +641,58 @@ class GxMaxLifecycle:
             ib, ip = kit_env.get(ib_key, ""), kit_env.get(ip_key, "")
             if not (ib and ip):
                 continue
-            idx = pick_roce_v2_gid(self._read_gid_table(node, ib), ip, preferred)
-            if idx is None:
-                log.warning("gx-max: no RoCE v2 GID for %s on %s/%s; leaving %s to the kit preflight",
-                            ip, node, ib, key)
+            idx, table = self._resolve_rank_gid(node, ib, ip, preferred)
+            if table is None:
+                log.warning("gx-max: could not read the GID table of %s/%s; leaving %s to the kit preflight",
+                            node, ib, key)
                 continue
+            if idx is None:
+                problems.append(
+                    f"{node} {ib} has no RoCE v2 GID for its fabric IP {ip} "
+                    f"(table: {_describe_gid_table(table)}): the fabric link is down "
+                    f"or the interface has no address")
+                continue
+            pinned = kit_env.get(key, "")
+            if pinned and pinned != str(idx):
+                problems.append(
+                    f"{kit_env_path} pins {key}={pinned}, but the live RoCE v2 GID for {ip} "
+                    f"on {node} {ib} is index {idx}; the kit sources .env after the "
+                    f"orchestrator's env, so the pin overrides per-rank resolution -- "
+                    f"delete the {key} line (canonical: legenex/lifecycle/mia-dsv41.env.canonical)")
+                continue
+            if pinned:
+                log.warning("gx-max: %s pins %s=%s (matches the live table today); remove it -- "
+                            "a reboot can move the index", kit_env_path, key, pinned)
             out[key] = str(idx)
+        if problems:
+            raise FabricConfigError("; ".join(problems))
         if out:
             log.info("gx-max: NCCL GID indices %s (preferred %s)", out, preferred)
         return out
+
+    def _resolve_rank_gid(
+        self, node: str, ib: str, ip: str, preferred: str,
+    ) -> "tuple[int | None, dict[int, tuple[str, str]] | None]":
+        """(index, table) for one rank; bounded wait for a GID still populating."""
+        deadline = time.time() + max(0.0, self._gid_settle_seconds)
+        while True:
+            table = self._read_gid_table(node, ib)
+            idx = pick_roce_v2_gid(table, ip, preferred)
+            if idx is not None or table is None or time.time() >= deadline:
+                return idx, table
+            time.sleep(min(5.0, max(0.1, deadline - time.time())))
 
     def _do_acquire(self, profile: ProfileSpec) -> None:
         model = self._registry.production_model()
         runtime = self._registry.runtime(self._registry.alias("gx-max").runtime)
         overlay = build_env_overlay(profile, model, runtime, extra=self._extra_env)
-        overlay.update(self._resolve_gid_overlay(overlay))
+        try:
+            overlay.update(self._resolve_gid_overlay(overlay))
+        except FabricConfigError as exc:
+            # Nothing was launched: no unwind, just the precise root cause.
+            self._event("acquire", f"fabric preflight failed: {exc}")
+            self._fail_acquire(f"fabric preflight: {exc}", FAILURE_FABRIC)
+            return
 
         # Record the pre-start memory floor for the release-time check.
         self._pre_start_mem = {n: self._read_mem_gib(n) for n in ("node1", "node2")}
@@ -599,6 +713,9 @@ class GxMaxLifecycle:
                     with self._cv:
                         self._last_used = time.time()
                         self._profile = profile.name
+                        self._fail_streak = 0
+                        self._retry_not_before = 0.0
+                        self._failure_kind = ""
                     self._set_phase(PHASE_SERVING)
                     self._end_job("ready")
                     self._set_state(State.READY, f"profile '{profile.name}' healthy")
@@ -623,15 +740,31 @@ class GxMaxLifecycle:
         # on every failure path, best-effort, before reporting the ORIGINAL
         # error to the caller.
         err = self._cleanup_after_failed_acquire(err)
+        self._fail_acquire(err, FAILURE_START)
 
-        log.error("gx-max acquisition failed: %s", err)
+    def _failure_error(self, message: str) -> AcquisitionError:
+        """The exception class matching the recorded failure kind."""
+        cls = FabricConfigError if self._failure_kind == FAILURE_FABRIC else AcquisitionError
+        return cls(message)
+
+    def _fail_acquire(self, err: str, kind: str) -> None:
+        """Record a failed acquisition and arm the request-driven backoff."""
+        log.error("gx-max acquisition failed (%s): %s", kind, err)
         with self._cv:
             self._last_error = err
+            self._failure_kind = kind
+            self._fail_streak += 1
+            if self._failure_backoff_base > 0:
+                # A fabric fault is detected without launching anything, so it
+                # only needs a short pause; a failed launch backs off harder.
+                base = min(self._failure_backoff_base, 30.0) if kind == FAILURE_FABRIC else self._failure_backoff_base
+                delay = min(self._failure_backoff_cap, base * (2 ** (self._fail_streak - 1)))
+                self._retry_not_before = time.time() + delay
         self._set_phase(PHASE_FAILED)
         self._end_job("failed", error=err)
         with self._cv:
             self._profile = ""
-        self._set_state(State.DOWN, "acquisition failed")
+        self._set_state(State.DOWN, "acquisition failed" if kind != FAILURE_FABRIC else "fabric preflight failed")
 
     def _await_ready(self, seconds: float) -> bool:
         deadline = time.time() + seconds
@@ -994,12 +1127,36 @@ def _read_kit_env(path: Path) -> dict[str, str]:
     try:
         for line in path.read_text(encoding="utf-8").splitlines():
             line = line.strip()
+            if line.startswith("export "):
+                line = line[len("export "):].lstrip()
             if line and not line.startswith("#") and "=" in line:
                 k, _, v = line.partition("=")
-                out[k.strip()] = v.strip().strip("'\"")
+                v = v.strip()
+                if v[:1] in ("'", '"') and v[-1:] == v[:1] and len(v) >= 2:
+                    v = v[1:-1]
+                else:
+                    v = v.split(" #", 1)[0].split("\t#", 1)[0].strip()
+                out[k.strip()] = v
     except OSError:
         pass
     return out
+
+
+def _describe_gid_table(table: "Mapping[int, tuple[str, str]]") -> str:
+    """Compact `idx=type(::ffff:a.b.c.d)` rendering of the populated entries."""
+    parts = []
+    for idx in sorted(table):
+        gid, typ = table[idx]
+        g = gid.strip().lower()
+        if not typ.strip() or set(g) <= {"0", ":"}:
+            continue
+        tail = g.rsplit(":ffff:", 1)[-1] if ":ffff:" in g else ""
+        ip = ""
+        if re.fullmatch(r"[0-9a-f]{4}:[0-9a-f]{4}", tail):
+            h = tail.replace(":", "")
+            ip = "(" + ".".join(str(int(h[i:i + 2], 16)) for i in range(0, 8, 2)) + ")"
+        parts.append(f"{idx}={typ.strip()}{ip}")
+    return ", ".join(parts) or "empty"
 
 
 def pick_roce_v2_gid(

@@ -24,10 +24,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from gx_orchestrator.lifecycle import (  # noqa: E402
     AcquisitionError,
+    FabricConfigError,
     GxMaxLifecycle,
     State,
     build_env_overlay,
     default_ready_probe,
+    _describe_gid_table,
     pick_roce_v2_gid,
 )
 from registry_fixtures import load_fixture_registry  # noqa: E402
@@ -328,6 +330,129 @@ class TestAcquire(LifecycleTestBase):
             lc.acquire(profile_name="fast", timeout=12)
         self.assertNotIn("GID=", envfile.read_text())
 
+    # D-051: a GID pin in the kit .env overrides the per-rank resolution (the
+    # kit sources .env after the caller's env). After the 2026-10-15 reboot the
+    # worker's RoCE v2 entry moved back to 3 while .env still pinned 4.
+    _KIT_FABRIC = ("HEAD_IP=192.168.100.10\nWORKER_IP=192.168.100.11\n"
+                   "HEAD_CX7_IB=rocep1s0f0\nWORKER_CX7_IB=rocep1s0f0\n")
+    _Z = "0000:0000:0000:0000:0000:0000:0000:0000"
+    _TABLES_AT_3 = {
+        "node1": {2: ("0000:0000:0000:0000:0000:ffff:c0a8:640a", "IB/RoCE v1"),
+                  3: ("0000:0000:0000:0000:0000:ffff:c0a8:640a", "RoCE v2")},
+        "node2": {2: ("0000:0000:0000:0000:0000:ffff:c0a8:640b", "IB/RoCE v1"),
+                  3: ("0000:0000:0000:0000:0000:ffff:c0a8:640b", "RoCE v2"),
+                  4: (_Z, "")},
+    }
+
+    def test_stale_gid_pin_fails_before_launch_with_the_root_cause(self):
+        (self.dir / ".env").write_text(self._KIT_FABRIC + "HEAD_GID=3\nWORKER_GID=4\n")
+        marker = self.dir / "ran"
+        self.write_start(f"#!/usr/bin/env bash\ntouch {marker}\nexit 0\n")
+        self.write_stop()
+        lc = self.make(read_gid_table=lambda node, ib: self._TABLES_AT_3[node], gid_settle_seconds=0)
+        with self.assertRaises(FabricConfigError) as ctx:
+            lc.acquire(profile_name="fast", timeout=12)
+        msg = str(ctx.exception)
+        self.assertIn("pins WORKER_GID=4", msg)
+        self.assertIn("192.168.100.11 on node2 rocep1s0f0 is index 3", msg)
+        self.assertFalse(marker.exists(), "start.sh must not run when the fabric cannot work")
+        st = lc.status().as_dict()
+        self.assertEqual(st["state"], "down")
+        self.assertEqual(st["failure_kind"], "fabric_config")
+        self.assertIn("fabric preflight", st["last_error"])
+
+    def test_gid_pin_that_matches_the_live_table_still_starts(self):
+        (self.dir / ".env").write_text(self._KIT_FABRIC + "WORKER_GID=3\n")
+        envfile = self.dir / "start-env"
+        self.write_start(f"#!/usr/bin/env bash\nenv | grep -E '^(HEAD_GID|WORKER_GID)=' > {envfile}\nexit 1\n")
+        self.write_stop()
+        lc = self.make(read_gid_table=lambda node, ib: self._TABLES_AT_3[node], gid_settle_seconds=0)
+        with self.assertRaises(AcquisitionError):
+            lc.acquire(profile_name="fast", timeout=12)
+        env = dict(line.split("=", 1) for line in envfile.read_text().splitlines())
+        self.assertEqual((env["HEAD_GID"], env["WORKER_GID"]), ("3", "3"))
+        self.assertEqual(lc.status().as_dict()["failure_kind"], "start_failed")
+
+    def test_missing_roce_v2_gid_names_the_rank_and_ip(self):
+        (self.dir / ".env").write_text(self._KIT_FABRIC)
+        tables = {"node1": self._TABLES_AT_3["node1"],
+                  "node2": {0: ("fe80:0000:0000:0000:32c5:99ff:febe:3a40", "IB/RoCE v1"),
+                            3: (self._Z, "")}}
+        marker = self.dir / "ran"
+        self.write_start(f"#!/usr/bin/env bash\ntouch {marker}\nexit 0\n")
+        self.write_stop()
+        lc = self.make(read_gid_table=lambda node, ib: tables[node], gid_settle_seconds=0)
+        with self.assertRaises(FabricConfigError) as ctx:
+            lc.acquire(profile_name="fast", timeout=12)
+        self.assertIn("node2 rocep1s0f0 has no RoCE v2 GID for its fabric IP 192.168.100.11", str(ctx.exception))
+        self.assertFalse(marker.exists())
+
+    def test_gid_still_populating_after_boot_is_waited_for(self):
+        (self.dir / ".env").write_text(self._KIT_FABRIC)
+        reads = {"node2": 0}
+        empty = {3: (self._Z, "")}
+
+        def read(node, ib):
+            if node == "node2":
+                reads["node2"] += 1
+                return empty if reads["node2"] < 2 else self._TABLES_AT_3["node2"]
+            return self._TABLES_AT_3[node]
+
+        envfile = self.dir / "start-env"
+        self.write_start(f"#!/usr/bin/env bash\nenv | grep -E '^WORKER_GID=' > {envfile}\nexit 1\n")
+        self.write_stop()
+        lc = self.make(read_gid_table=read, gid_settle_seconds=3)
+        with self.assertRaises(AcquisitionError):
+            lc.acquire(profile_name="fast", timeout=15)
+        self.assertEqual(envfile.read_text().strip(), "WORKER_GID=3")
+
+    def test_failed_start_backs_off_request_driven_acquire_only(self):
+        marker = self.dir / "invocations"
+        self.write_start(f"#!/usr/bin/env bash\necho x >> {marker}\nexit 1\n")
+        self.write_stop()
+        lc = self.make(failure_backoff_base=60.0)
+        with self.assertRaises(AcquisitionError):
+            lc.acquire(profile_name="fast", timeout=12)
+        with self.assertRaises(AcquisitionError) as ctx:
+            lc.acquire(profile_name="fast", timeout=12)   # request-driven: suppressed
+        self.assertIn("next automatic attempt in", str(ctx.exception))
+        self.assertEqual(marker.read_text().count("x"), 1, "a backed-off acquire must not relaunch")
+        st = lc.status().as_dict()
+        self.assertEqual(st["consecutive_failures"], 1)
+        self.assertGreater(st["retry_after_seconds"], 0)
+        with self.assertRaises(AcquisitionError):
+            lc.acquire(profile_name="fast", timeout=12, bypass_backoff=True)  # operator retry
+        self.assertEqual(marker.read_text().count("x"), 2)
+        self.assertEqual(lc.status().as_dict()["consecutive_failures"], 2)
+
+    def test_adopting_a_healthy_engine_clears_the_failure_backoff(self):
+        self.write_start("#!/usr/bin/env bash\nexit 1\n")
+        self.write_stop()
+        lc = self.make(failure_backoff_base=60.0)
+        with self.assertRaises(AcquisitionError):
+            lc.acquire(profile_name="fast", timeout=12)
+        self.assertGreater(lc.status().as_dict()["retry_after_seconds"], 0)
+        _StubUpstream.healthy = True          # an operator started it by hand
+        lc._last_reconcile = 0.0
+        st = lc.status().as_dict()
+        self.assertEqual(st["state"], "ready")
+        self.assertEqual((st["last_error"], st["failure_kind"], st["consecutive_failures"],
+                          st["retry_after_seconds"]), ("", "", 0, 0))
+
+    def test_kit_env_pins_are_read_like_bash_source(self):
+        from gx_orchestrator.lifecycle import _read_kit_env
+        p = self.dir / "kit.env"
+        p.write_text('export WORKER_GID=4\nHEAD_GID="3"\nHEAD_IP=192.168.100.10  # fabric\n')
+        env = _read_kit_env(p)
+        self.assertEqual((env["WORKER_GID"], env["HEAD_GID"], env["HEAD_IP"]),
+                         ("4", "3", "192.168.100.10"))
+
+    def test_describe_gid_table_shows_populated_entries_only(self):
+        self.assertEqual(
+            _describe_gid_table(self._TABLES_AT_3["node2"]),
+            "2=IB/RoCE v1(192.168.100.11), 3=RoCE v2(192.168.100.11)")
+        self.assertEqual(_describe_gid_table({4: (self._Z, "")}), "empty")
+
     def test_unknown_profile_is_a_clear_error(self):
         self.write_start("#!/usr/bin/env bash\nexit 0\n")
         self.write_stop()
@@ -491,6 +616,21 @@ class TestNoBootAutoload(unittest.TestCase):
             lc.shutdown()
             self.assertFalse((d / "started-marker").exists())
 
+class TestCanonicalKitEnv(unittest.TestCase):
+    """The tracked canonical kit .env (D-051) must never pin a GID index."""
+
+    PATH = Path(__file__).resolve().parents[2] / "lifecycle" / "mia-dsv41.env.canonical"
+
+    def test_canonical_kit_env_has_fabric_facts_and_no_gid_pin(self):
+        env = dict(
+            line.split("=", 1) for line in self.PATH.read_text().splitlines()
+            if line and not line.startswith("#") and "=" in line
+        )
+        for key in ("HEAD_GID", "WORKER_GID"):
+            self.assertNotIn(key, env, f"{key} pin overrides per-rank GID resolution")
+        for key in ("HEAD_IP", "WORKER_IP", "HEAD_CX7_IB", "WORKER_CX7_IB"):
+            self.assertTrue(env.get(key), f"{key} is needed for per-rank GID resolution")
+
 
 if __name__ == "__main__":
-    unittest.main(verbosity=2)
+    unittest.main()
