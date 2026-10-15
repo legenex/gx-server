@@ -475,14 +475,19 @@ _MEM_FAIL_GIB = 2.0
 _DISK_WARN_BYTES = 100 * 1024**3
 _DISK_FAIL_BYTES = 20 * 1024**3
 
-#: The proven NCCL GID index for this fabric (ARCHITECTURE-V41.md §1).
+#: The preferred NCCL GID index (ARCHITECTURE-V41.md §1). The kernel assigns
+#: the index and it moves across reboots/link flaps (D-049, D-051), so doctor
+#: accepts the RoCE v2 IPv4 entry at ANY index -- exactly what the
+#: orchestrator resolves per rank -- and only reports when it is not here.
 REQUIRED_GID_INDEX = 3
 
 
 def _gid_table_ok(hca_dir: Path, gid_index: int) -> tuple[bool, str]:
-    """Check /sys/class/infiniband/<hca>/ports/<n>/gids/<index> is a real,
-    non-zero GID (the all-zero entry at the wrong index is exactly the
-    ibv_modify_qp errno 61 failure mode Mia documented)."""
+    """True when a port of the HCA carries a RoCE v2 IPv4 GID (::ffff:a.b.c.d).
+
+    An all-zero entry at the pinned index is the ibv_modify_qp errno 61 failure
+    mode Mia documented; the fix is per-rank resolution, not a fixed index.
+    """
     ports_dir = hca_dir / "ports"
     try:
         ports = sorted(p for p in ports_dir.iterdir() if p.name.isdigit())
@@ -491,17 +496,16 @@ def _gid_table_ok(hca_dir: Path, gid_index: int) -> tuple[bool, str]:
     if not ports:
         return False, "no ports found"
     for port in ports:
-        gid_file = port / "gids" / str(gid_index)
-        try:
-            text = gid_file.read_text(encoding="utf-8")
-        except OSError:
-            continue
-        first = text.split("\n", 1)[0]
-        hexpart = first.split()[0] if first.split() else ""
-        # The all-zero GID (the one NCCL dies on) is 32 '0's (+ colons).
-        if hexpart and set(hexpart.replace(":", "")) != {"0"}:
-            return True, f"{hca_dir.name}/{port.name} gid{gid_index} ok"
-    return False, f"no valid non-zero GID at index {gid_index} on any port"
+        for idx in [gid_index] + [i for i in range(16) if i != gid_index]:
+            try:
+                gid = (port / "gids" / str(idx)).read_text(encoding="utf-8").split("\n", 1)[0].strip().lower()
+                typ = (port / "gid_attrs" / "types" / str(idx)).read_text(encoding="utf-8").strip()
+            except OSError:
+                continue
+            if typ == "RoCE v2" and gid.startswith("0000:0000:0000:0000:0000:ffff:"):
+                note = "" if idx == gid_index else f" (not the preferred {gid_index}; the orchestrator resolves it per rank)"
+                return True, f"{hca_dir.name}/{port.name} RoCE v2 IPv4 at gid{idx}{note}"
+    return False, "no RoCE v2 IPv4 GID on any port (link down or interface unaddressed)"
 
 
 def doctor_checks(*, registry_path: str | None = None) -> list[tuple[str, str, str, str]]:
@@ -600,7 +604,7 @@ def doctor_checks(*, registry_path: str | None = None) -> list[tuple[str, str, s
             else:
                 problems.append(f"{hca}: {gid_detail}")
         if problems:
-            add("fabric", FAIL, "; ".join(problems), f"NCCL needs a live port and a non-zero GID at index {REQUIRED_GID_INDEX} (NCCL_IB_GID_INDEX=3 is the proven pin)")
+            add("fabric", FAIL, "; ".join(problems), "NCCL needs a live port with a RoCE v2 IPv4 GID; check the fabric link and its address (ip -br addr)")
         elif details:
             add("fabric", PASS, "; ".join(details))
         else:

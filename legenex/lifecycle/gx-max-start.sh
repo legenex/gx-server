@@ -122,8 +122,6 @@ trap 'log "received SIGINT/SIGTERM; aborting"; exit 130' INT TERM
 
 # ------------------------------------------------------------------- start --
 log "=== starting the Mia kit (${GXMAX_RANK0_NAME} + ${GXMAX_RANK1_NAME}) ==="
-LAUNCHED=1   # the kit launches both containers itself; assume resident from here
-gxs_arm
 # --- per-rank RoCE v2 GID resolution ----------------------------------------
 # The GID *index* of a rank's fabric IPv4 is assigned by the kernel and is NOT
 # stable: after a link flap the worker's rocep1s0f0 table re-populated with the
@@ -132,7 +130,12 @@ gxs_arm
 # NCCL_IB_GID_INDEX ...") or hangs QP setup. So: keep the preferred index
 # (NCCL_IB_GID_INDEX, default 3) only where it is a populated RoCE v2 entry for
 # that rank's fabric IP; otherwise pick the index that is. Read-only sysfs.
-_mia_env() { sed -n "s/^$1=//p" "${GXMAX_MIA_DIR}/.env" 2>/dev/null | tail -1; }
+# Last assignment of $1 in the kit .env, read the way `source` would: optional
+# `export `, surrounding quotes, trailing ` # comment` (matches _read_kit_env).
+_mia_env() {
+  sed -nE "s/^[[:space:]]*(export[[:space:]]+)?$1=//p" "${GXMAX_MIA_DIR}/.env" 2>/dev/null | tail -1 \
+    | sed -E "s/^\"(.*)\"[[:space:]]*\$/\\1/; t; s/^'(.*)'[[:space:]]*\$/\\1/; t; s/[[:space:]]+#.*\$//; s/[[:space:]]+\$//"
+}
 _roce_v2_gid_index() {  # <ib-dev> <ipv4> <preferred-index>; prints the index or nothing
   local dev="$1" ip="$2" want="$3" base hex i g t
   base="/sys/class/infiniband/${dev}/ports/1"
@@ -153,6 +156,18 @@ HEAD_GID_RESOLVED="$(_roce_v2_gid_index "${_head_ib}" "${_head_ip}" "${_want_gid
 WORKER_GID_RESOLVED="$(n2 "$(declare -f _roce_v2_gid_index); _roce_v2_gid_index '${_work_ib}' '${_work_ip}' '${_want_gid}'")" \
   || die "no RoCE v2 GID for ${_work_ip} on worker ${_work_ib} (GID table empty or link down)"
 log "NCCL GID index: head ${_head_ib}=${HEAD_GID_RESOLVED} worker ${_work_ib}=${WORKER_GID_RESOLVED} (preferred ${_want_gid})"
+# The kit sources its .env AFTER our env, so a HEAD_GID/WORKER_GID pin there
+# silently overrides the resolution above (D-051: a stale WORKER_GID=4 pin kept
+# gx-max down after the 2026-10-15 reboot moved the worker's entry back to 3).
+for _k in HEAD_GID WORKER_GID; do
+  _pin="$(_mia_env "${_k}")"; _res_var="${_k}_RESOLVED"; _res="${!_res_var}"
+  if [ -n "${_pin}" ] && [ "${_pin}" != "${_res}" ]; then
+    die "${GXMAX_MIA_DIR}/.env pins ${_k}=${_pin} but the live RoCE v2 GID index is ${_res}; the pin overrides per-rank resolution -- delete the ${_k} line (canonical: legenex/lifecycle/mia-dsv41.env.canonical)"
+  fi
+  if [ -n "${_pin}" ]; then
+    log "WARN: ${GXMAX_MIA_DIR}/.env pins ${_k}=${_pin} (matches today); remove it -- a reboot can move the index"
+  fi
+done
 
 KIT_ENV=(SERVED_MODEL_NAME="${SERVED_MODEL_NAME}"
          HEAD_GID="${HEAD_GID_RESOLVED}"
@@ -161,6 +176,9 @@ KIT_ENV=(SERVED_MODEL_NAME="${SERVED_MODEL_NAME}"
          SPEC_METHOD="${SPEC_METHOD}"
          MAX_MODEL_LEN="${MAX_MODEL_LEN}")
 [ -n "${DSPARK_TOKENS:-}" ] && KIT_ENV+=(DSPARK_TOKENS="${DSPARK_TOKENS}")
+# Only now can a container exist: a preflight `die` above has nothing to unwind.
+LAUNCHED=1   # the kit launches both containers itself; assume resident from here
+gxs_arm
 set +e
 ( cd "${GXMAX_MIA_DIR}" && env "${KIT_ENV[@]}" bash ./start.sh )
 kit_rc=$?

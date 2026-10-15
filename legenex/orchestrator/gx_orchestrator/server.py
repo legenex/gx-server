@@ -490,9 +490,12 @@ class Handler(BaseHTTPRequestHandler):
                 # Unknown names are a 400, never a silent default profile.
                 self.registry.profile(profile)
             timeout = payload.get("timeout")
+            # An explicit operator acquire is a deliberate retry: it bypasses
+            # the request-driven failure backoff.
             self.lifecycle.acquire(
                 profile,
                 timeout=float(timeout) if isinstance(timeout, (int, float)) else None,
+                bypass_backoff=True,
             )
         except RegistryError as exc:
             self._send_error_json(400, str(exc), "invalid_profile", NO_RETRY_HEADERS)
@@ -512,7 +515,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
         self.lifecycle.release(force=bool(payload.get("force")))
         try:
-            self.lifecycle.acquire(profile)
+            self.lifecycle.acquire(profile, bypass_backoff=True)
         except AcquisitionError as exc:
             self._send_error_json(503, str(exc), "gx_max_unavailable")
             return

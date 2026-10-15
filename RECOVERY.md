@@ -140,6 +140,44 @@ gx10-02" for the full procedure (checking `loginctl list-sessions`, clearing
 only the stale graphical session, never the SSH session). This is unrelated
 to a B-012-style memory wedge and does not need a power cycle.
 
+## 3c. gx-max fabric preflight failed (GID index / kit .env) — no human needed
+
+Symptom: `/lifecycle/gx-max/status` shows `failure_kind: fabric_config` and a
+`last_error` starting `fabric preflight:` (older builds: the kit's
+`set NCCL_IB_GID_INDEX ... to populated indices`). Nothing was launched, so
+there is nothing to unwind.
+
+The kernel assigns each node's RoCE v2 GID **index** and moves it across
+reboots and link flaps (D-049, D-051). The orchestrator resolves it per rank
+on every start, so a moved index is handled automatically. It refuses to
+start only when:
+
+- **the kit `.env` pins `HEAD_GID`/`WORKER_GID` to a stale index.** The kit
+  sources `mia-dsv41/.env` after the orchestrator's env, so the pin wins.
+  Fix: back up the file, delete the pinned line (the error names it), and
+  compare with the tracked `legenex/lifecycle/mia-dsv41.env.canonical`:
+
+  ```bash
+  cd ~/Documents/Projects/Server/gx-cluster/mia-dsv41
+  cp -p .env ".env.bak-$(date -u +%Y%m%dT%H%M%SZ)"
+  diff <(grep -v '^#' ../legenex/lifecycle/mia-dsv41.env.canonical) <(grep -v '^#' .env)
+  # if .env is lost or corrupted:  cp ../legenex/lifecycle/mia-dsv41.env.canonical .env
+  ```
+
+- **a rank has no RoCE v2 IPv4 GID at all**: the fabric link is down or the
+  interface lost its address. Check `ip -br addr show enp1s0f0np0` and
+  `rdma link show` on that node. Do not edit GID settings for this.
+
+Read the live tables (read-only) on both nodes:
+
+```bash
+for i in $(seq 0 7); do echo "$i $(cat /sys/class/infiniband/rocep1s0f0/ports/1/gids/$i) $(cat /sys/class/infiniband/rocep1s0f0/ports/1/gid_attrs/types/$i 2>/dev/null)"; done
+```
+
+Then retry deliberately: `POST /lifecycle/gx-max/acquire` (operator token).
+That bypasses the request-driven failure backoff; ordinary requests wait out
+`retry_after_seconds` instead of relaunching the engine on every call.
+
 ## 4. A node is wedged / was rebooted
 
 Nothing in this stack auto-starts models at boot, by design.
