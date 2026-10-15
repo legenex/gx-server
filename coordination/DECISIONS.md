@@ -1935,3 +1935,27 @@ trip, all through LiteLLM `:4000`. Speech on gx10-02 stayed healthy.
   is an owner decision.
 
 
+## D-052 — Streamed gx-max lost the first answer token after reasoning; the orchestrator re-frames mixed deltas (2026-10-15)
+
+**Symptom:** through LiteLLM `:4000`, a streamed gx-max answer often began
+`<think>…</think>, 2, 3, 4, 5`, so the first answer token ("1") was missing.
+This was reproduced 2 times out of 3. Non-streamed answers and the engine's
+own stream were correct.
+
+**Root cause:** with dspark speculative decoding, the engine can emit several
+tokens in one step. One SSE delta therefore sometimes carries both the end of
+the reasoning and the first content token, for example
+`{"reasoning": ".", "content": "1"}`. When LiteLLM's
+`merge_reasoning_content_in_choices: true` (set on gx-max and gx-auto, which
+render `<think>` for chat UIs) meets such a delta, it emits `</think>` and
+drops that delta's content.
+
+**Fix:** `gx_orchestrator/sse.py` `DeltaSplitter` is applied in
+`_relay_stream`. It buffers the stream to SSE event boundaries and re-frames
+only a delta that has both a reasoning key and content: the reasoning part is
+sent first, then the content part (`finish_reason` and `usage` go on the
+last). Every other event passes through byte-for-byte, and JSON is parsed only
+when both keys appear in the event. A half-received event is discarded when
+the upstream dies mid-stream. The gateway configuration is unchanged. Tests:
+`tests/test_sse.py` covers arbitrary chunk boundaries, pass-through, and the
+`reasoning_content` key.
