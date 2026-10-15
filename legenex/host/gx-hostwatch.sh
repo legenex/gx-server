@@ -24,6 +24,13 @@
 #      which degrades under both CPU thrash and severe memory pressure).
 #   4. memory pressure - MemAvailable against the mandated floor, plus PSI
 #      (/proc/pressure/memory) if the kernel exposes it.
+#   5. GX boot headroom - while the DeepSeek model is NOT loaded, whether this
+#      head node could boot it at all: MemAvailable against mia-dsv41's own
+#      requirement (weight budget per rank + DSV41_BOOT_MARGIN_GIB). GX was down
+#      2026-10-14..15 because a resident desktop session left ~107 GiB against
+#      111.5 GiB needed, while check 4 (30 GiB floor) said OK. WARN names the
+#      largest anonymous-memory consumers; a margin below the kit default is
+#      reported, never changed.
 #
 # WHAT THIS SCRIPT DELIBERATELY DOES NOT DO
 # ------------------------------------------
@@ -64,6 +71,9 @@ PSI_FULL_CRIT_PCT="${GX_HOSTWATCH_PSI_FULL_CRIT_PCT:-20}"
 SSH_PORT="${GX_HOSTWATCH_SSH_PORT:-22}"
 SWAPFILE_NAME="${GX_HOSTWATCH_SWAPFILE_NAME:-/swapfile-sglang}"
 SWAPFILE_MIN_GIB="${GX_HOSTWATCH_SWAPFILE_MIN_GIB:-47}"   # L-8: keep 48G, recover-node2.sh uses the same >=47 tolerance
+DSV41_DIR="${GX_HOSTWATCH_DSV41_DIR:-$(cd "$(dirname "$(readlink -f "$0")")/../.." && pwd)/mia-dsv41}"
+DSV41_HEAD_CONTAINER="${GX_HOSTWATCH_DSV41_HEAD:-dsv41-exl3-head}"
+DSV41_KIT_MARGIN_GIB=12   # mia-dsv41 start.sh default (headless boot)
 
 mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
 
@@ -239,6 +249,59 @@ check_swap() {
   fi
 }
 
+# ------------------------------------------------- 5. GX boot headroom --
+_dsv41_env() {  # _dsv41_env KEY DEFAULT: value from mia-dsv41/.env (last assignment), else DEFAULT
+  local v
+  v=$(sed -n "s/^$1=//p" "$DSV41_DIR/.env" 2>/dev/null | tail -1 | tr -d '"'"'"'')
+  printf '%s' "${v:-$2}"
+}
+
+_top_anon() {  # the three user cgroups holding the most anonymous memory, "name=GiB"
+  local base="/sys/fs/cgroup/user.slice/user-$(id -u).slice/user@$(id -u).service"
+  [ -d "$base" ] || return 0
+  find "$base" -mindepth 2 -maxdepth 3 -name memory.stat 2>/dev/null | while read -r f; do
+    awk -v n="$(basename "$(dirname "$f")")" '/^anon /{printf "%d %s\n", $2, n}' "$f"
+  done | sort -rn | head -3 | awk '{printf "%s%s=%.1fGiB", (NR>1?",":""), $2, $1/1073741824}'
+}
+
+check_boot_headroom() {
+  if [ ! -x "$DSV41_DIR/start.sh" ]; then
+    note OK gx_boot_headroom not_applicable "no mia-dsv41 at $DSV41_DIR"
+    return
+  fi
+  local names
+  if ! names=$(timeout 10 docker ps --format '{{.Names}}' 2>/dev/null); then
+    # Under load (e.g. mid model boot) docker can be slow: never call that "unloaded".
+    note WARN gx_boot_headroom unknown "docker ps failed or timed out; cannot tell whether $DSV41_HEAD_CONTAINER is up"
+    return
+  fi
+  if printf '%s\n' "$names" | grep -qx "$DSV41_HEAD_CONTAINER"; then
+    note OK gx_boot_headroom model_resident "$DSV41_HEAD_CONTAINER running; boot headroom not applicable"
+    return
+  fi
+  local model tp margin per_rank need avail detail level="OK" status="ok"
+  model=$(_dsv41_env MODEL_HOST "")
+  tp=$(_dsv41_env TP 2)
+  margin=$(_dsv41_env DSV41_BOOT_MARGIN_GIB "$DSV41_KIT_MARGIN_GIB")
+  per_rank=$(timeout 30 python3 "$DSV41_DIR/scripts/weight_budget.py" --model "$model" --tp "$tp" --json 2>/dev/null \
+    | python3 -c 'import json,sys; print(json.load(sys.stdin)["per_rank_bytes"])' 2>/dev/null)
+  if ! [[ "${per_rank:-}" =~ ^[0-9]+$ ]]; then
+    note WARN gx_boot_headroom unknown "weight budget unavailable for MODEL_HOST=${model:-unset}"
+    return
+  fi
+  need=$(awk -v b="$per_rank" -v m="$margin" 'BEGIN{printf "%.1f", b/1073741824 + m}')
+  avail=$(awk '/^MemAvailable:/{printf "%.1f", $2/1048576}' /proc/meminfo)
+  detail="MemAvailable=${avail}GiB need=${need}GiB (weights $(awk -v b="$per_rank" 'BEGIN{printf "%.1f", b/1073741824}') + margin ${margin})"
+  if awk -v a="$avail" -v n="$need" 'BEGIN{exit !(a < n)}'; then
+    level="WARN"; status="insufficient"
+    detail="$detail; gx-auto/gx-max cannot load until $(awk -v a="$avail" -v n="$need" 'BEGIN{printf "%.1f", n-a}')GiB is freed; top anon: $(_top_anon)"
+  fi
+  note "$level" gx_boot_headroom "$status" "$detail"
+  if awk -v m="$margin" -v k="$DSV41_KIT_MARGIN_GIB" 'BEGIN{exit !(m < k)}'; then
+    note WARN gx_boot_margin lowered "DSV41_BOOT_MARGIN_GIB=${margin} in $DSV41_DIR/.env is below the kit default ${DSV41_KIT_MARGIN_GIB}"
+  fi
+}
+
 # --------------------------------------------------------------- main --
 main() {
   log_line INFO run start "gx-hostwatch cycle beginning"
@@ -247,6 +310,7 @@ main() {
   check_responsiveness
   check_memory
   check_swap
+  check_boot_headroom
 
   local overall="ok"
   [ "$WARN_COUNT" -gt 0 ] && overall="degraded"
