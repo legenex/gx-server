@@ -99,6 +99,8 @@ models/
 # ...except the alias -> model registry (config, no weights; D-038)
 !legenex/models/
 !legenex/models/registry.json
+# ...and the reviewed vLLM overlay of the dsv4-flash kit (Python source, vllm/models/deepseek_v4)
+!legenex/models/dsv4-flash/upstream-overlay/vllm/models/
 /srv/
 # --- generated media / ComfyUI output ---
 output/
