@@ -94,8 +94,8 @@ _EVENT_BUFFER = 400
 #: Job records kept (memory and the optional history file).
 _HISTORY_KEEP = 25
 
-#: MemAvailable must return to within this many GiB of the pre-start level on
-#: BOTH nodes before a release is called clean. The engine pins ~105 GiB per
+#: MemAvailable must return to no less than this many GiB below the pre-start level
+#: on BOTH nodes before a release is called clean (more than before is fine). The engine pins ~105 GiB per
 #: node; anything still resident is a leak, not noise.
 _MEM_RETURN_TOLERANCE_GIB = 5.0
 
@@ -761,7 +761,10 @@ class GxMaxLifecycle:
                     if pre is None:
                         continue  # no baseline (probe failed pre-start): cannot judge
                     now = self._read_mem_gib(node)
-                    if now is None or abs(now - pre) > _MEM_RETURN_TOLERANCE_GIB:
+                    # Only a shortfall is a leak. A node can come back with MORE than it
+                    # had before the start (the boot pushed idle desktop pages to swap;
+                    # 2026-10-15: 113.2 vs 107.3 GiB was wrongly flagged as a warning).
+                    if now is None or now < pre - _MEM_RETURN_TOLERANCE_GIB:
                         ok = False
                         break
             if ok or time.time() >= deadline:

@@ -391,6 +391,21 @@ class TestRelease(LifecycleTestBase):
         self.assertEqual(job["outcome"], "release_warning")
         self.assertIn("memory did not return", job["error"])
 
+    def test_release_with_more_memory_than_pre_start_is_clean(self):
+        # The boot pushed idle pages to swap, so the node returns with more free memory
+        # than before the start. That is not a leak.
+        self.write_start("#!/usr/bin/env bash\nexit 0\n")
+        self.write_stop()
+        self.go_healthy_after(0.2)
+        lc = self.make()
+        lc.acquire(timeout=15)
+        self.assertIs(lc.status().state, State.READY)
+        _StubUpstream.healthy = False
+        self.mem["node1"] = self.mem["node1"] + 6.0
+        lc.release()
+        job = lc.events()["history"][-1]
+        self.assertEqual(job["outcome"], "released")
+
     def test_release_waits_for_memory_return_when_slow(self):
         self.write_start("#!/usr/bin/env bash\nexit 0\n")
         self.write_stop()
