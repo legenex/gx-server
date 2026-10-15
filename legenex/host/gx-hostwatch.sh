@@ -29,8 +29,13 @@
 #      requirement (weight budget per rank + DSV41_BOOT_MARGIN_GIB). GX was down
 #      2026-10-14..15 because a resident desktop session left ~107 GiB against
 #      111.5 GiB needed, while check 4 (30 GiB floor) said OK. WARN names the
-#      largest anonymous-memory consumers; a margin below the kit default is
-#      reported, never changed.
+#      largest anonymous-memory consumers (leaf user cgroups and docker
+#      container scopes). A margin below the kit default (read from start.sh)
+#      is reported, never changed: as a level=INFO line (check=gx_boot_margin)
+#      that names the kit requirement but does not count towards warn=, so a
+#      deliberately lowered margin does not keep the summary permanently
+#      "degraded" and mask new WARNs. It stays visible in every cycle's log
+#      and in the summary as info=N.
 #
 # WHAT THIS SCRIPT DELIBERATELY DOES NOT DO
 # ------------------------------------------
@@ -39,10 +44,13 @@
 #     grep-able ALERT line. Automated remediation and the hardware/software
 #     watchdog question are separate, deliberately human-gated efforts.
 #   * No third-party dependencies. Bash + coreutils + awk, all present on a
-#     bare Ubuntu install. `tailscale` and `curl` are used opportunistically
-#     (already present on this host) with graceful degradation if missing.
-#   * No root. Every check here reads /proc, calls `systemctl is-active`
-#     (read-only, works unprivileged), or opens a plain TCP socket.
+#     bare Ubuntu install. `tailscale`, `curl`, `docker` and `python3` are
+#     used opportunistically (already present on this host; check 5 needs
+#     docker + python3), each call timeout-wrapped, with graceful degradation
+#     (WARN unknown / not_applicable) if missing or slow.
+#   * No root. Every check here reads /proc or /sys/fs/cgroup (world-readable
+#     memory.stat), calls `systemctl is-active` / `docker ps` (read-only,
+#     works unprivileged for a docker-group user), or opens a plain TCP socket.
 #
 # EVERY external call is wrapped in `timeout` so a wedged target cannot make
 # the watchdog itself hang - that would defeat the point.
@@ -73,7 +81,7 @@ SWAPFILE_NAME="${GX_HOSTWATCH_SWAPFILE_NAME:-/swapfile-sglang}"
 SWAPFILE_MIN_GIB="${GX_HOSTWATCH_SWAPFILE_MIN_GIB:-47}"   # L-8: keep 48G, recover-node2.sh uses the same >=47 tolerance
 DSV41_DIR="${GX_HOSTWATCH_DSV41_DIR:-$(cd "$(dirname "$(readlink -f "$0")")/../.." && pwd)/mia-dsv41}"
 DSV41_HEAD_CONTAINER="${GX_HOSTWATCH_DSV41_HEAD:-dsv41-exl3-head}"
-DSV41_KIT_MARGIN_GIB=12   # mia-dsv41 start.sh default (headless boot)
+DSV41_KIT_MARGIN_FALLBACK_GIB=12   # only if mia-dsv41/start.sh's own default cannot be read
 
 mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
 
@@ -91,6 +99,7 @@ log_line() {
 WARN_COUNT=0
 CRIT_COUNT=0
 OK_COUNT=0
+INFO_COUNT=0   # standing reminders: logged every cycle, never degrade the summary
 
 note() {
   # note LEVEL CHECK STATUS DETAIL
@@ -99,6 +108,7 @@ note() {
     OK) OK_COUNT=$((OK_COUNT+1)) ;;
     WARN) WARN_COUNT=$((WARN_COUNT+1)) ;;
     CRIT) CRIT_COUNT=$((CRIT_COUNT+1)) ;;
+    INFO) INFO_COUNT=$((INFO_COUNT+1)) ;;
   esac
   log_line "$level" "$2" "$3" "$4"
 }
@@ -250,18 +260,80 @@ check_swap() {
 }
 
 # ------------------------------------------------- 5. GX boot headroom --
-_dsv41_env() {  # _dsv41_env KEY DEFAULT: value from mia-dsv41/.env (last assignment), else DEFAULT
+# _dsv41_env KEY DEFAULT: KEY's value from mia-dsv41/.env, else DEFAULT.
+# start.sh `source`s that file; this mirrors the bash semantics that matter for
+# the plain keys read here: the last assignment wins, a leading `export ` is
+# allowed, one pair of surrounding "..." or '...' quotes is removed, and an
+# unquoted value ends at the first whitespace (so `KEY=6  # note` gives 6). An
+# empty value falls back to DEFAULT, like start.sh's ${KEY:-default}.
+# NOT emulated: $VAR / $(...) expansion, backslash escapes, multi-line values
+# and conditional assignments - none are used for these keys.
+_dsv41_env() {
   local v
-  v=$(sed -n "s/^$1=//p" "$DSV41_DIR/.env" 2>/dev/null | tail -1 | tr -d '"'"'"'')
+  v=$(awk -v k="$1" '
+    { line = $0; sub(/\r$/, "", line); sub(/^[ \t]+/, "", line); sub(/^export[ \t]+/, "", line) }
+    index(line, k "=") == 1 {
+      v = substr(line, length(k) + 2); q = substr(v, 1, 1)
+      if (q == "\"" || q == "\047") { v = substr(v, 2); i = index(v, q); if (i) v = substr(v, 1, i - 1) }
+      else sub(/[ \t].*$/, "", v)
+    }
+    END { printf "%s", v }' "$DSV41_DIR/.env" 2>/dev/null)
   printf '%s' "${v:-$2}"
 }
 
-_top_anon() {  # the three user cgroups holding the most anonymous memory, "name=GiB"
-  local base="/sys/fs/cgroup/user.slice/user-$(id -u).slice/user@$(id -u).service"
-  [ -d "$base" ] || return 0
-  find "$base" -mindepth 2 -maxdepth 3 -name memory.stat 2>/dev/null | while read -r f; do
-    awk -v n="$(basename "$(dirname "$f")")" '/^anon /{printf "%d %s\n", $2, n}' "$f"
-  done | sort -rn | head -3 | awk '{printf "%s%s=%.1fGiB", (NR>1?",":""), $2, $1/1073741824}'
+# The kit's own default margin, read from start.sh's
+#   DSV41_BOOT_MARGIN_GIB="${DSV41_BOOT_MARGIN_GIB:-N}"
+# so this watchdog follows the kit instead of a copy; fallback if unreadable.
+_dsv41_kit_margin() {
+  local v
+  # shellcheck disable=SC2016  # the ${...} is literal text to match, not an expansion
+  v=$(sed -n 's/^[[:space:]]*DSV41_BOOT_MARGIN_GIB="\${DSV41_BOOT_MARGIN_GIB:-\([0-9][0-9.]*\)}".*/\1/p' \
+    "$DSV41_DIR/start.sh" 2>/dev/null | head -1)
+  [[ "$v" =~ ^[0-9]+(\.[0-9]+)?$ ]] || v="$DSV41_KIT_MARGIN_FALLBACK_GIB"
+  printf '%s' "$v"
+}
+
+# _cg_label CGROUP_DIR DOCKER_PS: a readable name for a cgroup; docker scopes
+# become container:<name> using `docker ps --no-trunc` "ID NAME" lines.
+_cg_label() {
+  local name id=""
+  name=$(basename "$1")
+  case "$1" in
+    */docker-*.scope|*/docker-*.scope/) id=${name#docker-}; id=${id%.scope} ;;
+    /sys/fs/cgroup/docker/*) id=$name ;;
+  esac
+  if [ -z "$id" ]; then
+    printf '%s' "$name"
+    return
+  fi
+  name=$(printf '%s\n' "$2" | awk -v i="$id" '$1==i{print $2; exit}')
+  printf 'container:%s' "${name:-${id:0:12}}"
+}
+
+# _top_anon DOCKER_PS: the three cgroups holding the most anonymous memory,
+# "name=GiB". Covers this user's systemd tree (desktop session apps) and docker
+# container scopes (the classic cause start.sh names: a stray GPU container).
+# Leaf cgroups only: a parent slice's memory.stat already includes its
+# children, so counting both would double-count. memory.stat is world-readable,
+# no root needed. Caveat: anon is process memory; driver-side CUDA unified-
+# memory allocations may not be charged to any cgroup.
+_top_anon() {
+  local uid base
+  uid=$(id -u)
+  base="/sys/fs/cgroup/user.slice/user-${uid}.slice/user@${uid}.service"
+  {
+    [ -d "$base" ] && find "$base" -name memory.stat 2>/dev/null
+    [ -d /sys/fs/cgroup/system.slice ] && \
+      find /sys/fs/cgroup/system.slice -mindepth 2 -maxdepth 2 -path '*/docker-*.scope/memory.stat' 2>/dev/null
+    [ -d /sys/fs/cgroup/docker ] && \
+      find /sys/fs/cgroup/docker -mindepth 2 -maxdepth 2 -name memory.stat 2>/dev/null   # cgroupfs driver
+  } | sed 's|memory\.stat$||' | LC_ALL=C sort -u \
+    | awk 'NR > 1 && index($0, prev) != 1 { print prev } { prev = $0 } END { if (NR) print prev }' \
+    | while IFS= read -r d; do
+        awk -v d="$d" '/^anon /{printf "%d %s\n", $2, d; exit}' "${d}memory.stat" 2>/dev/null
+      done | sort -rn | head -3 | while read -r bytes d; do
+        printf '%s=%s\n' "$(_cg_label "$d" "$1")" "$(awk -v b="$bytes" 'BEGIN{printf "%.1fGiB", b/1073741824}')"
+      done | paste -sd, -
 }
 
 check_boot_headroom() {
@@ -269,36 +341,46 @@ check_boot_headroom() {
     note OK gx_boot_headroom not_applicable "no mia-dsv41 at $DSV41_DIR"
     return
   fi
-  local names
-  if ! names=$(timeout 10 docker ps --format '{{.Names}}' 2>/dev/null); then
+  local ps_out
+  if ! ps_out=$(timeout 10 docker ps --no-trunc --format '{{.ID}} {{.Names}}' 2>/dev/null); then
     # Under load (e.g. mid model boot) docker can be slow: never call that "unloaded".
     note WARN gx_boot_headroom unknown "docker ps failed or timed out; cannot tell whether $DSV41_HEAD_CONTAINER is up"
     return
   fi
-  if printf '%s\n' "$names" | grep -qx "$DSV41_HEAD_CONTAINER"; then
+  if printf '%s\n' "$ps_out" | awk -v n="$DSV41_HEAD_CONTAINER" '$2==n{f=1} END{exit !f}'; then
     note OK gx_boot_headroom model_resident "$DSV41_HEAD_CONTAINER running; boot headroom not applicable"
     return
   fi
-  local model tp margin per_rank need avail detail level="OK" status="ok"
-  model=$(_dsv41_env MODEL_HOST "")
+  local model tp kit margin per_rank weights need kit_need avail detail level="OK" status="ok"
+  model=$(_dsv41_env MODEL_HOST "$DSV41_DIR/model")   # start.sh: ${MODEL_HOST:-$SCRIPT_DIR/model}
   tp=$(_dsv41_env TP 2)
-  margin=$(_dsv41_env DSV41_BOOT_MARGIN_GIB "$DSV41_KIT_MARGIN_GIB")
-  per_rank=$(timeout 30 python3 "$DSV41_DIR/scripts/weight_budget.py" --model "$model" --tp "$tp" --json 2>/dev/null \
-    | python3 -c 'import json,sys; print(json.load(sys.stdin)["per_rank_bytes"])' 2>/dev/null)
-  if ! [[ "${per_rank:-}" =~ ^[0-9]+$ ]]; then
-    note WARN gx_boot_headroom unknown "weight budget unavailable for MODEL_HOST=${model:-unset}"
+  kit=$(_dsv41_kit_margin)
+  margin=$(_dsv41_env DSV41_BOOT_MARGIN_GIB "$kit")
+  if ! [[ "$margin" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+    note WARN gx_boot_headroom unknown "DSV41_BOOT_MARGIN_GIB=${margin} in $DSV41_DIR/.env is not a number"
     return
   fi
+  per_rank=$(timeout 30 python3 "$DSV41_DIR/scripts/weight_budget.py" --model "$model" --tp "$tp" --json 2>/dev/null \
+    | timeout 10 python3 -c 'import json,sys; print(json.load(sys.stdin)["per_rank_bytes"])' 2>/dev/null)
+  if ! [[ "${per_rank:-}" =~ ^[0-9]+$ ]]; then
+    note WARN gx_boot_headroom unknown "weight budget unavailable for MODEL_HOST=${model}"
+    return
+  fi
+  weights=$(awk -v b="$per_rank" 'BEGIN{printf "%.1f", b/1073741824}')
   need=$(awk -v b="$per_rank" -v m="$margin" 'BEGIN{printf "%.1f", b/1073741824 + m}')
   avail=$(awk '/^MemAvailable:/{printf "%.1f", $2/1048576}' /proc/meminfo)
-  detail="MemAvailable=${avail}GiB need=${need}GiB (weights $(awk -v b="$per_rank" 'BEGIN{printf "%.1f", b/1073741824}') + margin ${margin})"
+  detail="MemAvailable=${avail}GiB need=${need}GiB (weights ${weights} + margin ${margin})"
   if awk -v a="$avail" -v n="$need" 'BEGIN{exit !(a < n)}'; then
     level="WARN"; status="insufficient"
-    detail="$detail; gx-auto/gx-max cannot load until $(awk -v a="$avail" -v n="$need" 'BEGIN{printf "%.1f", n-a}')GiB is freed; top anon: $(_top_anon)"
+    detail="$detail; gx-auto/gx-max cannot load until $(awk -v a="$avail" -v n="$need" 'BEGIN{printf "%.1f", n-a}')GiB is freed; top anon: $(_top_anon "$ps_out")"
   fi
   note "$level" gx_boot_headroom "$status" "$detail"
-  if awk -v m="$margin" -v k="$DSV41_KIT_MARGIN_GIB" 'BEGIN{exit !(m < k)}'; then
-    note WARN gx_boot_margin lowered "DSV41_BOOT_MARGIN_GIB=${margin} in $DSV41_DIR/.env is below the kit default ${DSV41_KIT_MARGIN_GIB}"
+  if awk -v m="$margin" -v k="$kit" 'BEGIN{exit !(m < k)}'; then
+    # A standing, deliberate configuration choice, not a new fault: INFO keeps it
+    # in every cycle's log (and info= in the summary) without making the summary
+    # "degraded" forever, which would mask genuinely new WARNs.
+    kit_need=$(awk -v b="$per_rank" -v k="$kit" 'BEGIN{printf "%.1f", b/1073741824 + k}')
+    note INFO gx_boot_margin lowered "DSV41_BOOT_MARGIN_GIB=${margin} in $DSV41_DIR/.env is below the kit default ${kit}; kit requirement weights ${weights} + ${kit} = ${kit_need}GiB, MemAvailable ${avail}GiB $(awk -v a="$avail" -v n="$kit_need" 'BEGIN{ if (a < n) printf "is %.1fGiB short of it", n-a; else printf "meets it" }'); reported only, never changed here"
   fi
 }
 
@@ -319,7 +401,9 @@ main() {
   # A single, unambiguous, grep-able line for alerting:
   #   grep 'check=summary' -> then look at status=
   #   grep '^ALERT ' -> only appears when something is not OK.
-  log_line INFO summary "$overall" "ok=${OK_COUNT} warn=${WARN_COUNT} crit=${CRIT_COUNT}"
+  # info= goes last so the "warn=0"/"crit=0" substring checks in control-ui
+  # views.py are unaffected; INFO never changes $overall.
+  log_line INFO summary "$overall" "ok=${OK_COUNT} warn=${WARN_COUNT} crit=${CRIT_COUNT} info=${INFO_COUNT}"
   if [ "$overall" != "ok" ]; then
     printf 'ALERT ts=%s status=%s ok=%s warn=%s crit=%s (see %s)\n' \
       "$(_ts)" "$overall" "$OK_COUNT" "$WARN_COUNT" "$CRIT_COUNT" "$LOG_FILE" | tee -a "$LOG_FILE" >&2

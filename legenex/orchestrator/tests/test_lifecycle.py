@@ -515,6 +515,9 @@ class TestRelease(LifecycleTestBase):
         job = lc.events()["history"][-1]
         self.assertEqual(job["outcome"], "release_warning")
         self.assertIn("memory did not return", job["error"])
+        # One-sided: the message says "below", never a symmetric +/- band.
+        self.assertIn("more than 5.0 GiB below", job["error"])
+        self.assertNotIn("+/-", job["error"])
 
     def test_release_with_more_memory_than_pre_start_is_clean(self):
         # The boot pushed idle pages to swap, so the node returns with more free memory
