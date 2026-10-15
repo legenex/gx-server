@@ -725,14 +725,14 @@ class GxMaxLifecycle:
                 log.warning("stop.sh exited %s: %s", proc.returncode, (proc.stdout or "")[-500:])
                 outcome, rel_err = "release_warning", f"stop.sh exited {proc.returncode}"
 
-            # Verify BOTH containers exited and memory returned to the
-            # pre-start level (+- the tolerance) on BOTH nodes.
+            # Verify BOTH containers exited and memory returned on BOTH nodes to
+            # no more than the tolerance below the pre-start level.
             mem_ok = self._await_memory_return()
             if not mem_ok:
                 outcome = "release_warning" if outcome == "released" else outcome
                 rel_err = (rel_err + "; " if rel_err else "") + (
                     "memory did not return to the pre-start level on both nodes "
-                    f"(+/- {_MEM_RETURN_TOLERANCE_GIB} GiB)"
+                    f"(still more than {_MEM_RETURN_TOLERANCE_GIB} GiB below it, or unreadable)"
                 )
         except Exception as exc:  # noqa: BLE001
             log.error("gx-max release failed: %r", exc)
