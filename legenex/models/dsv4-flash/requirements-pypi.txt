@@ -1,0 +1,17 @@
+# requirements-pypi.txt — the PyPI wheels the runtime image installs, by exact
+# file and sha256 (pip --require-hashes --no-index --no-deps). build-image.sh
+# downloads each listed file to the vendor cache, checks the hash itself, and
+# the Dockerfile installs them with the network disabled. Hashes are copied
+# from the PyPI JSON API for the exact cp312 / linux-aarch64 files.
+#
+# The five pins of the reviewed recipe:
+cuda-python==13.3.1 \
+    --hash=sha256:280b014139ab447b6dd70a377db1596f310d6e887d9d342e6651b919ec145fb3
+nvidia-cutlass-dsl==4.5.2 \
+    --hash=sha256:68ed1b63ca74aae87955012da9dfd7fdaae471329d0028b229b841c7192ccf52
+nvidia-cutlass-dsl-libs-base==4.5.2 \
+    --hash=sha256:d2a3c412287e356fbe48fe9f845d6d33cd35dea5e20d7e4f628c20957967cacd
+nvidia-cutlass-dsl-libs-cu13==4.5.2 \
+    --hash=sha256:3032405dff28892340f96b467e744a822079cae454dce534fc17b77e85190e42
+apache-tvm-ffi==0.1.9 \
+    --hash=sha256:87cacce81df55685fc6a76e1e3c5db1200e85e87bf5974b692c59d131b7bc622

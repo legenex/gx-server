@@ -1,0 +1,16 @@
+[project]
+name = "gx-wob-probe"
+version = "1.0.0"
+description = "GX: log a sha256 of the loaded attn.wo_b tensors on every TP rank (overlay proof)"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+
+[project.entry-points."vllm.general_plugins"]
+gx_wob_probe = "gx_wob_probe:register"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["gx_wob_probe"]

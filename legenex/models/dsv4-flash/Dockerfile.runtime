@@ -1,0 +1,106 @@
+# Dockerfile.runtime — GX DeepSeek-V4-Flash-0731 (abliterated) vLLM runtime, arm64 / GB10.
+#
+# Hardened rebuild of the LOGIC of Anemll/dspark-vllm-gx10 v0.1.1
+# docker/Dockerfile.runtime (reviewed). Differences, all deliberate:
+#   * FROM the official vllm/vllm-openai v0.25.1 arm64 manifest BY DIGEST
+#     (pins.conf), never ghcr.io/anemll images;
+#   * every input comes from the vendor directory of the build context, whose
+#     sha256s build-image.sh checked; pip runs --no-index, the wheels with
+#     --require-hashes, and the whole build runs with `docker build --network=none`;
+#   * BUILD_NVEP=0 before FlashInfer, and the NCCL fingerprint must be
+#     identical before and after (security review condition 3);
+#   * the overlay target path is asserted before the COPY, and every overlay
+#     file is hash-checked after it;
+#   * telemetry/offline env baked in; no dashboard; no --trust-remote-code
+#     anywhere (the launch flags live in start.sh).
+#
+# Built only by build-image.sh. No `# syntax=` line on purpose: that would make
+# BuildKit pull a frontend image from the network.
+
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+
+ARG BASE_VLLM_SITE=/usr/local/lib/python3.12/dist-packages/vllm
+ARG B12X_FILE
+ARG FLASHINFER_FILE
+ARG GX_KIT_COMMIT=unknown
+
+LABEL org.opencontainers.image.title="gx-dsv4-flash-vllm" \
+      org.opencontainers.image.description="GX two-node GB10 DSpark vLLM runtime for DeepSeek-V4-Flash-0731 (abliterated overlay)" \
+      org.opencontainers.image.licenses="Apache-2.0 AND MIT" \
+      ai.legenex.gx.kit-commit="${GX_KIT_COMMIT}" \
+      ai.legenex.gx.recipe="Anemll/dspark-vllm-gx10 v0.1.1 @ 47503f8e (logic only, reviewed)"
+
+ENV FLASHINFER_DISABLE_VERSION_CHECK=1 \
+    BUILD_NVEP=0 \
+    BUILD_NIXL_EP=0 \
+    BUILD_NCCL_EP=0 \
+    PIP_NO_INDEX=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    VLLM_NO_USAGE_STATS=1 \
+    DO_NOT_TRACK=1 \
+    HF_HUB_OFFLINE=1 \
+    TRANSFORMERS_OFFLINE=1 \
+    HF_HUB_DISABLE_TELEMETRY=1
+
+COPY tools/nccl_fingerprint.py /opt/gx-build/nccl_fingerprint.py
+
+# 0. The overlay is copied to a FIXED path below; prove that path is the one
+#    this interpreter imports vLLM from, and record NCCL before anything moves.
+RUN set -eu; \
+    site="$(python3 -c 'import os, vllm; print(os.path.dirname(vllm.__file__))')"; \
+    echo "vllm site: ${site}"; \
+    test "${site}" = "${BASE_VLLM_SITE}"; \
+    python3 /opt/gx-build/nccl_fingerprint.py > /opt/gx-build/nccl.before.json; \
+    python3 -m pip --version
+
+# 1. Vendored, hash-checked inputs (bind mount: the wheels never enter a layer).
+RUN --mount=type=bind,source=vendor,target=/opt/gx-vendor \
+    set -eux; \
+    cd /opt/gx-vendor; \
+    sha256sum -c SHA256SUMS; \
+    python3 -m pip install --no-index --no-deps --require-hashes \
+        --find-links /opt/gx-vendor -r /opt/gx-vendor/requirements-pypi.txt; \
+    rm -rf /tmp/gx-src; mkdir -p /tmp/gx-src; \
+    tar -xzf "/opt/gx-vendor/${B12X_FILE}" -C /tmp/gx-src; \
+    tar -xzf "/opt/gx-vendor/${FLASHINFER_FILE}" -C /tmp/gx-src; \
+    python3 -m pip install --no-index --no-deps --no-build-isolation /tmp/gx-src/b12x-*/; \
+    python3 -m pip install --no-index --no-deps --no-build-isolation --force-reinstall \
+        /tmp/gx-src/flashinfer-*/; \
+    rm -rf /tmp/gx-src; \
+    cp /opt/gx-vendor/SHA256SUMS /opt/gx-build/vendor.SHA256SUMS; \
+    cp /opt/gx-vendor/requirements-pypi.txt /opt/gx-build/requirements-pypi.txt
+
+# 2. NCCL must be exactly what the base image shipped.
+RUN set -eu; \
+    python3 /opt/gx-build/nccl_fingerprint.py > /opt/gx-build/nccl.after.json; \
+    python3 /opt/gx-build/nccl_fingerprint.py --compare \
+        /opt/gx-build/nccl.before.json /opt/gx-build/nccl.after.json
+
+# 3. The reviewed Python overlay, merged into the installed vLLM, then verified
+#    file by file against the hashes recorded at review time.
+COPY upstream-overlay/vllm/ /usr/local/lib/python3.12/dist-packages/vllm/
+COPY upstream-overlay/OVERLAY.SHA256SUMS /opt/gx-build/OVERLAY.SHA256SUMS
+COPY upstream-overlay/LICENSE upstream-overlay/LICENSE.MIT upstream-overlay/NOTICE upstream-overlay/CREDITS.md \
+     /usr/share/licenses/gx-dsv4-flash/
+COPY upstream-overlay/LICENSES/Apache-2.0.txt /usr/share/licenses/gx-dsv4-flash/Apache-2.0.txt
+RUN set -eu; cd /usr/local/lib/python3.12/dist-packages && sha256sum -c /opt/gx-build/OVERLAY.SHA256SUMS
+
+# 4. GX overlay-proof plugin (inactive unless GX_WOB_DIGEST=1).
+COPY gx_probe /opt/gx-probe
+RUN set -eu; \
+    python3 -m pip install --no-index --no-deps --no-build-isolation /opt/gx-probe; \
+    rm -rf /opt/gx-probe/build /opt/gx-probe/*.egg-info
+
+# 5. Provenance: what is actually installed, recorded inside the image.
+COPY tools/provenance.py /opt/gx-build/provenance.py
+RUN set -eu; python3 /opt/gx-build/provenance.py > /opt/gx-build/provenance.json
+RUN set -eu; cat /opt/gx-build/provenance.json; \
+    python3 -c "import json; p=json.load(open('/opt/gx-build/provenance.json')); \
+assert p['flashinfer-python'] and p['flashinfer-python'].startswith('0.6.15'), p; \
+assert p['b12x'] == '0.15.3', p; assert p['gx-wob-probe'] == '1.0.0', p; \
+assert p['cuda-python'] == '13.3.1' and p['nvidia-cutlass-dsl'] == '4.5.2' and p['apache-tvm-ffi'] == '0.1.9', p"
+
+ENTRYPOINT []
+CMD ["bash"]

@@ -1,0 +1,11 @@
+# vendor-files.txt — "<file> <sha256> <url>" for every artefact build-image.sh
+# downloads into the vendor cache. The hash is checked before the file is
+# copied into the build context; a mismatch aborts the build. Wheels must also
+# appear (with the same hash) in requirements-pypi.txt.
+b12x-7dc6fb8fcc6446ea093537d1657df81985fa5f43.tar.gz 18a6b57739a493d5e6cca9f4f7bd91bf11d765905a43fa6dcbfc5b92d42a15a6 https://codeload.github.com/local-inference-lab/b12x/tar.gz/7dc6fb8fcc6446ea093537d1657df81985fa5f43
+flashinfer-0472b9b3f2fba11b463f8526f390297d52a8aad7.tar.gz d6f79757fd97bae845fd4ba763abe9643ad581376de15e161295e4b14e8ae865 https://codeload.github.com/flashinfer-ai/flashinfer/tar.gz/0472b9b3f2fba11b463f8526f390297d52a8aad7
+cuda_python-13.3.1-py3-none-any.whl 280b014139ab447b6dd70a377db1596f310d6e887d9d342e6651b919ec145fb3 https://files.pythonhosted.org/packages/38/31/7ff3f7768eded7535c621abc2fecb9d181a34ea4cae3afe682feb796f242/cuda_python-13.3.1-py3-none-any.whl
+nvidia_cutlass_dsl-4.5.2-py3-none-any.whl 68ed1b63ca74aae87955012da9dfd7fdaae471329d0028b229b841c7192ccf52 https://files.pythonhosted.org/packages/f0/15/575d7df4fe2f3406f1cfc68be72aeff2834f8a696daf1cd5bee8017e4507/nvidia_cutlass_dsl-4.5.2-py3-none-any.whl
+nvidia_cutlass_dsl_libs_base-4.5.2-cp312-cp312-manylinux_2_28_aarch64.whl d2a3c412287e356fbe48fe9f845d6d33cd35dea5e20d7e4f628c20957967cacd https://files.pythonhosted.org/packages/b1/ef/e827e3c67d72adbf4e8f680bdf03b1b67723d9e1ae7c3d0a1751f39f69ce/nvidia_cutlass_dsl_libs_base-4.5.2-cp312-cp312-manylinux_2_28_aarch64.whl
+nvidia_cutlass_dsl_libs_cu13-4.5.2-cp312-cp312-manylinux_2_28_aarch64.whl 3032405dff28892340f96b467e744a822079cae454dce534fc17b77e85190e42 https://files.pythonhosted.org/packages/21/e5/aeb570713a7bd6c2cb08102c2ebe6de234ef1bbc276d1af4643266cd71a8/nvidia_cutlass_dsl_libs_cu13-4.5.2-cp312-cp312-manylinux_2_28_aarch64.whl
+apache_tvm_ffi-0.1.9-cp312-abi3-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl 87cacce81df55685fc6a76e1e3c5db1200e85e87bf5974b692c59d131b7bc622 https://files.pythonhosted.org/packages/7a/4a/b469bcb2e1014cb84d336d2a59f42958a058251c577a4c2680cacad346e2/apache_tvm_ffi-0.1.9-cp312-abi3-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl
