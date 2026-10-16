@@ -70,7 +70,7 @@
       "commit": "752a3a504485790a2e8491cacbb35c137339ad34",
       "commit_is": "vLLM v0.25.1 base (the kit itself lives in this repo)",
       "image": "gx/dsv4-flash-vllm:0.25.1-b12x7dc6fb8f-fi0472b9b3-gx1",
-      "image_id": "",
+      "image_id": "sha256:ce6ccb53ecc9362639da1f529e9161186e030176e6067ae4bf3503170e95fc87",
       "base_image": "vllm/vllm-openai@sha256:2cc49b81319f7a66a33dd8bd63a7bfddae079122b33ce51989b6828a1f038c37",
       "pins": {
         "vllm": "0.25.1 @ 752a3a504485790a2e8491cacbb35c137339ad34",
@@ -86,7 +86,27 @@
       "start": "./start.sh",
       "stop": "./stop.sh",
       "status": "./start.sh status",
-      "notes": "vLLM 0.25.1 TP=2 nnodes=2 mp, --moe-backend flashinfer_b12x, fp8 KV, block 256, DSpark k=5, tokenizer/reasoning/tool parsers deepseek_v4, no --trust-remote-code. API 127.0.0.1:8890; NCCL/Gloo/VLLM_HOST_IP on rail 1 (rocep1s0f0). Weights live on gx10-02; the head mounts them over a read-only NFSv4 export bound to 192.168.100.11 (client 192.168.100.10 only)."
+      "notes": "vLLM 0.25.1 TP=2 nnodes=2 mp, --moe-backend flashinfer_b12x, fp8 KV, block 256, DSpark k=5, tokenizer/reasoning/tool parsers deepseek_v4, no --trust-remote-code. API 127.0.0.1:8890; NCCL/Gloo/VLLM_HOST_IP on rail 1 (rocep1s0f0). Weights live on gx10-02; the head mounts them over a read-only NFSv4 export bound to 192.168.100.11 (client 192.168.100.10 only).",
+      "image_build": {
+        "built_on": "gx10-02",
+        "built_at": "2026-10-16T08:01:26Z",
+        "kit_commit": "823aa5c8f9518f6ba4fc0d6ff37db7b0f55ac5fc",
+        "base_image_id": "sha256:30a38a1d74a17365eca400e83ffd885b250e0c8c0d3c5b508afa8c412d2ddf95",
+        "size_bytes": 19812191537,
+        "installed": {
+          "vllm": "0.25.1",
+          "flashinfer-python": "0.6.15",
+          "b12x": "0.15.3",
+          "cuda-python": "13.3.1",
+          "nvidia-cutlass-dsl": "4.5.2",
+          "apache-tvm-ffi": "0.1.9",
+          "torch": "2.11.0+cu130",
+          "nvidia-nccl-cu13": "2.28.9 (unchanged from base)"
+        },
+        "present_on": [
+          "gx10-02"
+        ]
+      }
     }
   },
   "models": {
@@ -303,8 +323,8 @@
         ]
       },
       "tracking": {
-        "files_preserved": "downloading 2026-10-16 01:08 SAST; VERIFY.json pending",
-        "runtime_installed": false,
+        "files_preserved": "gx10-02 /srv/models/dsv4-flash-0731-abliterated/21bd923c: 60/60 files verified (VERIFY.json 2026-10-15T23:53:03Z), 0750/0640, overlay order proof OK 2026-10-16",
+        "runtime_installed": "image sha256:ce6ccb53ecc9362639da1f529e9161186e030176e6067ae4bf3503170e95fc87 on gx10-02 only; gx10-01 needs ~20 GB more free disk before docker load",
         "loaded": false,
         "last_test": null,
         "last_restore": null,

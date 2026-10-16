@@ -56,6 +56,21 @@ out-of-pool overhead). `start.sh` refuses a node that would end below 15 GiB
 and fails the start if either node is below it after load. If the head is
 busy, free memory first (e.g. stop test databases) — never lower the floor.
 
+## Image (built 2026-10-16 on gx10-02, offline)
+
+`gx/dsv4-flash-vllm:0.25.1-b12x7dc6fb8f-fi0472b9b3-gx1` =
+`sha256:ce6ccb53ecc9362639da1f529e9161186e030176e6067ae4bf3503170e95fc87`
+(19.8 GB; base `sha256:30a38a1d…` = vllm/vllm-openai v0.25.1 arm64). Installed:
+vllm 0.25.1, flashinfer-python 0.6.15 (built from 0472b9b3), b12x 0.15.3
+(7dc6fb8f), cuda-python 13.3.1, cutlass-dsl 4.5.2, tvm-ffi 0.1.9 (the base
+already ships these five at the pinned versions; the hashes were still
+checked), torch 2.11.0+cu130, nvidia-nccl-cu13 2.28.9 (unchanged). All 12
+overlay files verified in the image; the overlay-proof plugin is registered.
+It is on gx10-02 only: gx10-01 had ~33 GB free, and loading 19.8 GB would leave
+< 15 GB. Free >= ~20 GB on gx10-01 first (owner action), then on gx10-01:
+`ssh legenex-02@10.60.21.41 'docker save gx/dsv4-flash-vllm:0.25.1-b12x7dc6fb8f-fi0472b9b3-gx1' | docker load`
+and check `docker image inspect -f '{{.Id}}'` equals the id above.
+
 ## Activation runbook (lead, inside 01:00-05:00 SAST)
 
 Prerequisites (once, any time): the image on BOTH nodes with the id pinned in
