@@ -43,7 +43,11 @@ from .autoroute import request_fingerprint
 from .config import CONFIG, Config
 from .health import AliasState, ClusterHealth, TierStatus
 from .lifecycle import AcquisitionError, GxMaxLifecycle, LifecycleStatus, State
-from .profiles import Registry, RegistryError, load_registry
+from .profiles import DeploymentSpec, Registry, RegistryError, load_registry
+from . import modes as M
+from .identity import IdentityPolicy, identity_from_headers, load_policy
+from .deployments import ActiveDeploymentStore, DeploymentManager, LifecycleProxy, fixed_profile_for
+from .switching import ModelSwitcher, SwitchError, SwitchHistory, SwitchLock
 from .sse import DeltaSplitter
 from .reasoning_guard import StreamGuard, guard_completion_body, thinking_requested
 from .scheduler import Scheduler
@@ -56,9 +60,12 @@ ROUTING_LOG = "gx.routing"
 _REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,96}$")
 _PRIORITY_RE = re.compile(r"^[a-z0-9-]{1,32}$")
 
-#: The two public aliases -- anything else is a 400, never a fallback.
+#: The public aliases -- anything else is a 400, never a fallback. gx-max and
+#: gx-auto keep their V4.1 semantics while the rollback deployment is active;
+#: on a mode-routing deployment all five are logical modes (D-053).
 ALIAS_DIRECT = "gx-max"
 ALIAS_AUTO = "gx-auto"
+PUBLIC_ALIASES = M.MODE_ALIASES
 
 
 class RoutingJournal:
@@ -232,7 +239,9 @@ def _attribution(headers: Any) -> dict[str, str]:
     priority = h("X-GX-Priority", SCHED.DEFAULT_PRIORITY).lower()
     if priority not in SCHED.PRIORITIES:
         priority = SCHED.DEFAULT_PRIORITY
+    # Raw claim; whether it counts is the identity policy's call (D-053).
     return {
+        "priority_header": h("X-GX-Priority", "").lower(),
         "project": h("X-GX-Project", SCHED.DEFAULT_PROJECT),
         "agent": h("X-GX-Agent", SCHED.DEFAULT_PROJECT),
         "task": h("X-GX-Task", ""),
@@ -251,6 +260,9 @@ class Handler(BaseHTTPRequestHandler):
     scheduler: Scheduler
     journal: RoutingJournal
     metrics: TextMetrics
+    identity_policy: IdentityPolicy = IdentityPolicy()
+    manager: "DeploymentManager | None" = None
+    switcher: "ModelSwitcher | None" = None
 
     # ---------------------------------------------------------------- helpers
     def log_message(self, fmt: str, *args: Any) -> None:  # noqa: A003
@@ -296,6 +308,53 @@ class Handler(BaseHTTPRequestHandler):
             self.close_connection = True
         return ok
 
+    def _operator_authorized(self) -> bool:
+        """Model-switching endpoints need the OPERATOR token as well (D-053):
+        the gateway holds the orchestrator key, so that key alone must never be
+        able to switch models."""
+        expected = self.cfg.operator_token()
+        presented = (self.headers.get("X-GX-Operator-Token") or "").strip()
+        ok = bool(expected) and bool(presented) and hmac.compare_digest(presented.encode(), expected.encode())
+        if not ok:
+            self._send_error_json(403 if expected else 503,
+                                  "operator token required" if expected else
+                                  "model switching is disabled: no operator token configured",
+                                  "operator_unauthorized", {"Connection": "close"})
+            self.close_connection = True
+        return ok
+
+    def _models_get(self, path: str) -> None:
+        mgr, sw = self.manager, self.switcher
+        if mgr is None or sw is None:
+            self._send_error_json(503, "deployment manager not configured", "not_configured")
+            return
+        if path == "/models/versions":
+            reg = self.registry
+            self._send_json(200, {"active": mgr.active_name, "data": [
+                {**d.as_dict(), "model_source": reg.model(d.model).source,
+                 "model_revision": reg.model(d.model).revision,
+                 "runtime_image": reg.runtime(d.runtime).image,
+                 "served_model_id": reg.runtime(d.runtime).served_model_id,
+                 "active": name == mgr.active_name}
+                for name, d in reg.deployments.items()]})
+        elif path == "/models/status":
+            st = self.lifecycle.status()
+            self._send_json(200, {"active": mgr.active_name, "lifecycle": st.as_dict(),
+                                  "switch": sw.current(), "scheduler_paused": self.scheduler.paused})
+        elif path == "/models/rollback-readiness":
+            from .validation import rollback_readiness  # noqa: PLC0415
+            facts = getattr(self, "host_facts", None)
+            if facts is None:
+                self._send_error_json(503, "host facts not configured", "not_configured")
+                return
+            self._send_json(200, {"active": mgr.active_name, "deployments": rollback_readiness(
+                self.registry, facts, sw.history(1000), mgr.active_name,
+                self.lifecycle.status().state.value)})
+        elif path == "/models/history":
+            self._send_json(200, {"data": sw.history(200)})
+        else:
+            self._send_error_json(404, f"no such path: {path}", "not_found")
+
     # ------------------------------------------------------------------- GET
     def do_GET(self) -> None:  # noqa: N802
         path = self.path.split("?", 1)[0].rstrip("/") or "/"
@@ -305,6 +364,11 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if not self._authorized():
+            return
+
+        if path.startswith("/models/"):
+            if self._operator_authorized():
+                self._models_get(path)
             return
 
         if path == "/health/detailed":
@@ -328,7 +392,7 @@ class Handler(BaseHTTPRequestHandler):
                             "created": now,
                             "owned_by": "gx-cluster",
                         }
-                        for alias in (ALIAS_DIRECT, ALIAS_AUTO)
+                        for alias in PUBLIC_ALIASES
                     ],
                 },
             )
@@ -386,11 +450,14 @@ class Handler(BaseHTTPRequestHandler):
         """The one model's state, shape and provenance (Control Center)."""
         st = self.lifecycle.status()
         reg = self.registry
-        model = reg.production_model()
-        runtime = reg.runtime(reg.alias(ALIAS_DIRECT).runtime)
+        dep = self.manager.active if self.manager is not None else None
+        model = reg.model(dep.model) if dep is not None else reg.production_model()
+        runtime = reg.runtime(dep.runtime if dep is not None else reg.alias(ALIAS_DIRECT).runtime)
         nodes = self.health.snapshot()
         return {
-            "id": self.cfg.gxmax_model_id,
+            "id": runtime.served_model_id if dep is not None else self.cfg.gxmax_model_id,
+            "deployment": dep.name if dep is not None else "legacy",
+            "modes": {n: m.as_dict() for n, m in reg.modes.items()} if dep is not None and dep.mode_routing else {},
             "uncensored": model.uncensored,
             "quant": model.quant,
             "vision": model.vision,
@@ -419,10 +486,7 @@ class Handler(BaseHTTPRequestHandler):
         return {
             "model": self._model_block(),
             "queue": self.scheduler.status(),
-            "aliases": {
-                ALIAS_DIRECT: {"last_request": last.get(ALIAS_DIRECT)},
-                ALIAS_AUTO: {"last_request": last.get(ALIAS_AUTO)},
-            },
+            "aliases": {alias: {"last_request": last.get(alias)} for alias in PUBLIC_ALIASES},
             "generated_at": time.time(),
         }
 
@@ -438,6 +502,21 @@ class Handler(BaseHTTPRequestHandler):
             return
         if not isinstance(payload, dict):
             self._send_error_json(400, "request body must be a JSON object", "invalid_request", NO_RETRY_HEADERS)
+            return
+
+        if path == "/models/activate":
+            if not self._operator_authorized():
+                return
+            if self.switcher is None:
+                self._send_error_json(503, "deployment manager not configured", "not_configured")
+                return
+            actor = f"operator@{self.client_address[0]}"
+            try:
+                rec = self.switcher.request(payload, actor=actor)
+            except SwitchError as exc:
+                self._send_error_json(exc.status, str(exc), exc.code, NO_RETRY_HEADERS)
+                return
+            self._send_json(202, {"status": "switching", "switch": rec})
             return
 
         if path == "/lifecycle/gx-max/acquire":
@@ -537,14 +616,18 @@ class Handler(BaseHTTPRequestHandler):
 
     def _handle_inference(self, path: str, payload: dict[str, Any]) -> None:
         requested = str(payload.get("model") or "").strip()
-        if requested not in (ALIAS_AUTO, ALIAS_DIRECT):
+        if requested not in PUBLIC_ALIASES:
             self._send_error_json(
                 400,
-                f"orchestrator handles only '{ALIAS_AUTO}' and '{ALIAS_DIRECT}'; "
+                f"orchestrator handles only {', '.join(PUBLIC_ALIASES)}; "
                 f"got '{requested}'. Send other traffic to the LiteLLM gateway directly.",
                 "invalid_model",
                 NO_RETRY_HEADERS,
             )
+            return
+        dep = self.manager.active if self.manager is not None else None
+        if (dep is not None and dep.mode_routing) or requested not in (ALIAS_AUTO, ALIAS_DIRECT):
+            self._serve_mode(path, payload, requested, dep)
             return
         if requested == ALIAS_AUTO:
             self._serve_auto(path, payload)
@@ -613,15 +696,23 @@ class Handler(BaseHTTPRequestHandler):
         return True
 
     def _scheduler_submit(self, request_id: str, attr: dict[str, str],
-                          profile_name: str, reasoning: str, payload: dict[str, Any]) -> "dict[str, Any] | None":
+                          profile_name: str, reasoning: str, payload: dict[str, Any],
+                          mode: str = "", bypass_pause: bool = False) -> "dict[str, Any] | None":
         record = {
             "id": request_id,
             "profile": profile_name,
             "reasoning": reasoning,
             "timeout": payload.get("gx_timeout"),
+            "mode": mode,
+            "bypass_pause": bypass_pause,
             **attr,
         }
         decision = self.scheduler.submit(record)
+        if decision.get("state") == SCHED.DECISION_REJECTED and decision.get("paused"):
+            # A model switch is draining the engine: a clear, retryable 503.
+            self._send_error_json(503, str(decision.get("reason")), "model_switch_in_progress",
+                                  {"Retry-After": "60"})
+            return None
         if decision.get("state") == SCHED.DECISION_REJECTED:
             # Queue full: 429 WITH the position (ARCHITECTURE-V41 §4).
             self._send_error_json(
@@ -677,15 +768,23 @@ class Handler(BaseHTTPRequestHandler):
 
     def _relay_phase(self, path: str, payload: dict[str, Any], request_id: str,
                      alias: str, profile_name: str, reasoning: str,
-                     decision_fields: dict[str, Any] | None, started: float) -> None:
+                     decision_fields: dict[str, Any] | None, started: float,
+                     *, mode: str = "", mode_priority: str = "") -> None:
         """Submit to the scheduler, wait for admission, relay, record.
 
         Split from the alias-specific front halves so gx-max and gx-auto
         share one well-tested relay path.
         """
         attr = _attribution(self.headers)
-        if not (self.headers.get("X-GX-Priority") or "").strip():
-            attr["priority"] = SCHED.priority_from_mode(profile_name)
+        # Priority comes from the AUTHENTICATED identity (D-053); a caller's
+        # X-GX-Priority counts only where the policy allows it.
+        identity = identity_from_headers(self.headers)
+        prio, prio_why = self.identity_policy.resolve(
+            identity, mode_priority or SCHED.priority_from_mode(profile_name),
+            attr.pop("priority_header", ""))
+        attr["priority"] = prio
+        bypass = bool(self.switcher is not None and self.switcher.validation_token_ok(
+            (self.headers.get("X-GX-Switch-Validation") or "").strip()))
         gate = self._gate_state
         assert gate is not None
         budget: B.ContextBudget = gate["budget"]
@@ -698,7 +797,8 @@ class Handler(BaseHTTPRequestHandler):
         # X-GX-Profile header -- that header only shapes the request. Engine
         # profile changes are administrative (lifecycle acquire/restart) or
         # gx-max. gx-max is unchanged.
-        if alias == ALIAS_AUTO:
+        if alias == ALIAS_AUTO or mode:
+            # Logical modes (D-053) never cycle the engine either.
             acquire_profile = self.lifecycle.current_profile or self.registry.default_profile().name
         else:
             acquire_profile = profile_name
@@ -706,7 +806,8 @@ class Handler(BaseHTTPRequestHandler):
         if not self._ensure_acquired(acquire_profile, attr, request_id):
             return
 
-        decision = self._scheduler_submit(request_id, attr, profile_name, reasoning, payload)
+        decision = self._scheduler_submit(request_id, attr, profile_name, reasoning, payload,
+                                          mode=mode, bypass_pause=bypass)
         if decision is None:
             return
 
@@ -744,19 +845,32 @@ class Handler(BaseHTTPRequestHandler):
             self._send_error_json(503, str(exc), "gx_max_unavailable")
             return
 
+        dep = self.manager.active if self.manager is not None else None
+        served_model = (self.registry.runtime(dep.runtime).served_model_id if dep is not None
+                        else self.cfg.gxmax_model_id)
+        upstream_base = (self.registry.runtime(dep.runtime).api if dep is not None
+                         else self.cfg.gxmax_base)
+        identity_headers = {
+            "X-GX-Deployment": dep.name if dep is not None else "legacy",
+            "X-GX-Served-Model": served_model,
+            "X-GX-Priority": prio,
+        }
+        if mode:
+            identity_headers["X-GX-Mode"] = mode
         self.lifecycle.begin_use()
         try:
             body = dict(payload)
-            body["model"] = self.cfg.gxmax_model_id
+            body["model"] = served_model
             # The reasoning mapping is decided ONCE (autoroute or profile
             # default) and injected verbatim -- never per-chunk negotiation.
             body["chat_template_kwargs"] = kwargs
-            url = f"{self.cfg.gxmax_base.rstrip('/')}{path[len('/v1'):]}"
+            url = f"{upstream_base.rstrip('/')}{path[len('/v1'):]}"
             outcome = self._relay(
                 url, body, budget=budget, request_id=request_id, started=started,
                 alias=alias, profile_name=profile_name, reasoning=reasoning,
                 record_id=request_id, queue_wait_ms=queue_wait_ms,
                 thinking=thinking_requested(kwargs),
+                extra_response_headers=identity_headers,
             )
         finally:
             self.lifecycle.end_use()
@@ -781,6 +895,11 @@ class Handler(BaseHTTPRequestHandler):
             "requested_output_tokens": budget.requested_output_tokens,
             "safe_output_tokens": budget.safe_output_tokens,
             "budget_status": budget.status,
+            "mode": mode or None,
+            "identity": identity or None,
+            "priority": prio,
+            "priority_reason": prio_why,
+            "deployment": identity_headers["X-GX-Deployment"],
             **outcome.as_dict(),
         }
         done["elapsed_ms"] = round((time.monotonic() - started) * 1000, 1)
@@ -824,6 +943,60 @@ class Handler(BaseHTTPRequestHandler):
             path, payload, request_id, ALIAS_AUTO, profile_name, reasoning,
             fields, started,
         )
+
+    # ------------------------------------------------------------ modes (D-053)
+    def _serve_mode(self, path: str, payload: dict[str, Any], alias: str,
+                    dep: "DeploymentSpec | None") -> None:
+        """The five aliases as logical modes of the ONE resident engine.
+
+        Server-owned reasoning (client attempts are stripped), the mode's
+        context admission and output ceiling, priority from identity, and
+        never an engine restart: the lifecycle is acquired with whatever
+        shape it already has.
+        """
+        started = time.monotonic()
+        request_id = self._request_id()
+        fingerprint = request_fingerprint(payload)
+        try:
+            decision = M.choose_mode(alias, payload, self.registry, headers=self.headers)
+            spec = self.registry.mode(decision.mode)
+            dialect = dep.dialect if dep is not None else "deepseek_v41"
+            kwargs = M.reasoning_kwargs(dialect, spec.reasoning, self.registry)
+        except RegistryError as exc:
+            self._send_error_json(400, str(exc), "invalid_mode", NO_RETRY_HEADERS,
+                                  **{"X-GX-Request-Id": request_id})
+            return
+        if alias == ALIAS_AUTO and decision.route is not None:
+            fields = decision.route.as_log_dict()
+            # The tool/output policy of gx-auto follows the chosen MODE.
+            fields["profile"] = "fast" if decision.mode == "fast" else "deep"
+            fields["allow_tools"] = bool(fields.get("allow_tools")) or decision.mode != "fast"
+            payload = apply_auto_policy(payload, fields)
+        body, overridden = M.shape_request(payload, spec, kwargs)
+        budget = M.mode_budget(body, spec, alias)
+        if budget.status == B.STATUS_OVERFLOW:
+            err = B.error_payload(budget, message=B.overflow_message(
+                budget, f"Mode {spec.name} ({alias}) admits at most {spec.max_context_tokens} tokens "
+                        f"of context; use a larger mode or shorten the input."))
+            err["error"]["mode"] = spec.name
+            self._send_json(400, err, {**NO_RETRY_HEADERS, "X-GX-Request-Id": request_id})
+            return
+        if budget.output_tokens is None:
+            # The engine window is larger than the mode's: always bound output.
+            budget = replace(budget, output_tokens=max(1, min(spec.max_output_tokens,
+                                                              budget.safe_output_tokens or 1)))
+        record = {
+            "event": "decision", "ts": time.time(), "request_id": request_id,
+            "fingerprint": fingerprint, "stream": bool(body.get("stream")),
+            **decision.as_log_dict(), "reasoning_kwargs": kwargs,
+            "client_overrides_removed": overridden,
+        }
+        logging.getLogger(ROUTING_LOG).info(json.dumps(record, default=str))
+        self.journal.write(record)
+        self._gate_state = {"spec": spec, "kwargs": kwargs, "budget": budget}
+        profile = self.lifecycle.current_profile or ""
+        self._relay_phase(path, body, request_id, alias, profile or spec.name, spec.reasoning,
+                          decision.as_log_dict(), started, mode=spec.name, mode_priority=spec.priority)
 
     # ------------------------------------------------------------ gx-max
     def _serve_direct(self, path: str, payload: dict[str, Any]) -> None:
@@ -1084,7 +1257,7 @@ class Handler(BaseHTTPRequestHandler):
         self._usage(out, tail)
 
 
-def build_servers(cfg: Config | None = None) -> tuple[list[ThreadingHTTPServer], GxMaxLifecycle]:
+def build_servers(cfg: Config | None = None) -> tuple[list[ThreadingHTTPServer], Any]:
     """Build one HTTP server per configured bind address.
 
     A single lifecycle manager, scheduler, registry and journal are SHARED
@@ -1103,19 +1276,49 @@ def build_servers(cfg: Config | None = None) -> tuple[list[ThreadingHTTPServer],
         default_timeout=cfg.request_timeout,
         history_cap=cfg.history_cap,
     )
-    runtime = registry.runtime(registry.alias(ALIAS_DIRECT).runtime)
-    lifecycle = GxMaxLifecycle(
-        cfg.runtime_dir,
-        api_base=runtime.api,
-        model_id=runtime.served_model_id,
-        registry=registry,
-        idle_ttl=cfg.gxmax_idle_ttl,
+    # Per-mode concurrency caps (gx-max's controlled admission, D-053).
+    scheduler.set_mode_caps({name: m.max_concurrent for name, m in registry.modes.items()})
+
+    def make_lifecycle(dep: DeploymentSpec) -> GxMaxLifecycle:
+        runtime = registry.runtime(dep.runtime)
+        kit_dir = (cfg.repo_root / runtime.kit_path) if runtime.kit_path else cfg.runtime_dir
+        legacy_history = dep.dialect == "deepseek_v41"
+        return GxMaxLifecycle(
+            kit_dir,
+            api_base=runtime.api,
+            model_id=runtime.served_model_id,
+            registry=registry,
+            idle_ttl=cfg.gxmax_idle_ttl if dep.idle_ttl_seconds is None else dep.idle_ttl_seconds,
+            acquire_timeout=cfg.gxmax_acquire_timeout,
+            events_log=cfg.log_dir / "gx-max-lifecycle.log",
+            history_path=cfg.state_dir / "orchestrator" / (
+                "gx-max-history.json" if legacy_history else f"gx-max-history-{dep.name}.json"),
+            drain_hook=scheduler.drain,
+            on_ready=lambda profile, max_seqs: scheduler.set_capacity(max_seqs),
+            extra_env={"SERVED_MODEL_NAME": runtime.served_model_id} if legacy_history else {},
+            deployment=dep,
+            fixed_profile=fixed_profile_for(dep),
+        )
+
+    store = ActiveDeploymentStore(cfg.state_dir / "orchestrator" / "active-deployment.json")
+    manager = DeploymentManager(registry, store, make_lifecycle)
+    lifecycle = LifecycleProxy(manager)
+    history = SwitchHistory(cfg.state_dir / "orchestrator" / "model-switch-history.jsonl")
+    interrupted = history.mark_interrupted()
+    if interrupted:
+        log.error("%d model switch(es) were interrupted by an orchestrator restart; "
+                  "check both nodes (GET /models/history)", interrupted)
+    from .lifecycle import _default_read_mem_gib  # noqa: PLC0415
+    from .validation import GatewayValidator, HostFacts, HostPreflight  # noqa: PLC0415
+    facts = HostFacts(cfg.node2_ssh, _default_read_mem_gib)
+    switcher = ModelSwitcher(
+        manager=manager, scheduler=scheduler, history=history,
+        lock=SwitchLock(cfg.state_dir / "orchestrator" / "model-switch.lock"),
+        validator=GatewayValidator(registry=registry, gateway_base=cfg.gateway_base,
+                                   gateway_key=cfg.gateway_key(), facts=facts),
+        preflight=HostPreflight(registry=registry, facts=facts, guard_dir=cfg.state_dir / "guard"),
+        drain_timeout=cfg.switch_drain_timeout,
         acquire_timeout=cfg.gxmax_acquire_timeout,
-        events_log=cfg.log_dir / "gx-max-lifecycle.log",
-        history_path=cfg.state_dir / "orchestrator" / "gx-max-history.json",
-        drain_hook=scheduler.drain,
-        on_ready=lambda profile, max_seqs: scheduler.set_capacity(max_seqs),
-        extra_env={"SERVED_MODEL_NAME": runtime.served_model_id},
     )
     health = ClusterHealth(cfg, registry)
     journal = RoutingJournal(cfg.log_dir / "gx-auto-routing.jsonl")
@@ -1132,6 +1335,10 @@ def build_servers(cfg: Config | None = None) -> tuple[list[ThreadingHTTPServer],
             "scheduler": scheduler,
             "journal": journal,
             "metrics": metrics,
+            "identity_policy": load_policy(),
+            "manager": manager,
+            "switcher": switcher,
+            "host_facts": facts,
         },
     )
     servers: list[ThreadingHTTPServer] = []
@@ -1165,8 +1372,8 @@ def main() -> int:
         return 2
     for srv in servers:
         log.info("gx-orchestrator listening on http://%s:%s", *srv.server_address[:2])
-    log.info("  model api=%s  model id=%s  idle_ttl=%ss",
-             cfg.gxmax_base, cfg.gxmax_model_id, cfg.gxmax_idle_ttl)
+    log.info("  active deployment=%s  idle_ttl default=%ss", lifecycle.deployment.name
+             if lifecycle.deployment else "legacy", cfg.gxmax_idle_ttl)
 
     threads = [threading.Thread(target=s.serve_forever, daemon=True, name=f"http-{s.server_address[0]}") for s in servers]
     for t in threads:

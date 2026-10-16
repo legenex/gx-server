@@ -45,14 +45,30 @@ from litellm.integrations.custom_logger import CustomLogger
 
 log = logging.getLogger("gx.budget_hook")
 
-#: The two public aliases (registry schema 2). Everything else is passed through.
-ALIASES = {"gx-max", "gx-auto"}
+#: The public aliases (registry schema 2, D-053). Everything else is passed through.
+ALIASES = {"gx-auto", "gx-fast", "gx-medium", "gx-high", "gx-max"}
 
 #: Attribution headers forwarded to the orchestrator (scheduler + autoroute).
+#: X-GX-Priority/Profile/Reasoning are forwarded as CLAIMS only: the
+#: orchestrator honours them per authenticated identity (identity-policy.json).
+#: X-GX-Switch-Validation carries the running model switch's one-time token.
 ATTRIB_HEADERS = (
     "X-GX-Project", "X-GX-Agent", "X-GX-Task", "X-GX-Intent",
-    "X-GX-Priority", "X-GX-Profile", "X-GX-Reasoning",
+    "X-GX-Priority", "X-GX-Profile", "X-GX-Reasoning", "X-GX-Switch-Validation",
 )
+#: Stamped by THIS hook from the key LiteLLM authenticated; never taken from the client.
+IDENTITY_HEADER = "X-GX-Identity"
+
+
+def _identity(user_api_key_dict: Any) -> str:
+    """The authenticated caller: key alias, else team alias, else "anonymous"."""
+    for attr in ("key_alias", "team_alias", "user_id"):
+        value = getattr(user_api_key_dict, attr, None)
+        if isinstance(value, str) and value.strip():
+            cleaned = "".join(c for c in value.strip() if c.isalnum() or c in "-_.@:")[:96]
+            if cleaned:
+                return cleaned
+    return "anonymous"
 #: Response header the orchestrator stamps with the queue wait in milliseconds.
 QUEUE_WAIT_HEADER = "x-gx-queue-wait-ms"
 
@@ -248,7 +264,11 @@ class GxBudgetHook(CustomLogger):
             # LiteLLM forwards these headers with the upstream OpenAI call;
             # the orchestrator reads them for scheduler priority, profile and
             # reasoning (gx-auto autoroute), defaulting each to "unknown".
-            data["forwarded_headers"] = dict(attribution)
+            # The identity is set here, from LiteLLM's own key check: a
+            # client-sent X-GX-Identity is never in `attribution` (D-053).
+            forwarded = dict(attribution)
+            forwarded[IDENTITY_HEADER] = _identity(user_api_key_dict)
+            data["forwarded_headers"] = forwarded
 
             # 2. Context guard — chat calls on the two aliases only.
             if alias not in ALIASES or call_type not in _CHAT_CALLS or B is None:

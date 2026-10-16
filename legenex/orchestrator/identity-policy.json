@@ -1,0 +1,12 @@
+{
+  "_about": "Scheduler priority by AUTHENTICATED identity (D-053). Keys are LiteLLM key aliases, stamped into X-GX-Identity by gx_budget_hook from the key LiteLLM verified. A caller's X-GX-Priority is honoured only where may_set_priority is true, and never beyond max_priority. 'health' is the reserved Odin lane. Loader: gx_orchestrator/identity.py.",
+  "default": {"max_priority": "interactive", "may_set_priority": false},
+  "identities": {
+    "open-webui":  {"priority": "interactive"},
+    "gx-computer": {"priority": "interactive"},
+    "hermes":      {"max_priority": "orchestrator"},
+    "ai-os":       {"max_priority": "orchestrator", "may_set_priority": true},
+    "odin":        {"priority": "health", "max_priority": "health"},
+    "gx-operator": {"max_priority": "interactive", "may_set_priority": true}
+  }
+}

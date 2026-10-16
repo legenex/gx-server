@@ -33,7 +33,16 @@ Rules implemented (schema 2 contract):
   revision, absolute paths, quant, vision/tools flags, positive window).
   ``serving_notes`` values must be sane numbers for their key.
 * Every alias references an existing model and runtime, and its mode is
-  ``direct`` or ``auto``.
+  ``direct`` or ``auto``; an optional ``logical_mode`` names a ``modes`` entry
+  (or ``auto``).
+* ``modes`` (optional) maps fast/medium/high/max to a reasoning level, a
+  context and output ceiling, a scheduler priority and a concurrency cap.
+* ``deployments`` (optional) name a model + runtime each, with role
+  ``primary`` or ``rollback`` (exactly one primary when present), a reasoning
+  dialect, and the per-node container names; ``initial_active_deployment``
+  must name one of them. Which one is ACTIVE is runtime state, not registry.
+* A model's ``engram_dir`` is required only for the EXL3 (Mia) packs; a
+  runtime pins either a 40-hex ``commit`` or an in-repo ``kit_path`` (or both).
 * The six profiles (fast/balanced/swarm/deep/long/custom) exist;
   ``max_num_seqs`` is 1..4 (custom may be a [lo, hi] pair), ``max_model_len``
   is within the documented bounds, ``reasoning_default`` is a real level.
@@ -53,6 +62,11 @@ SCHEMA_VERSION = 2
 PROFILE_NAMES = ("fast", "balanced", "swarm", "deep", "long", "custom")
 #: Alias modes the orchestrator understands.
 ALIAS_MODES = ("direct", "auto")
+#: Logical modes of the one resident model (D-053).
+MODE_NAMES = ("fast", "medium", "high", "max")
+DEPLOYMENT_ROLES = ("primary", "rollback")
+DIALECTS = ("deepseek_v4", "deepseek_v41")
+SCHEDULER_PRIORITIES = ("health", "interactive", "critical-review", "orchestrator", "normal-worker", "background")
 #: Serving knobs the Mia/vLLM overlay reads, with their validators.
 _SERVING_NOTE_RULES = {
     "gpu_mem_util": ("float01",),
@@ -201,9 +215,10 @@ def _validate_runtimes(data: dict, errors: list[str]) -> list[str]:
         for key in ("kind", "submodule", "image", "served_model_id", "start", "stop", "status"):
             if not _is_str(rt.get(key)):
                 errors.append(f"{where}.{key}: expected a non-empty string, got {rt.get(key)!r}")
-        err = _check_hex40(f"{where}.commit", rt.get("commit"))
-        if err:
-            errors.append(err)
+        if rt.get("commit") is not None or not rt.get("kit_path"):
+            err = _check_hex40(f"{where}.commit", rt.get("commit"))
+            if err:
+                errors.append(err)
         err = _check_url(f"{where}.api", rt.get("api"))
         if err:
             errors.append(err)
@@ -226,8 +241,11 @@ def _validate_models(data: dict, errors: list[str]) -> list[str]:
         err = _check_hex40(f"{where}.revision", model.get("revision"))
         if err:
             errors.append(err)
-        for key in ("path", "engram_dir"):
-            err = _check_path(f"{where}.{key}", model.get(key))
+        err = _check_path(f"{where}.path", model.get("path"))
+        if err:
+            errors.append(err)
+        if model.get("engram_dir") is not None or str(model.get("quant", "")).startswith("exl3"):
+            err = _check_path(f"{where}.engram_dir", model.get("engram_dir"))
             if err:
                 errors.append(err)
         if not isinstance(model.get("uncensored"), bool):
@@ -271,6 +289,83 @@ def _validate_aliases(data: dict, errors: list[str], models: list[str], runtimes
             errors.append(f"{where}.mode: expected one of {ALIAS_MODES}, got {alias.get('mode')!r}")
         if not _is_str(alias.get("description")):
             errors.append(f"{where}.description: expected a non-empty string, got {alias.get('description')!r}")
+        logical = alias.get("logical_mode")
+        if logical is not None and logical not in MODE_NAMES + ("auto",):
+            errors.append(f"{where}.logical_mode: expected one of {MODE_NAMES + ('auto',)}, got {logical!r}")
+
+
+def _validate_modes(data: dict, errors: list[str], levels: list[str]) -> None:
+    modes = data.get("modes")
+    if modes is None:
+        return
+    if not isinstance(modes, dict) or set(modes) != set(MODE_NAMES):
+        errors.append(f"modes: expected exactly {MODE_NAMES}, got {sorted(modes) if isinstance(modes, dict) else modes!r}")
+        return
+    for name, spec in modes.items():
+        where = f"modes[{name!r}]"
+        if not isinstance(spec, dict):
+            errors.append(f"{where}: expected an object")
+            continue
+        if spec.get("reasoning") not in levels:
+            errors.append(f"{where}.reasoning: {spec.get('reasoning')!r} is not a reasoning level")
+        for key in ("max_context_tokens", "max_output_tokens"):
+            if not _is_int(spec.get(key)) or spec[key] <= 0:
+                errors.append(f"{where}.{key}: expected a positive integer, got {spec.get(key)!r}")
+        if _is_int(spec.get("max_context_tokens")) and _is_int(spec.get("max_output_tokens")) \
+                and spec["max_output_tokens"] >= spec["max_context_tokens"]:
+            errors.append(f"{where}: max_output_tokens must be below max_context_tokens")
+        if spec.get("priority") not in SCHEDULER_PRIORITIES:
+            errors.append(f"{where}.priority: expected one of {SCHEDULER_PRIORITIES}, got {spec.get('priority')!r}")
+        cap = spec.get("max_concurrent", 0)
+        if not _is_int(cap) or cap < 0:
+            errors.append(f"{where}.max_concurrent: expected an integer >= 0, got {cap!r}")
+
+
+def _validate_deployments(data: dict, errors: list[str], models: list[str], runtimes: list[str]) -> None:
+    deps = data.get("deployments")
+    if deps is None:
+        if data.get("initial_active_deployment") is not None:
+            errors.append("initial_active_deployment: set but there is no deployments section")
+        return
+    if not isinstance(deps, dict) or not deps:
+        errors.append("deployments: expected a non-empty object")
+        return
+    roles = []
+    for name, dep in deps.items():
+        where = f"deployments[{name!r}]"
+        if not isinstance(dep, dict):
+            errors.append(f"{where}: expected an object")
+            continue
+        if not re.fullmatch(r"[a-z0-9][a-z0-9.-]{0,63}", name):
+            errors.append(f"{where}: deployment names are lowercase [a-z0-9.-]")
+        if dep.get("role") not in DEPLOYMENT_ROLES:
+            errors.append(f"{where}.role: expected one of {DEPLOYMENT_ROLES}, got {dep.get('role')!r}")
+        roles.append(dep.get("role"))
+        if dep.get("model") not in models:
+            errors.append(f"{where}.model: references unknown model {dep.get('model')!r}")
+        if dep.get("runtime") not in runtimes:
+            errors.append(f"{where}.runtime: references unknown runtime {dep.get('runtime')!r}")
+        if dep.get("dialect") not in DIALECTS:
+            errors.append(f"{where}.dialect: expected one of {DIALECTS}, got {dep.get('dialect')!r}")
+        if not isinstance(dep.get("mode_routing"), bool):
+            errors.append(f"{where}.mode_routing: expected a boolean")
+        ttl = dep.get("idle_ttl_seconds")
+        if not _is_int(ttl) or ttl < 0:
+            errors.append(f"{where}.idle_ttl_seconds: expected an integer >= 0 (0 = resident), got {ttl!r}")
+        containers = dep.get("containers")
+        if not isinstance(containers, dict) or set(containers) != {"node1", "node2"} \
+                or not all(_is_str(v) for v in containers.values()):
+            errors.append(f"{where}.containers: expected {{node1, node2}} container names")
+        shape = dep.get("engine_shape")
+        if shape is not None:
+            if not isinstance(shape, dict) or not _is_int(shape.get("max_num_seqs")) \
+                    or not 1 <= shape["max_num_seqs"] <= 64 or not _is_int(shape.get("max_model_len")):
+                errors.append(f"{where}.engine_shape: needs max_num_seqs 1..64 and an integer max_model_len")
+    if roles.count("primary") != 1:
+        errors.append(f"deployments: expected exactly one primary, got {roles.count('primary')}")
+    initial = data.get("initial_active_deployment")
+    if initial not in deps:
+        errors.append(f"initial_active_deployment: {initial!r} is not a deployment")
 
 
 def _validate_profiles(data: dict, errors: list[str], levels: list[str]) -> None:
@@ -398,7 +493,9 @@ def validate(data: Any) -> list[str]:
     runtimes = _validate_runtimes(data, errors)
     models = _validate_models(data, errors)
     _validate_aliases(data, errors, models, runtimes)
+    _validate_deployments(data, errors, models, runtimes)
     levels = _validate_reasoning(data, errors)
+    _validate_modes(data, errors, levels)
     _validate_profiles(data, errors, levels)
     _validate_capabilities(data, errors)
     return errors

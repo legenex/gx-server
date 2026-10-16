@@ -24,6 +24,7 @@ from gx_orchestrator.health import AliasState  # noqa: E402
 from gx_orchestrator.lifecycle import LifecycleStatus, State, AcquisitionError  # noqa: E402
 from gx_orchestrator.server import model_tier_status, _attribution  # noqa: E402
 from tests.server_harness import (  # noqa: E402
+    TRUSTED,
     OrchestratorHarness,
     completion_body,
 )
@@ -50,10 +51,11 @@ class TestAuthAndBasics(OrchestratorHarness):
         status, _, body = self.get("/text/status", auth=True)
         self.assertEqual(status, 200)
 
-    def test_models_lists_exactly_the_two_aliases(self):
+    def test_models_lists_exactly_the_five_mode_aliases(self):
         status, _, body = self.get("/v1/models")
         self.assertEqual(status, 200)
-        self.assertEqual([m["id"] for m in body["data"]], ["gx-max", "gx-auto"])
+        self.assertEqual([m["id"] for m in body["data"]],
+                         ["gx-auto", "gx-fast", "gx-medium", "gx-high", "gx-max"])
 
     def test_unknown_model_is_a_400_never_a_fallback(self):
         status, _, body = self.chat({"model": "gx-mini", "messages": []})
@@ -213,7 +215,8 @@ class TestLifecycleGate(OrchestratorHarness):
         self.lifecycle._state = State.DOWN
 
     def test_down_and_background_priority_is_a_clear_503(self):
-        status, headers, body = self.chat(_payload(), headers={"X-GX-Priority": "background"})
+        status, headers, body = self.chat(_payload(), headers={"X-GX-Priority": "background",
+                                                               "X-GX-Identity": TRUSTED})
         self.assertEqual(status, 503)
         self.assertEqual(body["error"]["code"], "model_down")
         self.assertEqual(body["error"]["lifecycle_state"], "down")
@@ -222,7 +225,8 @@ class TestLifecycleGate(OrchestratorHarness):
         self.assertEqual(self.lifecycle.acquire_calls, [])
 
     def test_down_and_interactive_triggers_the_acquisition(self):
-        status, headers, body = self.chat(_payload(), headers={"X-GX-Priority": "interactive"})
+        status, headers, body = self.chat(_payload(), headers={"X-GX-Priority": "interactive",
+                                                               "X-GX-Identity": TRUSTED})
         self.assertEqual(status, 200)
         self.assertEqual(body["choices"][0]["message"]["content"], "323")
         self.assertTrue(self.lifecycle.acquire_calls)  # acquisition was triggered
@@ -321,7 +325,7 @@ class TestSchedulerEndpoints(OrchestratorHarness):
 
         attr = _attribution(H({"X-GX-Project": "proj", "X-GX-Agent": "kilocode",
                                "X-GX-Task": "t-1", "X-GX-Priority": "INTERACTIVE"}))
-        self.assertEqual(attr, {"project": "proj", "agent": "kilocode",
+        self.assertEqual(attr, {"project": "proj", "agent": "kilocode", "priority_header": "interactive",
                                 "task": "t-1", "priority": "interactive"})
 
     def test_unknown_priority_falls_back_to_default(self):
@@ -358,10 +362,21 @@ class TestSchedulerEndpoints(OrchestratorHarness):
         self.assertTrue(hist)
         self.assertEqual(hist[0]["priority"], "normal-worker")
 
-    def test_explicit_priority_header_wins_over_mode(self):
+    def test_untrusted_priority_header_is_ignored(self):
         status, headers, body = self.chat(
             _payload(messages=[{"role": "user", "content": "What is 17 * 19?"}]),
-            headers={"X-GX-Priority": "background"},
+            headers={"X-GX-Priority": "background", "X-GX-Identity": "random-client"},
+        )
+        self.assertEqual(status, 200)
+        rid = headers["X-GX-Request-Id"]
+        self.wait_for_journal(rid, "completed")
+        hist = [h for h in self.scheduler.history() if h["id"] == rid]
+        self.assertEqual(hist[0]["priority"], "interactive")  # FAST mode default, header ignored
+
+    def test_explicit_priority_header_wins_over_mode_when_allowed(self):
+        status, headers, body = self.chat(
+            _payload(messages=[{"role": "user", "content": "What is 17 * 19?"}]),
+            headers={"X-GX-Priority": "background", "X-GX-Identity": TRUSTED},
         )
         self.assertEqual(status, 200)
         rid = headers["X-GX-Request-Id"]

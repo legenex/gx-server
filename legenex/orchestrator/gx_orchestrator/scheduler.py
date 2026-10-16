@@ -49,8 +49,11 @@ from typing import Any, Callable, Mapping
 
 log = logging.getLogger("gx.scheduler")
 
-#: Priority vocabulary -> sort key (lower = served first).
+#: Priority vocabulary -> sort key (lower = served first). `health` is the
+#: reserved Odin lane (D-053): it sorts first AND may use the reserved slot(s)
+#: that every other class leaves free; only the identity policy grants it.
 PRIORITIES: dict[str, int] = {
+    "health": -1,
     "interactive": 0,
     "critical-review": 1,
     "orchestrator": 2,
@@ -69,6 +72,8 @@ _MODE_TO_PRIORITY: dict[str, str] = {
     "background": "background",
 }
 DEFAULT_PRIORITY = "normal-worker"
+#: The health reserve only applies to engines at least this wide (D-053).
+RESERVE_MIN_CAPACITY = 4
 DEFAULT_PROJECT = "unknown"
 #: Seconds of queue wait per effective-rank step. Floor keeps aged DEEP
 #: behind a fresh FAST request.
@@ -122,6 +127,8 @@ class Record:
     profile: str
     reasoning: str
     state: str = STATE_QUEUED
+    #: Logical mode (fast/medium/high/max) for per-mode concurrency caps.
+    mode: str = ""
     enqueue_ts: float = 0.0
     start_ts: "float | None" = None
     done_ts: "float | None" = None
@@ -187,6 +194,9 @@ class Scheduler:
         clock: Callable[[], float] = time.time,
         ageing_step: float = DEFAULT_AGEING_STEP,
         ageing_floor: int = DEFAULT_AGEING_FLOOR,
+        reserved_health_slots: int = 1,
+        health_queued_cap: int = 4,
+        mode_caps: "Mapping[str, int] | None" = None,
     ) -> None:
         self._queue_path = Path(queue_path)
         self._history_path = Path(history_path)
@@ -199,6 +209,11 @@ class Scheduler:
         self._clock = clock
         self._ageing_step = float(ageing_step)
         self._ageing_floor = max(0, int(ageing_floor))
+        self._reserved_health = max(0, int(reserved_health_slots))
+        self._health_queued_cap = max(1, int(health_queued_cap))
+        self._mode_caps: dict[str, int] = {k: int(v) for k, v in (mode_caps or {}).items() if int(v) > 0}
+        #: Set while a model switch drains the engine: new submits are refused.
+        self._paused_reason = ""
 
         self._lock = threading.RLock()
         self._idle = threading.Condition(self._lock)
@@ -364,7 +379,55 @@ class Scheduler:
         )
 
     def _queued_count(self) -> int:
-        return sum(1 for r in self._records.values() if r.state is STATE_QUEUED)
+        return sum(1 for r in self._records.values() if r.state is STATE_QUEUED and r.priority != "health")
+
+    def _active_non_health(self) -> int:
+        return sum(1 for r in self._records.values()
+                   if r.state in (STATE_ACTIVE, STATE_CANCELLING) and r.priority != "health")
+
+    def _active_of_mode(self, mode: str) -> int:
+        return sum(1 for r in self._records.values()
+                   if r.mode == mode and r.state in (STATE_ACTIVE, STATE_CANCELLING))
+
+    def _non_health_capacity(self) -> int:
+        """Slots every class but `health` may fill: capacity minus the reserve.
+        Engines with fewer than RESERVE_MIN_CAPACITY slots reserve nothing (on
+        the 2-slot V4.1 rollback a reserve would halve throughput); there the
+        health lane still sorts first in the queue."""
+        if self._capacity < RESERVE_MIN_CAPACITY:
+            return self._capacity
+        return max(1, self._capacity - self._reserved_health)
+
+    def _admissible(self, rec: "Record") -> bool:
+        """May `rec` take a free slot right now (reserved lane + mode caps)?"""
+        if rec.priority != "health" and self._active_non_health() >= self._non_health_capacity():
+            return False
+        cap = self._mode_caps.get(rec.mode)
+        if cap and self._active_of_mode(rec.mode) >= cap:
+            return False
+        return True
+
+    # ------------------------------------------------------------------ pause
+    def pause(self, reason: str) -> None:
+        """Refuse new submits (a model switch is draining the engine)."""
+        with self._lock:
+            self._paused_reason = reason or "paused"
+
+    def resume(self) -> None:
+        with self._lock:
+            self._paused_reason = ""
+
+    @property
+    def paused(self) -> str:
+        with self._lock:
+            return self._paused_reason
+
+    def set_mode_caps(self, caps: "Mapping[str, int]") -> None:
+        with self._lock:
+            self._mode_caps = {k: int(v) for k, v in caps.items() if int(v) > 0}
+            promoted = self._promote_locked()
+        if promoted:
+            self._notify()
 
     def _effective_rank(self, rec: Record) -> int:
         """Base priority rank, aged toward (but not past) ageing_floor."""
@@ -401,6 +464,7 @@ class Scheduler:
             priority=valid_priority(record.get("priority")),
             profile=str(record.get("profile") or ""),
             reasoning=str(record.get("reasoning") or ""),
+            mode=str(record.get("mode") or ""),
             state=STATE_QUEUED,
             enqueue_ts=self._clock(),
             timeout_at=self._clock() + float(record.get("timeout") or self._default_timeout),
@@ -409,7 +473,16 @@ class Scheduler:
         with self._lock:
             if rec.id in self._records:
                 return {"state": DECISION_REJECTED, "reason": f"duplicate id {rec.id}", "position": 0}
-            if self._queued_count() >= self._global_queued_cap:
+            if self._paused_reason and not record.get("bypass_pause"):
+                return {"state": DECISION_REJECTED, "reason": self._paused_reason, "position": 0,
+                        "paused": True}
+            if rec.priority == "health":
+                queued_health = sum(1 for r in self._records.values()
+                                    if r.state is STATE_QUEUED and r.priority == "health")
+                if queued_health >= self._health_queued_cap:
+                    return {"state": DECISION_REJECTED, "position": queued_health + 1,
+                            "reason": f"health lane full ({queued_health}/{self._health_queued_cap})"}
+            elif self._queued_count() >= self._global_queued_cap:
                 return {
                     "state": DECISION_REJECTED,
                     "reason": (
@@ -418,7 +491,7 @@ class Scheduler:
                     # Position beyond the cap: the caller learns where it WOULD sit.
                     "position": self._queued_count() + 1,
                 }
-            if self._queued_of(rec.project) >= self._proj_queued_cap:
+            if rec.priority != "health" and self._queued_of(rec.project) >= self._proj_queued_cap:
                 return {
                     "state": DECISION_REJECTED,
                     "reason": (
@@ -453,7 +526,7 @@ class Scheduler:
         skipped. The caller retries without the cap so a free slot is not
         left idle when only over-cap work is waiting.
         """
-        queued = [r for r in self._records.values() if r.state is STATE_QUEUED]
+        queued = [r for r in self._records.values() if r.state is STATE_QUEUED and self._admissible(r)]
         if not queued:
             return None
         ranks = sorted({self._effective_rank(r) for r in queued})
@@ -462,7 +535,7 @@ class Scheduler:
             if respect_project_cap:
                 candidates = [
                     r for r in candidates
-                    if self._active_of(r.project) < self._proj_active_cap
+                    if r.priority == "health" or self._active_of(r.project) < self._proj_active_cap
                 ]
             if not candidates:
                 continue
@@ -727,7 +800,10 @@ class Scheduler:
                 "waiting": len(queued),
                 "projects": projects,
                 "oldest_wait_seconds": round(now - oldest, 1) if oldest else 0.0,
+                "paused": self._paused_reason,
+                "reserved_health_slots": self._capacity - self._non_health_capacity(),
                 "limits": {
+                    "mode_caps": dict(self._mode_caps),
                     "per_project_active": self._proj_active_cap,
                     "per_project_queued": self._proj_queued_cap,
                     "global_queued": self._global_queued_cap,

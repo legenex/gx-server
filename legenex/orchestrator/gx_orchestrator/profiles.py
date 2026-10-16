@@ -178,6 +178,8 @@ class RuntimeSpec:
     status: str
     image: str = ""
     commit: str = ""
+    #: In-repo kit directory (repo-relative), e.g. legenex/models/dsv4-flash.
+    kit_path: str = ""
 
 
 @dataclass(frozen=True)
@@ -188,7 +190,7 @@ class ModelSpec:
     source: str
     revision: str
     path: str
-    engram_dir: str
+    engram_dir: str  # "" for packs without Engram tables (V4 Flash)
     uncensored: bool
     quant: str
     vision: bool
@@ -204,6 +206,68 @@ class AliasSpec:
     runtime: str
     mode: str  # "direct" | "auto"
     description: str = ""
+    #: fast | medium | high | max | auto (D-053); "" on a legacy registry.
+    logical_mode: str = ""
+
+
+@dataclass(frozen=True)
+class ModeSpec:
+    """One logical mode of the resident model (D-053): request shaping only."""
+
+    name: str
+    reasoning: str
+    max_context_tokens: int
+    max_output_tokens: int
+    priority: str
+    max_concurrent: int = 0
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "name": self.name, "reasoning": self.reasoning,
+            "max_context_tokens": self.max_context_tokens,
+            "max_output_tokens": self.max_output_tokens,
+            "priority": self.priority, "max_concurrent": self.max_concurrent,
+        }
+
+
+#: Used when the registry carries no `modes` section (pre-D-053 files, tests).
+DEFAULT_MODES: dict[str, ModeSpec] = {
+    "fast": ModeSpec("fast", "none", 32_768, 8_192, "interactive", 0),
+    "medium": ModeSpec("medium", "low", 131_072, 32_768, "orchestrator", 0),
+    "high": ModeSpec("high", "high", 131_072, 32_768, "normal-worker", 0),
+    "max": ModeSpec("max", "max", 131_072, 65_536, "normal-worker", 2),
+}
+
+
+@dataclass(frozen=True)
+class DeploymentSpec:
+    """One switchable deployment: a model on a runtime kit (D-053)."""
+
+    name: str
+    role: str  # primary | rollback
+    model: str
+    runtime: str
+    dialect: str  # deepseek_v4 | deepseek_v41
+    mode_routing: bool
+    #: None = use the orchestrator's GX_MAX_IDLE_TTL; 0 = resident.
+    idle_ttl_seconds: "int | None" = None
+    containers: dict[str, str] = field(default_factory=dict)
+    kit_env_files: tuple[str, ...] = (".env",)
+    gid_keys: dict[str, tuple[str, str, str]] = field(default_factory=dict)
+    engine_shape: dict[str, Any] = field(default_factory=dict)
+    boot_min_avail_gib: dict[str, float] = field(default_factory=dict)
+    rank_watch: bool = False
+    status: str = ""
+    tracking: dict[str, Any] = field(default_factory=dict)
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "name": self.name, "role": self.role, "model": self.model, "runtime": self.runtime,
+            "dialect": self.dialect, "mode_routing": self.mode_routing,
+            "idle_ttl_seconds": self.idle_ttl_seconds, "containers": dict(self.containers),
+            "engine_shape": dict(self.engine_shape), "boot_min_avail_gib": dict(self.boot_min_avail_gib),
+            "rank_watch": self.rank_watch, "status": self.status, "tracking": dict(self.tracking),
+        }
 
 
 @dataclass(frozen=True)
@@ -219,8 +283,27 @@ class Registry:
     profiles: dict[str, ProfileSpec]
     reasoning: ReasoningSpec
     capabilities: dict[str, Any]
+    modes: dict[str, ModeSpec] = field(default_factory=lambda: dict(DEFAULT_MODES))
+    deployments: dict[str, DeploymentSpec] = field(default_factory=dict)
+    initial_active_deployment: str = ""
 
     # ------------------------------------------------------------- accessors
+    def mode(self, name: str) -> ModeSpec:
+        try:
+            return self.modes[name]
+        except KeyError:
+            raise RegistryError(f"unknown mode {name!r}; known: {', '.join(sorted(self.modes))}") from None
+
+    def deployment(self, name: str) -> DeploymentSpec:
+        try:
+            return self.deployments[name]
+        except KeyError:
+            known = ", ".join(sorted(self.deployments))
+            raise RegistryError(f"unknown deployment {name!r}; known: {known}") from None
+
+    def primary_deployment(self) -> DeploymentSpec:
+        return next(d for d in self.deployments.values() if d.role == "primary")
+
     def profile(self, name: str) -> ProfileSpec:
         try:
             return self.profiles[name]
@@ -383,6 +466,7 @@ def _parse_runtime(name: str, raw: Mapping[str, Any]) -> RuntimeSpec:
         status=str(raw.get("status") or "./start.sh status"),
         image=str(raw.get("image") or ""),
         commit=str(raw.get("commit") or ""),
+        kit_path=str(raw.get("kit_path") or ""),
     )
 
 
@@ -393,7 +477,7 @@ def _parse_model(model_id: str, raw: Mapping[str, Any]) -> ModelSpec:
         source=_require_str(raw, "source", where),
         revision=str(raw.get("revision") or ""),
         path=_require_str(raw, "path", where),
-        engram_dir=_require_str(raw, "engram_dir", where),
+        engram_dir=str(raw.get("engram_dir") or ""),
         uncensored=bool(raw.get("uncensored")),
         quant=str(raw.get("quant") or ""),
         vision=bool(raw.get("vision")),
@@ -454,6 +538,7 @@ def parse_registry(data: Any, *, path: Path | None = None) -> Registry:
             runtime=_require_str(raw, "runtime", a),
             mode=mode,
             description=str(raw.get("description") or ""),
+            logical_mode=str(raw.get("logical_mode") or ""),
         )
     for required in (ALIAS_DIRECT, ALIAS_AUTO):
         if required not in aliases:
@@ -479,6 +564,9 @@ def parse_registry(data: Any, *, path: Path | None = None) -> Registry:
                 f"{profile.reasoning_default!r} is not a valid reasoning level"
             )
 
+    modes = _parse_modes(data.get("modes"), reasoning)
+    deployments, initial = _parse_deployments(data, aliases, models, runtimes)
+
     return Registry(
         path=path or Path(""),
         cluster=dict(cluster),
@@ -489,7 +577,87 @@ def parse_registry(data: Any, *, path: Path | None = None) -> Registry:
         profiles=profiles,
         reasoning=reasoning,
         capabilities=dict(data.get("capabilities") or {}),
+        modes=modes,
+        deployments=deployments,
+        initial_active_deployment=initial,
     )
+
+
+def _parse_modes(raw: Any, reasoning: ReasoningSpec) -> dict[str, ModeSpec]:
+    if raw is None:
+        return dict(DEFAULT_MODES)
+    if not isinstance(raw, Mapping) or set(raw) != set(DEFAULT_MODES):
+        raise RegistryError(f"registry.modes: expected exactly {sorted(DEFAULT_MODES)}")
+    out: dict[str, ModeSpec] = {}
+    for name, spec in raw.items():
+        where = f"registry.modes.{name}"
+        if not isinstance(spec, Mapping):
+            raise RegistryError(f"{where}: must be an object")
+        level = _require_str(spec, "reasoning", where)
+        if not reasoning.is_valid(level):
+            raise RegistryError(f"{where}: reasoning {level!r} is not a reasoning level")
+        out[name] = ModeSpec(
+            name=name, reasoning=level,
+            max_context_tokens=_require_int(spec, "max_context_tokens", where),
+            max_output_tokens=_require_int(spec, "max_output_tokens", where),
+            priority=_require_str(spec, "priority", where),
+            max_concurrent=int(spec.get("max_concurrent") or 0),
+        )
+    return out
+
+
+def _parse_deployments(data: Mapping[str, Any], aliases: dict[str, AliasSpec],
+                       models: dict[str, ModelSpec], runtimes: dict[str, RuntimeSpec],
+                       ) -> tuple[dict[str, DeploymentSpec], str]:
+    raw = data.get("deployments")
+    if raw is None:
+        # Legacy registry: one implicit deployment = what gx-max is bound to.
+        gx = aliases[ALIAS_DIRECT]
+        legacy = DeploymentSpec(name="legacy", role="primary", model=gx.model, runtime=gx.runtime,
+                                dialect="deepseek_v41", mode_routing=False)
+        return {"legacy": legacy}, "legacy"
+    if not isinstance(raw, Mapping) or not raw:
+        raise RegistryError("registry.deployments: must be a non-empty object")
+    out: dict[str, DeploymentSpec] = {}
+    for name, spec in raw.items():
+        where = f"registry.deployments.{name}"
+        if not isinstance(spec, Mapping):
+            raise RegistryError(f"{where}: must be an object")
+        model = _require_str(spec, "model", where)
+        runtime = _require_str(spec, "runtime", where)
+        if model not in models:
+            raise RegistryError(f"{where}: unknown model {model!r}")
+        if runtime not in runtimes:
+            raise RegistryError(f"{where}: unknown runtime {runtime!r}")
+        role = _require_str(spec, "role", where)
+        if role not in ("primary", "rollback"):
+            raise RegistryError(f"{where}: role must be primary or rollback")
+        dialect = _require_str(spec, "dialect", where)
+        if dialect not in ("deepseek_v4", "deepseek_v41"):
+            raise RegistryError(f"{where}: unknown dialect {dialect!r}")
+        ttl = spec.get("idle_ttl_seconds")
+        gid_raw = spec.get("gid_keys") or {}
+        out[name] = DeploymentSpec(
+            name=name, role=role, model=model, runtime=runtime, dialect=dialect,
+            mode_routing=bool(spec.get("mode_routing")),
+            idle_ttl_seconds=int(ttl) if isinstance(ttl, int) and not isinstance(ttl, bool) else None,
+            containers={str(k): str(v) for k, v in (spec.get("containers") or {}).items()},
+            kit_env_files=tuple(str(x) for x in (spec.get("kit_env_files") or [".env"])),
+            gid_keys={str(k): tuple(str(x) for x in v) for k, v in gid_raw.items()
+                      if isinstance(v, (list, tuple)) and len(v) == 3},
+            engine_shape=dict(spec.get("engine_shape") or {}),
+            boot_min_avail_gib={str(k): float(v) for k, v in (spec.get("boot_min_avail_gib") or {}).items()},
+            rank_watch=bool(spec.get("rank_watch")),
+            status=str(spec.get("status") or ""),
+            tracking=dict(spec.get("tracking") or {}),
+        )
+    primaries = [d for d in out.values() if d.role == "primary"]
+    if len(primaries) != 1:
+        raise RegistryError("registry.deployments: exactly one primary is required")
+    initial = str(data.get("initial_active_deployment") or primaries[0].name)
+    if initial not in out:
+        raise RegistryError(f"registry.initial_active_deployment {initial!r} is not a deployment")
+    return out, initial
 
 
 def load_registry(path: "str | os.PathLike[str]") -> Registry:

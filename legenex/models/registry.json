@@ -1,5 +1,5 @@
 {
-  "_about": "GX Cluster V4.1 registry (schema 2) — the single source of truth for nodes, the Mia runtime, model packs, public aliases, serving profiles and reasoning levels. Dashboard, orchestrator and gateway must read from this file; no hardcoded model/node names in code. Contract: docs/ARCHITECTURE-V41.md section 2. Loader/validator: legenex/models/registry.py. Facts are pinned to the revisions below and to state/MIA-RUNTIME.md (verified 2026-09-27). Supersedes the schema-1 alias table of the retired L-6/L-10 stack (gx-mini/gx-code/gx-fast/gx-reason, llama-swap, SGLang); that content lives in git history under tag pre-deepseek-v41-rebuild-20260927.",
+  "_about": "GX Cluster registry (schema 2) — the single source of truth for nodes, runtimes, model packs, public aliases, deployments (primary + rollback), logical modes, serving profiles and reasoning levels. Loader/validator: legenex/models/registry.py. D-053 (2026-10-16): DeepSeek-V4-Flash-0731 abliterated (vLLM, kit legenex/models/dsv4-flash) is the PRIMARY deployment; DeepSeek V4.1 EXL3 (Mia kit) is kept as the rollback. Which deployment is ACTIVE is runtime state (/srv/projects/gx-cluster/state/orchestrator/active-deployment.json, written only by the orchestrator's typed switch); with no switch on record it is initial_active_deployment. Supersedes the schema-1 alias table of the retired L-6/L-10 stack (git tag pre-deepseek-v41-rebuild-20260927).",
   "schema": 2,
   "cluster": {
     "name": "legenex-dual-gx10",
@@ -16,7 +16,10 @@
         "rail1": "192.168.100.10",
         "rail2": "192.168.101.10"
       },
-      "hcas": ["rocep1s0f0", "roceP2p1s0f0"],
+      "hcas": [
+        "rocep1s0f0",
+        "roceP2p1s0f0"
+      ],
       "ssh": "gx10-01"
     },
     "gx10-02": {
@@ -28,7 +31,10 @@
         "rail1": "192.168.100.11",
         "rail2": "192.168.101.11"
       },
-      "hcas": ["rocep1s0f0", "roceP2p1s0f0"],
+      "hcas": [
+        "rocep1s0f0",
+        "roceP2p1s0f0"
+      ],
       "ssh": "10.60.21.41"
     }
   },
@@ -38,7 +44,10 @@
       "NCCL_IB_GID_INDEX": "3",
       "NCCL_IB_HCA": "=rocep1s0f0,roceP2p1s0f0",
       "NCCL_SOCKET_IFNAME": "enP7s7",
-      "rails": ["rail1", "rail2"]
+      "rails": [
+        "rail1",
+        "rail2"
+      ]
     }
   },
   "runtimes": {
@@ -52,7 +61,32 @@
       "start": "./start.sh",
       "stop": "./stop.sh",
       "status": "./start.sh status",
-      "notes": "vLLM-based 2x DGX Spark EXL3 kit, TP=2, nnodes=2, master port 29521. OpenAI API on head :8888 is LOOPBACK ONLY — never public. Lifecycle owned by the orchestrator (DOWN->ACQUIRING->READY->RELEASING), no boot autoload. Weights sync WEIGHT_SYNC=rsync over LAN SSH."
+      "notes": "vLLM-based 2x DGX Spark EXL3 kit, TP=2, nnodes=2, master port 29521. OpenAI API on head :8888 (bound 0.0.0.0 by the kit; reached by the orchestrator on loopback). Lifecycle owned by the orchestrator, no boot autoload. Worker reads the weights over the kit's NFSv4 export from gx10-01 (WEIGHT_SYNC=nfs)."
+    },
+    "dsv4-flash-tp2": {
+      "kind": "vllm-dsv4-flash-tp2",
+      "submodule": "legenex/models/dsv4-flash",
+      "kit_path": "legenex/models/dsv4-flash",
+      "commit": "752a3a504485790a2e8491cacbb35c137339ad34",
+      "commit_is": "vLLM v0.25.1 base (the kit itself lives in this repo)",
+      "image": "gx/dsv4-flash-vllm:0.25.1-b12x7dc6fb8f-fi0472b9b3-gx1",
+      "image_id": "",
+      "base_image": "vllm/vllm-openai@sha256:2cc49b81319f7a66a33dd8bd63a7bfddae079122b33ce51989b6828a1f038c37",
+      "pins": {
+        "vllm": "0.25.1 @ 752a3a504485790a2e8491cacbb35c137339ad34",
+        "b12x": "0.15.3 @ 7dc6fb8fcc6446ea093537d1657df81985fa5f43 (tar sha256 18a6b57739a493d5e6cca9f4f7bd91bf11d765905a43fa6dcbfc5b92d42a15a6)",
+        "flashinfer": "0.6.15 @ 0472b9b3f2fba11b463f8526f390297d52a8aad7 (tar sha256 d6f79757fd97bae845fd4ba763abe9643ad581376de15e161295e4b14e8ae865)",
+        "cuda-python": "13.3.1",
+        "nvidia-cutlass-dsl": "4.5.2",
+        "apache-tvm-ffi": "0.1.9",
+        "recipe": "Anemll/dspark-vllm-gx10 v0.1.1 @ 47503f8e (logic and overlay/vllm only, reviewed)"
+      },
+      "api": "http://127.0.0.1:8890/v1",
+      "served_model_id": "DeepSeek-V4-Flash-0731-abliterated",
+      "start": "./start.sh",
+      "stop": "./stop.sh",
+      "status": "./start.sh status",
+      "notes": "vLLM 0.25.1 TP=2 nnodes=2 mp, --moe-backend flashinfer_b12x, fp8 KV, block 256, DSpark k=5, tokenizer/reasoning/tool parsers deepseek_v4, no --trust-remote-code. API 127.0.0.1:8890; NCCL/Gloo/VLLM_HOST_IP on rail 1 (rocep1s0f0). Weights live on gx10-02; the head mounts them over a read-only NFSv4 export bound to 192.168.100.11 (client 192.168.100.10 only)."
     }
   },
   "models": {
@@ -75,10 +109,17 @@
         "parameters": "DeepSeek V4.1 Flash (MoE + DSpark MTP draft experts in checkpoint)",
         "modalities": "text and image input, text output, tool calls, reasoning",
         "licence": "mit",
-        "vision_tags": ["multimodal", "vision", "ocr-verified"],
+        "vision_tags": [
+          "multimodal",
+          "vision",
+          "ocr-verified"
+        ],
         "weights": "39 EXL3 shards, about 197 GiB; Engram tables NEVER quantized and never copied into the EXL3 tree (FP8 e4m3fn, deepseek-ai/DeepSeek-V4.1-Flash shards 47+48 at engram_dir)",
         "verified": "2026-09-27: repository and revision verified against the live Hugging Face API; arch/quant/license/vision from the model card at this revision (state/MIA-RUNTIME.md)"
-      }
+      },
+      "status": "deleted",
+      "files_preserved": false,
+      "deleted_note": "The stock pack at /srv/models/dsv41/model no longer exists on either node (checked 2026-10-16). Kept for provenance only: nothing may bind to it; restoring needs a fresh pinned download."
     },
     "dsv41-flash-exl3-uncensored": {
       "source": "dealignai/DeepSeek-V4.1-Flash-UNCENSORED-EXL3-2.9bpw",
@@ -105,26 +146,214 @@
         "parameters": "105.2B",
         "modalities": "multimodal; text and image input, text output, tool calls, reasoning",
         "licence": "mit",
-        "vision_tags": ["multimodal", "vision"],
+        "vision_tags": [
+          "multimodal",
+          "vision"
+        ],
         "weights": "39 EXL3 shards, 210.67 GiB used storage; still needs the native Engram 47+48 source at engram_dir",
         "verified": "2026-09-27: sha 8a27b35fc5b145fa05ee965c7d7b243b047915f7, MIT, multimodal, deepseek_v41 arch read from the live Hugging Face API; uncensoring verified behaviorally by ops/uncensor-verify"
+      },
+      "status": "rollback"
+    },
+    "dsv4-flash-0731-abliterated": {
+      "source": "cebeuq/DeepSeek-V4-Flash-0731-abliterated",
+      "revision": "21bd923c2574d9edcd7b914885024ce72fd5c076",
+      "base_source": "deepseek-ai/DeepSeek-V4-Flash-0731",
+      "base_revision": "7872f01b1d1fe23eabc4c98b48bffcef5a386062",
+      "path": "/srv/models/dsv4-flash-0731-abliterated/21bd923c",
+      "node": "gx10-02",
+      "head_access": "nfs4-ro over rail 1 (dsv4f-nfs exporter on gx10-02)",
+      "status": "primary",
+      "uncensored": true,
+      "quant": "native: FP4 (E2M1+ue8m0) routed experts, FP8 e4m3 128x128 block elsewhere",
+      "vision": false,
+      "tools": true,
+      "max_context": 131072,
+      "native_context": 1048576,
+      "files": {
+        "count": 60,
+        "total_bytes": 168442165347,
+        "verify_manifest": "VERIFY.json in the model dir (sha256 for LFS files, git blob sha1 for small files)"
+      },
+      "overlay": {
+        "file": "model-overlay-00001-of-00001.safetensors",
+        "sha256_prefix": "20d2559987a19cb5",
+        "tensors": 92,
+        "pattern": "layers.*.attn.wo_b.{weight,scale} (43) + mtp.*.attn.wo_b.{weight,scale} (3)",
+        "load_order_proof": "vLLM 0.25.1 yields every tensor of every indexed file in _natural_sort_key order and the last copy wins; 'model-' < 'model-overlay-' so the overlay is read last. Checked at every start by tools/overlay_check.py verify; per-rank wo_b digests via GX_WOB_DIGEST."
+      },
+      "identity": {
+        "repository": "cebeuq/DeepSeek-V4-Flash-0731-abliterated",
+        "revision": "21bd923c2574d9edcd7b914885024ce72fd5c076",
+        "base_model": "deepseek-ai/DeepSeek-V4-Flash-0731 @ 7872f01b1d1fe23eabc4c98b48bffcef5a386062",
+        "arch": "DeepseekV4ForCausalLM (no auto_map, no HF chat template)",
+        "quantization": "none added: native FP4 experts + FP8 block weights",
+        "parameters": "284B total / 13B active, 43 layers, 256 experts top-6 + 1 shared, inline 3-stage DSpark draft",
+        "modalities": "text in, text out, tool calls (DSML), reasoning (chat / thinking low|high|max)",
+        "licence": "mit",
+        "weights": "48 base shards + 1.54 GB overlay, 168.44 GB in 60 files",
+        "verified": "2026-10-16: manifest pinned to both revisions; abliteration = rank-1 projection on 46 attn.wo_b modules (model card)"
       }
     }
   },
   "aliases": {
-    "gx-max": {
-      "model": "dsv41-flash-exl3-uncensored",
-      "runtime": "mia-dsv41",
-      "mode": "direct",
-      "description": "Explicit DeepSeek V4.1 Flash (uncensored)"
-    },
     "gx-auto": {
-      "model": "dsv41-flash-exl3-uncensored",
-      "runtime": "mia-dsv41",
+      "model": "dsv4-flash-0731-abliterated",
+      "runtime": "dsv4-flash-tp2",
       "mode": "auto",
-      "description": "Profile/reasoning auto-selection"
+      "logical_mode": "auto",
+      "description": "Chooses fast, medium, high or max per task for the resident model"
+    },
+    "gx-fast": {
+      "model": "dsv4-flash-0731-abliterated",
+      "runtime": "dsv4-flash-tp2",
+      "mode": "direct",
+      "logical_mode": "fast",
+      "description": "Thinking off, up to 32K context, top interactive priority"
+    },
+    "gx-medium": {
+      "model": "dsv4-flash-0731-abliterated",
+      "runtime": "dsv4-flash-tp2",
+      "mode": "direct",
+      "logical_mode": "medium",
+      "description": "Thinking low, up to 128K context"
+    },
+    "gx-high": {
+      "model": "dsv4-flash-0731-abliterated",
+      "runtime": "dsv4-flash-tp2",
+      "mode": "direct",
+      "logical_mode": "high",
+      "description": "Thinking high, up to 128K context"
+    },
+    "gx-max": {
+      "model": "dsv4-flash-0731-abliterated",
+      "runtime": "dsv4-flash-tp2",
+      "mode": "direct",
+      "logical_mode": "max",
+      "description": "Thinking max, largest tested safe context, controlled admission"
     }
   },
+  "modes": {
+    "fast": {
+      "reasoning": "none",
+      "max_context_tokens": 32768,
+      "max_output_tokens": 8192,
+      "priority": "interactive",
+      "max_concurrent": 0
+    },
+    "medium": {
+      "reasoning": "low",
+      "max_context_tokens": 131072,
+      "max_output_tokens": 32768,
+      "priority": "orchestrator",
+      "max_concurrent": 0
+    },
+    "high": {
+      "reasoning": "high",
+      "max_context_tokens": 131072,
+      "max_output_tokens": 32768,
+      "priority": "normal-worker",
+      "max_concurrent": 0
+    },
+    "max": {
+      "reasoning": "max",
+      "max_context_tokens": 131072,
+      "max_output_tokens": 65536,
+      "priority": "normal-worker",
+      "max_concurrent": 2
+    }
+  },
+  "deployments": {
+    "dsv4-flash-primary": {
+      "role": "primary",
+      "model": "dsv4-flash-0731-abliterated",
+      "runtime": "dsv4-flash-tp2",
+      "dialect": "deepseek_v4",
+      "mode_routing": true,
+      "engine_shape": {
+        "max_num_seqs": 8,
+        "max_model_len": 131072,
+        "dspark_tokens": 5,
+        "gpu_memory_utilization": 0.74
+      },
+      "idle_ttl_seconds": 0,
+      "boot_min_avail_gib": {
+        "node1": 109.0,
+        "node2": 109.0
+      },
+      "rank_watch": true,
+      "containers": {
+        "node1": "dsv4f-head",
+        "node2": "dsv4f-worker"
+      },
+      "kit_env_files": [
+        ".env",
+        "dsv4-flash.env.canonical"
+      ],
+      "gid_keys": {
+        "node1": [
+          "DSV4F_HEAD_GID",
+          "DSV4F_HEAD_IB",
+          "DSV4F_HEAD_IP"
+        ],
+        "node2": [
+          "DSV4F_WORKER_GID",
+          "DSV4F_WORKER_IB",
+          "DSV4F_WORKER_IP"
+        ]
+      },
+      "tracking": {
+        "files_preserved": "downloading 2026-10-16 01:08 SAST; VERIFY.json pending",
+        "runtime_installed": false,
+        "loaded": false,
+        "last_test": null,
+        "last_restore": null,
+        "rollback_ready": null
+      }
+    },
+    "dsv41-rollback": {
+      "role": "rollback",
+      "status": "archived",
+      "model": "dsv41-flash-exl3-uncensored",
+      "runtime": "mia-dsv41",
+      "dialect": "deepseek_v41",
+      "mode_routing": false,
+      "idle_ttl_seconds": 1800,
+      "boot_min_avail_gib": {
+        "node1": 105.5,
+        "node2": 105.5
+      },
+      "rank_watch": false,
+      "containers": {
+        "node1": "dsv41-exl3-head",
+        "node2": "dsv41-exl3-worker"
+      },
+      "kit_env_files": [
+        ".env"
+      ],
+      "gid_keys": {
+        "node1": [
+          "HEAD_GID",
+          "HEAD_CX7_IB",
+          "HEAD_IP"
+        ],
+        "node2": [
+          "WORKER_GID",
+          "WORKER_CX7_IB",
+          "WORKER_IP"
+        ]
+      },
+      "tracking": {
+        "files_preserved": "gx10-01 /srv/models/dsv41/uncensored (197G) + engram-src (196G), present 2026-10-16",
+        "runtime_installed": "image ghcr.io/miaai-lab/deepseek-v4.1-flash-exl3-2x-dgx-sparks:2.9bpw present on both nodes (a80eafcd4e34 on gx10-02)",
+        "loaded": "serving until the switch (V4.1 baseline 2026-10-16 01:13-01:35 SAST)",
+        "last_test": "2026-10-16 V4.1 baseline via LiteLLM: tools + tool-result continuation PASS",
+        "last_restore": null,
+        "rollback_ready": true
+      }
+    }
+  },
+  "initial_active_deployment": "dsv41-rollback",
   "profiles": {
     "fast": {
       "max_num_seqs": 1,
@@ -168,24 +397,55 @@
     },
     "custom": {
       "bounded": true,
-      "max_num_seqs": [1, 4],
-      "max_model_len": [8192, 600000],
+      "max_num_seqs": [
+        1,
+        4
+      ],
+      "max_model_len": [
+        8192,
+        600000
+      ],
       "reasoning_default": "high",
       "target": "advanced, bounded"
     }
   },
   "reasoning": {
-    "levels": ["none", "minimal", "low", "medium", "high", "xhigh", "max"],
+    "levels": [
+      "none",
+      "minimal",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+    ],
     "mapping": {
-      "none": {"enable_thinking": false},
-      "minimal": {"enable_thinking": false},
-      "low": {"reasoning_effort": 50},
-      "medium": {"reasoning_effort": 62},
-      "high": {"reasoning_effort": 75},
-      "xhigh": {"reasoning_effort": 90},
-      "max": {"reasoning_effort": 100}
+      "none": {
+        "enable_thinking": false
+      },
+      "minimal": {
+        "enable_thinking": false
+      },
+      "low": {
+        "reasoning_effort": 50
+      },
+      "medium": {
+        "reasoning_effort": 62
+      },
+      "high": {
+        "reasoning_effort": 75
+      },
+      "xhigh": {
+        "reasoning_effort": 90
+      },
+      "max": {
+        "reasoning_effort": 100
+      }
     },
-    "numeric_range": [1, 100]
+    "numeric_range": [
+      1,
+      100
+    ]
   },
   "capabilities": {
     "vision": true,

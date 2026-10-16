@@ -37,6 +37,8 @@ from gx_orchestrator.scheduler import Scheduler
 from gx_orchestrator.server import Handler, RoutingJournal, TextMetrics
 
 API_KEY = "test-orchestrator-key"
+#: An identity the harness policy lets set X-GX-Priority (D-053).
+TRUSTED = "trusted-agent"
 MODEL_ID = "DeepSeek-v4.1-Flash-EXL3"
 
 
@@ -283,6 +285,7 @@ class OrchestratorHarness(unittest.TestCase):
             "scheduler": self.scheduler,
             "journal": self.journal,
             "metrics": self.metrics,
+            "identity_policy": self._identity_policy(),
         })
         srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), self._handler_cls)
         srv.daemon_threads = True
@@ -290,6 +293,13 @@ class OrchestratorHarness(unittest.TestCase):
         threading.Thread(target=srv.serve_forever, daemon=True).start()
         self.addCleanup(srv.shutdown)
         self.addCleanup(srv.server_close)
+
+    def _identity_policy(self):
+        from gx_orchestrator.identity import parse_policy
+        return parse_policy({"default": {"max_priority": "interactive"},
+                             "identities": {TRUSTED: {"max_priority": "interactive", "may_set_priority": True},
+                                            "odin": {"priority": "health"},
+                                            "batch": {"max_priority": "background"}}})
 
     def _restore_key(self):
         import os

@@ -42,7 +42,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from .profiles import ModelSpec, ProfileSpec, Registry, RuntimeSpec
+from .profiles import DeploymentSpec, ModelSpec, ProfileSpec, Registry, RuntimeSpec
 
 log = logging.getLogger("gx.lifecycle")
 
@@ -66,6 +66,13 @@ class FabricConfigError(AcquisitionError):
 #: Failure classes reported in status `failure_kind` (operators, Odin, AgentOS).
 FAILURE_FABRIC = "fabric_config"
 FAILURE_START = "start_failed"
+#: A rank container disappeared while READY (rank_watch deployments, D-053).
+FAILURE_RANK = "rank_failure"
+#: After this many consecutive failed starts, request-driven acquisition stops
+#: entirely (circuit open) until an explicit operator acquire/restart.
+CIRCUIT_BREAKER_AFTER = 5
+#: Seconds between rank-container checks on a READY rank_watch deployment.
+_RANK_CHECK_INTERVAL = 30.0
 
 
 #: Fine-grained, READ-ONLY progress within ACQUIRING / RELEASING. Derived from
@@ -82,7 +89,7 @@ _START_MARKERS: tuple[tuple["re.Pattern[str]", str], ...] = tuple(
     for p, ph in (
         (r"=== gx-max preflight ===", "preflight"),
         (r"=== profile overlay ===", "overlay"),
-        (r"=== starting the Mia kit \(.*\) ===", "loading"),
+        (r"=== starting the (Mia|dsv4-flash) kit \(.*\) ===", "loading"),
         (r"=== waiting for the model to become healthy", "warming"),
         (r"=== gx-max READY", "ready"),
         (r"start failed .* running the two-node unwind", "unwinding"),
@@ -134,6 +141,8 @@ class LifecycleStatus:
     failure_kind: str = ""
     consecutive_failures: int = 0
     retry_not_before: float = 0.0
+    circuit_open: bool = False
+    deployment: str = ""
 
     def as_dict(self) -> dict:
         now = time.time()
@@ -170,6 +179,10 @@ class LifecycleStatus:
                 max(0, round(self.retry_not_before - now))
                 if self.retry_not_before > now else 0
             ),
+            # Restart-storm breaker: request-driven starts are off until an
+            # explicit operator acquire/restart (D-053).
+            "circuit_open": self.circuit_open,
+            "deployment": self.deployment,
         }
 
 
@@ -250,7 +263,8 @@ def default_liveness_probe(api_base: str, model_id: str, *, timeout: float = 10.
         return False
 
 
-def default_ready_probe(api_base: str, model_id: str, *, timeout: float = 10.0) -> bool:
+def default_ready_probe(api_base: str, model_id: str, *, timeout: float = 10.0,
+                        no_think_kwargs: "Mapping[str, Any] | None" = None) -> bool:
     """READY means three facts, all verified live:
 
     1-2. Everything `default_liveness_probe` checks (health, model id).
@@ -273,7 +287,7 @@ def default_ready_probe(api_base: str, model_id: str, *, timeout: float = 10.0) 
     payload = json.dumps({
         "model": model_id,
         "messages": [{"role": "user", "content": _PROBE_QUESTION}],
-        "chat_template_kwargs": {"enable_thinking": False},
+        "chat_template_kwargs": dict(no_think_kwargs or {"enable_thinking": False}),
         "max_tokens": _PROBE_MAX_TOKENS,
         "stream": False,
     }).encode("utf-8")
@@ -318,6 +332,9 @@ class GxMaxLifecycle:
         gid_settle_seconds: float = 20.0,
         failure_backoff_base: float = 60.0,
         failure_backoff_cap: float = 900.0,
+        deployment: "DeploymentSpec | None" = None,
+        fixed_profile: "ProfileSpec | None" = None,
+        circuit_breaker_after: int = CIRCUIT_BREAKER_AFTER,
     ) -> None:
         self._dir = Path(runtime_dir)
         # Observability only: a plain append-only log of every script line and
@@ -352,7 +369,17 @@ class GxMaxLifecycle:
         self._failure_backoff_cap = failure_backoff_cap
 
         # Pluggable host facts -- fakes in tests, real I/O here.
-        self._ready_probe = ready_probe or (lambda: default_ready_probe(api_base, model_id))
+        #: The deployment this lifecycle drives (None = the legacy single kit).
+        self._deployment = deployment
+        #: Fixed-shape engines (V4 Flash) never cycle for a profile: every
+        #: profile name resolves to this one spec (D-053).
+        self._fixed_profile = fixed_profile
+        self._circuit_after = max(0, int(circuit_breaker_after))
+        self._circuit_open = False
+        dialect = deployment.dialect if deployment else "deepseek_v41"
+        no_think = {"thinking": False} if dialect == "deepseek_v4" else {"enable_thinking": False}
+        self._ready_probe = ready_probe or (
+            lambda: default_ready_probe(api_base, model_id, no_think_kwargs=no_think))
         # Ongoing background health (_reconcile) uses this instead of _ready_probe:
         # a caller that injects only `ready_probe` (every existing test) gets the
         # exact same fake for both, unchanged; production (neither injected) gets
@@ -360,7 +387,12 @@ class GxMaxLifecycle:
         # competing with live user traffic for the generation queue.
         self._liveness_probe = liveness_probe or ready_probe or (lambda: default_liveness_probe(api_base, model_id))
         self._read_mem_gib = read_mem_gib or _default_read_mem_gib
-        self._container_running = container_running or _default_container_running
+        names = dict(deployment.containers) if deployment and deployment.containers else {}
+        self._container_running = container_running or (
+            lambda node: _default_container_running(node, names.get(node)))
+        self._rank_watch = bool(deployment and deployment.rank_watch)
+        self._last_rank_check = 0.0
+        self._rank_misses = 0
         self._read_gid_table = read_gid_table or _default_read_gid_table
         #: drain_hook(seconds) waits for in-flight requests (the scheduler)
         #: and returns how many are still active. None => no drainable load.
@@ -393,7 +425,7 @@ class GxMaxLifecycle:
         if self._ready_probe():
             self._state = State.READY
             self._last_used = time.time()
-            self._profile = registry.default_profile().name
+            self._profile = self._default_profile_name()
             self._detail = "adopted an already-running engine at startup"
             self._phase, self._phase_since = PHASE_SERVING, time.time()
             log.info("gx-max: adopted already-running engine")
@@ -405,12 +437,40 @@ class GxMaxLifecycle:
     #: Minimum interval between reconciliation probes.
     _RECONCILE_INTERVAL = 10.0
 
+    # ------------------------------------------------------------- profiles
+    def _spec(self, name: str) -> ProfileSpec:
+        """The serving shape for `name` (a fixed-shape deployment has one)."""
+        if self._fixed_profile is not None:
+            return self._fixed_profile
+        return self._registry.profile(name)
+
+    def _default_profile_name(self) -> str:
+        if self._fixed_profile is not None:
+            return self._fixed_profile.name
+        return self._registry.default_profile().name
+
+    @property
+    def deployment(self) -> "DeploymentSpec | None":
+        return self._deployment
+
+    def _check_ranks(self) -> "str | None":
+        """rank_watch: name the rank whose container is gone (2 misses in a row)."""
+        if not self._rank_watch or time.time() - self._last_rank_check < _RANK_CHECK_INTERVAL:
+            return None
+        self._last_rank_check = time.time()
+        missing = [n for n in ("node1", "node2") if self._container_running(n) is False]
+        if not missing:
+            self._rank_misses = 0
+            return None
+        self._rank_misses += 1
+        return ", ".join(missing) if self._rank_misses >= 2 else None
+
     # -------------------------------------------------------------- plumbing
     def _fire_on_ready(self) -> None:
         if self._on_ready is None:
             return
         try:
-            max_seqs = self._registry.profile(self._profile).max_num_seqs if self._profile else 1
+            max_seqs = self._spec(self._profile).max_num_seqs if self._profile else 1
             self._on_ready(self._profile, max_seqs)
         except Exception as exc:  # noqa: BLE001 - observability must never kill a transition
             log.warning("on_ready callback failed: %r", exc)
@@ -436,6 +496,27 @@ class GxMaxLifecycle:
         # model id) -- never the full ready_probe here, which sends a real completion
         # that would compete with live user traffic for the same generation queue.
         healthy = self._liveness_probe()
+        dead_rank = self._check_ranks() if observed is State.READY and healthy else None
+        if dead_rank:
+            # The API can answer /health for a while after a TP peer died; a
+            # missing rank container is a dead engine (D-053 rank-failure
+            # detection). Tear down through the sanctioned stop path only.
+            with self._cv:
+                if self._state is not State.READY:
+                    return
+                self._last_error = f"rank container gone on {dead_rank} while READY"
+                self._failure_kind = FAILURE_RANK
+                self._fail_streak += 1
+                # Let the stop path finish before a request may restart it.
+                self._retry_not_before = time.time() + max(60.0, self._failure_backoff_base)
+                self._profile = ""
+                self._last_used = None
+                self._set_state(State.DOWN, f"rank failure ({dead_rank})")
+                self._set_phase(PHASE_FAILED)
+            self._event("reconcile", f"rank failure: container gone on {dead_rank}; running stop.sh --force")
+            threading.Thread(target=self._cleanup_after_failed_acquire, args=("rank failure",),
+                             name="gxmax-rank-cleanup", daemon=True).start()
+            return
 
         with self._cv:
             if self._state is not observed:
@@ -455,7 +536,7 @@ class GxMaxLifecycle:
                 self._failure_kind = ""
                 self._fail_streak = 0
                 self._retry_not_before = 0.0
-                self._profile = self._registry.default_profile().name
+                self._profile = self._default_profile_name()
                 self._set_state(State.READY, "adopted an externally started engine")
                 self._set_phase(PHASE_SERVING)
                 self._event("reconcile", "adopted an engine started outside the orchestrator")
@@ -481,6 +562,8 @@ class GxMaxLifecycle:
                 failure_kind=self._failure_kind,
                 consecutive_failures=self._fail_streak,
                 retry_not_before=self._retry_not_before,
+                circuit_open=self._circuit_open,
+                deployment=self._deployment.name if self._deployment else "",
             )
 
     def is_ready(self) -> bool:
@@ -537,7 +620,7 @@ class GxMaxLifecycle:
         straight away until the backoff expires (no restart storm); an
         explicit operator acquire passes `bypass_backoff=True`.
         """
-        profile = self._registry.profile(profile_name or self._registry.default_profile().name)
+        profile = self._spec(profile_name or self._default_profile_name())
         deadline = time.time() + (timeout if timeout is not None else self._acquire_timeout)
 
         # Never hand back a stale READY: if the engine died, re-acquire it.
@@ -568,6 +651,11 @@ class GxMaxLifecycle:
                         self._start_release(force=False, detail=f"switch to {profile.name}")
                         # Loop again; we are now DOWN (or RELEASING->DOWN soon).
 
+                    if self._state is State.DOWN and not bypass_backoff and self._circuit_open:
+                        raise self._failure_error(
+                            f"{self._last_error} [gx-max start failed {self._fail_streak} times in a "
+                            "row; automatic restarts are OFF until an operator acquire/restart]"
+                        )
                     if (
                         self._state is State.DOWN
                         and not bypass_backoff
@@ -582,6 +670,8 @@ class GxMaxLifecycle:
 
                     if self._state is State.DOWN:
                         # We are the one who starts it.
+                        if bypass_backoff:
+                            self._circuit_open = False
                         self._last_error = ""
                         self._failure_kind = ""
                         self._profile = profile.name
@@ -629,15 +719,25 @@ class GxMaxLifecycle:
         gx-max down after the reboot). A table that cannot be read at all is
         left to the kit's own preflight, which prints both GID tables.
         """
-        kit_env_path = self._dir / ".env"
-        kit_env = _read_kit_env(kit_env_path)
-        preferred = str(overlay.get("NCCL_IB_GID_INDEX") or "3")
+        files = self._deployment.kit_env_files if self._deployment else (".env",)
+        kit_env: dict[str, str] = {}
+        kit_env_path = self._dir / files[0]
+        # The first file that defines a key wins, the same order the kit uses.
+        for name in files:
+            for k, v in _read_kit_env(self._dir / name).items():
+                if k not in kit_env:
+                    kit_env[k] = v
+                    if k.endswith("_GID"):
+                        kit_env_path = self._dir / name
+        preferred = str(overlay.get("NCCL_IB_GID_INDEX") or overlay.get("DSV4F_GID_PREFERRED")
+                        or kit_env.get("DSV4F_GID_PREFERRED") or "3")
         out: dict[str, str] = {}
         problems: list[str] = []
-        for node, key, ib_key, ip_key in (
-            ("node1", "HEAD_GID", "HEAD_CX7_IB", "HEAD_IP"),
-            ("node2", "WORKER_GID", "WORKER_CX7_IB", "WORKER_IP"),
-        ):
+        keys = (self._deployment.gid_keys if self._deployment and self._deployment.gid_keys else {
+            "node1": ("HEAD_GID", "HEAD_CX7_IB", "HEAD_IP"),
+            "node2": ("WORKER_GID", "WORKER_CX7_IB", "WORKER_IP"),
+        })
+        for node, (key, ib_key, ip_key) in sorted(keys.items()):
             ib, ip = kit_env.get(ib_key, ""), kit_env.get(ip_key, "")
             if not (ib and ip):
                 continue
@@ -683,9 +783,18 @@ class GxMaxLifecycle:
             time.sleep(min(5.0, max(0.1, deadline - time.time())))
 
     def _do_acquire(self, profile: ProfileSpec) -> None:
-        model = self._registry.production_model()
-        runtime = self._registry.runtime(self._registry.alias("gx-max").runtime)
-        overlay = build_env_overlay(profile, model, runtime, extra=self._extra_env)
+        if self._deployment is not None:
+            model = self._registry.model(self._deployment.model)
+            runtime = self._registry.runtime(self._deployment.runtime)
+        else:
+            model = self._registry.production_model()
+            runtime = self._registry.runtime(self._registry.alias("gx-max").runtime)
+        if self._deployment is not None and self._deployment.dialect == "deepseek_v4":
+            # The dsv4-flash kit's canonical env file carries its whole shape;
+            # the orchestrator adds only the per-rank GIDs below.
+            overlay = {"DSV4F_GID_PREFERRED": "3"}
+        else:
+            overlay = build_env_overlay(profile, model, runtime, extra=self._extra_env)
         try:
             overlay.update(self._resolve_gid_overlay(overlay))
         except FabricConfigError as exc:
@@ -716,6 +825,8 @@ class GxMaxLifecycle:
                         self._fail_streak = 0
                         self._retry_not_before = 0.0
                         self._failure_kind = ""
+                        self._circuit_open = False
+                        self._rank_misses = 0
                     self._set_phase(PHASE_SERVING)
                     self._end_job("ready")
                     self._set_state(State.READY, f"profile '{profile.name}' healthy")
@@ -760,6 +871,8 @@ class GxMaxLifecycle:
                 base = min(self._failure_backoff_base, 30.0) if kind == FAILURE_FABRIC else self._failure_backoff_base
                 delay = min(self._failure_backoff_cap, base * (2 ** (self._fail_streak - 1)))
                 self._retry_not_before = time.time() + delay
+            if self._circuit_after and self._fail_streak >= self._circuit_after:
+                self._circuit_open = True
         self._set_phase(PHASE_FAILED)
         self._end_job("failed", error=err)
         with self._cv:
@@ -1219,16 +1332,22 @@ def _default_read_gid_table(node: str, ib_dev: str) -> "dict[int, tuple[str, str
     return table or None
 
 
-def _default_container_running(node: str) -> bool:
-    """True while the node's Mia container is running (rank0 here, rank1 via SSH)."""
+def _default_container_running(node: str, name: "str | None" = None) -> bool:
+    """True while the node's rank container is running (rank0 here, rank1 via SSH)."""
     from .config import CONFIG
 
     if node == "node1":
-        cmd = ["docker", "inspect", "-f", "{{.State.Running}}", CONFIG.head_container]
+        container = name or CONFIG.head_container
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+", container):
+            return False
+        cmd = ["docker", "inspect", "-f", "{{.State.Running}}", container]
     else:
+        container = name or CONFIG.worker_container
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+", container):
+            return False
         cmd = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
                CONFIG.node2_ssh,
-               f"docker inspect -f {{{{.State.Running}}}} {CONFIG.worker_container}"]
+               f"docker inspect -f {{{{.State.Running}}}} {container}"]
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
     except (OSError, subprocess.SubprocessError):

@@ -1,9 +1,13 @@
 # ==============================================================================
 # LiteLLM — the single OpenAI-compatible gateway for the gx cluster (V4.1)
 # ==============================================================================
-# Runs on NODE 1 (gx10-01), container port 4000. Public aliases, the ONLY two:
+# Runs on NODE 1 (gx10-01), container port 4000. Public aliases (D-053), the
+# five logical modes of the one resident model:
 #
-#   gx-max    gx-auto
+#   gx-auto  gx-fast  gx-medium  gx-high  gx-max
+#
+# SOURCE ONLY until the activation runbook: applying this file to the live
+# gx-litellm container is a deploy step (legenex/models/dsv4-flash/README.md).
 #
 # Both resolve to the lead's orchestrator on :18900, which owns the request
 # queue, profile/reasoning selection and the DeepSeek V4.1 Flash EXL3 runtime
@@ -22,7 +26,7 @@
 # Virtual keys (rpms / parallel-request caps / model budgets per consumer, e.g.
 # hermes, open-webui, gx-computer) are managed in the LiteLLM DATABASE via the
 # admin UI, deliberately NOT in this file. Trim each key's model list to
-# {gx-max, gx-auto} when this file is first deployed.
+# the five aliases when this file is deployed.
 #
 # ------------------------------------------------------------------------------
 # WHERE EACH ALIAS ACTUALLY GOES
@@ -82,44 +86,14 @@ general_settings:
 model_list:
 
   # ===========================================================================
-  # gx-max — explicit DeepSeek V4.1 Flash (uncensored), mode "direct".
+  # Five logical modes of ONE resident model (D-053). All go to the
+  # orchestrator, which owns mode -> reasoning mapping (client attempts to
+  # exceed a mode are stripped), context admission, identity priority and the
+  # active deployment (DeepSeek-V4-Flash-0731 abliterated primary, DeepSeek
+  # V4.1 EXL3 rollback). While the rollback is active, gx-max and gx-auto keep
+  # their V4.1 behaviour. NO FALLBACKS.
+  # The windows below are the mode admission limits (registry `modes`).
   # ===========================================================================
-  # Plain pass-through to the orchestrator: no routing logic lives here, the
-  # orchestrator enqueues the request with the caller's (or default) profile
-  # and reasoning. NO FALLBACKS — a failed gx-max request returns an error.
-  - model_name: gx-max
-    litellm_params:
-      model: openai/gx-max
-      api_base: "http://host.docker.internal:18900/v1"
-      api_key: os.environ/GX_ORCHESTRATOR_API_KEY
-      drop_params: true
-      include_reasoning: true
-      supports_reasoning: true
-      merge_reasoning_content_in_choices: true
-      # Queued + served end to end: a long architecture-grade generation can
-      # legitimately take tens of minutes behind the scheduler.
-      timeout: 3600
-      num_retries: 0
-    model_info:
-      # Registry model dsv41-flash-exl3-uncensored, max_context 262144.
-      # The orchestrator applies the final context budget, so this is the
-      # advertised window minus a sane output allowance.
-      max_input_tokens: 245760
-      max_output_tokens: 16384
-      mode: direct
-      uncensored: true
-      supports_vision: true
-      supports_function_calling: true
-      supports_reasoning: true
-      description: Explicit DeepSeek V4.1 Flash (uncensored)
-
-  # ===========================================================================
-  # gx-auto — profile/reasoning auto-selection, mode "auto".
-  # ===========================================================================
-  # Same single upstream; the orchestrator's autoroute maps intent headers
-  # (X-GX-Intent, forwarded by the gx_budget_hook) to (profile, reasoning).
-  # This gateway deliberately implements none of that logic — there is
-  # exactly one place where selection happens.
   - model_name: gx-auto
     litellm_params:
       model: openai/gx-auto
@@ -128,18 +102,108 @@ model_list:
       drop_params: true
       include_reasoning: true
       supports_reasoning: true
-      merge_reasoning_content_in_choices: true
+      # Reasoning stays in the separate reasoning field (D-053); it is never
+      # merged into content as <think> text.
+      merge_reasoning_content_in_choices: false
       timeout: 3600
       num_retries: 0
     model_info:
-      max_input_tokens: 245760
-      max_output_tokens: 16384
+      max_input_tokens: 122880
+      max_output_tokens: 32768
       mode: auto
       uncensored: true
-      supports_vision: true
+      supports_vision: false
       supports_function_calling: true
       supports_reasoning: true
-      description: Profile/reasoning auto-selection
+      description: Chooses fast, medium, high or max per task
+  - model_name: gx-fast
+    litellm_params:
+      model: openai/gx-fast
+      api_base: "http://host.docker.internal:18900/v1"
+      api_key: os.environ/GX_ORCHESTRATOR_API_KEY
+      drop_params: true
+      include_reasoning: true
+      supports_reasoning: true
+      # Reasoning stays in the separate reasoning field (D-053); it is never
+      # merged into content as <think> text.
+      merge_reasoning_content_in_choices: false
+      timeout: 3600
+      num_retries: 0
+    model_info:
+      max_input_tokens: 24576
+      max_output_tokens: 8192
+      mode: fast
+      uncensored: true
+      supports_vision: false
+      supports_function_calling: true
+      supports_reasoning: true
+      description: Thinking off, up to 32K context, top interactive priority
+  - model_name: gx-medium
+    litellm_params:
+      model: openai/gx-medium
+      api_base: "http://host.docker.internal:18900/v1"
+      api_key: os.environ/GX_ORCHESTRATOR_API_KEY
+      drop_params: true
+      include_reasoning: true
+      supports_reasoning: true
+      # Reasoning stays in the separate reasoning field (D-053); it is never
+      # merged into content as <think> text.
+      merge_reasoning_content_in_choices: false
+      timeout: 3600
+      num_retries: 0
+    model_info:
+      max_input_tokens: 98304
+      max_output_tokens: 32768
+      mode: medium
+      uncensored: true
+      supports_vision: false
+      supports_function_calling: true
+      supports_reasoning: true
+      description: Thinking low, up to 128K context
+  - model_name: gx-high
+    litellm_params:
+      model: openai/gx-high
+      api_base: "http://host.docker.internal:18900/v1"
+      api_key: os.environ/GX_ORCHESTRATOR_API_KEY
+      drop_params: true
+      include_reasoning: true
+      supports_reasoning: true
+      # Reasoning stays in the separate reasoning field (D-053); it is never
+      # merged into content as <think> text.
+      merge_reasoning_content_in_choices: false
+      timeout: 3600
+      num_retries: 0
+    model_info:
+      max_input_tokens: 98304
+      max_output_tokens: 32768
+      mode: high
+      uncensored: true
+      supports_vision: false
+      supports_function_calling: true
+      supports_reasoning: true
+      description: Thinking high, up to 128K context
+  - model_name: gx-max
+    litellm_params:
+      model: openai/gx-max
+      api_base: "http://host.docker.internal:18900/v1"
+      api_key: os.environ/GX_ORCHESTRATOR_API_KEY
+      drop_params: true
+      include_reasoning: true
+      supports_reasoning: true
+      # Reasoning stays in the separate reasoning field (D-053); it is never
+      # merged into content as <think> text.
+      merge_reasoning_content_in_choices: false
+      timeout: 3600
+      num_retries: 0
+    model_info:
+      max_input_tokens: 65536
+      max_output_tokens: 65536
+      mode: max
+      uncensored: true
+      supports_vision: false
+      supports_function_calling: true
+      supports_reasoning: true
+      description: Thinking max, largest tested safe context, controlled admission
 
 litellm_settings:
   drop_params: true
@@ -165,7 +229,8 @@ litellm_settings:
   context_window_fallbacks: []
   content_policy_fallbacks: []
 
-  merge_reasoning_content_in_choices: true
+  # D-053: reasoning is never merged into content (separate reasoning field).
+  merge_reasoning_content_in_choices: false
 
   # --- privacy-safe logging -------------------------------------------------
   # Prompts and completions are never written to logs or the spend database.

@@ -273,7 +273,8 @@ class TestEventsEndpoint(LifecycleTestBase):
         port = self._server(lc)
         status, body = self._get(port, "/v1/models")
         self.assertEqual(status, 200)
-        self.assertEqual([m["id"] for m in body["data"]], ["gx-max", "gx-auto"])
+        self.assertEqual([m["id"] for m in body["data"]],
+                         ["gx-auto", "gx-fast", "gx-medium", "gx-high", "gx-max"])
 
 
 class _FakeHealth:

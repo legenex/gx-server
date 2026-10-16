@@ -5,8 +5,9 @@ Run: python3 -m unittest discover -s legenex/models/tests -t .
 
 Checks the shipped file is valid, then re-checks the contract invariants the
 orchestrator and dashboard rely on: required keys, IP formats, profile bounds
-(max_num_seqs 1..4), reasoning mapping completeness, and that both public
-aliases reference a real model and runtime. Also proves the validator itself
+(max_num_seqs 1..4), reasoning mapping completeness, that the five public
+aliases reference a real model and runtime, and the primary/rollback
+deployments and logical modes (D-053). Also proves the validator itself
 rejects broken registries (negative tests on mutated copies).
 """
 
@@ -83,7 +84,7 @@ class ShippedRegistryTest(unittest.TestCase):
         models = self.reg["models"]
         self.assertEqual(
             set(models),
-            {"dsv41-flash-exl3-stock", "dsv41-flash-exl3-uncensored"},
+            {"dsv41-flash-exl3-stock", "dsv41-flash-exl3-uncensored", "dsv4-flash-0731-abliterated"},
         )
         stock = models["dsv41-flash-exl3-stock"]
         unc = models["dsv41-flash-exl3-uncensored"]
@@ -99,18 +100,56 @@ class ShippedRegistryTest(unittest.TestCase):
         self.assertEqual(notes["max_num_batched_tokens"], 2048)
         self.assertEqual(notes["vllm_sparse_indexer_max_logits_mb"], 256)
 
-    def test_public_aliases_only_and_bound(self) -> None:
-        self.assertEqual(set(self.reg["aliases"]), {"gx-max", "gx-auto"})
+    def test_public_aliases_are_the_five_modes_of_the_primary(self) -> None:
+        self.assertEqual(set(self.reg["aliases"]), {"gx-auto", "gx-fast", "gx-medium", "gx-high", "gx-max"})
         for name, alias in self.reg["aliases"].items():
-            self.assertIn(alias["model"], self.reg["models"],
-                          f"{name} references unknown model")
-            self.assertIn(alias["runtime"], self.reg["runtimes"],
-                          f"{name} references unknown runtime")
+            self.assertIn(alias["model"], self.reg["models"], f"{name}: unknown model")
+            self.assertIn(alias["runtime"], self.reg["runtimes"], f"{name}: unknown runtime")
             self.assertIn(alias["mode"], ("direct", "auto"))
             self.assertTrue(alias["description"])
-            self.assertEqual(alias["model"], "dsv41-flash-exl3-uncensored")
-        self.assertEqual(self.reg["aliases"]["gx-max"]["mode"], "direct")
+            self.assertEqual(alias["model"], "dsv4-flash-0731-abliterated")
+            self.assertEqual(alias["logical_mode"], name.removeprefix("gx-"))
         self.assertEqual(self.reg["aliases"]["gx-auto"]["mode"], "auto")
+
+    def test_primary_and_rollback_deployments(self) -> None:
+        deps = self.reg["deployments"]
+        self.assertEqual(deps["dsv4-flash-primary"]["role"], "primary")
+        self.assertEqual(deps["dsv41-rollback"]["role"], "rollback")
+        self.assertEqual(deps["dsv41-rollback"]["model"], "dsv41-flash-exl3-uncensored")
+        self.assertEqual(deps["dsv4-flash-primary"]["idle_ttl_seconds"], 0, "the primary stays resident")
+        # The registry never claims a switch happened: the live default is the
+        # rollback (what is serving today) until the orchestrator records one.
+        self.assertEqual(self.reg["initial_active_deployment"], "dsv41-rollback")
+        for dep in deps.values():
+            for key in ("files_preserved", "runtime_installed", "loaded", "last_test",
+                        "last_restore", "rollback_ready"):
+                self.assertIn(key, dep["tracking"])
+
+    def test_v4_flash_pack_pinned(self) -> None:
+        m = self.reg["models"]["dsv4-flash-0731-abliterated"]
+        self.assertEqual(m["revision"], "21bd923c2574d9edcd7b914885024ce72fd5c076")
+        self.assertEqual(m["base_revision"], "7872f01b1d1fe23eabc4c98b48bffcef5a386062")
+        self.assertEqual(m["overlay"]["tensors"], 92)
+        rt = self.reg["runtimes"]["dsv4-flash-tp2"]
+        self.assertEqual(rt["api"], "http://127.0.0.1:8890/v1")
+        self.assertIn("sha256:2cc49b81319f7a66a33dd8bd63a7bfddae079122b33ce51989b6828a1f038c37", rt["base_image"])
+
+    def test_deleted_stock_pack_is_marked(self) -> None:
+        stock = self.reg["models"]["dsv41-flash-exl3-stock"]
+        self.assertEqual(stock["status"], "deleted")
+        self.assertFalse(stock["files_preserved"])
+        for dep in self.reg["deployments"].values():
+            self.assertNotEqual(dep["model"], "dsv41-flash-exl3-stock")
+
+    def test_modes(self) -> None:
+        modes = self.reg["modes"]
+        self.assertEqual(modes["fast"]["reasoning"], "none")
+        self.assertEqual(modes["fast"]["max_context_tokens"], 32768)
+        self.assertEqual(modes["fast"]["priority"], "interactive")
+        self.assertEqual(modes["medium"]["reasoning"], "low")
+        self.assertEqual(modes["high"]["reasoning"], "high")
+        self.assertEqual(modes["max"]["reasoning"], "max")
+        self.assertGreater(modes["max"]["max_concurrent"], 0)
 
     def test_six_profiles_present_with_bounds(self) -> None:
         profiles = self.reg["profiles"]
@@ -226,6 +265,22 @@ class ValidatorRejectsTest(unittest.TestCase):
             **{"models.dsv41-flash-exl3-uncensored.serving_notes.gpu_mem_util": 1.7}
         )
         self.assertTrue(any("gpu_mem_util" in e for e in errors))
+
+    def test_deployment_needs_one_primary(self) -> None:
+        errors = self._errors(**{"deployments.dsv41-rollback.role": "primary"})
+        self.assertTrue(any("exactly one primary" in e for e in errors))
+
+    def test_initial_active_must_exist(self) -> None:
+        errors = self._errors(**{"initial_active_deployment": "nope"})
+        self.assertTrue(any("initial_active_deployment" in e for e in errors))
+
+    def test_bad_mode_priority(self) -> None:
+        errors = self._errors(**{"modes.fast.priority": "vip"})
+        self.assertTrue(any("modes['fast'].priority" in e for e in errors))
+
+    def test_bad_dialect(self) -> None:
+        errors = self._errors(**{"deployments.dsv4-flash-primary.dialect": "chatml"})
+        self.assertTrue(any("dialect" in e for e in errors))
 
     def test_loads_rejects_bad_json(self) -> None:
         with self.assertRaises(registry.RegistryError):

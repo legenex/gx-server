@@ -164,6 +164,28 @@ class Config:
     #: Records kept in the history ring buffer (memory + history.jsonl cap).
     history_cap: int = field(default_factory=lambda: _env_int("GX_SCHED_HISTORY_CAP", 5000))
 
+    #: Repository root (in-repo kits resolve against it, e.g. legenex/models/dsv4-flash).
+    repo_root: Path = field(default_factory=lambda: Path(_env("GX_REPO_ROOT", str(_REPO_DEFAULT))))
+    #: How long a model switch waits for in-flight requests before aborting.
+    switch_drain_timeout: float = field(default_factory=lambda: _env_float("GX_SWITCH_DRAIN_TIMEOUT", 600.0))
+
+    def operator_token(self) -> str | None:
+        """Second secret required by the /models/* switching endpoints (D-053).
+
+        GX_OPERATOR_TOKEN, or the first line of GX_OPERATOR_TOKEN_FILE (default
+        /srv/projects/gx-cluster/secrets/orchestrator/operator-token, 0600).
+        Unset or placeholder = switching disabled.
+        """
+        token = (os.environ.get("GX_OPERATOR_TOKEN") or "").strip()
+        if not token:
+            path = Path(os.environ.get("GX_OPERATOR_TOKEN_FILE")
+                        or "/srv/projects/gx-cluster/secrets/orchestrator/operator-token")
+            try:
+                token = path.read_text(encoding="utf-8").splitlines()[0].strip()
+            except (OSError, IndexError):
+                token = ""
+        return None if token.casefold() in ("", "not-required", "changeme") or len(token) < 16 else token
+
     def gateway_key(self) -> str | None:
         """API key for the LiteLLM gateway, from the environment only."""
         return os.environ.get("GX_GATEWAY_KEY") or os.environ.get("LITELLM_MASTER_KEY")

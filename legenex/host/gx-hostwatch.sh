@@ -81,6 +81,9 @@ SWAPFILE_NAME="${GX_HOSTWATCH_SWAPFILE_NAME:-/swapfile-sglang}"
 SWAPFILE_MIN_GIB="${GX_HOSTWATCH_SWAPFILE_MIN_GIB:-47}"   # L-8: keep 48G, recover-node2.sh uses the same >=47 tolerance
 DSV41_DIR="${GX_HOSTWATCH_DSV41_DIR:-$(cd "$(dirname "$(readlink -f "$0")")/../.." && pwd)/mia-dsv41}"
 DSV41_HEAD_CONTAINER="${GX_HOSTWATCH_DSV41_HEAD:-dsv41-exl3-head}"
+# The V4 Flash primary's head rank (D-053). While it is resident, the V4.1
+# boot-headroom question does not apply either. Rules are unchanged.
+DSV4F_HEAD_CONTAINER="${GX_HOSTWATCH_DSV4F_HEAD:-dsv4f-head}"
 DSV41_KIT_MARGIN_FALLBACK_GIB=12   # floor for the reminder threshold; also used if start.sh is unreadable
 
 mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
@@ -350,6 +353,10 @@ check_boot_headroom() {
   fi
   if printf '%s\n' "$ps_out" | awk -v n="$DSV41_HEAD_CONTAINER" '$2==n{f=1} END{exit !f}'; then
     note OK gx_boot_headroom model_resident "$DSV41_HEAD_CONTAINER running; boot headroom not applicable"
+    return
+  fi
+  if printf '%s\n' "$ps_out" | awk -v n="$DSV4F_HEAD_CONTAINER" '$2==n{f=1} END{exit !f}'; then
+    note OK gx_boot_headroom model_resident "$DSV4F_HEAD_CONTAINER (V4 Flash primary) running; boot headroom not applicable"
     return
   fi
   local model tp kit margin per_rank weights need kit_need avail detail level="OK" status="ok"
