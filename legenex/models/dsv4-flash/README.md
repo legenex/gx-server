@@ -197,12 +197,20 @@ Preflight run 2026-10-16 ~16:00 SAST, read-only (V4.1 resident, untouched):
 
 The installed unattended runner is the single activation controller. Its reviewed
 owner-control drill has these cutoffs: initial Flash native readiness 01:50,
-first full acceptance 02:30, AI OS owner V4.1 restoration plus real Hermes and
-LibreChat inference 02:50, AI OS owner Flash restoration/native validation 03:30,
-final full acceptance 04:15, and safety V4.1 recovery 04:45. Failure to fit any
-stage causes recovery rather than a success claim. This retains fifteen minutes
-before the authorized window closes. Both full acceptance passes include the
-1/2/4/6/8 benchmark and all five aliases, overlay/ranks/memory and real clients.
+first full acceptance 02:35, AI OS owner V4.1 restoration plus real Hermes and
+LibreChat inference 03:10, AI OS owner Flash restoration/native validation 03:55,
+final revalidation 04:10, latest safety rollback request 04:15, and recovery
+observation deadline 04:50. Failure to fit any stage causes recovery rather than
+a success claim. This reserves35 minutes for cold V4.1 fallback plus gateway
+validation and ten minutes before the window closes; readiness is measured,
+never inferred from those budgets. The systemd start bound is14400 seconds.
+
+The first acceptance performs the full1/2/4/6/8 benchmark and refusal checks.
+After the owner drill, explicit `final-revalidation` evidence repeats actual
+overlay/ranks/memory checks, all five aliases with streaming/tool/continuation
+at concurrency1, and all five production Hermes profiles plus LibreChat aliases.
+It does not claim to repeat the full concurrency/refusal sweep. The final pass
+has a hard15-minute process-group deadline; any timeout/missing result recovers.
 
 Each owner drill leg carries a unique durable operation UUID and an integer
 `not_after` epoch ninety seconds ahead. The owner API and enrolled agent preserve

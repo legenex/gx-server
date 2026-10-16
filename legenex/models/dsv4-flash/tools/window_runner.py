@@ -195,7 +195,8 @@ with opener.open(r,timeout=55) as response:
         (self.run / f'gateway-{target}.log').write_text(output)
 
     def accept(self, seconds: float, label: str = 'accept') -> None:
-        env = {**os.environ, 'GX_GATEWAY_ENV': str(LIVE / 'legenex/gateway/.env')}
+        env = {**os.environ, 'GX_GATEWAY_ENV': str(LIVE / 'legenex/gateway/.env'),
+               'DSV4F_ACCEPT_PHASE': 'final-revalidation' if label == 'accept-final' else 'full'}
         output = execute(['/bin/bash', str(TOOLS / 'accept.sh'), str(self.run / label)], seconds, env=env)
         (self.run / (label + '.log')).write_text(output)
         if 'ACCEPTANCE: GO' not in output.splitlines():
@@ -260,7 +261,7 @@ class Runner:
         key = 'activation' if target == TARGET else 'rollback'
         # Persist intent BEFORE the side effect. Lost acknowledgement is never
         # permission for a second activation or a second rollback request.
-        if not self.end('01:00:00') <= self.ops.now() < self.end('04:30:00'):
+        if not self.end('01:00:00') <= self.ops.now() < self.end('04:15:00'):
             raise TimeoutError('insufficient authorized time for a native activation/rollback')
         expiry = int(self.ops.now().timestamp()) + 90
         self.save(key + '_requested', **{key + '_requested': True, key + '_not_after': expiry})
@@ -303,9 +304,9 @@ class Runner:
 
     def restore(self, reason: str) -> int:
         self.step('recovery', reason)
-        # Reserve the last fifteen minutes for a human intervention; no new typed
+        # Reserve the last ten minutes for a human intervention; no new typed
         # operation is ever sent outside the authorized 01:00-05:00 window.
-        deadline = self.end('04:45:00')
+        deadline = self.end('04:50:00')
         while self.end('01:00:00') <= self.ops.now() < deadline:
             expiry = max((self.progress.get(p + '_not_after', 0) for p in ('activation','rollback','drill_v41','drill_flash')), default=0)
             if self.ops.now().timestamp() <= expiry or not self.ops.native_switch_settled():
@@ -381,28 +382,28 @@ class Runner:
             switch = status.get('switch') or {}
             if switch.get('state') != 'succeeded' or status.get('active') != TARGET or status['lifecycle']['state'] != 'ready':
                 return self.restore('Flash switch did not reach validated readiness')
-            self.ops.gateway('dsv4', min(180, (self.end('02:30:00') - self.ops.now()).total_seconds()))
-            left = (self.end('02:30:00') - self.ops.now()).total_seconds()
+            self.ops.gateway('dsv4', min(180, (self.end('02:35:00') - self.ops.now()).total_seconds()))
+            left = (self.end('02:35:00') - self.ops.now()).total_seconds()
             if left <= 0:
                 raise TimeoutError('acceptance hard stop')
             self.save('acceptance')
             self.ops.accept(left)
-            if self.ops.now() >= self.end('02:30:00'):
+            if self.ops.now() >= self.end('02:35:00'):
                 raise TimeoutError('acceptance passed the hard stop')
             # The successful rollback drill uses the real AI OS owner controls,
             # within this same locked controller. Interrupted runs recover only.
-            self.owner_switch('drill_v41', ROLLBACK, TARGET, self.end('02:50:00'))
-            left = (self.end('02:50:00') - self.ops.now()).total_seconds()
+            self.owner_switch('drill_v41', ROLLBACK, TARGET, self.end('03:10:00'))
+            left = (self.end('03:10:00') - self.ops.now()).total_seconds()
             if left <= 0:raise TimeoutError('V4.1 client validation deadline')
             self.ops.clients(left, 'drill-v41-clients')
             self.save('drill_v41_clients_verified', drill_v41_clients_verified=True)
-            self.owner_switch('drill_flash', TARGET, ROLLBACK, self.end('03:30:00'))
-            left = (self.end('04:15:00') - self.ops.now()).total_seconds()
+            self.owner_switch('drill_flash', TARGET, ROLLBACK, self.end('03:55:00'))
+            left = (self.end('04:10:00') - self.ops.now()).total_seconds()
             if left <= 0:
                 raise TimeoutError('final acceptance deadline')
             self.save('final_acceptance')
             self.ops.accept(left, 'accept-final')
-            if self.ops.now() >= self.end('04:15:00'):
+            if self.ops.now() >= self.end('04:10:00'):
                 raise TimeoutError('final acceptance hard stop')
             return self.finish('activated', 'Flash acceptance, AI OS owner V4.1→Flash drill and final acceptance passed', 0)
         except Exception as exc:

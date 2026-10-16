@@ -64,6 +64,12 @@ class TestBench(unittest.TestCase):
     def test_pass(self):
         self.assertTrue(E.eval_bench(report())[0])
 
+    def test_required_full_sweep_cannot_silently_omit_four_and_six(self):
+        self.assertFalse(E.eval_bench(report(), (1,2,4,6,8))[0])
+        runs=[{'concurrency':1,'ok':1,'errors':[],'requests':[{'completion_tokens':2}]}]
+        self.assertTrue(E.eval_bench(report(runs), (1,))[0])
+        self.assertFalse(E.eval_bench(report(runs), (1,2,4,6,8))[0])
+
     def test_zero_tokens_fail(self):
         runs = [{"concurrency": 1, "ok": 1, "errors": [], "requests": [{"completion_tokens": 0, "think_tag_leak": False}]}]
         ok, msg = E.eval_bench(report(runs))

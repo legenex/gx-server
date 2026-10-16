@@ -39,7 +39,7 @@ def eval_mem(text: str, floor: float = 15.0, min_samples: int = 10) -> tuple[boo
     return (h >= floor and w >= floor), msg
 
 
-def eval_bench(text: str) -> tuple[bool, str]:
+def eval_bench(text: str, required: tuple[int, ...] = ()) -> tuple[bool, str]:
     """gx_bench REPORT: every run complete, every request produced tokens and no
     raw think tags, and the tool call + continuation both worked."""
     reports = [line[len("REPORT "):] for line in text.splitlines() if line.startswith("REPORT ")]
@@ -50,6 +50,8 @@ def eval_bench(text: str) -> tuple[bool, str]:
     except ValueError:
         return False, "unparsable REPORT"
     problems = []
+    if required and [r.get('concurrency') for r in rep.get('runs') or []] != list(required):
+        problems.append('required concurrency sweep missing or changed: ' + str(required))
     for run in rep.get("runs") or []:
         n = run.get("concurrency")
         if run.get("errors"):
@@ -110,6 +112,7 @@ def main(argv: "list[str] | None" = None) -> int:
     m.add_argument("--min-samples", type=int, default=10)
     b = sub.add_parser("bench")
     b.add_argument("log")
+    b.add_argument("--required-concurrency", default="")
     r = sub.add_parser("ranks")
     r.add_argument("before")
     r.add_argument("after")
@@ -123,7 +126,7 @@ def main(argv: "list[str] | None" = None) -> int:
     if args.cmd == "mem":
         ok, msg = eval_mem(read(args.tsv), args.floor, args.min_samples)
     elif args.cmd == "bench":
-        ok, msg = eval_bench(read(args.log))
+        ok, msg = eval_bench(read(args.log), tuple(int(n) for n in args.required_concurrency.split(",") if n))
     else:
         ok, msg = eval_ranks(read(args.before), read(args.after))
     print(msg)

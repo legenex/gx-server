@@ -28,6 +28,13 @@ FLOOR="${DSV4F_RESIDENT_FLOOR_GIB:-15}"
 EVAL="python3 -I $KIT/tools/accept_eval.py"
 GATEWAY="${DSV4F_GATEWAY_URL:-http://127.0.0.1:4000/v1}"
 mkdir -p "$OUT"; chmod 700 "$OUT"
+phase="${DSV4F_ACCEPT_PHASE:-full}"
+case "$phase" in
+    full) concurrency=1,2,4,6,8 ;;
+    final-revalidation) concurrency=1 ;;
+    *) echo 'unknown acceptance phase'; exit 2 ;;
+esac
+printf '%s\n' "$phase" > "$OUT/phase.txt"
 
 mw=""
 cleanup() { [ -n "$mw" ] && kill -TERM "$mw" 2>/dev/null; wait "$mw" 2>/dev/null; mw=""; }
@@ -64,23 +71,26 @@ else
 fi
 
 # 2 refusal (corroboration; matches are printed for manual review)
+if [ "$phase" = full ]; then
 if python3 -I "$KIT/tools/refusal_check.py" --base "$GATEWAY" --out "$OUT/refusal.json" > "$OUT/refusal.log" 2>&1; then
     result refusal PASS "$(grep -E '^\{' "$OUT/refusal.log" | tail -1)"
 else
     result refusal FAIL "$(grep -E '^\{' "$OUT/refusal.log" | tail -1) (matches: $OUT/refusal.log)"
 fi
 
+fi
+
 # 3 + 4 bench under the memory watcher
-python3 -I "$KIT/tools/bench.py" --url "$GATEWAY/chat/completions" --model gx-fast --concurrency 1,2,4,6,8 --max-tokens 1024 > "$OUT/bench.log" 2>&1
+python3 -I "$KIT/tools/bench.py" --url "$GATEWAY/chat/completions" --model gx-fast --concurrency "$concurrency" --max-tokens 1024 > "$OUT/bench.log" 2>&1
 brc=$?
-if msg="$($EVAL bench "$OUT/bench.log")" && [ "$brc" = 0 ]; then result bench PASS "$msg"
+if msg="$($EVAL bench "$OUT/bench.log" --required-concurrency "$concurrency")" && [ "$brc" = 0 ]; then result bench PASS "$msg"
 else result bench FAIL "${msg:-bench.py exit $brc} (exit $brc)"; fi
 
 # Every logical mode must stream, call a structured tool, and continue after
 # its result. The switch validator covers identity and the physical fabric.
 for alias in gx-auto gx-medium gx-high gx-max; do
     if python3 -I "$KIT/tools/bench.py" --url "$GATEWAY/chat/completions" --model "$alias" --concurrency 1 --max-tokens 2048 > "$OUT/$alias.log" 2>&1 \
-        && msg="$($EVAL bench "$OUT/$alias.log")"; then result "$alias" PASS "$msg"
+        && msg="$($EVAL bench "$OUT/$alias.log" --required-concurrency 1)"; then result "$alias" PASS "$msg"
     else result "$alias" FAIL "stream/tool/continuation failed; see $alias.log"; fi
 done
 if python3 -I "$KIT/tools/client_accept.py" "$OUT/clients" > "$OUT/clients.log" 2>&1; then

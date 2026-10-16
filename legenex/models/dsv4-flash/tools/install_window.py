@@ -106,7 +106,7 @@ Environment=TZ=Africa/Johannesburg
 Environment=XDG_RUNTIME_DIR=%t
 ExecStart={entry} --window {window}
 ExecStopPost={entry} --window {window} --recover
-TimeoutStartSec=13800
+TimeoutStartSec=14400
 TimeoutStopSec=3900
 KillMode=control-group
 NoNewPrivileges=true
