@@ -9,20 +9,37 @@
 # landing = legenex/gateway/litellm/config.yaml as landed in 82ca712 (V4.1 model_info)
 # Both copy over the live config.yaml (a tracked file: autosync commits it).
 set -euo pipefail
-REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
+REPO="${GX_REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)}"
 GW="$REPO/legenex/gateway"
+GATEWAY_URL="${GX_GATEWAY_URL:-http://127.0.0.1:4000/v1}"
 LANDING_REF="${GX_LANDING_REF:-82ca712}"
-case "${1:-}" in
+DOCKER="${GX_DOCKER:-docker}"
+CONTAINER="${GX_LITELLM_CONTAINER:-gx-litellm}"
+target="${1:-}"
+other=landing; [ "$target" = landing ] && other=dsv4
+trap 'rc=$?; echo "[gateway_config] FAILED (exit $rc). Way back: $0 $other   (gateway config);  $GW/identity-hmac.sh rollback   (identity signing, only if verify keeps failing)" >&2' ERR
+
+# Refuse to recreate the LIVE gx-litellm from any checkout other than the one
+# it was created from (a worktree would swap in its own mounts).
+want="$(realpath "$GW/docker-compose.gateway.yml")"
+have="$($DOCKER inspect -f '{{index .Config.Labels "com.docker.compose.project.config_files"}}' "$CONTAINER" 2>/dev/null || true)"
+if [ -z "$have" ] || [ "$(realpath -m "$have")" != "$want" ]; then
+    trap - ERR
+    echo "[gateway_config] REFUSED: $CONTAINER was created from '${have:-unknown}', not $want; run this script from that checkout" >&2
+    exit 3
+fi
+case "$target" in
     dsv4)    cp "$GW/litellm/config.dsv4-flash.yaml" "$GW/litellm/config.yaml" ;;
     landing) git -C "$REPO" show "$LANDING_REF:legenex/gateway/litellm/config.yaml" > "$GW/litellm/config.yaml" ;;
     *) echo "usage: $0 dsv4|landing" >&2; exit 2 ;;
 esac
-docker compose -p gx-gateway -f "$GW/docker-compose.gateway.yml" --env-file "$GW/.env" \
+$DOCKER compose -p gx-gateway -f "$GW/docker-compose.gateway.yml" --env-file "$GW/.env" \
     up -d --no-deps --force-recreate litellm
-for _ in $(seq 1 60); do
-    curl -fsS -m 3 http://127.0.0.1:4000/health/liveliness >/dev/null 2>&1 && break
+for _ in $(seq 1 $(( ${GX_LIVE_WAIT:-120} / 2 ))); do
+    curl -fsS -m 3 "${GATEWAY_URL%/v1}/health/liveliness" >/dev/null 2>&1 && break
     sleep 2
 done
-curl -fsS -m 3 http://127.0.0.1:4000/health/liveliness >/dev/null || { echo "gx-litellm is not live" >&2; exit 1; }
+curl -fsS -m 3 "${GATEWAY_URL%/v1}/health/liveliness" >/dev/null || { echo "gx-litellm is not live" >&2; false; }
 "$GW/identity-hmac.sh" verify
-echo "gateway config '$1' applied, gx-litellm recreated, identity signing verified"
+trap - ERR
+echo "gateway config '$target' applied, gx-litellm recreated, identity signing verified"

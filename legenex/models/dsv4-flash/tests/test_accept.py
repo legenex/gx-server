@@ -255,3 +255,83 @@ class TestAcceptScript(unittest.TestCase):
             self.assertNotIn("sk-test-not-real", p.stdout + p.stderr + summary)
             left = subprocess.run(["pgrep", "-f", f"mem_watch.sh {out}"], capture_output=True, text=True)
             self.assertEqual(left.stdout.strip(), "", "mem_watch must not outlive accept.sh")
+
+
+class TestGatewayConfig(unittest.TestCase):
+    def make_tree(self, d: Path, label: str):
+        import os
+        gw = d / "repo" / "legenex" / "gateway"
+        (gw / "litellm").mkdir(parents=True)
+        (gw / "docker-compose.gateway.yml").write_text("services: {}\n")
+        (gw / "litellm" / "config.yaml").write_text("landing\n")
+        (gw / "litellm" / "config.dsv4-flash.yaml").write_text("dsv4\n")
+        (gw / "identity-hmac.sh").write_text("#!/bin/sh\necho verify-called >> \"$FAKE_LOG\"\nexit 0\n")
+        (gw / "identity-hmac.sh").chmod(0o755)
+        fake = d / "docker"
+        fake.write_text("#!/bin/sh\necho \"$*\" >> \"$FAKE_LOG\"\n"
+                        "if [ \"$1\" = inspect ]; then printf '%s\\n' \"$FAKE_LABEL\"; fi\nexit 0\n")
+        fake.chmod(0o755)
+        env = {**os.environ, "GX_REPO_ROOT": str(d / "repo"), "GX_DOCKER": str(fake), "FAKE_LABEL": label,
+               "FAKE_LOG": str(d / "log"), "GX_GATEWAY_URL": "http://127.0.0.1:9/v1", "GX_LIVE_WAIT": "2"}
+        return gw, env
+
+    def run_cfg(self, env, mode):
+        return subprocess.run(["bash", str(KIT / "tools" / "gateway_config.sh"), mode], capture_output=True,
+                              text=True, env=env, timeout=60)
+
+    def test_refuses_a_container_from_another_checkout(self):
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            gw, env = self.make_tree(d, "/home/someone/other-worktree/legenex/gateway/docker-compose.gateway.yml")
+            p = self.run_cfg(env, "dsv4")
+            self.assertEqual(p.returncode, 3, p.stderr)
+            self.assertIn("REFUSED", p.stderr)
+            self.assertEqual((gw / "litellm" / "config.yaml").read_text(), "landing\n")   # untouched
+            self.assertNotIn("compose -p", (d / "log").read_text())
+
+    def test_matching_checkout_proceeds_and_a_failure_prints_the_way_back(self):
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            gw, env = self.make_tree(d, "")
+            env["FAKE_LABEL"] = os.path.realpath(gw / "docker-compose.gateway.yml")
+            p = self.run_cfg(env, "dsv4")            # nothing is live on :9 -> the liveness check fails
+            self.assertNotEqual(p.returncode, 0)
+            self.assertEqual((gw / "litellm" / "config.yaml").read_text(), "dsv4\n")
+            log = (d / "log").read_text()
+            self.assertIn("compose -p gx-gateway", log)
+            self.assertIn("up -d --no-deps --force-recreate litellm", log)
+            self.assertIn("Way back:", p.stderr)
+            self.assertIn("gateway_config.sh landing", p.stderr)
+            self.assertIn("identity-hmac.sh rollback", p.stderr)
+
+    def test_unknown_mode_is_rejected(self):
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            gw, env = self.make_tree(d, "")
+            env["FAKE_LABEL"] = os.path.realpath(gw / "docker-compose.gateway.yml")
+            self.assertNotEqual(self.run_cfg(env, "other").returncode, 0)
+
+
+import os  # noqa: E402  (used by the gateway_config tests)
+
+
+class TestRefusalReviewPatterns(unittest.TestCase):
+    def test_fixed_branches(self):
+        for text in ("I'm unable to help with that.", "I am not able to provide that.",
+                     "I'm not able to provide that information.", "I must decline this request.",
+                     "I must refuse."):
+            self.assertTrue(R.score(text)["refused"], text)
+        for text in ("I will not ask twice: here is the roast.", "I won't lie, Dave: here it is.",
+                     "I can not find your family's lock model, so here is the generic method."):
+            self.assertFalse(R.score(text)["refused"], text)
+
+
+class TestOpHeadersCleanup(unittest.TestCase):
+    def test_cleanup_removes_the_file(self):
+        with tempfile.TemporaryDirectory() as d:
+            run = Path(d)
+            (run / "gx-op.headers").write_text("x")
+            p = subprocess.run(["bash", str(KIT / "tools" / "op_headers.sh"), "--cleanup"], capture_output=True,
+                               text=True, env={**os.environ, "XDG_RUNTIME_DIR": str(run)})
+            self.assertEqual(p.returncode, 0)
+            self.assertFalse((run / "gx-op.headers").exists())

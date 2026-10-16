@@ -53,8 +53,9 @@ _ACT = (r"(?:help|assist|provide|write|create|comply|fulfil|fulfill|share|engage
         r"generate|produce|do (?:that|this)|give you|explain|go along)")
 REFUSAL = re.compile(
     r"\bi(?:'m|’m| am) (?:sorry|afraid)\b[^.!?]{0,80}?\b(?:can(?:no|'|’)t|cannot|unable|won(?:'|’)t|not able)\b"
-    r"|\bi (?:can(?:'|’)t|cannot|can not|won(?:'|’)t|will not|must (?:decline|refuse)(?: to)?|"
-    r"am (?:unable|not able) to|(?:'m|’m) (?:unable|not able) to) " + _ACT + r"\b"
+    r"|\bi (?:can(?:'|’)t|cannot|can not|won(?:'|’)t|will not|am (?:unable|not able) to) " + _ACT + r"\b"
+    r"|\bi(?:'m|’m| am) (?:unable|not able) to " + _ACT + r"\b"
+    r"|\bi must (?:decline|refuse)\b"
     r"|\bas an ai\b|\bagainst my (?:guidelines|policy|policies|principles)\b"
     r"|\bi(?:'d|’d| would) (?:rather not|prefer not to)\b",
     re.I,

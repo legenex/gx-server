@@ -83,6 +83,7 @@ uses `curl -H @"$HF"`; `accept.sh` reads the gateway key from its file.
   [ -s /srv/projects/gx-cluster/secrets/orchestrator/operator-token ] || \
     openssl rand -hex 24 > /srv/projects/gx-cluster/secrets/orchestrator/operator-token )
 HF=$(legenex/models/dsv4-flash/tools/op_headers.sh <your-name>)
+trap 'rm -f "$HF"' EXIT          # the headers file dies with this shell
 O=http://127.0.0.1:18900
 
 # 1. readiness (read-only)
@@ -107,7 +108,7 @@ legenex/models/dsv4-flash/tools/accept.sh            # -> "ACCEPTANCE: GO"
 curl -s -H @"$HF" -X POST $O/models/activate -d '{"target":"dsv41-rollback","confirm":true}'
 legenex/models/dsv4-flash/tools/gateway_config.sh landing   # after it succeeded
 
-# end of session
+# end of session (the EXIT trap does it too; or: tools/op_headers.sh --cleanup)
 rm -f "$HF"
 ```
 
@@ -138,12 +139,14 @@ Preflight run 2026-10-16 ~16:00 SAST, read-only (V4.1 resident, untouched):
 | memory model | today's idle after V4.1 release: head 113.4-115.8, worker 116.8-117.0 GiB -> after load at 0.74: head ~19-22, worker ~23 GiB (floor 15). Below 110 GiB on the head the start refuses |
 | tools | `tools/accept.sh` (overlay digests, refusal, bench c=1,2,8 + memory watcher), `tools/bench.py` (the V4.1 baseline method), `tools/refusal_check.py`, `tools/mem_watch.sh` |
 
-Timed plan (all on gx10-01; `HF=$(legenex/models/dsv4-flash/tools/op_headers.sh <name>)`, every call `curl -s -H @"$HF" ...`; `rm -f "$HF"` at the end):
+Timed plan (all on gx10-01, in ONE operator shell started with
+`HF=$(legenex/models/dsv4-flash/tools/op_headers.sh <name>); trap 'rm -f "$HF"' EXIT`;
+every call `curl -s -H @"$HF" ...`; `tools/op_headers.sh --cleanup` if the shell was lost):
 
 | Time | Step | Go criterion / action on failure |
 |---|---|---|
 | before 01:00 | **W0** operator token (owner): `umask 077; openssl rand -hex 24 > /srv/projects/gx-cluster/secrets/orchestrator/operator-token` (read per request: no restart) | `GET /models/status` -> 200, `active: dsv41-rollback` |
-| 01:00 | **W1** `GET /models/rollback-readiness`; `df -h /` on gx10-01 >= 15 GB; no AI OS work orders running | both `rollback_ready: true`; else NO-GO (stay on V4.1) |
+| 01:00 | **W1** `GET /models/rollback-readiness`; `df -h /` on gx10-01 >= 15 GB; no AI OS work orders running. Memory gate: head MemAvailable must reach >= 110 GiB before W2. With V4.1 resident it is ~5 GiB: wait for its idle release (TTL 30 min), or release it through the lifecycle API, never `docker stop`: `curl -s -H @"$HF" -X POST $O/lifecycle/gx-max/release -d '{}'`, then `awk '/MemAvailable/{print $2/1048576}' /proc/meminfo` until >= 110. Issue W2 right after a manual release: until the switch pauses the scheduler, any interactive request can re-acquire V4.1 (the switch itself also stops V4.1 and re-checks >= 109 GiB per node before booting) | both `rollback_ready: true` and head >= 110 GiB; else NO-GO (stay on V4.1; release it only once the go is certain) |
 | 01:05 | **W2** `POST /models/activate {"target":"dsv4-flash-primary","confirm":true}`; poll `/models/status` every 30 s | drain <= 10 min (else `aborted`, nothing stopped; retry with `cut_in_flight` only if the owner agrees) |
 | ~01:08 | V4.1 stopped, preflight (memory, image, holds), V4 Flash boot (budget 40 min, `DSV4F_READY_TIMEOUT`) | the switcher itself rolls back on ANY failure (`rolled_back`, V4.1 back in ~10 min) |
 | by ~01:50 | **W3** switch `succeeded`: all checks ok (ranks, identity, completion, fabric_rdma, streaming, tool_call, continuation, tool_call_thinking) | if `rolled_back`: collect `~/.cache/gx-dsv4-flash/run/*-fail.log`, stay on V4.1, end the window |

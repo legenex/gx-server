@@ -4,12 +4,17 @@
 #   HF=$(legenex/models/dsv4-flash/tools/op_headers.sh <your-name>)
 #   curl -s -H @"$HF" http://127.0.0.1:18900/models/status
 #   ...
-#   rm -f "$HF"
+#   rm -f "$HF"          # or: op_headers.sh --cleanup
 #
 # Keys never reach argv, the process list, the screen or shell history: they
 # are read from their files and written with the printf builtin into a file
 # created under umask 077 in $XDG_RUNTIME_DIR (tmpfs, per user, 0700).
 set -euo pipefail
+if [ "${1:-}" = --cleanup ]; then
+    rm -f -- "${XDG_RUNTIME_DIR:?}/gx-op.headers"
+    echo "removed ${XDG_RUNTIME_DIR}/gx-op.headers" >&2
+    exit 0
+fi
 name="${1:-operator}"
 name="$(printf '%s' "$name" | tr -cd 'A-Za-z0-9._@ -' | cut -c1-48)"
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
@@ -30,3 +35,4 @@ out="$DIR/gx-op.headers"
 } > "$out"
 chmod 600 "$out"
 printf '%s\n' "$out"
+echo "headers in $out (0600). In this shell: trap 'rm -f \"\$HF\"' EXIT   -- or later: $0 --cleanup" >&2
