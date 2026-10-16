@@ -17,6 +17,12 @@
 #                                .env backed up), recreate gx-litellm ->
 #                                everyone anonymous again
 #
+# ROTATION = rollback, then provision, then restart the orchestrator:
+#   systemctl --user restart gx-orchestrator
+# (its unit loads the gateway .env as EnvironmentFile, and an environment key
+# wins over the key file, so a running orchestrator keeps the OLD key until it
+# restarts; every signed identity is anonymous in between).
+#
 # No sudo. Never prints a key. Overridable for tests: GX_HMAC_FILE,
 # GX_GATEWAY_ENV, GX_COMPOSE_FILE, GX_COMPOSE_PROJECT, GX_LITELLM_CONTAINER,
 # GX_DOCKER, GX_GATEWAY_URL, GX_ORCH_URL, GX_SKIP_RECREATE=1, GX_SKIP_REQUEST=1.
@@ -50,15 +56,27 @@ container_prefix() {
     [ -n "$v" ] && printf '%s' "$v" | prefix || printf 'absent'
 }
 
-set_env_line() {   # $1 = value ("" removes the line); keeps a timestamped backup
-    [ -f "$ENV_FILE" ] || die "gateway env file missing: $ENV_FILE"
-    cp -p "$ENV_FILE" "$ENV_FILE.bak-identity-hmac-$(date -u +%Y%m%dT%H%M%SZ)"
-    local tmp
-    tmp="$(mktemp "$ENV_FILE.XXXXXX")"
-    grep -v "^${KEY_NAME}=" "$ENV_FILE" > "$tmp" || true
+set_env_line() {   # $1 = value ("" removes the line)
+    # The live gateway .env is a SYMLINK into the secrets store (D-043): edit
+    # the real target in place, keep temp files and backups beside it (0600,
+    # never inside the tree that Open WebUI Computer mounts), and never
+    # replace the symlink itself (review of dfefdc3, B2).
+    [ -e "$ENV_FILE" ] || die "gateway env file missing: $ENV_FILE"
+    local real dir base tmp stamp
+    real="$(readlink -f "$ENV_FILE")"
+    [ -f "$real" ] || die "gateway env target is not a regular file: $real"
+    dir="$(dirname "$real")"; base="$(basename "$real")"
+    stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+    ( umask 077; cp "$real" "$dir/$base.bak-identity-hmac-$stamp" )
+    chmod 600 "$dir/$base.bak-identity-hmac-$stamp"
+    # Keep only the newest BACKUPS_KEEP backups so reruns do not pile up.
+    ls -1t "$dir/$base".bak-identity-hmac-* 2>/dev/null | tail -n +"$(( ${GX_BACKUPS_KEEP:-3} + 1 ))" \
+        | while read -r old; do rm -f -- "$old"; done
+    tmp="$(mktemp "$dir/.$base.identity-hmac.XXXXXX")"   # mktemp creates it 0600
+    grep -v "^${KEY_NAME}=" "$real" > "$tmp" || true
     [ -n "$1" ] && printf '%s=%s\n' "$KEY_NAME" "$1" >> "$tmp"
-    chmod --reference="$ENV_FILE" "$tmp"
-    mv "$tmp" "$ENV_FILE"
+    chmod --reference="$real" "$tmp"
+    mv -f -- "$tmp" "$real"      # same directory: atomic; the symlink keeps pointing at it
 }
 
 recreate_litellm() {
@@ -139,6 +157,8 @@ PY
 cmd_rollback() {
     if [ -s "$HMAC_FILE" ]; then
         mv "$HMAC_FILE" "$HMAC_FILE.disabled-$(date -u +%Y%m%dT%H%M%SZ)"
+        ls -1t "$HMAC_FILE".disabled-* 2>/dev/null | tail -n +"$(( ${GX_BACKUPS_KEEP:-3} + 1 ))" \
+            | while read -r old; do rm -f -- "$old"; done
         log "orchestrator key moved aside: signed identities stop counting immediately"
     fi
     if [ -n "$(env_value)" ]; then set_env_line ""; log "key removed from $ENV_FILE (backup kept)"; fi

@@ -98,6 +98,36 @@ class TestIdentityHmacScript(unittest.TestCase):
         self.assertIn("compose -p gx-gateway", calls)
         self.assertIn("up -d --no-deps --force-recreate litellm", calls)
 
+    def test_symlinked_env_stays_a_symlink_and_secrets_stay_out_of_the_tree(self):
+        # Live layout (D-043): legenex/gateway/.env -> /srv/projects/gx-cluster/secrets/gateway.env
+        d = Path(self.tmp.name)
+        tree, secrets = d / "tree", d / "secrets-store"
+        tree.mkdir()
+        secrets.mkdir()
+        target = secrets / "gateway.env"
+        target.write_text(self.envf.read_text())
+        target.chmod(0o600)
+        link = tree / ".env"
+        link.symlink_to(target)
+        env = {"GX_GATEWAY_ENV": str(link), "GX_SKIP_RECREATE": "1"}
+        for _ in range(5):                      # reruns: backups must be capped
+            self.assertEqual(self.run_script("provision", **env).returncode, 0)
+        self.assertTrue(link.is_symlink(), "the .env symlink must never be replaced")
+        self.assertEqual(Path(os.readlink(link)), target)
+        key = self.key.read_text().strip()
+        self.assertIn(f"GX_IDENTITY_HMAC_KEY={key}", target.read_text())
+        self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o600)
+        self.assertEqual(sorted(p.name for p in tree.iterdir()), [".env"], "nothing secret lands in the tree")
+        backups = list(secrets.glob("gateway.env.bak-identity-hmac-*"))
+        self.assertTrue(1 <= len(backups) <= 3, backups)
+        self.assertTrue(all(stat.S_IMODE(b.stat().st_mode) == 0o600 for b in backups))
+        self.assertFalse(list(secrets.glob(".gateway.env.identity-hmac.*")), "no temp file left behind")
+        r = self.run_script("rollback", **env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue(link.is_symlink())
+        self.assertNotIn("GX_IDENTITY_HMAC_KEY=", target.read_text())
+        self.assertEqual(sorted(p.name for p in tree.iterdir()), [".env"])
+
 
 if __name__ == "__main__":
     unittest.main()

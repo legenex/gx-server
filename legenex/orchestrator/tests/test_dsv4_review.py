@@ -271,6 +271,36 @@ class TestNoAcquireDuringASwitch(OrchestratorHarness):
         self.assertEqual(self.lifecycle.acquire_calls, [], "a request during a switch must never start a kit")
 
 
+class TestKeepAliveIsolation(OrchestratorHarness):
+    """Review of dfefdc3 (B1): one keep-alive connection, several requests --
+    each request's identity is verified afresh, never inherited."""
+
+    def test_signed_then_unsigned_on_one_connection(self):
+        import http.client
+        from server_harness import API_KEY, signed_identity
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=15)
+        self.addCleanup(conn.close)
+        socks = []
+
+        def send(text, extra):
+            body = json.dumps({"model": "gx-auto", "messages": [{"role": "user", "content": text}]})
+            conn.request("POST", "/v1/chat/completions", body=body,
+                         headers={"Content-Type": "application/json", "Authorization": f"Bearer {API_KEY}", **extra})
+            resp = conn.getresponse()
+            resp.read()
+            socks.append(conn.sock)
+            rid = resp.getheader("X-GX-Request-Id")
+            self.assertEqual(resp.status, 200)
+            return self.wait_for_journal(rid, "decision")["identity"]
+
+        signed = signed_identity("odin")
+        self.assertEqual(send("hi one", signed), "odin")
+        self.assertIsNone(send("hi two", {}))                     # nothing inherited
+        self.assertIsNone(send("hi three", signed))               # the nonce is checked again: replay refused
+        self.assertEqual(send("hi four", signed_identity("odin")), "odin")
+        self.assertTrue(all(s is socks[0] for s in socks), "the requests really shared one connection")
+
+
 class TestActiveDeploymentConsumers(unittest.TestCase):
     def test_active_model_follows_the_pointer_not_the_alias(self):
         r = reg()

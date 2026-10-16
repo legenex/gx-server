@@ -266,6 +266,22 @@ class Handler(BaseHTTPRequestHandler):
     manager: "DeploymentManager | None" = None
     switcher: "ModelSwitcher | None" = None
 
+    # ------------------------------------------------- per-request state
+    #: Attributes that describe ONE request. HTTP/1.1 keep-alive reuses this
+    #: handler object for every request on a connection, so they are cleared
+    #: before each request is parsed (review of dfefdc3, B1): a signed request
+    #: must never lend its identity to the next one.
+    _PER_REQUEST_ATTRS = ("_gx_identity", "_auto_base_profile", "_gate_state")
+    _gate_state: "dict[str, Any] | None" = None
+
+    def _reset_request_state(self) -> None:
+        for name in self._PER_REQUEST_ATTRS:
+            self.__dict__.pop(name, None)
+
+    def parse_request(self) -> bool:  # noqa: D401 - stdlib hook, once per request
+        self._reset_request_state()
+        return super().parse_request()
+
     # ---------------------------------------------------------------- helpers
     def log_message(self, fmt: str, *args: Any) -> None:  # noqa: A003
         log.info("%s - %s", self.address_string(), fmt % args)
@@ -690,7 +706,7 @@ class Handler(BaseHTTPRequestHandler):
     def _caller_identity(self) -> str:
         """The signed gateway identity of THIS request, verified once (the
         nonce is single-use, so it must never be checked twice)."""
-        if not hasattr(self, "_gx_identity"):
+        if "_gx_identity" not in self.__dict__:
             self._gx_identity = identity_from_headers(
                 self.headers, self.cfg.identity_hmac_key(), nonces=self.identity_nonces)
         return self._gx_identity
@@ -997,7 +1013,7 @@ class Handler(BaseHTTPRequestHandler):
         self._relay_phase(
             path, payload, request_id, ALIAS_AUTO, profile_name, reasoning,
             fields, started,
-            mode_priority=SCHED.priority_from_mode(getattr(self, "_auto_base_profile", profile_name)),
+            mode_priority=SCHED.priority_from_mode(self.__dict__.get("_auto_base_profile", profile_name)),
         )
 
     # ------------------------------------------------------------ modes (D-053)

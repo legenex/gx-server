@@ -91,6 +91,10 @@ H=(-H "Authorization: Bearer $OK" -H "X-GX-Operator-Token: $OT")
 legenex/gateway/identity-hmac.sh provision   # key 0600 + gateway .env, recreates ONLY gx-litellm
 legenex/gateway/identity-hmac.sh verify      # equal sha256 prefixes + a signed identity in the routing journal
 #   rollback (everyone anonymous again): legenex/gateway/identity-hmac.sh rollback
+#   ROTATION: rollback, provision, then systemctl --user restart gx-orchestrator
+#   (its unit loads the gateway .env, and an env key beats the key file).
+#   V4.1/V4 Flash wake by X-GX-Priority for AI OS / AgentOS relies on their
+#   LiteLLM key aliases being exactly "ai-os" and "agentos".
 
 # gx10-01 — 1. deploy the code (merge, then): restart the control plane
 systemctl --user restart gx-orchestrator          # adopts the running V4.1 (still active)
