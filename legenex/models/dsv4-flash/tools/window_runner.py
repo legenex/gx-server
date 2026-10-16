@@ -260,8 +260,11 @@ class Runner:
         key = 'activation' if target == TARGET else 'rollback'
         # Persist intent BEFORE the side effect. Lost acknowledgement is never
         # permission for a second activation or a second rollback request.
-        self.save(key + '_requested', **{key + '_requested': True})
-        response = self.ops.api('/models/activate', {'target': target, 'confirm': True})
+        if not self.end('01:00:00') <= self.ops.now() < self.end('04:30:00'):
+            raise TimeoutError('insufficient authorized time for a native activation/rollback')
+        expiry = int(self.ops.now().timestamp()) + 90
+        self.save(key + '_requested', **{key + '_requested': True, key + '_not_after': expiry})
+        response = self.ops.api('/models/activate', {'target': target, 'confirm': True, 'not_after': expiry})
         ident = response['switch']['id']
         self.progress['switch_ids'].append(ident)
         self.save(key + '_waiting', **{key + '_switch': ident})
@@ -304,7 +307,7 @@ class Runner:
         # operation is ever sent outside the authorized 01:00-05:00 window.
         deadline = self.end('04:45:00')
         while self.end('01:00:00') <= self.ops.now() < deadline:
-            expiry = max((self.progress.get(p + '_not_after', 0) for p in ('drill_v41','drill_flash')), default=0)
+            expiry = max((self.progress.get(p + '_not_after', 0) for p in ('activation','rollback','drill_v41','drill_flash')), default=0)
             if self.ops.now().timestamp() <= expiry or not self.ops.native_switch_settled():
                 self.ops.sleep(5)
                 continue

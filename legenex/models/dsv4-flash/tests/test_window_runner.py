@@ -179,6 +179,33 @@ class TestWindow(unittest.TestCase):
                 self.assertEqual(self.runner.run_window(recover=True), 5)
                 self.assertEqual(self.ops.owner_posts, [])
 
+    def test_initial_native_lost_ack_before_lock_publication_expires_before_recovery(self):
+        original = self.ops.api
+        pending=[]
+        def api(path,body=None):
+            if path=='/models/activate':
+                pending.append(body)
+                raise TimeoutError('HTTP accepted but handler not yet at switch lock')
+            if path=='/models/status' and pending:
+                # Simulate the old HTTP handler finally running during recovery.
+                # The native authoritative expiry rejects this late delivery.
+                self.assertGreaterEqual(self.ops.now().timestamp(),pending[0]['not_after'])
+            return original(path,body)
+        self.ops.api=api
+        self.assertEqual(self.runner.run_window(),5)
+        self.assertEqual(len(pending),1)
+        self.assertEqual(pending[0]['not_after'],self.runner.progress['activation_not_after'])
+        self.assertEqual(self.ops.active,W.ROLLBACK)
+        self.assertEqual(self.ops.owner_posts,[])
+
+    def test_every_native_post_has_distinct_durable_expiry(self):
+        self.ops.failure='acceptance'
+        self.assertEqual(self.runner.run_window(),5)
+        self.assertEqual(len(self.ops.posts),2)
+        self.assertEqual(self.ops.posts[0]['not_after'],self.runner.progress['activation_not_after'])
+        self.assertEqual(self.ops.posts[1]['not_after'],self.runner.progress['rollback_not_after'])
+        self.assertGreater(self.ops.posts[1]['not_after'],self.ops.posts[0]['not_after'])
+
     def test_recovery_waits_out_delayed_owner_action_expiry(self):
         self.ops.clock = self.runner.end('02:00:00')
         start = self.ops.clock
