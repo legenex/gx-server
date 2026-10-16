@@ -103,7 +103,7 @@ model_list:
       include_reasoning: true
       supports_reasoning: true
       # V4.1 landing values (review L3); config.dsv4-flash.yaml at activation.
-      merge_reasoning_content_in_choices: true
+      merge_reasoning_content_in_choices: false
       timeout: 3600
       num_retries: 0
     model_info:
@@ -190,7 +190,7 @@ model_list:
       include_reasoning: true
       supports_reasoning: true
       # V4.1 landing values (review L3); config.dsv4-flash.yaml at activation.
-      merge_reasoning_content_in_choices: true
+      merge_reasoning_content_in_choices: false
       timeout: 3600
       num_retries: 0
     model_info:
@@ -228,8 +228,9 @@ litellm_settings:
   context_window_fallbacks: []
   content_policy_fallbacks: []
 
-  # Landing value (V4.1 behaviour for Open WebUI); config.dsv4-flash.yaml sets false.
-  merge_reasoning_content_in_choices: true
+  # false everywhere: reasoning travels in reasoning_content, never as <think> in content.
+  # Open WebUI v0.11.4 reads delta.reasoning_content/reasoning natively (middleware.py:3748).
+  merge_reasoning_content_in_choices: false
 
   # --- privacy-safe logging -------------------------------------------------
   # Prompts and completions are never written to logs or the spend database.
