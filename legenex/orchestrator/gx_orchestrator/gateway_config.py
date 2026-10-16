@@ -42,7 +42,7 @@ class GatewayConfigurator:
         if code:raise RuntimeError(f'gateway reconciliation failed ({code}); private log {log}')
 
 
-def source_snapshot(repo: Path) -> dict:
+def source_snapshot(repo: Path, registry_path: Path | None = None) -> dict:
     """Capture code/registry provenance ONCE at startup, not a later checkout HEAD."""
     source=None
     try:
@@ -50,11 +50,16 @@ def source_snapshot(repo: Path) -> dict:
     except (OSError,subprocess.SubprocessError):pass
     digest=hashlib.sha256()
     paths=sorted((repo/'legenex/orchestrator/gx_orchestrator').glob('*.py'))
-    paths += [repo/'legenex/orchestrator/identity-policy.json',repo/'legenex/models/registry.json']
+    registry_path=registry_path or repo/'legenex/models/registry.json'
+    paths += [repo/'legenex/orchestrator/identity-policy.json',registry_path]
     try:
         for path in paths:
-            digest.update(str(path.relative_to(repo)).encode()+b'\0'+path.read_bytes()+b'\0')
+            name=str(path.relative_to(repo)) if path.is_relative_to(repo) else str(path)
+            digest.update(name.encode()+b'\0'+path.read_bytes()+b'\0')
         fingerprint=digest.hexdigest()
     except OSError:fingerprint=None
-    return {'source_sha':source,'startup_source_files_sha256':fingerprint,'pid':os.getpid(),
+    try:registry_sha=hashlib.sha256(registry_path.read_bytes()).hexdigest()
+    except OSError:registry_sha=None
+    return {'source_sha':source,'startup_source_files_sha256':fingerprint,
+            'configured_registry_path':str(registry_path),'startup_registry_file_sha256':registry_sha,'pid':os.getpid(),
             'captured_at':dt.datetime.now(dt.timezone.utc).isoformat()}

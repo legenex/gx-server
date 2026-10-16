@@ -1444,7 +1444,7 @@ def build_servers(cfg: Config | None = None) -> tuple[list[ThreadingHTTPServer],
         acquire_timeout=cfg.gxmax_acquire_timeout,
         configure_gateway=GatewayConfigurator(cfg.repo_root, cfg.log_dir),
     )
-    runtime_receipt = source_snapshot(cfg.repo_root)
+    runtime_receipt = source_snapshot(cfg.repo_root, cfg.registry_path)
     def active_endpoint() -> tuple[str, str, str]:
         dep = manager.active
         rt = registry.runtime(dep.runtime)
