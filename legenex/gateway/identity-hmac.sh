@@ -73,6 +73,8 @@ set_env_line() {   # $1 = value ("" removes the line)
     ls -1t "$dir/$base".bak-identity-hmac-* 2>/dev/null | tail -n +"$(( ${GX_BACKUPS_KEEP:-3} + 1 ))" \
         | while read -r old; do rm -f -- "$old"; done
     tmp="$(mktemp "$dir/.$base.identity-hmac.XXXXXX")"   # mktemp creates it 0600
+    # An interrupt (Ctrl-C, TERM) mid-edit must not leave the secrets copy behind.
+    trap 'rm -f -- "$tmp"; echo "[identity-hmac] interrupted; nothing changed" >&2; exit 130' INT TERM
     # Every step is checked; on ANY failure the secrets-bearing temp file is
     # removed before we stop, and the original file is left untouched.
     local rc=0
@@ -84,6 +86,7 @@ set_env_line() {   # $1 = value ("" removes the line)
     chmod --reference="$real" "$tmp" || { rm -f -- "$tmp"; die "could not set the temp file mode; nothing changed"; }
     # same directory: atomic; the symlink keeps pointing at it
     mv -f -- "$tmp" "$real" || { rm -f -- "$tmp"; die "could not replace $real; nothing changed"; }
+    trap - INT TERM
 }
 
 recreate_litellm() {

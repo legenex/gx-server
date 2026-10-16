@@ -73,69 +73,52 @@ and check `docker image inspect -f '{{.Id}}'` equals the id above.
 
 ## Activation runbook (lead, inside 01:00-05:00 SAST)
 
-Prerequisites (once, any time): the image on BOTH nodes with the id pinned in
-`dsv4-flash.env.canonical` (`DSV4F_IMAGE_ID`), gx10-01 disk for it (see the
-build record), this branch merged and deployed on gx10-01, and an operator
-token in `/srv/projects/gx-cluster/secrets/orchestrator/operator-token`
-(0600, >= 16 chars).
+Keys never go on a command line, the screen, `ps` or shell history: the
+operator headers live in a 0600 file under `$XDG_RUNTIME_DIR` and every call
+uses `curl -H @"$HF"`; `accept.sh` reads the gateway key from its file.
 
 ```bash
-# gx10-01 — 0. operator token (once)
-umask 077; mkdir -p /srv/projects/gx-cluster/secrets/orchestrator
-openssl rand -hex 24 > /srv/projects/gx-cluster/secrets/orchestrator/operator-token
-OT=$(cat /srv/projects/gx-cluster/secrets/orchestrator/operator-token)
-OK=$(grep ^GX_ORCHESTRATOR_API_KEY= legenex/gateway/.env | cut -d= -f2-)
-H=(-H "Authorization: Bearer $OK" -H "X-GX-Operator-Token: $OT")
+# gx10-01 — 0. operator token (once) and the headers file (each session)
+( umask 077; mkdir -p /srv/projects/gx-cluster/secrets/orchestrator
+  [ -s /srv/projects/gx-cluster/secrets/orchestrator/operator-token ] || \
+    openssl rand -hex 24 > /srv/projects/gx-cluster/secrets/orchestrator/operator-token )
+HF=$(legenex/models/dsv4-flash/tools/op_headers.sh <your-name>)
+O=http://127.0.0.1:18900
 
-# gx10-01 — 0b. identity signing key (once), shared by LiteLLM and the orchestrator
-legenex/gateway/identity-hmac.sh provision   # key 0600 + gateway .env, recreates ONLY gx-litellm
-legenex/gateway/identity-hmac.sh verify      # equal sha256 prefixes + a signed identity in the routing journal
-#   rollback (everyone anonymous again): legenex/gateway/identity-hmac.sh rollback
-#   ROTATION: rollback, provision, then systemctl --user restart gx-orchestrator
-#   (its unit loads the gateway .env, and an env key beats the key file).
-#   V4.1/V4 Flash wake by X-GX-Priority for AI OS / AgentOS relies on their
-#   LiteLLM key aliases being exactly "ai-os" and "agentos".
+# 1. readiness (read-only)
+curl -s -H @"$HF" $O/models/status | jq '.active, .lifecycle.state'          # "dsv41-rollback"
+curl -s -H @"$HF" $O/models/rollback-readiness | jq '.deployments[] | {role, rollback_ready}'
 
-# gx10-01 — 1. deploy the code (merge, then): restart the control plane
-systemctl --user restart gx-orchestrator          # adopts the running V4.1 (still active)
-cp legenex/gateway/litellm/config.yaml <live gx-litellm config>; docker restart gx-litellm
-#   (landing config: gx-max/gx-auto keep their V4.1 model_info)
-curl -s "${H[@]}" http://127.0.0.1:18900/models/status | jq .active          # "dsv41-rollback"
-curl -s "${H[@]}" http://127.0.0.1:18900/models/rollback-readiness | jq      # both rollback_ready
+# 2. the switch (async). A running switch answers 409 to a second activate.
+curl -s -H @"$HF" -X POST $O/models/activate -d '{"target":"dsv4-flash-primary","confirm":true}' | jq .switch.id
+watch -n 15 "curl -s -H @$HF $O/models/status | jq -c '.switch.state, .switch.steps[-1]'"
+#   expect "succeeded"; on any failure the switcher restores V4.1 itself ("rolled_back").
+#   Audited overrides only if needed: "override_window":true + "emergency_reason",
+#   "cut_in_flight":true, "reactivate":true.
 
-# gx10-01 — 2. kit preflight (launches nothing; V4.1 must be idle-released or it refuses)
-legenex/models/dsv4-flash/start.sh preflight
-#   expect: overlay order proof OK, GID indices, memory head/worker "fits": true
+# 3. V4 Flash gateway config: copy, recreate ONLY gx-litellm, identity-hmac verify
+legenex/models/dsv4-flash/tools/gateway_config.sh dsv4
 
-# gx10-01 — 3. the switch (async; poll status)
-curl -s "${H[@]}" -X POST http://127.0.0.1:18900/models/activate \
-     -d '{"target":"dsv4-flash-primary","confirm":true}' | jq
-watch -n 15 "curl -s ${H[*]} http://127.0.0.1:18900/models/status | jq '.switch.state, .switch.steps[-1]'"
-#   expect state succeeded; checks rank_node1/2, completion, served_identity,
-#   fabric_rdma, streaming, tool_call, tool_result_continuation all ok.
-#   On any failure the switcher restores V4.1 by itself: state rolled_back.
-#   Explicit, audited overrides only if needed: "override_window":true +
-#   "emergency_reason", "cut_in_flight":true, "reactivate":true (no "force").
-#   Name yourself for the audit trail: -H "X-GX-Operator: <name>".
+# 4. acceptance: overlay digests (PRIMARY proof of the abliterated weights),
+#    refusal check (corroboration), bench c=1,2,8, memory floor, no rank restarts
+legenex/models/dsv4-flash/tools/accept.sh            # -> "ACCEPTANCE: GO"
 
-# gx10-01 — 3b. after "succeeded": the V4 Flash gateway config
-cp legenex/gateway/litellm/config.dsv4-flash.yaml <live gx-litellm config>; docker restart gx-litellm
+# rollback at any time (window, or override_window + emergency_reason):
+curl -s -H @"$HF" -X POST $O/models/activate -d '{"target":"dsv41-rollback","confirm":true}'
+legenex/models/dsv4-flash/tools/gateway_config.sh landing   # after it succeeded
 
-# gx10-01 — 4. acceptance (after succeeded)
-grep GX_WOB_DIGEST <(docker logs dsv4f-head 2>&1) > /tmp/wob-head.log
-ssh legenex-02@10.60.21.41 'docker logs dsv4f-worker 2>&1 | grep GX_WOB_DIGEST' > /tmp/wob-worker.log
-scp /tmp/wob-*.log legenex-02@10.60.21.41:/tmp/
-ssh legenex-02@10.60.21.41 'python3 -I ~/.cache/gx-dsv4-flash/kit/tools/overlay_check.py compare \
-    /srv/models/dsv4-flash-0731-abliterated/21bd923c /tmp/wob-head.log /tmp/wob-worker.log'   # "ok": true
-GX_GATEWAY_KEY=... python3 -I legenex/models/dsv4-flash/tools/refusal_check.py     # PASS
-awk '/MemAvailable/' /proc/meminfo; ssh legenex-02@10.60.21.41 "awk '/MemAvailable/' /proc/meminfo"  # >= 15 GiB each
-# 8-way load: python3 gx_bench.py ... c=8 on gx-fast, sample MemAvailable on both nodes during it (>= 15 GiB)
+# end of session
+rm -f "$HF"
 ```
 
-Rollback at any time (inside the window, or override_window + emergency_reason;
-then put back `config.yaml` in gx-litellm):
-`curl ... -X POST /models/activate -d '{"target":"dsv41-rollback","confirm":true}'`.
 Kit-level stop if the orchestrator is unavailable: `legenex/models/dsv4-flash/stop.sh`.
+
+Identity signing key (done 2026-10-16 by the lead): `legenex/gateway/identity-hmac.sh`
+provision / verify / rollback. ROTATION: rollback, provision, then
+`systemctl --user restart gx-orchestrator` (its unit loads the gateway .env,
+and an environment key beats the key file). The V4.1/V4 Flash wake by
+X-GX-Priority for AI OS / AgentOS relies on their LiteLLM key aliases being
+exactly `ai-os` and `agentos`.
 
 ## Window plan, night of 2026-10-16/17 (01:00-05:00 SAST)
 
@@ -155,7 +138,7 @@ Preflight run 2026-10-16 ~16:00 SAST, read-only (V4.1 resident, untouched):
 | memory model | today's idle after V4.1 release: head 113.4-115.8, worker 116.8-117.0 GiB -> after load at 0.74: head ~19-22, worker ~23 GiB (floor 15). Below 110 GiB on the head the start refuses |
 | tools | `tools/accept.sh` (overlay digests, refusal, bench c=1,2,8 + memory watcher), `tools/bench.py` (the V4.1 baseline method), `tools/refusal_check.py`, `tools/mem_watch.sh` |
 
-Timed plan (all on gx10-01; `H=(-H "Authorization: Bearer $OK" -H "X-GX-Operator-Token: $OT" -H "X-GX-Operator: <name>")`):
+Timed plan (all on gx10-01; `HF=$(legenex/models/dsv4-flash/tools/op_headers.sh <name>)`, every call `curl -s -H @"$HF" ...`; `rm -f "$HF"` at the end):
 
 | Time | Step | Go criterion / action on failure |
 |---|---|---|
@@ -164,10 +147,10 @@ Timed plan (all on gx10-01; `H=(-H "Authorization: Bearer $OK" -H "X-GX-Operator
 | 01:05 | **W2** `POST /models/activate {"target":"dsv4-flash-primary","confirm":true}`; poll `/models/status` every 30 s | drain <= 10 min (else `aborted`, nothing stopped; retry with `cut_in_flight` only if the owner agrees) |
 | ~01:08 | V4.1 stopped, preflight (memory, image, holds), V4 Flash boot (budget 40 min, `DSV4F_READY_TIMEOUT`) | the switcher itself rolls back on ANY failure (`rolled_back`, V4.1 back in ~10 min) |
 | by ~01:50 | **W3** switch `succeeded`: all checks ok (ranks, identity, completion, fabric_rdma, streaming, tool_call, continuation, tool_call_thinking) | if `rolled_back`: collect `~/.cache/gx-dsv4-flash/run/*-fail.log`, stay on V4.1, end the window |
-| ~01:55 | **W4** apply the V4 Flash gateway config: copy `config.dsv4-flash.yaml` over the live `litellm/config.yaml`, then `legenex/gateway/identity-hmac.sh status` and recreate only gx-litellm (`docker compose -p gx-gateway -f legenex/gateway/docker-compose.gateway.yml --env-file legenex/gateway/.env up -d --no-deps --force-recreate litellm`), then `identity-hmac.sh verify` | verify OK. Note: the copied `config.yaml` is a tracked file in the live checkout, so autosync commits it; that IS the post-activation gateway config (W6/rollback put back `git show 82ca712:legenex/gateway/litellm/config.yaml`) |
-| ~02:00 | **W5** `GX_BENCH_KEY=<key> legenex/models/dsv4-flash/tools/accept.sh` (~25-35 min) | `ACCEPTANCE: GO` (overlay, refusal, bench, memory all PASS) |
-| ~02:35 | **W6 (optional drill, only if >= 75 min remain)** V4 -> V4.1 -> V4: activate `dsv41-rollback` (~2 min stop + ~7.5 min V4.1 cold load + ~3 min validation), then activate `dsv4-flash-primary` again (same timings as W2-W3). Put back `config.yaml` while on V4.1 | both `succeeded`; time each leg |
-| **03:30 hard stop** | if V4 Flash is not accepted by 03:30: `POST /models/activate {"target":"dsv41-rollback","confirm":true}` and put back the landing `config.yaml` | V4.1 `succeeded` before 04:00 |
+| ~01:55 | **W4** `tools/gateway_config.sh dsv4`: copies `config.dsv4-flash.yaml` over the live `config.yaml`, recreates ONLY gx-litellm, runs `identity-hmac.sh verify` | prints "identity signing verified". The live `config.yaml` is tracked, so autosync commits it: that IS the post-activation config |
+| ~02:00 | **W5** `tools/accept.sh` (~30-45 min; reads the gateway key from its file) | `ACCEPTANCE: GO`: overlay (primary proof), refusal (<= 1 per mode; read the printed matches), bench (tokens > 0, no think leak, tools), memory (>= 15 GiB both nodes, no NA, >= 10 samples), ranks (no restart) |
+| ~02:45 | **W6 (optional drill, only if >= 75 min remain)** V4 -> V4.1 -> V4: activate `dsv41-rollback` (~2 min stop + ~7.5 min V4.1 cold load + ~3 min validation), `tools/gateway_config.sh landing`; then activate `dsv4-flash-primary` again (as W2-W3) and `tools/gateway_config.sh dsv4` | each leg `succeeded` and each gateway_config run verified; time each leg |
+| **03:30 hard stop** | if V4 Flash is not accepted by 03:30: `POST /models/activate {"target":"dsv41-rollback","confirm":true}`. If it answers **409** (a switch is still running), wait for that switch to finish (`/models/status`; it rolls itself back on failure), then roll back if V4 Flash is still active. Then `tools/gateway_config.sh landing` (recreates ONLY gx-litellm + identity-hmac verify) | V4.1 `succeeded` and verify OK before 04:00 |
 | 05:00 | window closes | |
 
 NO-GO triggers at any point: an `overlay` FAIL (the base weights are serving), a

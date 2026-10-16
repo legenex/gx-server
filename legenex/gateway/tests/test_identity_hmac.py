@@ -145,6 +145,29 @@ class TestIdentityHmacScript(unittest.TestCase):
             self.assertFalse(list(d.glob(".gateway.env.identity-hmac.*")), f"temp file left after a failed {tool}")
             self.assertEqual(self.envf.read_text(), before, tool)
 
+    def test_interrupt_mid_edit_removes_the_temp_file(self):
+        import signal
+        import time
+        d = Path(self.tmp.name)
+        before = self.envf.read_text()
+        bindir = d / "slow-mv"
+        bindir.mkdir()
+        (bindir / "mv").write_text("#!/bin/sh\nsleep 3\nexit 0\n")
+        (bindir / "mv").chmod(0o755)
+        proc = subprocess.Popen(["bash", str(SCRIPT), "provision"], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                text=True, env={**self.env, "GX_SKIP_RECREATE": "1",
+                                                "PATH": f"{bindir}:{os.environ['PATH']}"})
+        deadline = time.time() + 10
+        while time.time() < deadline and not list(d.glob(".gateway.env.identity-hmac.*")):
+            time.sleep(0.05)
+        self.assertTrue(list(d.glob(".gateway.env.identity-hmac.*")), "the edit never started")
+        proc.send_signal(signal.SIGTERM)
+        _out, err = proc.communicate(timeout=15)
+        self.assertEqual(proc.returncode, 130, err)
+        self.assertIn("interrupted", err)
+        self.assertFalse(list(d.glob(".gateway.env.identity-hmac.*")), "temp file left after an interrupt")
+        self.assertEqual(self.envf.read_text(), before)
+
 
 if __name__ == "__main__":
     unittest.main()
