@@ -23,6 +23,7 @@ class FakeOperations:
         self.gateways = []
         self.owner_posts = []
         self.accept_labels = []
+        self.accept_budgets = []
         self.client_labels = []
         self.failure = None
         self.polls = 0
@@ -100,6 +101,7 @@ class FakeOperations:
 
     def accept(self, seconds, label='accept'):
         self.accept_labels.append(label)
+        self.accept_budgets.append(seconds)
         if self.failure in ('acceptance', 'landing', 'lost_rollback_response'):
             raise ValueError('ACCEPTANCE NO-GO')
         if self.failure == 'interrupt':
@@ -136,6 +138,7 @@ class TestWindow(unittest.TestCase):
         self.assertEqual([p['target'] for p in self.ops.posts], [W.TARGET, W.ROLLBACK, W.TARGET])
         self.assertEqual(self.ops.gateways, ['dsv4', 'landing', 'dsv4'])
         self.assertEqual(self.ops.accept_labels, ['accept', 'accept-final'])
+        self.assertLessEqual(self.ops.accept_budgets[-1],900)
         self.assertEqual([p['expected_active'] for p in self.ops.owner_posts], [W.TARGET, W.ROLLBACK])
         self.assertEqual(len({p['operation_id'] for p in self.ops.owner_posts}), 2)
 

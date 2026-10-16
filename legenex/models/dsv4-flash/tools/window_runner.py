@@ -402,7 +402,7 @@ class Runner:
             if left <= 0:
                 raise TimeoutError('final acceptance deadline')
             self.save('final_acceptance')
-            self.ops.accept(left, 'accept-final')
+            self.ops.accept(min(900, left), 'accept-final')
             if self.ops.now() >= self.end('04:10:00'):
                 raise TimeoutError('final acceptance hard stop')
             return self.finish('activated', 'Flash acceptance, AI OS owner V4.1→Flash drill and final acceptance passed', 0)
