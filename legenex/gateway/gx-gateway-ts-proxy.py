@@ -19,7 +19,7 @@ import sys
 import time
 
 UPSTREAM = ("127.0.0.1", 4000)
-PUBLIC_MODELS = ("gx-max", "gx-auto")
+PUBLIC_MODELS = ("gx-auto", "gx-fast", "gx-medium", "gx-high", "gx-max")
 
 
 def tailscale_ipv4(timeout: float = 120.0) -> str:
