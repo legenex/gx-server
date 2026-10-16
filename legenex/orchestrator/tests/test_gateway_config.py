@@ -5,6 +5,7 @@ sys.path.insert(0,str(Path(__file__).resolve().parent))
 from test_dsv4_primary import SwitchTestBase,SUCCEEDED,ROLLED_BACK,ROLLBACK_FAILED
 from gx_orchestrator.gateway_config import GatewayConfigurator,source_snapshot
 import json
+import hashlib
 import os
 import tempfile
 import unittest
@@ -40,6 +41,15 @@ class TestNativeGateway(SwitchTestBase):
         self.assertEqual(self.hist.read()[-1]['state'],ROLLED_BACK)
 
 class TestGatewayProcess(unittest.TestCase):
+    def test_receipt_uses_configured_registry_instead_of_default(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p=Path(tmp);src=p/'legenex/orchestrator/gx_orchestrator';src.mkdir(parents=True)
+            (src/'server.py').write_text('code');(src.parent/'identity-policy.json').write_text('{}')
+            custom=p/'custom-registry.json';custom.write_text('{"actual":true}')
+            receipt=source_snapshot(p,custom)
+            self.assertEqual(receipt['configured_registry_path'],str(custom))
+            self.assertEqual(receipt['startup_registry_file_sha256'],hashlib.sha256(custom.read_bytes()).hexdigest())
+            self.assertIsNotNone(receipt['startup_source_files_sha256'])
     def test_source_receipt_is_a_startup_snapshot(self):
         with tempfile.TemporaryDirectory() as tmp:
             p=Path(tmp);src=p/'legenex/orchestrator/gx_orchestrator';src.mkdir(parents=True)
