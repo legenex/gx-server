@@ -265,6 +265,7 @@ class TestGatewayConfig(unittest.TestCase):
         (gw / "docker-compose.gateway.yml").write_text("services: {}\n")
         (gw / "litellm" / "config.yaml").write_text("landing\n")
         (gw / "litellm" / "config.dsv4-flash.yaml").write_text("dsv4\n")
+        (gw / "litellm" / "config.dsv41.yaml").write_text("dsv41\n")
         (gw / "identity-hmac.sh").write_text("#!/bin/sh\necho verify-called >> \"$FAKE_LOG\"\nexit 0\n")
         (gw / "identity-hmac.sh").chmod(0o755)
         fake = d / "docker"
@@ -303,6 +304,14 @@ class TestGatewayConfig(unittest.TestCase):
             self.assertIn("Way back:", p.stderr)
             self.assertIn("gateway_config.sh landing", p.stderr)
             self.assertIn("identity-hmac.sh rollback", p.stderr)
+
+    def test_landing_copies_the_tracked_dsv41_config(self):
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            gw, env = self.make_tree(d, "")
+            env["FAKE_LABEL"] = os.path.realpath(gw / "docker-compose.gateway.yml")
+            self.run_cfg(env, "landing")             # liveness fails on :9; the copy has happened
+            self.assertEqual((gw / "litellm" / "config.yaml").read_text(), "dsv41\n")
 
     def test_unknown_mode_is_rejected(self):
         with tempfile.TemporaryDirectory() as d:

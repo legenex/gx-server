@@ -80,9 +80,12 @@ class TestModes(unittest.TestCase):
         self.assertEqual(body["max_tokens"], spec.max_output_tokens)
         self.assertIn("chat_template_kwargs", removed)
 
-    def test_fast_admission_is_32k(self):
+    def test_fast_admission_is_64k(self):
+        # Owner Decision #10: Hermes Agent needs a >= 64,000-token window on gx-fast.
         spec = self.reg.mode("fast")
-        big = chat("word " * 40_000)
+        self.assertEqual(spec.max_context_tokens, 73728)
+        self.assertNotEqual(M.mode_budget(chat("word " * 60_000), spec, "gx-fast").status, "overflow")
+        big = chat("word " * 90_000)
         self.assertEqual(M.mode_budget(big, spec, "gx-fast").status, "overflow")
         self.assertNotEqual(M.mode_budget(chat("hello"), spec, "gx-fast").status, "overflow")
         self.assertNotEqual(M.mode_budget(big, self.reg.mode("medium"), "gx-medium").status, "overflow")
@@ -95,8 +98,8 @@ class TestModes(unittest.TestCase):
                                        self.reg).mode, "high")
         hard = chat("Debug this intermittent race condition deadlock in the scheduler, it is flaky")
         self.assertEqual(M.choose_mode("gx-auto", hard, self.reg).mode, "max")
-        # A plain question that needs > 32K of context cannot stay FAST.
-        long_q = chat("summarise: " + "lorem ipsum " * 20_000)
+        # A plain question that needs > 72K of context cannot stay FAST.
+        long_q = chat("summarise: " + "lorem ipsum " * 30_000)
         d = M.choose_mode("gx-auto", long_q, self.reg)
         self.assertIn(d.mode, ("medium", "high"))
         self.assertIn("escalated", d.reason)
@@ -567,8 +570,8 @@ class TestServerModes(OrchestratorHarness):
             self.assertEqual(headers.get("X-GX-Deployment"), "dsv4-flash-primary")
             self.assertEqual(headers.get("X-GX-Mode"), alias.removeprefix("gx-"))
 
-    def test_fast_rejects_context_beyond_32k_and_bounds_output(self):
-        status, _, body = self.chat({"model": "gx-fast", "messages": [{"role": "user", "content": "word " * 60_000}]})
+    def test_fast_rejects_context_beyond_64k_and_bounds_output(self):
+        status, _, body = self.chat({"model": "gx-fast", "messages": [{"role": "user", "content": "word " * 90_000}]})
         self.assertEqual(status, 400)
         self.assertEqual(body["error"]["mode"], "fast")
         self.assertEqual(len(self.upstream.requests), 0)

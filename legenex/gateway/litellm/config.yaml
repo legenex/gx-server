@@ -129,14 +129,16 @@ model_list:
       timeout: 3600
       num_retries: 0
     model_info:
-      max_input_tokens: 24576
+      # 64K input (owner Decision #10, 2026-10-16): Hermes Agent refuses a
+      # window below 64,000. The orchestrator's fast mode admits 65536 + 8192.
+      max_input_tokens: 65536
       max_output_tokens: 8192
       mode: fast
       uncensored: true
       supports_vision: false
       supports_function_calling: true
       supports_reasoning: true
-      description: Thinking off, up to 32K context, top interactive priority
+      description: Thinking off, 64K context, top interactive priority
   - model_name: gx-medium
     litellm_params:
       model: openai/gx-medium

@@ -147,7 +147,7 @@ class ShippedRegistryTest(unittest.TestCase):
     def test_modes(self) -> None:
         modes = self.reg["modes"]
         self.assertEqual(modes["fast"]["reasoning"], "none")
-        self.assertEqual(modes["fast"]["max_context_tokens"], 32768)
+        self.assertEqual(modes["fast"]["max_context_tokens"], 73728)  # 64K in + 8K out (Decision #10)
         self.assertEqual(modes["fast"]["priority"], "interactive")
         self.assertEqual(modes["medium"]["reasoning"], "low")
         self.assertEqual(modes["high"]["reasoning"], "high")

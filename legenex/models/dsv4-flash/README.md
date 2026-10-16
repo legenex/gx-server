@@ -129,7 +129,7 @@ Preflight run 2026-10-16 ~16:00 SAST, read-only (V4.1 resident, untouched):
 |---|---|
 | weights on gx10-02 | VERIFY.json 60/60 (2026-10-15T23:53Z), dir 0750 legenex-02, overlay order proof OK (92 tensors, overlay read last). The head has no copy by design: it reads over NFS |
 | image on both nodes | `sha256:ce6ccb53…` on gx10-01 AND gx10-02 (= `DSV4F_IMAGE_ID`) |
-| `config.dsv4-flash.yaml` | loaded by the live LiteLLM image in a throwaway proxy: 5 aliases, windows 122880/24576/98304/98304/65536, merge off, no errors |
+| `config.dsv4-flash.yaml` | loaded by the live LiteLLM image in a throwaway proxy: 5 aliases, windows 122880/24576/98304/98304/65536, merge off, no errors (gx-fast raised to 65536 by owner Decision #10, 2026-10-16: Hermes needs >= 64,000; orchestrator fast admits 65536 + 8192) |
 | identity HMAC | provisioned and verified by the lead (prefix `cd068f60…`) |
 | **operator token** | **MISSING**: `/models/*` answers 503 "switching is disabled" -> step W0 |
 | fabric | rocep1s0f0 ACTIVE on both, RoCE v2 IPv4 at GID index 3 (head .10, worker .11) |

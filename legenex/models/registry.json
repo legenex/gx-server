@@ -229,7 +229,7 @@
       "runtime": "mia-dsv41",
       "mode": "direct",
       "logical_mode": "fast",
-      "description": "Thinking off, up to 32K context, top interactive priority"
+      "description": "Thinking off, 64K input context (+8K output), top interactive priority"
     },
     "gx-medium": {
       "model": "dsv41-flash-exl3-uncensored",
@@ -256,7 +256,7 @@
   "modes": {
     "fast": {
       "reasoning": "none",
-      "max_context_tokens": 32768,
+      "max_context_tokens": 73728,
       "max_output_tokens": 8192,
       "priority": "interactive",
       "max_concurrent": 0
