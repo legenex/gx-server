@@ -132,9 +132,24 @@ class TestRoutingDecisions(OrchestratorHarness):
         status, _, body = self.chat(_payload(), headers={"X-GX-Reasoning": "ultra"})
         self.assertEqual(status, 400)
         self.assertEqual(body["error"]["code"], "invalid_profile")
+        # Raising reasoning needs a signed, permitted identity (owner policy).
         status, headers, body = self.chat(_payload(), headers={"X-GX-Reasoning": "max"})
         self.assertEqual(status, 200)
+        self.assertEqual(headers["X-GX-Reasoning"], "none")
+        status, headers, body = self.chat(_payload(), headers={"X-GX-Reasoning": "max",
+                                                               **signed_identity("gx-operator")})
+        self.assertEqual(status, 200)
         self.assertEqual(headers["X-GX-Reasoning"], "max")
+
+    def test_v41_wake_by_header_needs_a_permitted_identity(self):
+        # gx-max (balanced -> orchestrator) on the V4.1 rollback.
+        msg = {"model": "gx-max", "messages": [{"role": "user", "content": "hi"}]}
+        for hdrs, want in (({"X-GX-Priority": "interactive"}, "orchestrator"),
+                           ({"X-GX-Priority": "interactive", **signed_identity("gx-operator")}, "interactive")):
+            _, headers, _ = self.chat(msg, headers=hdrs)
+            rid = headers["X-GX-Request-Id"]
+            self.wait_for_journal(rid, "completed")
+            self.assertEqual([h for h in self.scheduler.history() if h["id"] == rid][0]["priority"], want)
 
     def test_direct_uses_the_running_profile_and_honours_overrides(self):
         status, headers, body = self.chat({"model": "gx-max", "messages": [

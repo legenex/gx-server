@@ -71,6 +71,32 @@ class TestIdentity(unittest.TestCase):
         self.assertEqual(set(fwd) - set(H.ATTRIB_HEADERS),
                          {"X-GX-Identity", "X-GX-Identity-Ts", "X-GX-Identity-Nonce", "X-GX-Identity-Sig"})
 
+    def test_hook_failure_drops_every_client_header_field(self):
+        # Even a client dict that names X-GX-Identity exactly (the old check)
+        # and carries Authorization must not survive a hook error.
+        data = {"model": "gx-fast", "messages": [],
+                "extra_headers": {"X-GX-Identity": "odin", "Authorization": "Bearer stolen"},
+                "headers": {"X-GX-Identity": "odin"}}
+        orig = H._capture_attribution
+        H._capture_attribution = lambda d: (_ for _ in ()).throw(RuntimeError("boom"))
+        try:
+            out = asyncio.run(H.GxBudgetHook().async_pre_call_hook(Key(key_alias="hermes"), None, data, "acompletion"))
+        finally:
+            H._capture_attribution = orig
+        self.assertNotIn("extra_headers", out)
+        self.assertNotIn("headers", out)
+
+    def test_non_ascii_or_control_values_are_dropped(self):
+        data = {"metadata": {"headers": {"X-GX-Project": "projekt-ü", "X-GX-Agent": "ok-agent",
+                                         "X-GX-Task": "a\r\nInjected: 1", "X-GX-Intent": "x" * 500}}}
+        out = H._capture_attribution(data)
+        self.assertNotIn("X-GX-Project", out)
+        self.assertNotIn("X-GX-Task", out)
+        self.assertEqual(out["X-GX-Agent"], "ok-agent")
+        self.assertEqual(len(out["X-GX-Intent"]), 120)
+        for v in out.values():
+            v.encode("ascii")
+
 
 if __name__ == "__main__":
     unittest.main()

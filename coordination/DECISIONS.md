@@ -2038,3 +2038,15 @@ per identity on V4 Flash, header-wins on the V4.1 rollback (the documented
 wake path); X-GX-Profile on gx-max (which cycles the two-node engine) only
 from a signed identity with `may_set_profile` (gx-operator); the switch token
 is checked against the running switch.
+
+**Follow-up (review of c9c9ac0):** the same raise/lower rule now applies on
+V4.1 and V4 Flash (owner requirement, mission §9): X-GX-Priority and
+X-GX-Reasoning that LOWER the mode default are always honoured; RAISING needs
+a signed identity whose policy allows it (`identity-policy.json`: ai-os and
+agentos may raise priority to interactive; gx-operator may raise priority and
+reasoning and change the V4.1 profile; odin is pinned to the health lane;
+open-webui, gx-computer, team-librechat-kvm2, hermes, kilo-cli, kilo-code,
+gigpilot, gx-orchestrator and anonymous keep the mode default). On a hook
+error every client header field is dropped; header values are printable
+ASCII only. Key rollout: `legenex/gateway/identity-hmac.sh`
+provision / verify / rollback.

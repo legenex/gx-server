@@ -1,12 +1,23 @@
 {
-  "_about": "Scheduler priority by AUTHENTICATED identity (D-053). Keys are LiteLLM key aliases, stamped into X-GX-Identity by gx_budget_hook from the key LiteLLM verified. A caller's X-GX-Priority is honoured only where may_set_priority is true, and never beyond max_priority. 'health' is the reserved Odin lane. Loader: gx_orchestrator/identity.py.",
-  "default": {"max_priority": "interactive", "may_set_priority": false},
+  "_about": "Scheduler priority and reasoning by AUTHENTICATED identity (D-053, D-054). Keys are LiteLLM key aliases (live list read 2026-10-16), stamped into X-GX-Identity and HMAC-signed by gx_budget_hook; an unsigned identity is anonymous. On EVERY deployment: X-GX-Priority / X-GX-Reasoning that LOWER the mode default are always honoured; RAISING needs may_set_priority (capped at max_priority) or may_raise_reasoning; X-GX-Profile that cycles the V4.1 engine needs may_set_profile. 'health' is the reserved Odin lane (pinned, never reachable by header). Loader: gx_orchestrator/identity.py.",
+  "default": {"max_priority": "interactive"},
   "identities": {
-    "open-webui":  {"priority": "interactive"},
-    "gx-computer": {"priority": "interactive"},
-    "hermes":      {"max_priority": "orchestrator"},
-    "ai-os":       {"max_priority": "interactive", "may_set_priority": true},
-    "odin":        {"priority": "health", "max_priority": "health"},
-    "gx-operator": {"max_priority": "interactive", "may_set_priority": true, "may_set_profile": true}
+    "ai-os":               {"max_priority": "interactive", "may_set_priority": true,
+                            "_why": "owner work orders may wake the primary after a failure (owner decision 2026-10-16)"},
+    "agentos":             {"max_priority": "interactive", "may_set_priority": true,
+                            "_why": "AgentOS model tests (model_admin.py _openai_headers sends X-GX-Priority: interactive): an owner-admin action"},
+    "gx-operator":         {"max_priority": "interactive", "may_set_priority": true,
+                            "may_raise_reasoning": true, "may_set_profile": true,
+                            "_why": "operator key: diagnostics, explicit V4.1 profile changes"},
+    "odin":                {"priority": "health", "max_priority": "health",
+                            "_why": "reserved health lane; no live key with this alias yet (create it in LiteLLM as 'odin')"},
+    "open-webui":          {"_why": "human chat: the mode default (gx-fast is already interactive)"},
+    "gx-computer":         {"_why": "mode default"},
+    "team-librechat-kvm2": {"_why": "mode default"},
+    "hermes":              {"_why": "mode default"},
+    "kilo-cli":            {"_why": "mode default"},
+    "kilo-code":           {"_why": "mode default"},
+    "gigpilot":            {"_why": "mode default"},
+    "gx-orchestrator":     {"_why": "mode default"}
   }
 }

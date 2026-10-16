@@ -217,9 +217,18 @@ def _capture_attribution(data: dict[str, Any]) -> dict[str, str]:
     out: dict[str, str] = {}
     for name in ATTRIB_HEADERS:
         value = _header_value(headers, name)
-        if value is not None and str(value).strip():
-            out[name] = str(value)[:120]
+        if value is None:
+            continue
+        text = str(value).strip()[:120]
+        # Printable ASCII only: httpx refuses non-ASCII header values with a
+        # UnicodeEncodeError, which would fail the whole request (review).
+        if text and all(" " <= c <= "~" for c in text):
+            out[name] = text
     return out
+
+
+class _GxUpstreamHeaders(dict):
+    """Marker type: header dicts THIS hook built (the only ones allowed upstream)."""
 
 
 # ---------------------------------------------------------------------------
@@ -298,8 +307,8 @@ class GxBudgetHook(CustomLogger):
             # The identity comes from LiteLLM's own key check, never the client.
             upstream = dict(attribution)
             upstream.update(_signed_identity(_identity(user_api_key_dict)))
-            data["extra_headers"] = upstream
-            data["headers"] = dict(upstream)
+            data["extra_headers"] = _GxUpstreamHeaders(upstream)
+            data["headers"] = _GxUpstreamHeaders(upstream)
             data.pop("forwarded_headers", None)
 
             # 2. Context guard — chat calls on the two aliases only.
@@ -316,10 +325,10 @@ class GxBudgetHook(CustomLogger):
             log.warning("gx hook pre-call failed; forwarding without client headers", exc_info=True)
             # Fail closed on headers: never let a client body's extra_headers /
             # headers through just because attribution failed.
-            if isinstance(data, dict) and isinstance(data.get("extra_headers"), dict) \
-                    and IDENTITY_HEADER not in data["extra_headers"]:
-                data.pop("extra_headers", None)
-                data.pop("headers", None)
+            if isinstance(data, dict):
+                for key in ("extra_headers", "headers"):
+                    if not isinstance(data.get(key), _GxUpstreamHeaders):
+                        data.pop(key, None)
             return data
 
         if isinstance(meta, dict):

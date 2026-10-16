@@ -33,7 +33,7 @@ from gx_orchestrator.switching import (  # noqa: E402
     SwitchError, SwitchHistory, SwitchLock, in_maintenance_window,
 )
 from registry_fixtures import fixture_registry_dict  # noqa: E402
-from server_harness import API_KEY, IDENTITY_KEY, FakeLifecycle, OrchestratorHarness, signed_identity  # noqa: E402
+from server_harness import API_KEY, IDENTITY_KEY, TRUSTED, FakeLifecycle, OrchestratorHarness, signed_identity  # noqa: E402
 
 REPO_REGISTRY = Path(__file__).resolve().parents[3] / "legenex" / "models" / "registry.json"
 IN_WINDOW = dt.datetime(2026, 10, 16, 0, 30, tzinfo=dt.timezone.utc)      # 02:30 SAST
@@ -113,10 +113,16 @@ class TestIdentity(unittest.TestCase):
         self.p = load_policy()  # the shipped identity-policy.json
 
     def test_shipped_policy(self):
-        self.assertEqual(self.p.resolve("open-webui", "normal-worker")[0], "interactive")
+        # Owner policy (mission §9): everyone gets the MODE default; only odin is pinned.
+        for who in ("", "open-webui", "gx-computer", "team-librechat-kvm2", "hermes", "kilo-code"):
+            self.assertEqual(self.p.resolve(who, "normal-worker")[0], "normal-worker", who)
+            self.assertEqual(self.p.resolve(who, "interactive")[0], "interactive", who)
         self.assertEqual(self.p.resolve("odin", "interactive")[0], "health")
-        self.assertEqual(self.p.resolve("hermes", "interactive")[0], "orchestrator")   # capped
-        self.assertEqual(self.p.resolve("hermes", "normal-worker")[0], "normal-worker")
+        # Raising to interactive: only the permitted identities.
+        for who, ok in (("ai-os", True), ("agentos", True), ("gx-operator", True), ("hermes", False),
+                        ("open-webui", False), ("team-librechat-kvm2", False), ("", False)):
+            self.assertEqual(self.p.resolve(who, "normal-worker", "interactive")[0],
+                             "interactive" if ok else "normal-worker", who)
 
     def test_raising_needs_permission_lowering_never_does(self):
         prio, why = self.p.resolve("hermes", "normal-worker", "interactive")
@@ -128,14 +134,27 @@ class TestIdentity(unittest.TestCase):
         for who in ("", "hermes", "open-webui", "random"):
             self.assertEqual(self.p.resolve(who, "interactive", "background")[0], "background", who)
 
-    def test_legacy_deployment_keeps_the_header_contract(self):
-        # V4.1 rollback (mode_routing false): X-GX-Priority wins, so
-        # `interactive` still wakes an idle-released engine; health stays out of reach.
-        self.assertEqual(self.p.resolve("", "normal-worker", "interactive", legacy=True)[0], "interactive")
+    def test_v41_uses_the_same_raise_lower_rule(self):
+        # Review of c9c9ac0: with headers live, an anonymous key holder must not
+        # wake both nodes by header on V4.1 either.
+        self.assertEqual(self.p.resolve("", "normal-worker", "interactive", legacy=True)[0], "normal-worker")
+        self.assertEqual(self.p.resolve("ai-os", "normal-worker", "interactive", legacy=True)[0], "interactive")
         self.assertEqual(self.p.resolve("hermes", "orchestrator", "background", legacy=True)[0], "background")
         self.assertEqual(self.p.resolve("", "orchestrator", "health", legacy=True)[0], "orchestrator")
-        self.assertEqual(self.p.resolve("open-webui", "orchestrator", "", legacy=True)[0], "orchestrator")
         self.assertEqual(self.p.resolve("odin", "orchestrator", "", legacy=True)[0], "health")
+
+    def test_reasoning_lower_always_raise_only_if_permitted(self):
+        from gx_orchestrator.identity import reasoning_ranker
+        rank = reasoning_ranker(prod_registry())
+        self.assertEqual(self.p.resolve_reasoning("", "high", "low", rank)[0], "low")
+        self.assertEqual(self.p.resolve_reasoning("", "high", "none", rank)[0], "none")
+        self.assertEqual(self.p.resolve_reasoning("", "none", "max", rank)[0], "none")
+        self.assertEqual(self.p.resolve_reasoning("hermes", "medium", "max", rank)[0], "medium")
+        self.assertEqual(self.p.resolve_reasoning("ai-os", "medium", "max", rank)[0], "medium")
+        self.assertEqual(self.p.resolve_reasoning("gx-operator", "medium", "max", rank)[0], "max")
+        self.assertEqual(self.p.resolve_reasoning("", "medium", "40", rank)[0], "40")      # numeric, lower
+        self.assertEqual(self.p.resolve_reasoning("", "medium", "90", rank)[0], "medium")  # numeric, higher
+        self.assertEqual(self.p.resolve_reasoning("", "medium", "ultra", rank)[0], "ultra")  # -> caller 400
 
     def test_nobody_reaches_the_health_lane_by_header(self):
         for who in ("", "unknown", "ai-os", "gx-operator"):
@@ -570,16 +589,28 @@ class TestServerModes(OrchestratorHarness):
         # An unsigned odin claim (orchestrator-key holder) gets nothing.
         _, headers, _ = self.chat({"model": "gx-high", "messages": msg}, headers={"X-GX-Identity": "odin"})
         self.assertEqual(headers.get("X-GX-Priority"), "normal-worker")
-        _, headers, _ = self.chat({"model": "gx-fast", "messages": msg}, headers=signed_identity("batch"))
-        self.assertEqual(headers.get("X-GX-Priority"), "background")
-        _, headers, _ = self.chat({"model": "gx-fast", "messages": msg}, headers={"X-GX-Identity": "batch"})
-        self.assertEqual(headers.get("X-GX-Priority"), "interactive")
+        _, headers, _ = self.chat({"model": "gx-high", "messages": msg},
+                                  headers={"X-GX-Priority": "interactive", **signed_identity(TRUSTED)})
+        self.assertEqual(headers.get("X-GX-Priority"), "interactive")       # signed + permitted
+        _, headers, _ = self.chat({"model": "gx-high", "messages": msg},
+                                  headers={"X-GX-Priority": "interactive", "X-GX-Identity": TRUSTED})
+        self.assertEqual(headers.get("X-GX-Priority"), "normal-worker")     # unsigned claim
         # A replayed signed identity is anonymous the second time.
         replay = signed_identity("odin")
         _, headers, _ = self.chat({"model": "gx-high", "messages": msg}, headers=replay)
         self.assertEqual(headers.get("X-GX-Priority"), "health")
         _, headers, _ = self.chat({"model": "gx-high", "messages": msg}, headers=replay)
         self.assertEqual(headers.get("X-GX-Priority"), "normal-worker")
+
+    def test_mode_reasoning_header_lowers_but_never_raises_unpermitted(self):
+        msg = [{"role": "user", "content": "hi"}]
+        self.chat({"model": "gx-max", "messages": msg}, headers={"X-GX-Reasoning": "none"})
+        self.assertEqual(self.kwargs_sent(), {"thinking": False})
+        self.chat({"model": "gx-fast", "messages": msg}, headers={"X-GX-Reasoning": "max"})
+        self.assertEqual(self.kwargs_sent(), {"thinking": False})
+        self.chat({"model": "gx-fast", "messages": msg},
+                  headers={"X-GX-Reasoning": "max", **signed_identity("gx-operator")})
+        self.assertEqual(self.kwargs_sent(), {"thinking": True, "reasoning_effort": "max"})
 
     def test_gx_auto_uses_a_mode_and_keeps_the_engine(self):
         status, headers, _ = self.chat({"model": "gx-auto", "messages": [{"role": "user", "content": "hi"}]})

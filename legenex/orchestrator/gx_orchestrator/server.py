@@ -45,7 +45,7 @@ from .health import AliasState, ClusterHealth, TierStatus
 from .lifecycle import AcquisitionError, GxMaxLifecycle, LifecycleStatus, State
 from .profiles import DeploymentSpec, Registry, RegistryError, load_registry
 from . import modes as M
-from .identity import IdentityPolicy, NonceCache, identity_from_headers, load_policy
+from .identity import IdentityPolicy, NonceCache, identity_from_headers, load_policy, reasoning_ranker
 from .deployments import ActiveDeploymentStore, DeploymentManager, LifecycleProxy, fixed_profile_for
 from .switching import ModelSwitcher, SwitchError, SwitchHistory, SwitchLock
 from .sse import DeltaSplitter
@@ -647,13 +647,30 @@ class Handler(BaseHTTPRequestHandler):
         validated against the registry (an unknown X-GX-Profile is a 400, not
         a silent default).
         """
-        decision = autoroute_decide(payload, headers=self.headers)
+        # X-GX-Profile only SHAPES a gx-auto request (tools, output cap); it
+        # never cycles the engine and never buys priority: the scheduler
+        # priority comes from the un-overridden decision (_auto_base_profile).
+        # X-GX-Reasoning may lower the decision's level; raising needs a
+        # signed, permitted identity (owner requirement, mission §9).
+        hdrs = {k: v for k, v in self.headers.items() if k.lower() != "x-gx-reasoning"}
+        decision = autoroute_decide(payload, headers=hdrs)
+        self._auto_base_profile = decision.profile
+        if (self.headers.get("X-GX-Profile") or "").strip():
+            base = {k: v for k, v in hdrs.items() if k.lower() != "x-gx-profile"}
+            self._auto_base_profile = autoroute_decide(payload, headers=base).profile
+        reasoning, why = self.identity_policy.resolve_reasoning(
+            self._caller_identity(), decision.reasoning, self.headers.get("X-GX-Reasoning") or "",
+            reasoning_ranker(self.registry))
+        fields = decision.as_log_dict()
+        fields["reasoning"] = reasoning
+        fields["reasoning_policy"] = why
+        fields["reasoning_override"] = reasoning != decision.reasoning
         try:
             self.registry.profile(decision.profile)
-            self.registry.reasoning_kwargs(decision.reasoning)
+            self.registry.reasoning_kwargs(reasoning)
         except RegistryError as exc:
-            return decision.profile, decision.reasoning, decision.as_log_dict(), exc
-        return decision.profile, decision.reasoning, decision.as_log_dict(), None
+            return decision.profile, reasoning, fields, exc
+        return decision.profile, reasoning, fields, None
 
     def _direct_profile(self) -> str:
         """gx-max serves with the RUNNING profile (or the registry default
@@ -679,10 +696,12 @@ class Handler(BaseHTTPRequestHandler):
         return self._gx_identity
 
     def _direct_reasoning(self, profile_name: str) -> str:
-        override = (self.headers.get("X-GX-Reasoning") or "").strip()
-        if override:
-            return override
-        return self.registry.profile(profile_name).reasoning_default
+        """The profile's level; X-GX-Reasoning may lower it, raising needs a
+        signed, permitted identity."""
+        level, _why = self.identity_policy.resolve_reasoning(
+            self._caller_identity(), self.registry.profile(profile_name).reasoning_default,
+            self.headers.get("X-GX-Reasoning") or "", reasoning_ranker(self.registry))
+        return level
 
     def _common_gate(
         self,
@@ -961,6 +980,9 @@ class Handler(BaseHTTPRequestHandler):
             "request_id": request_id,
             "fingerprint": fingerprint,
             "stream": bool(payload.get("stream")),
+            # The signed gateway identity ("" = anonymous): lets an operator
+            # prove the HMAC rollout (identity-hmac.sh verify).
+            "identity": self._caller_identity() or None,
             **fields,
         }
         # Every routing decision is logged, as required by the spec.
@@ -975,6 +997,7 @@ class Handler(BaseHTTPRequestHandler):
         self._relay_phase(
             path, payload, request_id, ALIAS_AUTO, profile_name, reasoning,
             fields, started,
+            mode_priority=SCHED.priority_from_mode(getattr(self, "_auto_base_profile", profile_name)),
         )
 
     # ------------------------------------------------------------ modes (D-053)
@@ -994,7 +1017,10 @@ class Handler(BaseHTTPRequestHandler):
             decision = M.choose_mode(alias, payload, self.registry, headers=self.headers)
             spec = self.registry.mode(decision.mode)
             dialect = dep.dialect if dep is not None else "deepseek_v41"
-            kwargs = M.reasoning_kwargs(dialect, spec.reasoning, self.registry)
+            level, level_why = self.identity_policy.resolve_reasoning(
+                self._caller_identity(), spec.reasoning, self.headers.get("X-GX-Reasoning") or "",
+                reasoning_ranker(self.registry))
+            kwargs = M.reasoning_kwargs(dialect, level, self.registry)
         except RegistryError as exc:
             self._send_error_json(400, str(exc), "invalid_mode", NO_RETRY_HEADERS,
                                   **{"X-GX-Request-Id": request_id})
@@ -1021,14 +1047,15 @@ class Handler(BaseHTTPRequestHandler):
         record = {
             "event": "decision", "ts": time.time(), "request_id": request_id,
             "fingerprint": fingerprint, "stream": bool(body.get("stream")),
-            **decision.as_log_dict(), "reasoning_kwargs": kwargs,
+            "identity": self._caller_identity() or None,
+            **decision.as_log_dict(), "reasoning_kwargs": kwargs, "reasoning_policy": level_why,
             "client_overrides_removed": overridden,
         }
         logging.getLogger(ROUTING_LOG).info(json.dumps(record, default=str))
         self.journal.write(record)
         self._gate_state = {"spec": spec, "kwargs": kwargs, "budget": budget}
         profile = self.lifecycle.current_profile or ""
-        self._relay_phase(path, body, request_id, alias, profile or spec.name, spec.reasoning,
+        self._relay_phase(path, body, request_id, alias, profile or spec.name, level,
                           decision.as_log_dict(), started, mode=spec.name, mode_priority=spec.priority)
 
     # ------------------------------------------------------------ gx-max

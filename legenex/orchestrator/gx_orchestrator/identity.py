@@ -16,8 +16,9 @@ package, override with GX_IDENTITY_POLICY)::
 * ``priority``      the class this identity always gets (wins over the mode);
 * ``max_priority``  the best class it may reach (a mode's default is capped);
 * ``may_set_priority`` whether its X-GX-Priority header may RAISE priority
-  (still capped by max_priority); lowering is always honoured, and the V4.1
-  rollback keeps its header-wins contract.
+  above the mode default (capped by max_priority); lowering is always
+  honoured, on every deployment.
+* ``may_raise_reasoning`` whether X-GX-Reasoning may go above the mode's level.
 * ``may_set_profile`` whether its X-GX-Profile may cycle the V4.1 engine on
   gx-max (default no: a profile change restarts both nodes).
 * ``health`` is the reserved Odin lane: only an identity whose ``priority``
@@ -33,7 +34,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 from . import scheduler as SCHED
 
@@ -52,6 +53,8 @@ class IdentityRule:
     may_set_priority: bool = False
     #: May an X-GX-Profile header cycle the legacy (V4.1) engine on gx-max?
     may_set_profile: bool = False
+    #: May X-GX-Reasoning go ABOVE the mode's level (lowering is always allowed)?
+    may_raise_reasoning: bool = False
 
 
 @dataclass(frozen=True)
@@ -64,26 +67,21 @@ class IdentityPolicy:
 
     def resolve(self, identity: str, mode_priority: str, header_priority: str = "",
                 *, legacy: bool = False) -> tuple[str, str]:
-        """(scheduler priority, why) for one request.
+        """(scheduler priority, why) for one request -- the same rule on every
+        deployment (owner requirement, mission §9: "do not trust arbitrary
+        caller-supplied priority headers"):
 
-        * A header that LOWERS priority is always honoured (bench scripts send
-          `background`; nobody gains anything by asking for less).
-        * `legacy=True` (a deployment without mode routing, i.e. the V4.1
-          rollback): the pre-D-053 contract -- a valid X-GX-Priority wins, so
-          `X-GX-Priority: interactive` still wakes an idle-released engine.
-          Only the health lane stays out of reach of a header.
-        * Otherwise raising needs `may_set_priority`, and never beyond the cap.
+        * the base is the identity's pinned class (only odin: health) or the
+          mode's default;
+        * a header that LOWERS it is always honoured (bench scripts send
+          `background`; asking for less gains nothing);
+        * a header that RAISES it needs a signed identity with
+          `may_set_priority`, and never beyond `max_priority`;
+        * nobody reaches the health lane by header.
+        `legacy` is accepted for callers' clarity; it no longer changes the rule.
         """
         rule = self.rule(identity)
         who = identity or "anonymous"
-        if legacy:
-            asked = (header_priority or "").strip().lower()
-            canon = SCHED.valid_priority(asked) if asked and asked != "health" else ""
-            if canon:
-                return canon, f"X-GX-Priority {canon} (legacy deployment: header wins)"
-            if rule.priority == "health":
-                return "health", f"identity {who} is pinned to the health lane"
-            return mode_priority, f"mode default {mode_priority} (legacy deployment)"
         if rule.priority:
             prio, why = rule.priority, f"identity {who} is pinned to {rule.priority}"
         else:
@@ -91,21 +89,57 @@ class IdentityPolicy:
         asked = (header_priority or "").strip().lower()
         canon = SCHED.valid_priority(asked) if asked and asked != "health" else ""
         if asked and not canon:
-            why += f"; X-GX-Priority {asked!r} is not a settable class"
-        if canon:
-            if _rank(canon) >= _rank(prio):
-                return canon, f"X-GX-Priority {canon} (lowering is always allowed)"
-            if not rule.may_set_priority:
-                why += f"; X-GX-Priority {canon!r} ignored ({who} may not raise it)"
-            else:
-                prio, why = canon, f"X-GX-Priority {canon} from {who}"
-        cap = rule.priority or rule.max_priority
-        if _rank(prio) < _rank(cap):
-            why += f"; capped at {cap}"
-            prio = cap
-        if prio not in SCHED.PRIORITIES:
-            prio, why = SCHED.DEFAULT_PRIORITY, why + "; unknown class -> default"
-        return prio, why
+            return prio, why + f"; X-GX-Priority {asked!r} is not a settable class"
+        if not canon or canon == prio:
+            return prio, why
+        if _rank(canon) > _rank(prio):
+            return canon, f"X-GX-Priority {canon} (lowering is always allowed)"
+        if not rule.may_set_priority:
+            return prio, why + f"; X-GX-Priority {canon!r} ignored ({who} may not raise priority)"
+        cap = rule.max_priority
+        if _rank(canon) < _rank(cap):
+            return cap, f"X-GX-Priority {canon} from {who}, capped at {cap}"
+        return canon, f"X-GX-Priority {canon} from {who}"
+
+    def resolve_reasoning(self, identity: str, base_level: str, header_level: str,
+                          rank: "Callable[[str], int | None]") -> tuple[str, str]:
+        """(reasoning level, why): the same raise/lower rule as priority.
+
+        `rank(level)` orders levels by reasoning depth (None = not a level).
+        Lowering below the mode's level is always honoured; raising needs a
+        signed identity with `may_raise_reasoning`. An unknown header value is
+        returned as is so the caller answers it with a 400.
+        """
+        asked = (header_level or "").strip()
+        if not asked:
+            return base_level, f"mode level {base_level}"
+        r_asked, r_base = rank(asked), rank(base_level)
+        if r_asked is None:
+            return asked, "unknown X-GX-Reasoning (400)"
+        if r_base is None or r_asked <= r_base:
+            return asked, f"X-GX-Reasoning {asked} (not above the mode's {base_level})"
+        who = identity or "anonymous"
+        if self.rule(identity).may_raise_reasoning:
+            return asked, f"X-GX-Reasoning {asked} from {who}"
+        return base_level, f"X-GX-Reasoning {asked!r} ignored ({who} may not raise reasoning above {base_level})"
+
+
+def reasoning_ranker(registry: Any) -> "Callable[[str], int | None]":
+    """Order reasoning levels by effort: thinking off = 0, else reasoning_effort;
+    a bare integer 1-100 is its own effort (V4.1 numeric levels)."""
+    def rank(level: str) -> "int | None":
+        text = str(level).strip().lower()
+        if text.isdigit():
+            lo, hi = registry.reasoning.numeric_range
+            return int(text) if lo <= int(text) <= hi else None
+        kw = registry.reasoning.mapping.get(text)
+        if kw is None:
+            return None
+        if kw.get("enable_thinking") is False or kw.get("thinking") is False:
+            return 0
+        effort = kw.get("reasoning_effort")
+        return int(effort) if isinstance(effort, (int, float)) else 50
+    return rank
 
 
 def _rule(raw: Mapping[str, Any], where: str) -> IdentityRule:
@@ -119,7 +153,8 @@ def _rule(raw: Mapping[str, Any], where: str) -> IdentityRule:
     if cap == "health" and prio != "health":
         raise ValueError(f"{where}: only an identity pinned to priority 'health' may reach the health lane")
     return IdentityRule(priority=prio, max_priority=cap, may_set_priority=bool(raw.get("may_set_priority")),
-                        may_set_profile=bool(raw.get("may_set_profile")))
+                        may_set_profile=bool(raw.get("may_set_profile")),
+                        may_raise_reasoning=bool(raw.get("may_raise_reasoning")))
 
 
 def parse_policy(doc: Mapping[str, Any]) -> IdentityPolicy:

@@ -87,6 +87,9 @@ services:
       # --- upstream credential ---
       # Bearer key the orchestrator on :18900 requires (gx-max + gx-auto).
       GX_ORCHESTRATOR_API_KEY: ${GX_ORCHESTRATOR_API_KEY:-not-required}
+      # D-054: signs X-GX-Identity for the orchestrator. Provisioned and rolled
+      # back only by legenex/gateway/identity-hmac.sh. Empty = anonymous.
+      GX_IDENTITY_HMAC_KEY: ${GX_IDENTITY_HMAC_KEY:-}
       LITELLM_LOG: ${LITELLM_LOG_LEVEL:-INFO}
       # D-039/V4.1 budget hook: metrics file location inside the container.
       GX_TEXT_METRICS_LOG: /var/log/gx-text/gateway-text.jsonl
