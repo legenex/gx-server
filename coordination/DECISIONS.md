@@ -1959,3 +1959,44 @@ when both keys appear in the event. A half-received event is discarded when
 the upstream dies mid-stream. The gateway configuration is unchanged. Tests:
 `tests/test_sse.py` covers arbitrary chunk boundaries, pass-through, and the
 `reasoning_content` key.
+
+## D-053 — DeepSeek-V4-Flash-0731 abliterated becomes the primary; five logical modes; typed model switching (2026-10-16, source + offline build, NOT activated)
+
+**Decision (owner brief GX_V4FLASH_SPEC):** the primary text model becomes
+`cebeuq/DeepSeek-V4-Flash-0731-abliterated@21bd923c` (overlay of 92
+`attn.wo_b` tensors over `deepseek-ai/DeepSeek-V4-Flash-0731@7872f01b`) on a
+locally built vLLM 0.25.1 image (kit `legenex/models/dsv4-flash/`). DeepSeek
+V4.1 EXL3 (mia-dsv41) is kept, archived, as the rollback. Nothing was started
+or switched: the registry's `initial_active_deployment` is the rollback and
+only `POST /models/activate` (operator token, maintenance window) changes it.
+
+**Conflicts with locked rows, flagged for the owner:** L-6 (gx-max = SGLang
+NVFP4, "never vLLM") and L-10 (eleven aliases) are already stale (B-035); this
+brief adds gx-medium / gx-high and keeps gx-max on vLLM. Not self-amended.
+
+**What changed:**
+- *Kit*: offline, hash-pinned image build (base by digest, `--network=none`,
+  `--require-hashes`, NCCL fingerprint check, reviewed overlay verified after
+  COPY); TP=2/nnodes=2 launch with API on 127.0.0.1:8890 and NCCL/Gloo on the
+  rail-1 fabric; weights stay on gx10-02 and the head reads them over an
+  NFSv4-only, read-only, all_squash export bound to 192.168.100.11.
+- *Overlay proof*: vLLM yields every indexed file's tensors in natural-sort
+  order and the last copy wins; `model-overlay-…` sorts after `model-000NN-…`.
+  Verified on the real files; per-rank `wo_b` digests logged by a vLLM plugin;
+  behavioural refusal check in `tools/refusal_check.py`.
+- *Orchestrator*: five aliases as modes of one resident engine (fast = thinking
+  off/32K/interactive, medium = low/128K, high = high/128K, max = max/128K
+  with 2 concurrent, auto = autoroute intent), server-owned reasoning kwargs,
+  priority from the gateway-stamped identity (`identity-policy.json`), Odin
+  health lane, typed switching with lock, drain, validation through the
+  gateway and automatic rollback, persistent switch history, per-deployment
+  idle TTL (V4 Flash resident), rank-failure detection, restart circuit
+  breaker. Raw `<think>` reasoning never reaches `content` (any deployment).
+- *Gateway (source only)*: five aliases, reasoning never merged into content.
+
+**Memory:** V4 Flash at `gpu_memory_utilization 0.74` keeps >= 15 GiB on both
+nodes from measured idle levels (start.sh enforces it). V4.1 cannot keep
+15 GiB on the head at all (99.5 GiB of weights per rank); see
+`legenex/lifecycle/mia-dsv41.env.lowmem-proposal`.
+
+**Runbook / residual risks:** `legenex/models/dsv4-flash/README.md`.
