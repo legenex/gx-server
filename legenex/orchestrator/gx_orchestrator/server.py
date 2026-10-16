@@ -271,7 +271,8 @@ class Handler(BaseHTTPRequestHandler):
     #: handler object for every request on a connection, so they are cleared
     #: before each request is parsed (review of dfefdc3, B1): a signed request
     #: must never lend its identity to the next one.
-    _PER_REQUEST_ATTRS = ("_gx_identity", "_auto_base_profile", "_gate_state")
+    _PER_REQUEST_ATTRS = ("_gx_identity", "_auto_base_profile", "_gate_state",
+                          '_last_completed_request_id', '_last_json_status')
     _gate_state: "dict[str, Any] | None" = None
 
     def _reset_request_state(self) -> None:
@@ -287,6 +288,7 @@ class Handler(BaseHTTPRequestHandler):
         log.info("%s - %s", self.address_string(), fmt % args)
 
     def _send_json(self, status: int, payload: Any, headers: dict[str, str] | None = None) -> None:
+        self._last_json_status = status
         body = json.dumps(payload).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
@@ -633,6 +635,7 @@ class Handler(BaseHTTPRequestHandler):
         return uuid.uuid4().hex
 
     def _finish(self, alias: str, record: dict[str, Any]) -> None:
+        self._last_completed_request_id = record.get('request_id')
         self.journal.write(record)
         self.metrics.record(alias, record)
 
@@ -648,7 +651,8 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
         dep = self.manager.active if self.manager is not None else None
-        if (dep is not None and dep.mode_routing) or requested not in (ALIAS_AUTO, ALIAS_DIRECT):
+        if (self._caller_identity().startswith('hermes-profile-')
+                or (dep is not None and dep.mode_routing) or requested not in (ALIAS_AUTO, ALIAS_DIRECT)):
             self._serve_mode(path, payload, requested, dep)
             return
         if requested == ALIAS_AUTO:
@@ -1030,15 +1034,21 @@ class Handler(BaseHTTPRequestHandler):
         request_id = self._request_id()
         fingerprint = request_fingerprint(payload)
         try:
+            from .profile_modes import decide as bounded_decide, ProfileModeError
+            bounded = bounded_decide(self._caller_identity(), alias, payload, self.registry)
             decision = M.choose_mode(alias, payload, self.registry, headers=self.headers)
+            if bounded is not None:
+                decision = bounded.decision
             spec = self.registry.mode(decision.mode)
             dialect = dep.dialect if dep is not None else "deepseek_v41"
             level, level_why = self.identity_policy.resolve_reasoning(
                 self._caller_identity(), spec.reasoning, self.headers.get("X-GX-Reasoning") or "",
                 reasoning_ranker(self.registry))
             kwargs = M.reasoning_kwargs(dialect, level, self.registry)
-        except RegistryError as exc:
-            self._send_error_json(400, str(exc), "invalid_mode", NO_RETRY_HEADERS,
+        except (RegistryError, ProfileModeError) as exc:
+            status = exc.status if isinstance(exc, ProfileModeError) else 400
+            headers = {'Retry-After': '30'} if status == 503 else NO_RETRY_HEADERS
+            self._send_error_json(status, str(exc), "profile_mode_policy" if isinstance(exc, ProfileModeError) else "invalid_mode", headers,
                                   **{"X-GX-Request-Id": request_id})
             return
         if alias == ALIAS_AUTO and decision.route is not None:
@@ -1050,6 +1060,10 @@ class Handler(BaseHTTPRequestHandler):
         body, overridden = M.shape_request(payload, spec, kwargs)
         budget = M.mode_budget(body, spec, alias)
         if budget.status == B.STATUS_OVERFLOW:
+            if bounded is not None:
+                self.journal.write({'event': 'escalation_outcome', 'ts': time.time(),
+                                    'request_id': request_id, 'task_id': self.headers.get('X-GX-Task') or request_id,
+                                    **bounded.as_log_dict(), 'outcome': 'context_rejected', 'status': 400})
             err = B.error_payload(budget, message=B.overflow_message(
                 budget, f"Mode {spec.name} ({alias}) admits at most {spec.max_context_tokens} tokens "
                         f"of context; use a larger mode or shorten the input."))
@@ -1067,12 +1081,28 @@ class Handler(BaseHTTPRequestHandler):
             **decision.as_log_dict(), "reasoning_kwargs": kwargs, "reasoning_policy": level_why,
             "client_overrides_removed": overridden,
         }
+        if bounded is not None:
+            record.update(bounded.as_log_dict())
+            record['task_id'] = self.headers.get('X-GX-Task') or request_id
+            record['outcome'] = 'admitted'
         logging.getLogger(ROUTING_LOG).info(json.dumps(record, default=str))
         self.journal.write(record)
         self._gate_state = {"spec": spec, "kwargs": kwargs, "budget": budget}
         profile = self.lifecycle.current_profile or ""
-        self._relay_phase(path, body, request_id, alias, profile or spec.name, level,
-                          decision.as_log_dict(), started, mode=spec.name, mode_priority=spec.priority)
+        fields = decision.as_log_dict()
+        if bounded is not None:
+            fields.update(bounded.as_log_dict())
+            fields['task_id'] = self.headers.get('X-GX-Task') or request_id
+        self._last_json_status = None
+        try:
+            self._relay_phase(path, body, request_id, alias, profile or spec.name, level,
+                              fields, started, mode=spec.name, mode_priority=spec.priority)
+        finally:
+            if bounded is not None and getattr(self, '_last_completed_request_id', None) != request_id:
+                self.journal.write({'event': 'escalation_outcome', 'ts': time.time(),
+                                    'request_id': request_id, 'task_id': fields['task_id'],
+                                    **bounded.as_log_dict(), 'outcome': 'failed_before_completion',
+                                    'status': self._last_json_status})
 
     # ------------------------------------------------------------ gx-max
     def _serve_direct(self, path: str, payload: dict[str, Any]) -> None:

@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import tempfile
 
 REPO = Path(__file__).resolve().parents[4]
 KIT = 'legenex/models/dsv4-flash'
@@ -17,7 +18,7 @@ def checked(args):
     return subprocess.check_output(args, text=True, cwd=REPO).strip()
 
 
-def install(window: dt.date) -> dict:
+def install(window: dt.date, replace_reviewed: bool = False) -> dict:
     if window != dt.date(2026, 10, 17):
         raise ValueError('only the owner-approved 2026-10-17 window is authorized')
     now = dt.datetime.now(dt.timezone(dt.timedelta(hours=2)))
@@ -34,8 +35,19 @@ def install(window: dt.date) -> dict:
     unit_dir = Path.home() / '.config/systemd/user'
     service = unit_dir / 'gx-dsv4f-window.service'
     timer = unit_dir / 'gx-dsv4f-window.timer'
-    if root.exists() or service.exists() or timer.exists():
-        raise ValueError('existing release/unit detected; inspect it before changing any schedule')
+    previous = {}
+    if root.exists():
+        raise ValueError('release already exists; inspect before reinstalling')
+    if service.exists() or timer.exists():
+        if not replace_reviewed or not (service.is_file() and timer.is_file()):
+            raise ValueError('existing units require explicit reviewed replacement')
+        if checked(['systemctl', '--user', 'show', service.name, '-p', 'ActiveState', '--value']) not in ('inactive', 'failed'):
+            raise ValueError('activation service is executing; never replace an active controller')
+        if 'OnCalendar=2026-10-17 00:57:00 Africa/Johannesburg' not in timer.read_text():
+            raise ValueError('existing timer is not this approved maintenance window')
+        previous = {service.name: service.read_text(), timer.name: timer.read_text()}
+    if Path('/srv/projects/gx-cluster/state/dsv4f-window/2026-10-17.used.json').exists():
+        raise ValueError('maintenance window already consumed; never replace/replay')
     os.umask(0o077)
     root.mkdir(parents=True)
     unit_dir.mkdir(parents=True, exist_ok=True)
@@ -63,6 +75,8 @@ def install(window: dt.date) -> dict:
                'release': str(root), 'live_source': str(LIVE), 'timer': 'gx-dsv4f-window.timer',
                'service': 'gx-dsv4f-window.service', 'trigger': '2026-10-17 00:57:00 Africa/Johannesburg'}
     (root / 'RELEASE.json').write_text(json.dumps(receipt, indent=2))
+    if previous:
+        (root / 'PREVIOUS_UNITS.json').write_text(json.dumps(previous, indent=2))
     entry = root / 'entry.sh'
     entry.write_text('#!/bin/bash\nset -euo pipefail\n'
                      f'cd "{root}"\nsha256sum --quiet -c SHA256SUMS\n'
@@ -80,7 +94,7 @@ def install(window: dt.date) -> dict:
     for p in sorted((p for p in root.rglob('*') if p.is_dir()), reverse=True):
         p.chmod(0o500)
     root.chmod(0o500)
-    service.write_text(f'''[Unit]
+    service_text = f'''[Unit]
 Description=Reviewed V4 Flash single maintenance window ({sha[:12]})
 After=network-online.target gx-orchestrator.service
 Wants=network-online.target
@@ -99,8 +113,8 @@ NoNewPrivileges=true
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=gx-dsv4f-window
-''')
-    timer.write_text('''[Unit]
+'''
+    timer_text = '''[Unit]
 Description=V4 Flash preflight 2026-10-17 00:57 SAST (one approved window)
 
 [Timer]
@@ -112,10 +126,34 @@ Unit=gx-dsv4f-window.service
 
 [Install]
 WantedBy=timers.target
-''')
-    checked(['systemd-analyze', '--user', 'verify', str(service), str(timer)])
-    checked(['systemctl', '--user', 'daemon-reload'])
-    checked(['systemctl', '--user', 'enable', '--now', timer.name])
+'''
+    # Validate candidates before stopping the single existing future timer.
+    with tempfile.TemporaryDirectory(prefix='gx-window-units-') as candidate:
+        staged_service, staged_timer = Path(candidate)/service.name, Path(candidate)/timer.name
+        staged_service.write_text(service_text)
+        staged_timer.write_text(timer_text)
+        checked(['systemd-analyze', '--user', 'verify', str(staged_service), str(staged_timer)])
+    try:
+        if dt.datetime.now(now.tzinfo) >= dt.datetime.combine(window, dt.time(0, 57), now.tzinfo):
+            raise ValueError('trigger elapsed during installation; retain the existing controller')
+        if previous:
+            if checked(['systemctl', '--user', 'show', service.name, '-p', 'ActiveState', '--value']) not in ('inactive','failed'):
+                raise ValueError('controller became active during staging; refuse replacement')
+            checked(['systemctl', '--user', 'stop', timer.name])
+            if (checked(['systemctl', '--user', 'show', service.name, '-p', 'ActiveState', '--value']) not in ('inactive','failed')
+                    or Path('/srv/projects/gx-cluster/state/dsv4f-window/2026-10-17.used.json').exists()):
+                raise ValueError('controller started during replacement; original units retained')
+        service.write_text(service_text)
+        timer.write_text(timer_text)
+        checked(['systemctl', '--user', 'daemon-reload'])
+        checked(['systemctl', '--user', 'enable', '--now', timer.name])
+    except Exception:
+        for name, text in previous.items():
+            (unit_dir/name).write_text(text)
+        checked(['systemctl', '--user', 'daemon-reload'])
+        if previous:
+            checked(['systemctl', '--user', 'enable', '--now', timer.name])
+        raise
     receipt['next_trigger'] = checked(['systemctl', '--user', 'show', timer.name, '-p', 'NextElapseUSecRealtime', '--value'])
     return receipt
 
@@ -123,5 +161,6 @@ WantedBy=timers.target
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--window', required=True, type=dt.date.fromisoformat)
+    parser.add_argument('--replace-reviewed', action='store_true', help='replace the inactive controller with a newly reviewed source release')
     args = parser.parse_args()
-    print(json.dumps(install(args.window), indent=2))
+    print(json.dumps(install(args.window, args.replace_reviewed), indent=2))

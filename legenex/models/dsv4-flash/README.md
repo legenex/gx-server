@@ -122,6 +122,13 @@ read-only preflight and writes a separate receipt without consuming the window.
 The original runbook below remains the manual fallback. The optional W6 rollback
 drill is separate from the first activation and is not implied by a GO receipt.
 
+After another reviewed GX source change, `install_window.py --window 2026-10-17
+--replace-reviewed` updates the **same** inactive controller to a fresh pinned
+release. It verifies the old absolute schedule, refuses an executing/consumed
+window, retains the previous units, validates candidates first, and restores
+the previous units if replacement fails. It creates no second activation timer.
+The old immutable release remains available for audit and recovery.
+
 Keys never go on a command line, the screen, `ps` or shell history: the
 operator headers live in a 0600 file under `$XDG_RUNTIME_DIR` and every call
 uses `curl -H @"$HF"`; `accept.sh` reads the gateway key from its file.

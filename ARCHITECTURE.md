@@ -654,3 +654,19 @@ host auth is not mounted. Operator docs: `legenex/computer/README.md`.
 * **Tooling:** everything is reproducible with
   `legenex/computer/tools/provision.py` and proven by `verify.py`.
 
+
+
+## Owner Decision #10 — canonical profile mode bounds (2026-10-16)
+
+AgentOS remains the sole profile routing store. GX reads live floor/ceiling
+values through the existing private AgentOS management tunnel, then runs its
+existing gx-auto task classifier. Signed LiteLLM key aliases bind credentials
+to profiles. A profile policy outage refuses bounded inference. Both V4.1 and
+V4 Flash enforce the policy before dispatch; no alternate classifier or routing
+database is introduced. Task and request identifiers link decisions, rejected
+context and final outcomes. The existing per-mode scheduler enforces max slots.
+
+The retained user activation timer is updated only to another reviewed immutable
+release using the same units. Replacement refuses active or consumed windows.
+A separate read-only follow-up measurement may report 24-hour escalation, latency
+and failure counts; empty samples are NO_DATA, never acceptance.

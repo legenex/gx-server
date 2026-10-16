@@ -3,6 +3,26 @@
 **This file must always reflect reality.** If you are a new agent resuming this
 work, read this first, then ARCHITECTURE.md (what is locked), then BLOCKERS.md.
 
+## Decision #10 context acceptance — 2026-10-16, 20:21 SAST
+
+Live V4.1 gx-fast accepted **64,010 actual prompt tokens** (64,012 total)
+in 79.33 seconds and returned OK with zero reasoning tokens. The gateway's
+real `/v1/models` advertises 65,536 input and 8,192 output. A separate real
+stream/tool-call/tool-result continuation test passed after the 458-second
+cold load (27.5 decode tokens/s, no raw reasoning in content). This verifies
+runtime admission, not only metadata. Source receipts are private under
+`/srv/logs/dsv4f-window/takeover-20261016/`.
+
+Decision #10 task classification reuses gx-auto and obtains canonical bounds
+from AgentOS's existing management tunnel. Only signed per-profile LiteLLM
+key aliases select a profile; request profile headers are not authority.
+Both V4.1 and Flash apply the same bounds, and existing max-slot admission
+is retained. Scoped profile identities may wake a cold model at interactive
+priority, but cannot claim the reserved health lane. Classifier, HTTP and
+policy-outage tests cover both deployments. Production profile-key rotation,
+delegation acceptance and follow-up measurement are separate release gates;
+source implementation alone is not claimed live.
+
 ## Takeover checkpoint — 2026-10-16, before the approved overnight window
 
 V4.1 remains the working deployment on GX10-01/GX10-02 (idle-released during

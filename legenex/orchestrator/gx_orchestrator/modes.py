@@ -1,6 +1,6 @@
 """The five public aliases as logical modes of ONE resident model (D-053).
 
-    gx-fast    thinking off,  admission <= 32K,  top interactive priority
+    gx-fast    thinking off,  65,536 input + 8,192 output admission, interactive
     gx-medium  thinking low,  admission <= 128K
     gx-high    thinking high, admission <= 128K
     gx-max     thinking max,  the largest tested safe window, capped concurrency
