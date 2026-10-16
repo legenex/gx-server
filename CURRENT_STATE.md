@@ -3,6 +3,36 @@
 **This file must always reflect reality.** If you are a new agent resuming this
 work, read this first, then ARCHITECTURE.md (what is locked), then BLOCKERS.md.
 
+## Takeover checkpoint — 2026-10-16, before the approved overnight window
+
+V4.1 remains the working deployment on GX10-01/GX10-02 (idle-released during
+preflight). Production AI OS reports `fdccc23`. The recovered Decision #10
+context change was committed by Claude as `ccc2a0d`; it raises gx-fast input to
+65,536 and total admission to 73,728, leaving thinking off and interactive
+priority. This source change is **not yet claimed live**.
+
+The former Claude session's only activation cron `ad0c16c2` was cancelled
+(tool receipt verified). No V4 Flash timer existed at takeover. The original
+untracked shell runner was preserved privately, independently reviewed and
+found nonfunctional; its entry point now uses a tested durable Python state
+machine. See the kit README's durable-window section for exact cutoff,
+recovery and receipt semantics. Timer installation/next-trigger evidence
+belongs in the private installation receipt, not an assumed deployed status.
+
+A harmless full preflight passed at 20:01 SAST: all 60 checkpoint files
+rehashed against the pinned integrity manifest, both model images and NFS image
+matched exact IDs, fabric/GID/kernel/CDI checks passed, no active AI OS work
+orders or inference requests, both rollback-readiness records ready. Available
+memory was 111.96/116.82 GiB; it must be checked again at the real window.
+The missing worker NFS image was transferred from the head and its identical
+`sha256:d87e9c20…` ID verified. No models were switched or restarted.
+
+Independent source QA: model registry 33 and orchestrator 393 tests pass.
+Timer failure/duplicate/interruption/rollback cases pass. Overnight activation,
+rollback drill, Decision #10 production routing and the broader eight mission
+gates remain **PARTIAL** until live acceptance evidence exists. The nested
+`mia-dsv41` repository and its private environment backup were preserved.
+
 ## LATEST UPDATE — 2026-10-14 SAST, gx-auto tool calling fixed (D-050)
 
 `gx-auto` now forwards an agent's tools on the FAST profile and honours a

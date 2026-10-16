@@ -73,6 +73,55 @@ and check `docker image inspect -f '{{.Id}}'` equals the id above.
 
 ## Activation runbook (lead, inside 01:00-05:00 SAST)
 
+### Durable unattended window (2026-10-17)
+
+`tools/window_run.sh --window 2026-10-17` is the recovered W1–W5 entry point.
+Its Python state machine replaces the unfinished shell state propagation,
+retaining the typed model-switch API and existing acceptance tools. The original
+Claude script is retained privately under `/srv/logs/dsv4f-window/takeover-20261016/`.
+The runner never sends window overrides, cuts in-flight work or reactivates a
+model. It does not install another work-order engine.
+
+Install with `tools/install_window.py --window 2026-10-17` **from a clean,
+reviewed, committed checkout matching the live source**. It creates a private,
+read-only release under `~/.local/share/legenex/dsv4f-window/releases/<SHA>`.
+The absolute one-shot user timer `gx-dsv4f-window.timer` triggers at **00:57 SAST
+on 17 October**, has `Persistent=false`, and runs with user lingering. It never
+catches up a missed date. The service runs checksum verification over the release
+and relevant live source before preflight. It uses no credential in unit files,
+arguments, repository content or journals. Same-user source integrity is not a
+root-owned security boundary.
+
+Preflight verifies both pinned runtime image IDs plus NFS image ID, kernels,
+CDI, fabric/GIDs, storage, both rollback-readiness records, deployment lock,
+request queue, active AI OS work orders, maintenance holds and actual per-node
+memory. It **re-reads all 60 checkpoint files** against the reviewed manifest,
+including Git blob hashes for small files. A busy or unknown dependency refuses
+activation. When V4.1 is resident, the switcher enforces the boot floor after
+its sanctioned release; no floor is lowered to force admission.
+
+The first activation is no earlier than 01:00:30. It must start before 01:20,
+finish switching before 02:35, and complete real acceptance before **03:30**.
+Acceptance covers overlay rank digests, refusal corroboration, all five aliases,
+streaming/tool calls/continuation, concurrency **1,2,4,6,8**, rank stability and
+memory throughout the run. Failures request V4.1 restoration via the same typed
+API, with recovery ending at 04:30. A rollback is reported only after V4.1 is
+ready and the gateway configuration/identity verification succeeds.
+
+The runner persists intent before each side effect. It never repeats a POST
+whose response was lost. A duplicate trigger with a final receipt is a no-op.
+If killed, `ExecStopPost` re-enters **recovery only**: reconcile an in-progress
+switch and restore V4.1 where safe, without another Flash activation. Failed
+or ambiguous recovery remains an explicit failure; it is not called restored.
+
+Evidence: retained systemd journal (`journalctl --user -u gx-dsv4f-window.service`),
+private step logs, source-pinned release receipt, switch history and final JSON
+under `/srv/logs/dsv4f-window/<UTC stamp>/`. Per-window used/result records live
+under `/srv/projects/gx-cluster/state/dsv4f-window/`. `--dry-run` performs full
+read-only preflight and writes a separate receipt without consuming the window.
+The original runbook below remains the manual fallback. The optional W6 rollback
+drill is separate from the first activation and is not implied by a GO receipt.
+
 Keys never go on a command line, the screen, `ps` or shell history: the
 operator headers live in a 0600 file under `$XDG_RUNTIME_DIR` and every call
 uses `curl -H @"$HF"`; `accept.sh` reads the gateway key from its file.

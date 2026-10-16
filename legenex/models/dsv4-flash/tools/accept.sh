@@ -37,7 +37,7 @@ trap 'cleanup; echo "ACCEPTANCE: NO-GO (interrupted)"; exit 130' INT TERM
 if [ -n "${GX_BENCH_KEY_FILE:-}" ]; then
     key="$(head -n1 "$GX_BENCH_KEY_FILE" | tr -d '\r\n')"
 else
-    key="$(sed -n 's/^LITELLM_MASTER_KEY=//p' "$REPO/legenex/gateway/.env" | tail -1)"
+    key="$(sed -n 's/^LITELLM_MASTER_KEY=//p' "${GX_GATEWAY_ENV:-$REPO/legenex/gateway/.env}" | tail -1)"
 fi
 [ -n "$key" ] || { echo "no gateway key (GX_BENCH_KEY_FILE or LITELLM_MASTER_KEY in the gateway .env)"; echo "ACCEPTANCE: NO-GO"; exit 2; }
 export GX_BENCH_KEY="$key" GX_GATEWAY_KEY="$key"   # environment of our own children only
@@ -50,6 +50,7 @@ rank_state() {
     printf 'node2 %s\n' "$(ssh -o BatchMode=yes -o ConnectTimeout=10 "$WORKER" "docker inspect -f '{{.RestartCount}} {{.State.StartedAt}} {{.State.Running}}' dsv4f-worker" 2>/dev/null || echo 'NA NA false')"
 }
 rank_state > "$OUT/ranks-before.txt"
+bash "$KIT/tools/mem_watch.sh" "$OUT/mem.tsv" 5 "$WORKER" & mw=$!
 
 # 1 overlay digests (primary proof)
 docker logs dsv4f-head 2>&1 | grep GX_WOB_DIGEST > "$OUT/wob-head.log"
@@ -70,12 +71,19 @@ else
 fi
 
 # 3 + 4 bench under the memory watcher
-bash "$KIT/tools/mem_watch.sh" "$OUT/mem.tsv" 5 "$WORKER" & mw=$!
-python3 -I "$KIT/tools/bench.py" --url "$GATEWAY/chat/completions" --model gx-fast --concurrency 1,2,8 --max-tokens 1024 > "$OUT/bench.log" 2>&1
+python3 -I "$KIT/tools/bench.py" --url "$GATEWAY/chat/completions" --model gx-fast --concurrency 1,2,4,6,8 --max-tokens 1024 > "$OUT/bench.log" 2>&1
 brc=$?
-cleanup
 if msg="$($EVAL bench "$OUT/bench.log")" && [ "$brc" = 0 ]; then result bench PASS "$msg"
 else result bench FAIL "${msg:-bench.py exit $brc} (exit $brc)"; fi
+
+# Every logical mode must stream, call a structured tool, and continue after
+# its result. The switch validator covers identity and the physical fabric.
+for alias in gx-auto gx-medium gx-high gx-max; do
+    if python3 -I "$KIT/tools/bench.py" --url "$GATEWAY/chat/completions" --model "$alias" --concurrency 1 --max-tokens 2048 > "$OUT/$alias.log" 2>&1 \
+        && msg="$($EVAL bench "$OUT/$alias.log")"; then result "$alias" PASS "$msg"
+    else result "$alias" FAIL "stream/tool/continuation failed; see $alias.log"; fi
+done
+cleanup
 if msg="$($EVAL mem "$OUT/mem.tsv" --floor "$FLOOR" --min-samples 10)"; then result memory PASS "$msg"
 else result memory FAIL "$msg"; fi
 
