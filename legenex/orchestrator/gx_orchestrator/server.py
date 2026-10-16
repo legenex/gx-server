@@ -660,8 +660,23 @@ class Handler(BaseHTTPRequestHandler):
         while DOWN); an X-GX-Profile header overrides."""
         override = (self.headers.get("X-GX-Profile") or "").strip()
         if override:
-            return override
+            # On gx-max a profile change CYCLES the two-node engine (~9 min for
+            # everyone). Now that X-GX-* headers really reach us through the
+            # gateway, only a signed identity allowed to do it may (review).
+            who = self._caller_identity()
+            if self.identity_policy.rule(who).may_set_profile:
+                return override
+            log.info("X-GX-Profile %r from %s ignored (identity may not cycle the engine)",
+                     override, who or "anonymous")
         return self.lifecycle.current_profile or self.registry.default_profile().name
+
+    def _caller_identity(self) -> str:
+        """The signed gateway identity of THIS request, verified once (the
+        nonce is single-use, so it must never be checked twice)."""
+        if not hasattr(self, "_gx_identity"):
+            self._gx_identity = identity_from_headers(
+                self.headers, self.cfg.identity_hmac_key(), nonces=self.identity_nonces)
+        return self._gx_identity
 
     def _direct_reasoning(self, profile_name: str) -> str:
         override = (self.headers.get("X-GX-Reasoning") or "").strip()
@@ -794,8 +809,7 @@ class Handler(BaseHTTPRequestHandler):
         attr = _attribution(self.headers)
         # Priority comes from the AUTHENTICATED identity (D-053); a caller's
         # X-GX-Priority counts only where the policy allows it.
-        identity = identity_from_headers(self.headers, self.cfg.identity_hmac_key(),
-                                         nonces=self.identity_nonces)
+        identity = self._caller_identity()
         dep_now = self.manager.active if self.manager is not None else None
         prio, prio_why = self.identity_policy.resolve(
             identity, mode_priority or SCHED.priority_from_mode(profile_name),

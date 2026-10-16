@@ -316,6 +316,7 @@ class OrchestratorHarness(unittest.TestCase):
         return parse_policy({"default": {"max_priority": "interactive"},
                              "identities": {TRUSTED: {"max_priority": "interactive", "may_set_priority": True},
                                             "odin": {"priority": "health"},
+                                            "gx-operator": {"may_set_priority": True, "may_set_profile": True},
                                             "batch": {"max_priority": "background"}}})
 
     def _restore_key(self):

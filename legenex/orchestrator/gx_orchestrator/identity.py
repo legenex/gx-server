@@ -15,8 +15,11 @@ package, override with GX_IDENTITY_POLICY)::
 
 * ``priority``      the class this identity always gets (wins over the mode);
 * ``max_priority``  the best class it may reach (a mode's default is capped);
-* ``may_set_priority`` whether its X-GX-Priority header is honoured at all
-  (still capped by max_priority). Everyone else's header is ignored.
+* ``may_set_priority`` whether its X-GX-Priority header may RAISE priority
+  (still capped by max_priority); lowering is always honoured, and the V4.1
+  rollback keeps its header-wins contract.
+* ``may_set_profile`` whether its X-GX-Profile may cycle the V4.1 engine on
+  gx-max (default no: a profile change restarts both nodes).
 * ``health`` is the reserved Odin lane: only an identity whose ``priority``
   is health gets it; nobody can ask for it by header unless it may reach it.
 """
@@ -47,6 +50,8 @@ class IdentityRule:
     priority: str = ""
     max_priority: str = "interactive"
     may_set_priority: bool = False
+    #: May an X-GX-Profile header cycle the legacy (V4.1) engine on gx-max?
+    may_set_profile: bool = False
 
 
 @dataclass(frozen=True)
@@ -113,7 +118,8 @@ def _rule(raw: Mapping[str, Any], where: str) -> IdentityRule:
             raise ValueError(f"{where}.{key}: unknown priority class {value!r}")
     if cap == "health" and prio != "health":
         raise ValueError(f"{where}: only an identity pinned to priority 'health' may reach the health lane")
-    return IdentityRule(priority=prio, max_priority=cap, may_set_priority=bool(raw.get("may_set_priority")))
+    return IdentityRule(priority=prio, max_priority=cap, may_set_priority=bool(raw.get("may_set_priority")),
+                        may_set_profile=bool(raw.get("may_set_profile")))
 
 
 def parse_policy(doc: Mapping[str, Any]) -> IdentityPolicy:

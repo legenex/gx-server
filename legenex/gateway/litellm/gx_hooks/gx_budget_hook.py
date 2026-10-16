@@ -5,8 +5,9 @@ the gx-litellm container. For the two public aliases (gx-max, gx-auto) it does:
 
 1. PRE-CALL — attribution forwarding: captures the X-GX-* headers from the
    incoming request (project / agent / task / intent / priority / profile /
-   reasoning) and forwards them to the orchestrator via
-   ``data["forwarded_headers"]`` (and stashes a copy in
+   reasoning / switch validation) and forwards exactly those, plus a signed
+   X-GX-Identity, to the orchestrator via ``data["extra_headers"]`` (and
+   stashes a copy, without the switch token, in
    ``data["metadata"]["gx_attribution"]`` for the metrics line — the same
    metadata mechanism the previous D-039 hook used to carry its budget).
    The orchestrator's scheduler and autoroute read them for priority,
@@ -285,14 +286,21 @@ class GxBudgetHook(CustomLogger):
             meta = data.setdefault("metadata", {})
             if isinstance(meta, dict):
                 meta["gx_attribution"] = {k: v for k, v in attribution.items() if k not in _NOT_LOGGED}
-            # LiteLLM forwards these headers with the upstream OpenAI call;
-            # the orchestrator reads them for scheduler priority, profile and
-            # reasoning (gx-auto autoroute), defaulting each to "unknown".
-            # The identity is set here, from LiteLLM's own key check: a
-            # client-sent X-GX-Identity is never in `attribution` (D-053).
-            forwarded = dict(attribution)
-            forwarded.update(_signed_identity(_identity(user_api_key_dict)))
-            data["forwarded_headers"] = forwarded
+            # Upstream headers, sent to the orchestrator as the OpenAI SDK's
+            # per-request `extra_headers` (LiteLLM 1.100.1: main.py
+            # _complete_custom_openai copies ctx.extra_headers into
+            # optional_params["extra_headers"]; llms/openai/openai.py passes
+            # `headers` as extra_headers when set). `forwarded_headers` was
+            # never read by LiteLLM, so before this no X-GX-* header reached
+            # the orchestrator. EXACTLY the allowlist plus our signed identity:
+            # any client-supplied `extra_headers` / `headers` body field is
+            # replaced (it could carry a spoofed X-GX-Identity or Authorization).
+            # The identity comes from LiteLLM's own key check, never the client.
+            upstream = dict(attribution)
+            upstream.update(_signed_identity(_identity(user_api_key_dict)))
+            data["extra_headers"] = upstream
+            data["headers"] = dict(upstream)
+            data.pop("forwarded_headers", None)
 
             # 2. Context guard — chat calls on the two aliases only.
             if alias not in ALIASES or call_type not in _CHAT_CALLS or B is None:
@@ -305,7 +313,13 @@ class GxBudgetHook(CustomLogger):
                 max_output_limit=DEFAULT_MAX_OUTPUT,
             )
         except Exception:  # noqa: BLE001 - never break serving
-            log.warning("gx hook pre-call failed; forwarding unchanged", exc_info=True)
+            log.warning("gx hook pre-call failed; forwarding without client headers", exc_info=True)
+            # Fail closed on headers: never let a client body's extra_headers /
+            # headers through just because attribution failed.
+            if isinstance(data, dict) and isinstance(data.get("extra_headers"), dict) \
+                    and IDENTITY_HEADER not in data["extra_headers"]:
+                data.pop("extra_headers", None)
+                data.pop("headers", None)
             return data
 
         if isinstance(meta, dict):

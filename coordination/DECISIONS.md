@@ -2012,3 +2012,29 @@ cleanup ends; explicit switch flags; lock released if a switch cannot start;
 startup reconciliation of interrupted switches; health probes the active
 runtime; validation via gx-fast plus a thinking-mode tool call; exact weights
 node; HMAC-signed identity; validation token never logged.
+
+## D-054 — X-GX-* headers never reached the orchestrator; the hook now forwards them as `extra_headers` (2026-10-16)
+
+**Defect (found by the AI OS engineer, verified by the lead):** `gx_budget_hook`
+wrote `data["forwarded_headers"]`, which LiteLLM 1.100.1 never reads, so every
+X-GX-* header (project, agent, task, intent, priority, profile, reasoning,
+switch validation, signed identity) was dropped: all orchestrator requests
+were project `unknown`, and identity priority, the Odin lane and the
+X-GX-Priority wake path were inert.
+
+**Fix:** the hook sets `data["extra_headers"]` (and `data["headers"]`) to
+exactly the allowlist plus its signed identity, replacing any client-supplied
+`extra_headers`/`headers` body field. LiteLLM 1.100.1 passes per-request
+`extra_headers` to the OpenAI SDK for `openai/` deployments
+(`litellm/main.py` `_complete_custom_openai`, `litellm/llms/openai/openai.py`).
+Proven by a real-proxy integration test
+(`legenex/gateway/litellm/tests/test_it_header_forwarding.py`,
+`GX_LITELLM_IT=1`), which fails on the old hook.
+
+**Policy now that the headers are live:** identity only when HMAC-signed by
+the gateway (single-use nonce), so orchestrator-key holders on the direct
+listener cannot claim an identity; X-GX-Priority: lowering always, raising
+per identity on V4 Flash, header-wins on the V4.1 rollback (the documented
+wake path); X-GX-Profile on gx-max (which cycles the two-node engine) only
+from a signed identity with `may_set_profile` (gx-operator); the switch token
+is checked against the running switch.

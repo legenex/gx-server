@@ -54,14 +54,22 @@ class TestIdentity(unittest.TestCase):
         os.environ["GX_IDENTITY_HMAC_KEY"] = KEY
         self.addCleanup(os.environ.pop, "GX_IDENTITY_HMAC_KEY", None)
         data = {"model": "gx-fast", "messages": [{"role": "user", "content": "hi"}],
+                "extra_headers": {"X-GX-Identity": "odin", "Authorization": "Bearer stolen", "X-Evil": "1"},
+                "headers": {"X-GX-Priority": "health"},
                 "metadata": {"headers": {"X-GX-Project": "p", "X-GX-Switch-Validation": "secret-token",
                                          "X-GX-Identity": "odin"}}}
         out = asyncio.run(H.GxBudgetHook().async_pre_call_hook(Key(key_alias="hermes"), None, data, "acompletion"))
-        fwd = out["forwarded_headers"]
+        fwd = out["extra_headers"]
+        self.assertEqual(out["headers"], fwd)
+        self.assertNotIn("forwarded_headers", out)
         self.assertEqual(fwd["X-GX-Identity"], "hermes")          # the client's "odin" claim is gone
         self.assertEqual(fwd["X-GX-Switch-Validation"], "secret-token")
         self.assertNotIn("X-GX-Switch-Validation", out["metadata"]["gx_attribution"])
         self.assertEqual(identity_from_headers(fwd, KEY), "hermes")
+        self.assertNotIn("Authorization", fwd)
+        self.assertNotIn("X-Evil", fwd)
+        self.assertEqual(set(fwd) - set(H.ATTRIB_HEADERS),
+                         {"X-GX-Identity", "X-GX-Identity-Ts", "X-GX-Identity-Nonce", "X-GX-Identity-Sig"})
 
 
 if __name__ == "__main__":

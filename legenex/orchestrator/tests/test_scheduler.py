@@ -388,8 +388,12 @@ class TestWait(SchedCase):
             self.sched.record_finished("r1", {})
             self.sched.record_finished("r2", {})
 
-        threading.Thread(target=finisher, daemon=True).start()
+        t = threading.Thread(target=finisher, daemon=True)
+        t.start()
         remaining = self.sched.drain(timeout=5)
+        # Let the finisher's history writes land before the temp dir is removed
+        # (the old flake: "Directory not empty" at cleanup).
+        t.join(timeout=5)
         self.assertEqual(remaining, 0)
 
 

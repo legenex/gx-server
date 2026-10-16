@@ -25,6 +25,7 @@ from gx_orchestrator.lifecycle import LifecycleStatus, State, AcquisitionError  
 from gx_orchestrator.server import model_tier_status, _attribution  # noqa: E402
 from tests.server_harness import (  # noqa: E402
     OrchestratorHarness,
+    signed_identity,
     completion_body,
 )
 
@@ -140,8 +141,10 @@ class TestRoutingDecisions(OrchestratorHarness):
             {"role": "user", "content": "hi"}]})
         self.assertEqual(status, 200)
         self.assertEqual(headers["X-GX-Profile"], "balanced")  # the running profile
+        # Engine-cycling profile overrides need a signed, permitted identity
+        # (X-GX-* headers really reach the orchestrator since the gateway fix).
         status, headers, body = self.chat({"model": "gx-max", "messages": [
-            {"role": "user", "content": "hi"}]}, headers={"X-GX-Profile": "swarm"})
+            {"role": "user", "content": "hi"}]}, headers={"X-GX-Profile": "swarm", **signed_identity("gx-operator")})
         self.assertEqual(status, 200)
         self.assertEqual(headers["X-GX-Profile"], "swarm")
         # swarm's reasoning_default is low -> effort 50
@@ -150,9 +153,18 @@ class TestRoutingDecisions(OrchestratorHarness):
 
     def test_direct_unknown_profile_override_is_a_400(self):
         status, _, body = self.chat({"model": "gx-max", "messages": []},
-                                   headers={"X-GX-Profile": "bogus"})
+                                   headers={"X-GX-Profile": "bogus", **signed_identity("gx-operator")})
         self.assertEqual(status, 400)
         self.assertEqual(body["error"]["code"], "invalid_profile")
+
+    def test_direct_profile_override_from_an_unpermitted_caller_is_ignored(self):
+        for hdrs in ({"X-GX-Profile": "swarm"},                                    # anonymous / direct
+                     {"X-GX-Profile": "swarm", **signed_identity("hermes")},        # signed, not allowed
+                     {"X-GX-Profile": "swarm", "X-GX-Identity": "gx-operator"}):     # unsigned claim
+            status, headers, _ = self.chat({"model": "gx-max", "messages": [
+                {"role": "user", "content": "hi"}]}, headers=hdrs)
+            self.assertEqual(status, 200)
+            self.assertEqual(headers["X-GX-Profile"], "balanced")   # the running profile: no engine cycle
 
     def test_none_reasoning_disables_thinking(self):
         status, headers, body = self.chat(_payload(), headers={"X-GX-Reasoning": "none"})
