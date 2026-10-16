@@ -73,10 +73,17 @@ set_env_line() {   # $1 = value ("" removes the line)
     ls -1t "$dir/$base".bak-identity-hmac-* 2>/dev/null | tail -n +"$(( ${GX_BACKUPS_KEEP:-3} + 1 ))" \
         | while read -r old; do rm -f -- "$old"; done
     tmp="$(mktemp "$dir/.$base.identity-hmac.XXXXXX")"   # mktemp creates it 0600
-    grep -v "^${KEY_NAME}=" "$real" > "$tmp" || true
-    [ -n "$1" ] && printf '%s=%s\n' "$KEY_NAME" "$1" >> "$tmp"
-    chmod --reference="$real" "$tmp"
-    mv -f -- "$tmp" "$real"      # same directory: atomic; the symlink keeps pointing at it
+    # Every step is checked; on ANY failure the secrets-bearing temp file is
+    # removed before we stop, and the original file is left untouched.
+    local rc=0
+    grep -v "^${KEY_NAME}=" "$real" > "$tmp" || rc=$?
+    [ "$rc" -le 1 ] || { rm -f -- "$tmp"; die "could not read $real (grep exit $rc); nothing changed"; }
+    if [ -n "$1" ]; then
+        printf '%s=%s\n' "$KEY_NAME" "$1" >> "$tmp" || { rm -f -- "$tmp"; die "could not write the temp file; nothing changed"; }
+    fi
+    chmod --reference="$real" "$tmp" || { rm -f -- "$tmp"; die "could not set the temp file mode; nothing changed"; }
+    # same directory: atomic; the symlink keeps pointing at it
+    mv -f -- "$tmp" "$real" || { rm -f -- "$tmp"; die "could not replace $real; nothing changed"; }
 }
 
 recreate_litellm() {

@@ -128,6 +128,23 @@ class TestIdentityHmacScript(unittest.TestCase):
         self.assertNotIn("GX_IDENTITY_HMAC_KEY=", target.read_text())
         self.assertEqual(sorted(p.name for p in tree.iterdir()), [".env"])
 
+    def test_a_failed_step_never_leaves_a_secrets_temp_file(self):
+        # Reviewer minor (82ca712): grep / mv failing mid-edit must not leave
+        # the temp copy of the secrets file behind, and must not change it.
+        d = Path(self.tmp.name)
+        before = self.envf.read_text()
+        for tool, code in (("grep", 2), ("mv", 1)):
+            bindir = d / f"fail-{tool}"
+            bindir.mkdir()
+            fake = bindir / tool
+            fake.write_text(f"#!/bin/sh\nexit {code}\n")
+            fake.chmod(0o755)
+            p = self.run_script("provision", GX_SKIP_RECREATE="1", PATH=f"{bindir}:{os.environ['PATH']}")
+            self.assertNotEqual(p.returncode, 0, tool)
+            self.assertIn("nothing changed", p.stderr, tool)
+            self.assertFalse(list(d.glob(".gateway.env.identity-hmac.*")), f"temp file left after a failed {tool}")
+            self.assertEqual(self.envf.read_text(), before, tool)
+
 
 if __name__ == "__main__":
     unittest.main()
