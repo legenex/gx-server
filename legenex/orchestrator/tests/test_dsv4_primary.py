@@ -122,7 +122,8 @@ class TestIdentity(unittest.TestCase):
         prio, why = self.p.resolve("hermes", "normal-worker", "interactive")
         self.assertEqual(prio, "normal-worker")
         self.assertIn("ignored", why)
-        self.assertEqual(self.p.resolve("ai-os", "normal-worker", "interactive")[0], "orchestrator")  # cap
+        self.assertEqual(self.p.resolve("ai-os", "normal-worker", "interactive")[0], "interactive")  # may wake it
+        self.assertEqual(self.p.resolve("gx-operator", "normal-worker", "health")[0], "normal-worker")
         # Review L2: a header that LOWERS priority is honoured for everyone.
         for who in ("", "hermes", "open-webui", "random"):
             self.assertEqual(self.p.resolve(who, "interactive", "background")[0], "background", who)
@@ -158,6 +159,15 @@ class TestIdentity(unittest.TestCase):
         self.assertEqual(identity_from_headers(good, None, now=now), "")        # no key -> fail closed
         bad = signed_identity("bad name; rm", key, now)
         self.assertEqual(identity_from_headers(bad, key, now=now), "")
+        # Single use: the same signed headers are refused the second time.
+        from gx_orchestrator.identity import NonceCache
+        seen = NonceCache()
+        once = signed_identity("odin", key, now)
+        self.assertEqual(identity_from_headers(once, key, now=now, nonces=seen), "odin")
+        self.assertEqual(identity_from_headers(once, key, now=now + 1, nonces=seen), "")
+        self.assertEqual(identity_from_headers(signed_identity("odin", key, now), key, now=now, nonces=seen), "odin")
+        no_nonce = {k: v for k, v in once.items() if k != "X-GX-Identity-Nonce"}
+        self.assertEqual(identity_from_headers(no_nonce, key, now=now), "")
 
 
 # ----------------------------------------------------------------- scheduler
@@ -564,6 +574,12 @@ class TestServerModes(OrchestratorHarness):
         self.assertEqual(headers.get("X-GX-Priority"), "background")
         _, headers, _ = self.chat({"model": "gx-fast", "messages": msg}, headers={"X-GX-Identity": "batch"})
         self.assertEqual(headers.get("X-GX-Priority"), "interactive")
+        # A replayed signed identity is anonymous the second time.
+        replay = signed_identity("odin")
+        _, headers, _ = self.chat({"model": "gx-high", "messages": msg}, headers=replay)
+        self.assertEqual(headers.get("X-GX-Priority"), "health")
+        _, headers, _ = self.chat({"model": "gx-high", "messages": msg}, headers=replay)
+        self.assertEqual(headers.get("X-GX-Priority"), "normal-worker")
 
     def test_gx_auto_uses_a_mode_and_keeps_the_engine(self):
         status, headers, _ = self.chat({"model": "gx-auto", "messages": [{"role": "user", "content": "hi"}]})

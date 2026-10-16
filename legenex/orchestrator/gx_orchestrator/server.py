@@ -45,7 +45,7 @@ from .health import AliasState, ClusterHealth, TierStatus
 from .lifecycle import AcquisitionError, GxMaxLifecycle, LifecycleStatus, State
 from .profiles import DeploymentSpec, Registry, RegistryError, load_registry
 from . import modes as M
-from .identity import IdentityPolicy, identity_from_headers, load_policy
+from .identity import IdentityPolicy, NonceCache, identity_from_headers, load_policy
 from .deployments import ActiveDeploymentStore, DeploymentManager, LifecycleProxy, fixed_profile_for
 from .switching import ModelSwitcher, SwitchError, SwitchHistory, SwitchLock
 from .sse import DeltaSplitter
@@ -261,6 +261,8 @@ class Handler(BaseHTTPRequestHandler):
     journal: RoutingJournal
     metrics: TextMetrics
     identity_policy: IdentityPolicy = IdentityPolicy()
+    #: Signed-identity nonces seen (single use, D-053 review); shared per process.
+    identity_nonces: "NonceCache" = NonceCache()
     manager: "DeploymentManager | None" = None
     switcher: "ModelSwitcher | None" = None
 
@@ -792,7 +794,8 @@ class Handler(BaseHTTPRequestHandler):
         attr = _attribution(self.headers)
         # Priority comes from the AUTHENTICATED identity (D-053); a caller's
         # X-GX-Priority counts only where the policy allows it.
-        identity = identity_from_headers(self.headers, self.cfg.identity_hmac_key())
+        identity = identity_from_headers(self.headers, self.cfg.identity_hmac_key(),
+                                         nonces=self.identity_nonces)
         dep_now = self.manager.active if self.manager is not None else None
         prio, prio_why = self.identity_policy.resolve(
             identity, mode_priority or SCHED.priority_from_mode(profile_name),
@@ -1273,6 +1276,14 @@ class Handler(BaseHTTPRequestHandler):
         self._usage(out, tail)
 
 
+def _ready_for(registry: Registry, name: str) -> tuple[bool, str]:
+    """Health + /v1/models listing the deployment's served id (no generation)."""
+    from .lifecycle import default_liveness_probe  # noqa: PLC0415
+    rt = registry.runtime(registry.deployment(name).runtime)
+    ok = default_liveness_probe(rt.api, rt.served_model_id)
+    return ok, f"{rt.api} {'serves' if ok else 'does not serve'} {rt.served_model_id}"
+
+
 def build_servers(cfg: Config | None = None) -> tuple[list[ThreadingHTTPServer], Any]:
     """Build one HTTP server per configured bind address.
 
@@ -1327,7 +1338,8 @@ def build_servers(cfg: Config | None = None) -> tuple[list[ThreadingHTTPServer],
     recon = reconcile_interrupted(
         history.mark_interrupted(), registry=registry, store=store, history=history,
         running=lambda name: {n: facts.container_running(n, c)
-                              for n, c in registry.deployment(name).containers.items()})
+                              for n, c in registry.deployment(name).containers.items()},
+        ready=lambda name: _ready_for(registry, name))
     manager = DeploymentManager(registry, store, make_lifecycle)
     if recon["latch"]:
         manager.lifecycle.latch("interrupted switch needs an operator: " + recon["latch"])

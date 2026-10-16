@@ -169,6 +169,19 @@ class TestNonStream(unittest.TestCase):
         body = self.body("323", reasoning="x")
         self.assertIs(guard_completion_body(body, thinking=True), body)
 
+    def test_literal_close_tag_late_in_a_non_stream_answer_stays_content(self):
+        # Review follow-up: thinking on, no reasoning key, the answer QUOTES
+        # </think> after the holdback bound -> nothing moves to reasoning.
+        answer = "Here is the parser.\n" + "x = 1\n" * 400 + 'head, tail = s.split("</think>")\n'
+        out = json.loads(guard_completion_body(self.body(answer), thinking=True))
+        msg = out["choices"][0]["message"]
+        self.assertEqual(msg["content"], answer)
+        self.assertNotIn("reasoning", msg)
+        # Streamed the same way, cut into small chunks.
+        raw = sse([answer[i:i + 50] for i in range(0, len(answer), 50)])
+        content, reasoning, _, _ = run_stream(raw, thinking=True)
+        self.assertEqual((content, reasoning), (answer, ""))
+
     def test_bare_close_with_thinking(self):
         out = json.loads(guard_completion_body(self.body("thoughts</think>answer"), thinking=True))
         self.assertEqual(out["choices"][0]["message"]["content"], "answer")

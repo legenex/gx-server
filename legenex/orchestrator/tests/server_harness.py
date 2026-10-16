@@ -45,9 +45,12 @@ IDENTITY_KEY = "test-identity-hmac-key-0123456789"
 
 def signed_identity(name: str, key: str = IDENTITY_KEY, ts: "int | None" = None) -> dict:
     """The headers the LiteLLM hook adds for an authenticated key alias."""
+    import secrets
     from gx_orchestrator.identity import sign_identity
     ts = int(time.time()) if ts is None else ts
-    return {"X-GX-Identity": name, "X-GX-Identity-Ts": str(ts), "X-GX-Identity-Sig": sign_identity(key, name, ts)}
+    nonce = secrets.token_hex(16)
+    return {"X-GX-Identity": name, "X-GX-Identity-Ts": str(ts), "X-GX-Identity-Nonce": nonce,
+            "X-GX-Identity-Sig": sign_identity(key, name, ts, nonce)}
 MODEL_ID = "DeepSeek-v4.1-Flash-EXL3"
 
 
@@ -299,6 +302,7 @@ class OrchestratorHarness(unittest.TestCase):
             "journal": self.journal,
             "metrics": self.metrics,
             "identity_policy": self._identity_policy(),
+            "identity_nonces": __import__("gx_orchestrator.identity", fromlist=["NonceCache"]).NonceCache(),
         })
         srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), self._handler_cls)
         srv.daemon_threads = True

@@ -5,7 +5,7 @@
     "open-webui":  {"priority": "interactive"},
     "gx-computer": {"priority": "interactive"},
     "hermes":      {"max_priority": "orchestrator"},
-    "ai-os":       {"max_priority": "orchestrator", "may_set_priority": true},
+    "ai-os":       {"max_priority": "interactive", "may_set_priority": true},
     "odin":        {"priority": "health", "max_priority": "health"},
     "gx-operator": {"max_priority": "interactive", "may_set_priority": true}
   }

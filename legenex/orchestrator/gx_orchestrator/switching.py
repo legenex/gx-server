@@ -167,7 +167,8 @@ def _stop_hint(registry: Any, name: str) -> str:
 
 def reconcile_interrupted(records: list[dict[str, Any]], *, registry: Any, store: Any,
                           running: Callable[[str], Mapping[str, "bool | None"]],
-                          history: "SwitchHistory") -> dict[str, Any]:
+                          history: "SwitchHistory",
+                          ready: "Callable[[str], tuple[bool, str]] | None" = None) -> dict[str, Any]:
     """Startup reconciliation of switches cut short by an orchestrator restart (A9).
 
     Looks at which deployment's rank containers are actually running and
@@ -189,12 +190,27 @@ def reconcile_interrupted(records: list[dict[str, Any]], *, registry: Any, store
         action = (f"rank state unknown for {unknown} (probe errors); check `docker ps` on both nodes, "
                   "then restart gx-orchestrator")
         latch = action
+    elif len(full) == 1 and not partial and full[0] == pointer:
+        outcome, action = "pointer_confirmed", f"{pointer} is running and active; nothing to do"
     elif len(full) == 1 and not partial:
-        if full[0] != pointer:
-            store.write(full[0], switch_id=str(records[-1].get("id", "")), actor="startup-reconcile")
-            outcome, action = "pointer_completed", f"active pointer set to {full[0]}, which is the kit running"
+        # Containers alone prove nothing: the pointer moves only to an engine
+        # that answers its ready probe with the right served id AND passed the
+        # switch's validation before the restart (review follow-up 1).
+        name = full[0]
+        ok, detail = ready(name) if ready is not None else (False, "no ready probe configured")
+        validated = any(r.get("target") == name and r.get("checks")
+                        and all(c.get("ok") for c in r["checks"]) for r in records)
+        if ok and validated:
+            store.write(name, switch_id=str(records[-1].get("id", "")), actor="startup-reconcile")
+            outcome, action = "pointer_completed", f"active pointer set to {name}: ready ({detail}) and validated"
         else:
-            outcome, action = "pointer_confirmed", f"{pointer} is running and active; nothing to do"
+            outcome = "needs_operator"
+            action = (f"{name} rank containers are up but not proven (ready probe: {detail}; validation "
+                      f"record: {'passed' if validated else 'none'}). Either stop it with "
+                      f"{_stop_hint(registry, name)} and restart gx-orchestrator ({pointer} stays active), or "
+                      f"restart gx-orchestrator and run POST /models/activate "
+                      f'{{"target":"{name}","confirm":true}} to switch to it properly')
+            latch = action
     elif not full and not partial:
         outcome = "needs_operator"
         action = (f"no model is running; the active pointer is {pointer}. Start it with "

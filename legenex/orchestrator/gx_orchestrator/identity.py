@@ -26,6 +26,7 @@ import hashlib
 import hmac
 import json
 import os
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -139,17 +140,43 @@ def load_policy(path: "str | os.PathLike[str] | None" = None) -> IdentityPolicy:
 SIGNATURE_MAX_AGE = 300
 
 
-def sign_identity(key: str, identity: str, ts: int) -> str:
-    """HMAC-SHA256 over "identity|ts" (the gateway hook computes the same)."""
-    return hmac.new(key.encode(), f"{identity}|{ts}".encode(), hashlib.sha256).hexdigest()
+def sign_identity(key: str, identity: str, ts: int, nonce: str) -> str:
+    """HMAC-SHA256 over "identity|ts|nonce" (the gateway hook computes the same)."""
+    return hmac.new(key.encode(), f"{identity}|{ts}|{nonce}".encode(), hashlib.sha256).hexdigest()
 
 
-def identity_from_headers(headers: Any, key: "str | None" = None, *, now: "float | None" = None) -> str:
+class NonceCache:
+    """Nonces seen within the signature window: a signed identity is single-use."""
+
+    def __init__(self, ttl: float = SIGNATURE_MAX_AGE * 2, cap: int = 100_000) -> None:
+        self._ttl = ttl
+        self._cap = cap
+        self._seen: dict[str, float] = {}
+        self._lock = threading.Lock()
+
+    def first_use(self, nonce: str, now: float) -> bool:
+        with self._lock:
+            if len(self._seen) > self._cap or (self._seen and len(self._seen) % 1024 == 0):
+                self._seen = {n: t for n, t in self._seen.items() if t > now}
+            if self._seen.get(nonce, 0.0) > now:
+                return False
+            self._seen[nonce] = now + self._ttl
+            return True
+
+
+_NONCE_OK = set("0123456789abcdef")
+
+
+def identity_from_headers(headers: Any, key: "str | None" = None, *, now: "float | None" = None,
+                          nonces: "NonceCache | None" = None) -> str:
     """The gateway-stamped identity, or "" when it is not proven.
 
     The hook signs ``X-GX-Identity`` with a key only it and the orchestrator
-    hold (``X-GX-Identity-Ts`` + ``X-GX-Identity-Sig``), so a holder of the
-    orchestrator API key cannot claim another identity (e.g. the odin lane).
+    hold, over the identity, a timestamp and a per-request random nonce
+    (``X-GX-Identity-Ts`` / ``-Nonce`` / ``-Sig``). A holder of the
+    orchestrator API key can therefore neither forge an identity (e.g. the
+    odin lane) nor replay a captured one: the nonce is accepted once
+    (`nonces`) and only within SIGNATURE_MAX_AGE seconds.
     Without a configured key no identity is trusted (fail closed: default rule).
     """
     get = (lambda k: headers.get(k)) if headers is not None else (lambda k: None)
@@ -160,9 +187,15 @@ def identity_from_headers(headers: Any, key: "str | None" = None, *, now: "float
         ts = int(str(get("X-GX-Identity-Ts") or "").strip())
     except ValueError:
         return ""
-    if abs((now if now is not None else time.time()) - ts) > SIGNATURE_MAX_AGE:
+    clock = now if now is not None else time.time()
+    if abs(clock - ts) > SIGNATURE_MAX_AGE:
+        return ""
+    nonce = str(get("X-GX-Identity-Nonce") or "").strip().lower()
+    if not 16 <= len(nonce) <= 64 or not set(nonce) <= _NONCE_OK:
         return ""
     sig = str(get("X-GX-Identity-Sig") or "").strip()
-    if not sig or not hmac.compare_digest(sig, sign_identity(key, value, ts)):
+    if not sig or not hmac.compare_digest(sig, sign_identity(key, value, ts, nonce)):
+        return ""
+    if nonces is not None and not nonces.first_use(nonce, clock):
         return ""
     return value

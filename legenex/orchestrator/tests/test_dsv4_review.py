@@ -200,19 +200,41 @@ class TestReconcileInterrupted(unittest.TestCase):
         self.hist = SwitchHistory(Path(self.tmp.name) / "h.jsonl")
         self.hist.append({"id": "s1", "state": "running", "target": "dsv4-flash-primary", "previous": "dsv41-rollback"})
 
-    def run_with(self, up):
+    def run_with(self, up, ready=(True, "serves it"), validated=True):
+        if validated:
+            self.hist.append({"id": "s1", "state": "running", "target": "dsv4-flash-primary",
+                              "previous": "dsv41-rollback", "checks": [{"name": "completion", "ok": True}]})
         return reconcile_interrupted(self.hist.mark_interrupted(), registry=reg(), store=self.store,
-                                     history=self.hist, running=lambda name: up.get(name, {"node1": False, "node2": False}))
+                                     history=self.hist, running=lambda name: up.get(name, {"node1": False, "node2": False}),
+                                     ready=lambda name: ready)
 
-    def test_target_fully_up_completes_the_pointer(self):
+    def test_ready_and_validated_target_completes_the_pointer(self):
         out = self.run_with({"dsv4-flash-primary": {"node1": True, "node2": True}})
         self.assertEqual(out["outcome"], "pointer_completed")
         self.assertEqual(self.store.read()["deployment"], "dsv4-flash-primary")
         self.assertFalse(out["latch"])
         self.assertEqual(self.hist.read()[-1]["reconcile"]["outcome"], "pointer_completed")
 
+    def test_containers_alone_never_move_the_pointer(self):
+        for ready, validated in (((False, "no /health"), True), ((True, "serves it"), False)):
+            self.store.path.unlink(missing_ok=True)
+            self.hist.path.unlink(missing_ok=True)
+            self.hist.append({"id": "s1", "state": "running", "target": "dsv4-flash-primary"})
+            out = self.run_with({"dsv4-flash-primary": {"node1": True, "node2": True}}, ready, validated)
+            self.assertEqual(out["outcome"], "needs_operator", (ready, validated))
+            self.assertTrue(out["latch"])
+            self.assertIn("legenex/models/dsv4-flash/stop.sh", out["action"])
+            self.assertIsNone(self.store.read())
+
+    def test_previous_still_running_is_confirmed_without_a_probe(self):
+        out = reconcile_interrupted(self.hist.mark_interrupted(), registry=reg(), store=self.store, history=self.hist,
+                                    running=lambda n: {"node1": n == "dsv41-rollback", "node2": n == "dsv41-rollback"},
+                                    ready=lambda n: (False, "unused"))
+        self.assertEqual(out["outcome"], "pointer_confirmed")
+        self.assertFalse(out["latch"])
+
     def test_two_kits_up_needs_an_operator_and_latches(self):
-        out = self.run_with({"dsv4-flash-primary": {"node1": True, "node2": False},
+        out = self.run_with(validated=False, up={"dsv4-flash-primary": {"node1": True, "node2": False},
                              "dsv41-rollback": {"node1": True, "node2": True}})
         self.assertEqual(out["outcome"], "needs_operator")
         self.assertIn("legenex/models/dsv4-flash/stop.sh", out["action"])
@@ -220,13 +242,13 @@ class TestReconcileInterrupted(unittest.TestCase):
         self.assertIsNone(self.store.read())    # pointer untouched
 
     def test_nothing_running_names_the_next_action_without_starting(self):
-        out = self.run_with({})
+        out = self.run_with({}, validated=False)
         self.assertEqual(out["outcome"], "needs_operator")
         self.assertIn("/lifecycle/gx-max/acquire", out["action"])
         self.assertFalse(out["latch"])
 
     def test_probe_errors_latch(self):
-        out = self.run_with({"dsv41-rollback": {"node1": True, "node2": None}})
+        out = self.run_with({"dsv41-rollback": {"node1": True, "node2": None}}, validated=False)
         self.assertEqual(out["outcome"], "needs_operator")
         self.assertTrue(out["latch"])
 

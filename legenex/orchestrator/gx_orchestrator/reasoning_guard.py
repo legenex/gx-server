@@ -95,8 +95,8 @@ class ChoiceFilter:
                     buf = stripped[len(OPEN):]
                     continue
                 if self.thinking and not self.engine_reasoning_seen:
-                    idx = buf.find(CLOSE)
-                    if idx >= 0:
+                    idx = buf.find(CLOSE, 0, self.holdback + len(CLOSE))
+                    if 0 <= idx < self.holdback:
                         # Reasoning whose opening tag was in the prompt.
                         self.changed = True
                         reasoning.append(buf[:idx])
@@ -148,7 +148,9 @@ def guard_message(message: dict[str, Any], *, thinking: bool) -> bool:
     content = message.get("content")
     if not isinstance(content, str) or not content:
         return False
-    flt = ChoiceFilter(thinking=thinking, holdback_chars=1 << 62)
+    # The same bound as streaming: a bare </think> beyond the first
+    # DEFAULT_HOLDBACK_CHARS of an answer is answer text, not reasoning.
+    flt = ChoiceFilter(thinking=thinking, holdback_chars=DEFAULT_HOLDBACK_CHARS)
     key = next((k for k in REASONING_KEYS if message.get(k)), None)
     if key:
         flt.note_engine_reasoning()

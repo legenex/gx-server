@@ -85,9 +85,12 @@ def _signed_identity(identity: str) -> dict[str, str]:
     if len(key) >= 16:
         import hashlib  # noqa: PLC0415
         import hmac  # noqa: PLC0415
+        import secrets  # noqa: PLC0415
         ts = str(int(time.time()))
+        nonce = secrets.token_hex(16)   # single-use: the orchestrator rejects a replay
         out["X-GX-Identity-Ts"] = ts
-        out["X-GX-Identity-Sig"] = hmac.new(key.encode(), f"{identity}|{ts}".encode(),
+        out["X-GX-Identity-Nonce"] = nonce
+        out["X-GX-Identity-Sig"] = hmac.new(key.encode(), f"{identity}|{ts}|{nonce}".encode(),
                                             hashlib.sha256).hexdigest()
     return out
 #: Response header the orchestrator stamps with the queue wait in milliseconds.

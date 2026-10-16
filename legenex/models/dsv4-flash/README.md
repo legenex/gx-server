@@ -91,6 +91,12 @@ H=(-H "Authorization: Bearer $OK" -H "X-GX-Operator-Token: $OT")
 openssl rand -hex 32 > /srv/projects/gx-cluster/secrets/orchestrator/identity-hmac
 #   and set GX_IDENTITY_HMAC_KEY=<same value> in the gx-litellm container env.
 #   Without it every identity is anonymous (fail closed: no pins, no odin lane).
+#   CHECK BOTH SIDES (a partial rollout also makes everyone anonymous):
+sha256sum < /srv/projects/gx-cluster/secrets/orchestrator/identity-hmac | cut -c1-16
+docker exec gx-litellm sh -c 'printf "%s\n" "$GX_IDENTITY_HMAC_KEY"' | sha256sum | cut -c1-16
+#   -> the two prefixes must be identical (and non-empty). After the restarts in
+#   step 1, a gx-fast request with the open-webui key must show
+#   "identity": "open-webui" in /srv/logs/gx-auto-routing.jsonl, not null.
 
 # gx10-01 — 1. deploy the code (merge, then): restart the control plane
 systemctl --user restart gx-orchestrator          # adopts the running V4.1 (still active)
