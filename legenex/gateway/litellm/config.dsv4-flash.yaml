@@ -1,0 +1,262 @@
+# ==============================================================================
+# LiteLLM — the single OpenAI-compatible gateway for the gx cluster (V4.1)
+# ==============================================================================
+# Runs on NODE 1 (gx10-01), container port 4000. Public aliases (D-053), the
+# five logical modes of the one resident model:
+#
+#   gx-auto  gx-fast  gx-medium  gx-high  gx-max
+#
+# ACTIVATION CONFIG (D-053): applied to the live gx-litellm container only as
+# part of the V4 Flash activation runbook (legenex/models/dsv4-flash/README.md),
+# AFTER the switch succeeded. Until then config.yaml (V4.1 model_info) is live.
+#
+# Both resolve to the lead's orchestrator on :18900, which owns the request
+# queue, profile/reasoning selection and the DeepSeek V4.1 Flash EXL3 runtime
+# (Mia kit, served model id DeepSeek-v4.1-Flash-EXL3, OpenAI loopback :8888).
+# The retired L-6/L-10 alias set (gx-mini, gx-code, gx-fast, gx-reason and the
+# media aliases) is deleted; its history lives under git tag
+# pre-deepseek-v41-rebuild-20260927.
+#
+# ------------------------------------------------------------------------------
+# SECRETS
+# ------------------------------------------------------------------------------
+# Every credential is read from the environment via LiteLLM's `os.environ/` form.
+# NO secret, and no credential-bearing URL, may ever appear in this file.
+# See legenex/gateway/.env.sample for the variables and how to generate them.
+#
+# Virtual keys (rpms / parallel-request caps / model budgets per consumer, e.g.
+# hermes, open-webui, gx-computer) are managed in the LiteLLM DATABASE via the
+# admin UI, deliberately NOT in this file. Trim each key's model list to
+# the five aliases when this file is deployed.
+#
+# ------------------------------------------------------------------------------
+# WHERE EACH ALIAS ACTUALLY GOES
+# ------------------------------------------------------------------------------
+#   gx-max  -> orchestrator http://host.docker.internal:18900/v1  (mode direct)
+#   gx-auto -> orchestrator http://host.docker.internal:18900/v1  (mode auto)
+#
+# The orchestrator accepts BOTH alias names as the model id and maps them to
+# the served model id DeepSeek-v4.1-Flash-EXL3 (registry
+# legenex/models/registry.json, schema 2). host.docker.internal resolves to
+# the host gateway (docker-compose.gateway.yml sets extra_hosts: host-gateway).
+#
+# ------------------------------------------------------------------------------
+# NO SILENT FALLBACK — READ THIS
+# ------------------------------------------------------------------------------
+# There is exactly ONE model family. If the cluster cannot serve a request, it
+# must FAIL with an error — silently answering from a different model would be
+# worse than an error, and gx-max must never fall back to the stock pack.
+# Enforced globally below: num_retries 0, fallbacks [], context_window_fallbacks
+# [], content_policy_fallbacks []. Do not add entries to any of these lists.
+# ==============================================================================
+
+general_settings:
+  # --- authentication -------------------------------------------------------
+  # Required. Every API call needs Authorization: Bearer <this key> (or a
+  # virtual key minted from it). Sourced from the environment only.
+  master_key: os.environ/LITELLM_MASTER_KEY
+
+  # LiteLLM proxy database (keys, budgets, usage, admin UI sessions). Assembled
+  # from POSTGRES_* by docker-compose.gateway.yml; prompt/completion bodies are
+  # never stored (turn_off_message_logging below).
+  database_url: os.environ/DATABASE_URL
+
+  # Admin UI credentials are supplied to the container as UI_USERNAME /
+  # UI_PASSWORD environment variables and are intentionally NOT referenced here,
+  # so this file can never leak them.
+  ui_access_mode: admin_only
+
+  # Do not echo the master key back in API responses.
+  disable_master_key_return: true
+
+  # --- least privilege ------------------------------------------------------
+  # No runtime model creation: the alias set is fixed by this file and reviewed
+  # in git. Anything else would let a UI session add an unaudited upstream.
+  allow_model_creation: false
+  store_model_in_db: false
+
+  # --- health ---------------------------------------------------------------
+  # Background health checks are OFF. LiteLLM probing the orchestrator would
+  # add queue noise and can wake the two-node runtime for no user request.
+  # /health/liveliness and /health/readiness still work (they do not touch
+  # upstreams); /health is authenticated.
+  background_health_checks: false
+  health_check_interval: 0
+  health_check_details: false
+
+model_list:
+
+  # ===========================================================================
+  # Five logical modes of ONE resident model (D-053). All go to the
+  # orchestrator, which owns mode -> reasoning mapping (client attempts to
+  # exceed a mode are stripped), context admission, identity priority and the
+  # active deployment (DeepSeek-V4-Flash-0731 abliterated primary, DeepSeek
+  # V4.1 EXL3 rollback). While the rollback is active, gx-max and gx-auto keep
+  # their V4.1 behaviour. NO FALLBACKS.
+  # The windows below are the mode admission limits (registry `modes`).
+  # ===========================================================================
+  - model_name: gx-auto
+    litellm_params:
+      model: openai/gx-auto
+      api_base: "http://host.docker.internal:18900/v1"
+      api_key: os.environ/GX_ORCHESTRATOR_API_KEY
+      drop_params: true
+      include_reasoning: true
+      supports_reasoning: true
+      # Reasoning stays in the separate reasoning field (D-053); it is never
+      # merged into content as <think> text.
+      merge_reasoning_content_in_choices: false
+      timeout: 3600
+      num_retries: 0
+    model_info:
+      max_input_tokens: 122880
+      max_output_tokens: 32768
+      mode: auto
+      uncensored: true
+      supports_vision: false
+      supports_function_calling: true
+      supports_reasoning: true
+      description: Chooses fast, medium, high or max per task
+  - model_name: gx-fast
+    litellm_params:
+      model: openai/gx-fast
+      api_base: "http://host.docker.internal:18900/v1"
+      api_key: os.environ/GX_ORCHESTRATOR_API_KEY
+      drop_params: true
+      include_reasoning: true
+      supports_reasoning: true
+      # Reasoning stays in the separate reasoning field (D-053); it is never
+      # merged into content as <think> text.
+      merge_reasoning_content_in_choices: false
+      timeout: 3600
+      num_retries: 0
+    model_info:
+      max_input_tokens: 24576
+      max_output_tokens: 8192
+      mode: fast
+      uncensored: true
+      supports_vision: false
+      supports_function_calling: true
+      supports_reasoning: true
+      description: Thinking off, up to 32K context, top interactive priority
+  - model_name: gx-medium
+    litellm_params:
+      model: openai/gx-medium
+      api_base: "http://host.docker.internal:18900/v1"
+      api_key: os.environ/GX_ORCHESTRATOR_API_KEY
+      drop_params: true
+      include_reasoning: true
+      supports_reasoning: true
+      # Reasoning stays in the separate reasoning field (D-053); it is never
+      # merged into content as <think> text.
+      merge_reasoning_content_in_choices: false
+      timeout: 3600
+      num_retries: 0
+    model_info:
+      max_input_tokens: 98304
+      max_output_tokens: 32768
+      mode: medium
+      uncensored: true
+      supports_vision: false
+      supports_function_calling: true
+      supports_reasoning: true
+      description: Thinking low, up to 128K context
+  - model_name: gx-high
+    litellm_params:
+      model: openai/gx-high
+      api_base: "http://host.docker.internal:18900/v1"
+      api_key: os.environ/GX_ORCHESTRATOR_API_KEY
+      drop_params: true
+      include_reasoning: true
+      supports_reasoning: true
+      # Reasoning stays in the separate reasoning field (D-053); it is never
+      # merged into content as <think> text.
+      merge_reasoning_content_in_choices: false
+      timeout: 3600
+      num_retries: 0
+    model_info:
+      max_input_tokens: 98304
+      max_output_tokens: 32768
+      mode: high
+      uncensored: true
+      supports_vision: false
+      supports_function_calling: true
+      supports_reasoning: true
+      description: Thinking high, up to 128K context
+  - model_name: gx-max
+    litellm_params:
+      model: openai/gx-max
+      api_base: "http://host.docker.internal:18900/v1"
+      api_key: os.environ/GX_ORCHESTRATOR_API_KEY
+      drop_params: true
+      include_reasoning: true
+      supports_reasoning: true
+      # Reasoning stays in the separate reasoning field (D-053); it is never
+      # merged into content as <think> text.
+      merge_reasoning_content_in_choices: false
+      timeout: 3600
+      num_retries: 0
+    model_info:
+      max_input_tokens: 65536
+      max_output_tokens: 65536
+      mode: max
+      uncensored: true
+      supports_vision: false
+      supports_function_calling: true
+      supports_reasoning: true
+      description: Thinking max, largest tested safe context, controlled admission
+
+litellm_settings:
+  drop_params: true
+  set_verbose: false
+
+  # --- attribution + context guard + text latency metrics -------------------
+  # gx_hooks.gx_budget_hook: forwards X-GX-* attribution headers to the
+  # orchestrator, applies a context-budget guard for the two aliases using the
+  # orchestrator's budget module (mounted read-only at /app/gx_lib), and
+  # appends one privacy-safe timing line per request (never prompt text).
+  callbacks: ["gx_hooks.gx_budget_hook.proxy_handler_instance"]
+
+  # Long enough for a queued + served request; the per-deployment `timeout`
+  # above is the one that matters per alias.
+  request_timeout: 1800
+
+  # --- NEVER silently substitute a model ------------------------------------
+  # Applied to every alias: a failure surfaces as an error to the caller
+  # instead of being retried into the same (or, worse, a different) upstream.
+  # Do not add entries to any of these lists. See NO SILENT FALLBACK above.
+  num_retries: 0
+  fallbacks: []
+  context_window_fallbacks: []
+  content_policy_fallbacks: []
+
+  # D-053: reasoning is never merged into content (separate reasoning field).
+  merge_reasoning_content_in_choices: false
+
+  # --- privacy-safe logging -------------------------------------------------
+  # Prompts and completions are never written to logs or the spend database.
+  # Only metadata (model, token counts, latency, status, attribution) is kept.
+  turn_off_message_logging: true
+  redact_user_api_key_info: true
+
+  # --- concurrency ----------------------------------------------------------
+  # Requests QUEUE in the orchestrator's scheduler now (per-profile
+  # max_num_seqs, strict priority, round-robin across projects), so the
+  # gateway may hold more in-flight requests and let the scheduler enforce
+  # admission. 16 (raised from the old 8): still bounded so the gateway
+  # itself never becomes a second, dumber queue in front of the real one —
+  # the orchestrator is the single admission authority.
+  global_max_parallel_requests: 16
+  max_request_size_mb: 160
+  max_response_size_mb: 160
+
+router_settings:
+  routing_strategy: simple-shuffle
+  # Reinforces the no-silent-substitution rule at the router layer.
+  num_retries: 0
+  # Do not park a deployment in cooldown after a failure — each alias is a
+  # single distinct upstream, so a cooldown only turns one failure into a
+  # burst of 429 "No deployments available" (seen 2026-09-17; D-039).
+  disable_cooldowns: true
+  allowed_fails: 1000
+  cooldown_time: 0

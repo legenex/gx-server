@@ -1,9 +1,9 @@
 """Scheduler priority from the AUTHENTICATED caller, not from what it claims (D-053).
 
 The LiteLLM hook stamps ``X-GX-Identity`` with the key alias LiteLLM itself
-authenticated (a client-sent X-GX-Identity is overwritten there). The
-orchestrator only accepts requests bearing its own key, which only the
-gateway and operators hold, so the header is trustworthy here.
+authenticated (a client-sent X-GX-Identity is overwritten there) and signs
+it with GX_IDENTITY_HMAC_KEY, a secret only the gateway and the orchestrator
+hold; an unsigned or stale identity counts as anonymous.
 
 Policy file (JSON, no secrets; default ``identity-policy.json`` next to this
 package, override with GX_IDENTITY_POLICY)::
@@ -22,8 +22,11 @@ package, override with GX_IDENTITY_POLICY)::
 """
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import os
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
@@ -53,20 +56,42 @@ class IdentityPolicy:
     def rule(self, identity: str) -> IdentityRule:
         return self.identities.get(identity, self.default)
 
-    def resolve(self, identity: str, mode_priority: str, header_priority: str = "") -> tuple[str, str]:
-        """(scheduler priority, why) for one request."""
+    def resolve(self, identity: str, mode_priority: str, header_priority: str = "",
+                *, legacy: bool = False) -> tuple[str, str]:
+        """(scheduler priority, why) for one request.
+
+        * A header that LOWERS priority is always honoured (bench scripts send
+          `background`; nobody gains anything by asking for less).
+        * `legacy=True` (a deployment without mode routing, i.e. the V4.1
+          rollback): the pre-D-053 contract -- a valid X-GX-Priority wins, so
+          `X-GX-Priority: interactive` still wakes an idle-released engine.
+          Only the health lane stays out of reach of a header.
+        * Otherwise raising needs `may_set_priority`, and never beyond the cap.
+        """
         rule = self.rule(identity)
         who = identity or "anonymous"
+        if legacy:
+            asked = (header_priority or "").strip().lower()
+            canon = SCHED.valid_priority(asked) if asked and asked != "health" else ""
+            if canon:
+                return canon, f"X-GX-Priority {canon} (legacy deployment: header wins)"
+            if rule.priority == "health":
+                return "health", f"identity {who} is pinned to the health lane"
+            return mode_priority, f"mode default {mode_priority} (legacy deployment)"
         if rule.priority:
             prio, why = rule.priority, f"identity {who} is pinned to {rule.priority}"
         else:
             prio, why = mode_priority, f"mode default {mode_priority}"
         asked = (header_priority or "").strip().lower()
-        if asked:
-            canon = SCHED.valid_priority(asked) if asked != "health" else "health"
+        canon = SCHED.valid_priority(asked) if asked and asked != "health" else ""
+        if asked and not canon:
+            why += f"; X-GX-Priority {asked!r} is not a settable class"
+        if canon:
+            if _rank(canon) >= _rank(prio):
+                return canon, f"X-GX-Priority {canon} (lowering is always allowed)"
             if not rule.may_set_priority:
-                why += f"; X-GX-Priority {asked!r} ignored ({who} may not set it)"
-            elif canon in SCHED.PRIORITIES:
+                why += f"; X-GX-Priority {canon!r} ignored ({who} may not raise it)"
+            else:
                 prio, why = canon, f"X-GX-Priority {canon} from {who}"
         cap = rule.priority or rule.max_priority
         if _rank(prio) < _rank(cap):
@@ -110,9 +135,34 @@ def load_policy(path: "str | os.PathLike[str] | None" = None) -> IdentityPolicy:
         return IdentityPolicy()
 
 
-def identity_from_headers(headers: Any) -> str:
-    """The gateway-stamped identity (bounded, charset-checked) or ""."""
-    value = str((headers.get("X-GX-Identity") if headers is not None else "") or "").strip()
-    if not value or len(value) > 96 or not set(value) <= _NAME_OK:
+#: Seconds a gateway identity signature stays valid (bounds replay).
+SIGNATURE_MAX_AGE = 300
+
+
+def sign_identity(key: str, identity: str, ts: int) -> str:
+    """HMAC-SHA256 over "identity|ts" (the gateway hook computes the same)."""
+    return hmac.new(key.encode(), f"{identity}|{ts}".encode(), hashlib.sha256).hexdigest()
+
+
+def identity_from_headers(headers: Any, key: "str | None" = None, *, now: "float | None" = None) -> str:
+    """The gateway-stamped identity, or "" when it is not proven.
+
+    The hook signs ``X-GX-Identity`` with a key only it and the orchestrator
+    hold (``X-GX-Identity-Ts`` + ``X-GX-Identity-Sig``), so a holder of the
+    orchestrator API key cannot claim another identity (e.g. the odin lane).
+    Without a configured key no identity is trusted (fail closed: default rule).
+    """
+    get = (lambda k: headers.get(k)) if headers is not None else (lambda k: None)
+    value = str(get("X-GX-Identity") or "").strip()
+    if not value or len(value) > 96 or not set(value) <= _NAME_OK or not key:
+        return ""
+    try:
+        ts = int(str(get("X-GX-Identity-Ts") or "").strip())
+    except ValueError:
+        return ""
+    if abs((now if now is not None else time.time()) - ts) > SIGNATURE_MAX_AGE:
+        return ""
+    sig = str(get("X-GX-Identity-Sig") or "").strip()
+    if not sig or not hmac.compare_digest(sig, sign_identity(key, value, ts)):
         return ""
     return value

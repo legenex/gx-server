@@ -87,9 +87,15 @@ OT=$(cat /srv/projects/gx-cluster/secrets/orchestrator/operator-token)
 OK=$(grep ^GX_ORCHESTRATOR_API_KEY= legenex/gateway/.env | cut -d= -f2-)
 H=(-H "Authorization: Bearer $OK" -H "X-GX-Operator-Token: $OT")
 
+# gx10-01 — 0b. identity signing key (once), shared by LiteLLM and the orchestrator
+openssl rand -hex 32 > /srv/projects/gx-cluster/secrets/orchestrator/identity-hmac
+#   and set GX_IDENTITY_HMAC_KEY=<same value> in the gx-litellm container env.
+#   Without it every identity is anonymous (fail closed: no pins, no odin lane).
+
 # gx10-01 — 1. deploy the code (merge, then): restart the control plane
 systemctl --user restart gx-orchestrator          # adopts the running V4.1 (still active)
 cp legenex/gateway/litellm/config.yaml <live gx-litellm config>; docker restart gx-litellm
+#   (landing config: gx-max/gx-auto keep their V4.1 model_info)
 curl -s "${H[@]}" http://127.0.0.1:18900/models/status | jq .active          # "dsv41-rollback"
 curl -s "${H[@]}" http://127.0.0.1:18900/models/rollback-readiness | jq      # both rollback_ready
 
@@ -104,6 +110,12 @@ watch -n 15 "curl -s ${H[*]} http://127.0.0.1:18900/models/status | jq '.switch.
 #   expect state succeeded; checks rank_node1/2, completion, served_identity,
 #   fabric_rdma, streaming, tool_call, tool_result_continuation all ok.
 #   On any failure the switcher restores V4.1 by itself: state rolled_back.
+#   Explicit, audited overrides only if needed: "override_window":true +
+#   "emergency_reason", "cut_in_flight":true, "reactivate":true (no "force").
+#   Name yourself for the audit trail: -H "X-GX-Operator: <name>".
+
+# gx10-01 — 3b. after "succeeded": the V4 Flash gateway config
+cp legenex/gateway/litellm/config.dsv4-flash.yaml <live gx-litellm config>; docker restart gx-litellm
 
 # gx10-01 — 4. acceptance (after succeeded)
 grep GX_WOB_DIGEST <(docker logs dsv4f-head 2>&1) > /tmp/wob-head.log
@@ -116,7 +128,8 @@ awk '/MemAvailable/' /proc/meminfo; ssh legenex-02@10.60.21.41 "awk '/MemAvailab
 # 8-way load: python3 gx_bench.py ... c=8 on gx-fast, sample MemAvailable on both nodes during it (>= 15 GiB)
 ```
 
-Rollback at any time (window, or force + reason):
+Rollback at any time (inside the window, or override_window + emergency_reason;
+then put back `config.yaml` in gx-litellm):
 `curl ... -X POST /models/activate -d '{"target":"dsv41-rollback","confirm":true}'`.
 Kit-level stop if the orchestrator is unavailable: `legenex/models/dsv4-flash/stop.sh`.
 

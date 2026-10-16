@@ -22,7 +22,7 @@ from gx_orchestrator import modes as M  # noqa: E402
 from gx_orchestrator.deployments import (  # noqa: E402
     ActiveDeploymentStore, DeploymentManager, LifecycleProxy, fixed_profile_for,
 )
-from gx_orchestrator.identity import identity_from_headers, load_policy, parse_policy  # noqa: E402
+from gx_orchestrator.identity import identity_from_headers, load_policy, parse_policy, sign_identity  # noqa: E402
 from gx_orchestrator.lifecycle import (  # noqa: E402
     AcquisitionError, FAILURE_RANK, GxMaxLifecycle, LifecycleStatus, State,
 )
@@ -33,7 +33,7 @@ from gx_orchestrator.switching import (  # noqa: E402
     SwitchError, SwitchHistory, SwitchLock, in_maintenance_window,
 )
 from registry_fixtures import fixture_registry_dict  # noqa: E402
-from server_harness import API_KEY, FakeLifecycle, OrchestratorHarness  # noqa: E402
+from server_harness import API_KEY, IDENTITY_KEY, FakeLifecycle, OrchestratorHarness, signed_identity  # noqa: E402
 
 REPO_REGISTRY = Path(__file__).resolve().parents[3] / "legenex" / "models" / "registry.json"
 IN_WINDOW = dt.datetime(2026, 10, 16, 0, 30, tzinfo=dt.timezone.utc)      # 02:30 SAST
@@ -118,12 +118,23 @@ class TestIdentity(unittest.TestCase):
         self.assertEqual(self.p.resolve("hermes", "interactive")[0], "orchestrator")   # capped
         self.assertEqual(self.p.resolve("hermes", "normal-worker")[0], "normal-worker")
 
-    def test_header_only_counts_for_allowed_identities(self):
+    def test_raising_needs_permission_lowering_never_does(self):
         prio, why = self.p.resolve("hermes", "normal-worker", "interactive")
         self.assertEqual(prio, "normal-worker")
         self.assertIn("ignored", why)
-        self.assertEqual(self.p.resolve("ai-os", "normal-worker", "background")[0], "background")
         self.assertEqual(self.p.resolve("ai-os", "normal-worker", "interactive")[0], "orchestrator")  # cap
+        # Review L2: a header that LOWERS priority is honoured for everyone.
+        for who in ("", "hermes", "open-webui", "random"):
+            self.assertEqual(self.p.resolve(who, "interactive", "background")[0], "background", who)
+
+    def test_legacy_deployment_keeps_the_header_contract(self):
+        # V4.1 rollback (mode_routing false): X-GX-Priority wins, so
+        # `interactive` still wakes an idle-released engine; health stays out of reach.
+        self.assertEqual(self.p.resolve("", "normal-worker", "interactive", legacy=True)[0], "interactive")
+        self.assertEqual(self.p.resolve("hermes", "orchestrator", "background", legacy=True)[0], "background")
+        self.assertEqual(self.p.resolve("", "orchestrator", "health", legacy=True)[0], "orchestrator")
+        self.assertEqual(self.p.resolve("open-webui", "orchestrator", "", legacy=True)[0], "orchestrator")
+        self.assertEqual(self.p.resolve("odin", "orchestrator", "", legacy=True)[0], "health")
 
     def test_nobody_reaches_the_health_lane_by_header(self):
         for who in ("", "unknown", "ai-os", "gx-operator"):
@@ -135,10 +146,18 @@ class TestIdentity(unittest.TestCase):
         with self.assertRaises(ValueError):
             parse_policy({"identities": {"x": {"priority": "vip"}}})
 
-    def test_identity_header_sanitised(self):
-        self.assertEqual(identity_from_headers({"X-GX-Identity": "open-webui"}), "open-webui")
-        self.assertEqual(identity_from_headers({"X-GX-Identity": "bad name; rm"}), "")
-        self.assertEqual(identity_from_headers({"X-GX-Identity": "a" * 200}), "")
+    def test_identity_must_be_signed_by_the_gateway(self):
+        key, now = IDENTITY_KEY, 1_800_000_000
+        good = signed_identity("odin", key, now)
+        self.assertEqual(identity_from_headers(good, key, now=now), "odin")
+        # An orchestrator-key holder cannot claim odin without the gateway key.
+        self.assertEqual(identity_from_headers({"X-GX-Identity": "odin"}, key, now=now), "")
+        self.assertEqual(identity_from_headers(signed_identity("odin", "another-key-xxxxxxxxxx", now), key, now=now), "")
+        self.assertEqual(identity_from_headers(dict(good, **{"X-GX-Identity": "open-webui"}), key, now=now), "")
+        self.assertEqual(identity_from_headers(good, key, now=now + 301), "")   # stale -> replay bounded
+        self.assertEqual(identity_from_headers(good, None, now=now), "")        # no key -> fail closed
+        bad = signed_identity("bad name; rm", key, now)
+        self.assertEqual(identity_from_headers(bad, key, now=now), "")
 
 
 # ----------------------------------------------------------------- scheduler
@@ -219,6 +238,12 @@ class FakeLC:
     def shutdown(self):
         self.shut = True
 
+    def latch(self, reason):
+        self.latched = reason
+
+    def unlatch(self):
+        self.latched = ""
+
 
 class FakeScheduler:
     def __init__(self, active=0, drain_left=0):
@@ -226,6 +251,10 @@ class FakeScheduler:
         self.drain_left = drain_left
         self.paused_reason = ""
         self.pause_log = []
+
+    @property
+    def paused(self):
+        return self.paused_reason
 
     def status(self):
         return {"active": self.active, "queued": 0}
@@ -294,6 +323,7 @@ class TestSwitchStateMachine(SwitchTestBase):
                           "start_target", "validate"])
         self.assertEqual(self.sched.pause_log, ["pause", "resume"])
         self.assertTrue(self.validated[0][1], "validator got a pause-bypass token")
+        self.assertTrue(self.lcs["dsv41-rollback"][0].latched, "outgoing deployment latched before release")
         self.assertEqual(rec["id"], last["id"])
 
     def test_validation_failure_rolls_back(self):
@@ -334,6 +364,36 @@ class TestSwitchStateMachine(SwitchTestBase):
         self.assertEqual(self.mgr.active_name, "dsv41-rollback")
         self.assertEqual(self.sched.pause_log, ["pause", "resume"])
 
+    def test_cut_in_flight_proceeds_and_reactivate_restarts_the_active(self):
+        self.sched.drain_left = 2
+        self.switcher().request({"target": "dsv4-flash-primary", "confirm": True, "cut_in_flight": True}, actor="op")
+        self.assertEqual(self.hist.read()[-1]["state"], SUCCEEDED)
+        self.sched.drain_left = 0
+        self.switcher().request({"target": "dsv4-flash-primary", "confirm": True, "reactivate": True}, actor="op")
+        self.assertEqual(self.hist.read()[-1]["state"], SUCCEEDED)
+        self.assertEqual(len(self.lcs["dsv4-flash-primary"]), 2)
+
+    def test_lock_is_released_when_the_switch_cannot_start(self):
+        class Broken(SwitchHistory):
+            def append(self, record):
+                raise OSError("disk full")
+        sw = ModelSwitcher(manager=self.mgr, scheduler=self.sched, history=Broken(self.dir / "h2.jsonl"),
+                           lock=self.lock, validator=self.validator, preflight=self.preflight,
+                           clock=lambda: IN_WINDOW, run_async=False)
+        with self.assertRaises(SwitchError) as c:
+            sw.request({"target": "dsv4-flash-primary", "confirm": True}, actor="op")
+        self.assertEqual(c.exception.code, "switch_start_failed")
+        probe = SwitchLock(self.lock.path)
+        self.assertTrue(probe.try_acquire("after"))
+        probe.release()
+
+    def test_preflight_failure_unlatches_and_restarts_the_previous(self):
+        self.preflight_ok = False
+        self.switcher().request({"target": "dsv4-flash-primary", "confirm": True}, actor="op")
+        prev = self.lcs["dsv41-rollback"][0]
+        self.assertEqual(prev.latched, "")
+        self.assertEqual(prev.state, State.READY)
+
     def test_request_validation(self):
         sw = self.switcher()
         with self.assertRaises(SwitchError) as c:
@@ -361,17 +421,26 @@ class TestWindow(SwitchTestBase):
         self.assertEqual(c.exception.status, 423)
         self.assertEqual(self.hist.read(), [])
 
-    def test_force_needs_a_reason_and_is_audited(self):
+    def test_window_override_needs_a_reason_and_is_audited(self):
         sw = self.switcher(clock=OUT_WINDOW)
         with self.assertRaises(SwitchError) as c:
-            sw.request({"target": "dsv4-flash-primary", "confirm": True, "force": True}, actor="op")
+            sw.request({"target": "dsv4-flash-primary", "confirm": True, "override_window": True}, actor="op")
         self.assertEqual(c.exception.code, "reason_required")
-        sw.request({"target": "dsv4-flash-primary", "confirm": True, "force": True,
-                    "emergency_reason": "V4.1 down, owner approved"}, actor="op@1.2.3.4")
+        with self.assertRaises(SwitchError) as c:   # cut_in_flight is NOT a window override (A7)
+            sw.request({"target": "dsv4-flash-primary", "confirm": True, "cut_in_flight": True}, actor="op")
+        self.assertEqual(c.exception.code, "outside_window")
+        sw.request({"target": "dsv4-flash-primary", "confirm": True, "override_window": True,
+                    "emergency_reason": "V4.1 down, owner approved"}, actor="nick (token) via 1.2.3.4")
         last = self.hist.read()[-1]
         self.assertTrue(last["forced"])
+        self.assertEqual(last["flags"], {"override_window": True, "cut_in_flight": False, "reactivate": False})
         self.assertEqual(last["emergency_reason"], "V4.1 down, owner approved")
-        self.assertIn("FORCED by op@1.2.3.4", last["steps"][0]["detail"])
+        self.assertIn("OVERRIDDEN by nick (token) via 1.2.3.4", last["steps"][0]["detail"])
+
+    def test_legacy_force_flag_is_refused(self):
+        with self.assertRaises(SwitchError) as c:
+            self.switcher().request({"target": "dsv4-flash-primary", "confirm": True, "force": True}, actor="op")
+        self.assertEqual(c.exception.code, "force_removed")
 
 
 class TestLockAndHistory(SwitchTestBase):
@@ -407,9 +476,9 @@ class TestLockAndHistory(SwitchTestBase):
         h2 = SwitchHistory(self.hist.path)
         self.assertEqual(h2.read()[-1]["state"], SUCCEEDED)
         h2.append({"id": "dead1", "state": "running", "target": "dsv41-rollback"})
-        self.assertEqual(h2.mark_interrupted(), 1)
+        self.assertEqual(len(h2.mark_interrupted()), 1)
         self.assertEqual(h2.read()[-1]["state"], INTERRUPTED)
-        self.assertEqual(h2.mark_interrupted(), 0)
+        self.assertEqual(h2.mark_interrupted(), [])
 
     def test_restart_keeps_the_switched_deployment(self):
         self.switcher().request({"target": "dsv4-flash-primary", "confirm": True}, actor="op")
@@ -478,16 +547,23 @@ class TestServerModes(OrchestratorHarness):
         self.assertEqual(status, 200)
         self.assertLessEqual(self.upstream.last_request()["max_tokens"], 8192)
 
-    def test_fast_is_interactive_priority_and_untrusted_header_ignored(self):
-        _, headers, _ = self.chat({"model": "gx-fast", "messages": [{"role": "user", "content": "hi"}]},
-                                  headers={"X-GX-Priority": "background"})
-        self.assertEqual(headers.get("X-GX-Priority"), "interactive")
-        _, headers, _ = self.chat({"model": "gx-high", "messages": [{"role": "user", "content": "hi"}]},
-                                  headers={"X-GX-Identity": "odin"})
-        self.assertEqual(headers.get("X-GX-Priority"), "health")
-        _, headers, _ = self.chat({"model": "gx-fast", "messages": [{"role": "user", "content": "hi"}]},
-                                  headers={"X-GX-Identity": "batch"})
+    def test_priority_from_signed_identity_and_header_rules(self):
+        msg = [{"role": "user", "content": "hi"}]
+        # Lowering by header is honoured (bench scripts send background).
+        _, headers, _ = self.chat({"model": "gx-fast", "messages": msg}, headers={"X-GX-Priority": "background"})
         self.assertEqual(headers.get("X-GX-Priority"), "background")
+        # Raising is not, for an anonymous caller.
+        _, headers, _ = self.chat({"model": "gx-high", "messages": msg}, headers={"X-GX-Priority": "interactive"})
+        self.assertEqual(headers.get("X-GX-Priority"), "normal-worker")
+        _, headers, _ = self.chat({"model": "gx-high", "messages": msg}, headers=signed_identity("odin"))
+        self.assertEqual(headers.get("X-GX-Priority"), "health")
+        # An unsigned odin claim (orchestrator-key holder) gets nothing.
+        _, headers, _ = self.chat({"model": "gx-high", "messages": msg}, headers={"X-GX-Identity": "odin"})
+        self.assertEqual(headers.get("X-GX-Priority"), "normal-worker")
+        _, headers, _ = self.chat({"model": "gx-fast", "messages": msg}, headers=signed_identity("batch"))
+        self.assertEqual(headers.get("X-GX-Priority"), "background")
+        _, headers, _ = self.chat({"model": "gx-fast", "messages": msg}, headers={"X-GX-Identity": "batch"})
+        self.assertEqual(headers.get("X-GX-Priority"), "interactive")
 
     def test_gx_auto_uses_a_mode_and_keeps_the_engine(self):
         status, headers, _ = self.chat({"model": "gx-auto", "messages": [{"role": "user", "content": "hi"}]})
@@ -594,12 +670,42 @@ class TestFixedShapeLifecycle(unittest.TestCase):
         lc.status()                     # miss 1
         lc._last_reconcile = 0
         st = lc.status()                # miss 2 -> rank failure
-        self.assertEqual(st.state, State.DOWN)
+        self.assertIn(st.state, (State.RELEASING, State.DOWN))
         self.assertEqual(st.failure_kind, FAILURE_RANK)
         deadline = time.time() + 5
-        while time.time() < deadline and not (self.dir / "stop.log").exists():
+        _Health.healthy = False   # the stop path took the API down with it
+        while time.time() < deadline and lc._state is not State.DOWN:   # no reconcile in the loop
             time.sleep(0.05)
+        self.assertEqual(lc._state, State.DOWN)   # DOWN only after the stop path finished (A6)
         self.assertTrue((self.dir / "stop.log").exists())
+
+    def test_rank_probe_error_is_unknown_not_dead(self):
+        lc = self.make()
+        import gx_orchestrator.lifecycle as L
+        old = L._RANK_CHECK_INTERVAL
+        L._RANK_CHECK_INTERVAL = 0.0
+        self.addCleanup(setattr, L, "_RANK_CHECK_INTERVAL", old)
+        self.containers["node2"] = None          # SSH failed: could not tell
+        for _ in range(4):
+            lc._last_reconcile = 0
+            self.assertEqual(lc.status().state, State.READY)
+        self.assertFalse((self.dir / "stop.log").exists())
+
+    def test_container_state_classification(self):
+        from gx_orchestrator.lifecycle import container_state_from
+        self.assertIs(container_state_from(0, "true\n", "", remote=True), True)
+        self.assertIs(container_state_from(0, "false\n", "", remote=True), False)
+        self.assertIs(container_state_from(1, "", "Error: No such object: dsv4f-worker", remote=True), False)
+        self.assertIsNone(container_state_from(255, "", "ssh: connect to host ... timed out", remote=True))
+        self.assertIsNone(container_state_from(1, "", "Cannot connect to the Docker daemon", remote=False))
+
+    def test_latched_lifecycle_refuses_every_acquire(self):
+        lc = self.make()
+        lc.latch("switch x to dsv41-rollback")
+        with self.assertRaises(AcquisitionError):
+            lc.acquire(None, bypass_backoff=True)
+        lc.unlatch()
+        self.assertTrue(lc.acquire(None))
 
     def test_circuit_breaker_stops_request_driven_restarts(self):
         _Health.healthy = False

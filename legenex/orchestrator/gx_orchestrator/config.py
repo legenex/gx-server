@@ -186,6 +186,22 @@ class Config:
                 token = ""
         return None if token.casefold() in ("", "not-required", "changeme") or len(token) < 16 else token
 
+    def identity_hmac_key(self) -> str | None:
+        """Shared with the LiteLLM hook to sign X-GX-Identity (D-053).
+
+        GX_IDENTITY_HMAC_KEY, or the first line of GX_IDENTITY_HMAC_KEY_FILE
+        (default /srv/projects/gx-cluster/secrets/orchestrator/identity-hmac).
+        """
+        key = (os.environ.get("GX_IDENTITY_HMAC_KEY") or "").strip()
+        if not key:
+            path = Path(os.environ.get("GX_IDENTITY_HMAC_KEY_FILE")
+                        or "/srv/projects/gx-cluster/secrets/orchestrator/identity-hmac")
+            try:
+                key = path.read_text(encoding="utf-8").splitlines()[0].strip()
+            except (OSError, IndexError):
+                key = ""
+        return key if len(key) >= 16 else None
+
     def gateway_key(self) -> str | None:
         """API key for the LiteLLM gateway, from the environment only."""
         return os.environ.get("GX_GATEWAY_KEY") or os.environ.get("LITELLM_MASTER_KEY")

@@ -376,6 +376,7 @@ class GxMaxLifecycle:
         self._fixed_profile = fixed_profile
         self._circuit_after = max(0, int(circuit_breaker_after))
         self._circuit_open = False
+        self._latched = ""
         dialect = deployment.dialect if deployment else "deepseek_v41"
         no_think = {"thinking": False} if dialect == "deepseek_v4" else {"enable_thinking": False}
         self._ready_probe = ready_probe or (
@@ -453,14 +454,30 @@ class GxMaxLifecycle:
     def deployment(self) -> "DeploymentSpec | None":
         return self._deployment
 
+    def latch(self, reason: str) -> None:
+        """Refuse every acquire (operator ones included) from now on: a model
+        switch is replacing this deployment (D-053 A1). Reconcile adoption is
+        off too. `unlatch` only when the switch aborted before stopping it."""
+        with self._cv:
+            self._latched = reason or "latched"
+            self._cv.notify_all()
+
+    def unlatch(self) -> None:
+        with self._cv:
+            self._latched = ""
+
     def _check_ranks(self) -> "str | None":
         """rank_watch: name the rank whose container is gone (2 misses in a row)."""
         if not self._rank_watch or time.time() - self._last_rank_check < _RANK_CHECK_INTERVAL:
             return None
         self._last_rank_check = time.time()
-        missing = [n for n in ("node1", "node2") if self._container_running(n) is False]
+        states = {n: self._container_running(n) for n in ("node1", "node2")}
+        # Only a definite "not running" counts; an unknown (SSH/docker error)
+        # neither counts nor resets the streak (D-053 A2).
+        missing = [n for n, st in states.items() if st is False]
         if not missing:
-            self._rank_misses = 0
+            if all(st is True for st in states.values()):
+                self._rank_misses = 0
             return None
         self._rank_misses += 1
         return ", ".join(missing) if self._rank_misses >= 2 else None
@@ -507,14 +524,14 @@ class GxMaxLifecycle:
                 self._last_error = f"rank container gone on {dead_rank} while READY"
                 self._failure_kind = FAILURE_RANK
                 self._fail_streak += 1
-                # Let the stop path finish before a request may restart it.
-                self._retry_not_before = time.time() + max(60.0, self._failure_backoff_base)
                 self._profile = ""
                 self._last_used = None
-                self._set_state(State.DOWN, f"rank failure ({dead_rank})")
+                # RELEASING until stop.sh has finished (it can take ~140 s):
+                # no acquire may start a new boot on top of the teardown (A6).
+                self._set_state(State.RELEASING, f"rank failure ({dead_rank}); running the stop path")
                 self._set_phase(PHASE_FAILED)
             self._event("reconcile", f"rank failure: container gone on {dead_rank}; running stop.sh --force")
-            threading.Thread(target=self._cleanup_after_failed_acquire, args=("rank failure",),
+            threading.Thread(target=self._finish_rank_failure, args=(dead_rank,),
                              name="gxmax-rank-cleanup", daemon=True).start()
             return
 
@@ -528,7 +545,7 @@ class GxMaxLifecycle:
                 self._set_state(State.DOWN, "engine vanished (torn down externally)")
                 self._set_phase(PHASE_IDLE)
                 self._event("reconcile", "engine vanished while READY; marked DOWN")
-            elif observed is State.DOWN and healthy:
+            elif observed is State.DOWN and healthy and not self._latched:
                 log.info("gx-max: adopted an engine started outside the orchestrator")
                 self._last_used = time.time()
                 # A healthy engine supersedes any recorded start failure.
@@ -631,6 +648,8 @@ class GxMaxLifecycle:
         try:
             while True:
                 with self._cv:
+                    if self._latched:
+                        raise AcquisitionError(f"deployment is being switched out: {self._latched}")
                     if self._state is State.READY and self._profile == profile.name:
                         self._last_used = time.time()
                         return profile.name
@@ -888,6 +907,15 @@ class GxMaxLifecycle:
                 return False
             time.sleep(2.0)
 
+    def _finish_rank_failure(self, dead_rank: str) -> None:
+        note = self._cleanup_after_failed_acquire(f"rank failure ({dead_rank})")
+        with self._cv:
+            self._last_error = f"rank container gone on {dead_rank} while READY; stop path: {note}"
+            self._retry_not_before = time.time() + max(60.0, self._failure_backoff_base)
+            if self._circuit_after and self._fail_streak >= self._circuit_after:
+                self._circuit_open = True
+        self._set_state(State.DOWN, f"rank failure ({dead_rank}); stop path finished")
+
     def _cleanup_after_failed_acquire(self, original_err: str) -> str:
         """Best-effort unwind via stop.sh --force. Never raises and never
         masks `original_err` -- it only appends a note when the cleanup
@@ -918,11 +946,14 @@ class GxMaxLifecycle:
 
     # ---------------------------------------------------------------- release
     def release(self, *, force: bool = False) -> None:
-        """Tear the engine down and hand both nodes back."""
+        """Tear the engine down and hand both nodes back. A teardown already in
+        progress (RELEASING) is waited for, not skipped."""
         with self._cv:
-            if self._state in (State.DOWN, State.RELEASING):
+            if self._state is State.DOWN:
                 return
-        self._start_release(force=force, detail="forced" if force else "graceful drain")
+            in_progress = self._state is State.RELEASING
+        if not in_progress:
+            self._start_release(force=force, detail="forced" if force else "graceful drain")
         # Wait for the RELEASING worker to finish (bounded: it has its own
         # timeouts). Callers of /lifecycle/release get a settled answer.
         deadline = time.time() + 900
@@ -1332,24 +1363,34 @@ def _default_read_gid_table(node: str, ib_dev: str) -> "dict[int, tuple[str, str
     return table or None
 
 
-def _default_container_running(node: str, name: "str | None" = None) -> bool:
-    """True while the node's rank container is running (rank0 here, rank1 via SSH)."""
+def _default_container_running(node: str, name: "str | None" = None) -> "bool | None":
+    """Tri-state (D-053 A2): True running, False provably not running (docker
+    answered: stopped or no such container), None unknown (SSH/docker error,
+    timeout). Callers must never treat None as a dead rank."""
     from .config import CONFIG
 
+    container = name or (CONFIG.head_container if node == "node1" else CONFIG.worker_container)
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", container):
+        return None
+    inspect = f"docker inspect -f {{{{.State.Running}}}} {container}"
     if node == "node1":
-        container = name or CONFIG.head_container
-        if not re.fullmatch(r"[A-Za-z0-9_.-]+", container):
-            return False
         cmd = ["docker", "inspect", "-f", "{{.State.Running}}", container]
     else:
-        container = name or CONFIG.worker_container
-        if not re.fullmatch(r"[A-Za-z0-9_.-]+", container):
-            return False
-        cmd = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
-               CONFIG.node2_ssh,
-               f"docker inspect -f {{{{.State.Running}}}} {container}"]
+        cmd = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", CONFIG.node2_ssh, inspect]
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
     except (OSError, subprocess.SubprocessError):
+        return None
+    return container_state_from(proc.returncode, proc.stdout, proc.stderr, remote=node != "node1")
+
+
+def container_state_from(rc: int, stdout: str, stderr: str, *, remote: bool) -> "bool | None":
+    """Classify one `docker inspect -f {{.State.Running}}` result."""
+    if remote and rc == 255:
+        return None  # ssh itself failed
+    if rc == 0:
+        out = stdout.strip()
+        return True if out == "true" else (False if out == "false" else None)
+    if "No such object" in stderr or "No such container" in stderr:
         return False
-    return proc.returncode == 0 and proc.stdout.strip() == "true"
+    return None

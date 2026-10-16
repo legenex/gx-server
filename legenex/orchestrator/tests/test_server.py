@@ -24,7 +24,6 @@ from gx_orchestrator.health import AliasState  # noqa: E402
 from gx_orchestrator.lifecycle import LifecycleStatus, State, AcquisitionError  # noqa: E402
 from gx_orchestrator.server import model_tier_status, _attribution  # noqa: E402
 from tests.server_harness import (  # noqa: E402
-    TRUSTED,
     OrchestratorHarness,
     completion_body,
 )
@@ -215,8 +214,7 @@ class TestLifecycleGate(OrchestratorHarness):
         self.lifecycle._state = State.DOWN
 
     def test_down_and_background_priority_is_a_clear_503(self):
-        status, headers, body = self.chat(_payload(), headers={"X-GX-Priority": "background",
-                                                               "X-GX-Identity": TRUSTED})
+        status, headers, body = self.chat(_payload(), headers={"X-GX-Priority": "background"})
         self.assertEqual(status, 503)
         self.assertEqual(body["error"]["code"], "model_down")
         self.assertEqual(body["error"]["lifecycle_state"], "down")
@@ -225,8 +223,7 @@ class TestLifecycleGate(OrchestratorHarness):
         self.assertEqual(self.lifecycle.acquire_calls, [])
 
     def test_down_and_interactive_triggers_the_acquisition(self):
-        status, headers, body = self.chat(_payload(), headers={"X-GX-Priority": "interactive",
-                                                               "X-GX-Identity": TRUSTED})
+        status, headers, body = self.chat(_payload(), headers={"X-GX-Priority": "interactive"})
         self.assertEqual(status, 200)
         self.assertEqual(body["choices"][0]["message"]["content"], "323")
         self.assertTrue(self.lifecycle.acquire_calls)  # acquisition was triggered
@@ -362,21 +359,10 @@ class TestSchedulerEndpoints(OrchestratorHarness):
         self.assertTrue(hist)
         self.assertEqual(hist[0]["priority"], "normal-worker")
 
-    def test_untrusted_priority_header_is_ignored(self):
+    def test_explicit_priority_header_wins_over_mode(self):
         status, headers, body = self.chat(
             _payload(messages=[{"role": "user", "content": "What is 17 * 19?"}]),
-            headers={"X-GX-Priority": "background", "X-GX-Identity": "random-client"},
-        )
-        self.assertEqual(status, 200)
-        rid = headers["X-GX-Request-Id"]
-        self.wait_for_journal(rid, "completed")
-        hist = [h for h in self.scheduler.history() if h["id"] == rid]
-        self.assertEqual(hist[0]["priority"], "interactive")  # FAST mode default, header ignored
-
-    def test_explicit_priority_header_wins_over_mode_when_allowed(self):
-        status, headers, body = self.chat(
-            _payload(messages=[{"role": "user", "content": "What is 17 * 19?"}]),
-            headers={"X-GX-Priority": "background", "X-GX-Identity": TRUSTED},
+            headers={"X-GX-Priority": "background"},
         )
         self.assertEqual(status, 200)
         rid = headers["X-GX-Request-Id"]

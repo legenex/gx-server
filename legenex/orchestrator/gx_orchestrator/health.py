@@ -140,8 +140,12 @@ class ClusterHealth:
         ping: Callable[[str, float], bool] | None = None,
         local_mem_gib: Callable[[], "float | None"] | None = None,
         http_get: Callable[..., Any] | None = None,
+        active: "Callable[[], tuple[str, str, str]] | None" = None,
     ) -> None:
         self._cfg = cfg
+        #: () -> (api base, served model id, worker container) of the ACTIVE
+        #: deployment (D-053 A3); None = the configured V4.1 defaults.
+        self._active = active or (lambda: (cfg.gxmax_base, cfg.gxmax_model_id, cfg.worker_container))
         self._registry = registry
         self._ttl = ttl
         self._ssh_run = ssh_run or (lambda target, cmd, timeout: _real_ssh(target, cmd, timeout))
@@ -157,11 +161,12 @@ class ClusterHealth:
         """/health + /v1/models on the head node; the served id is verified,
         never assumed (a vLLM proxy up with the wrong model is a fault)."""
         cfg = self._cfg
-        base = cfg.gxmax_base.rstrip("/")
+        api, model_id, _worker = self._active()
+        base = api.rstrip("/")
         health_url = base.removesuffix("/v1") + "/health"
         out: dict[str, Any] = {
             "healthy": False, "serves_model": False,
-            "model_id": cfg.gxmax_model_id, "detail": "",
+            "model_id": model_id, "detail": "",
         }
         try:
             self._http_get(health_url, timeout=cfg.node1_probe_timeout)
@@ -173,9 +178,9 @@ class ClusterHealth:
             resp = self._http_get(f"{base}/models", timeout=cfg.node1_probe_timeout)
             body = resp.json() if hasattr(resp, "json") else json.loads(resp.body)
             ids = [str(m.get("id")) for m in (body.get("data") or []) if isinstance(m, Mapping)]
-            out["serves_model"] = cfg.gxmax_model_id in ids
+            out["serves_model"] = model_id in ids
             if not out["serves_model"]:
-                out["detail"] = f"/v1/models lists {ids!r}, expected '{cfg.gxmax_model_id}'"
+                out["detail"] = f"/v1/models lists {ids!r}, expected '{model_id}'"
         except Exception as exc:  # noqa: BLE001
             out["detail"] = f"/v1/models probe failed: {exc!r}"
         return out
@@ -187,7 +192,7 @@ class ClusterHealth:
         worker = self._registry.worker_node()
         out: dict[str, Any] = {
             "ssh_reachable": False, "container_running": False,
-            "container": cfg.worker_container, "fabric": {}, "detail": "",
+            "container": self._active()[2], "fabric": {}, "detail": "",
         }
         ps = self._ssh_run(cfg.node2_ssh, "docker ps --format '{{.Names}}'", cfg.node2_probe_timeout + 8)
         if ps is None:
@@ -195,9 +200,9 @@ class ClusterHealth:
         else:
             out["ssh_reachable"] = True
             names = {line.strip() for line in ps.splitlines() if line.strip()}
-            out["container_running"] = cfg.worker_container in names
+            out["container_running"] = self._active()[2] in names
             if not out["container_running"]:
-                out["detail"] = f"worker container '{cfg.worker_container}' not in docker ps"
+                out["detail"] = f"worker container '{self._active()[2]}' not in docker ps"
         for rail, ip in worker.fabric.items():
             out["fabric"][ip] = self._ping(ip, cfg.node2_probe_timeout)
         return out

@@ -11,15 +11,17 @@ guarantee lives here, for every deployment:
 * when thinking was requested and the engine has sent NO reasoning yet, the
   first content is held (bounded) until a bare ``</think>`` proves it was
   reasoning, or the bound proves it was not;
-* stray ``<think>`` / ``</think>`` tags never reach content;
+* tags are only interpreted at the START of a reply (or, when thinking was
+  requested and the engine split nothing, up to the first bare ``</think>``);
+  once the answer has begun, literal ``<think>`` / ``</think>`` are answer
+  text (code, regexes, docs) and pass through untouched;
 * tags split across SSE chunks are reassembled (partial-tag tails are held);
 * the first real answer token is never dropped: text after ``</think>`` in the
   same delta is content (the D-052 `DeltaSplitter` later separates such a
   mixed delta for LiteLLM).
 
 Engines that already split reasoning correctly are untouched: once the engine
-emits a reasoning delta, content is the answer and passes straight through
-(only literal tags are removed).
+emits a reasoning delta, content is the answer and passes straight through.
 """
 from __future__ import annotations
 
@@ -117,19 +119,10 @@ class ChoiceFilter:
                 reasoning.append(buf[:len(buf) - keep])
                 self.pending = buf[len(buf) - keep:]
                 break
-            # content
-            positions = [(buf.find(t), t) for t in _TAGS if t in buf]
-            if positions:
-                idx, tag = min(positions)
-                content.append(buf[:idx])
-                buf = buf[idx + len(tag):]
-                self.changed = True
-                if tag == OPEN:
-                    self.state = "think"
-                continue
-            keep = _partial_tag_suffix(buf)
-            content.append(buf[:len(buf) - keep])
-            self.pending = buf[len(buf) - keep:]
+            # content: the answer itself. Literal "<think>" / "</think>" here
+            # are answer text (code, regexes, docs about tags) and pass
+            # through untouched -- only the START of a reply can be reasoning.
+            content.append(buf)
             break
         return "".join(content), "".join(reasoning)
 

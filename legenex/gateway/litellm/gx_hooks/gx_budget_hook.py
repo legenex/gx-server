@@ -60,15 +60,36 @@ ATTRIB_HEADERS = (
 IDENTITY_HEADER = "X-GX-Identity"
 
 
+#: Never written to the metrics/attribution log: it is a one-time credential.
+_NOT_LOGGED = ("X-GX-Switch-Validation",)
+
+
 def _identity(user_api_key_dict: Any) -> str:
-    """The authenticated caller: key alias, else team alias, else "anonymous"."""
-    for attr in ("key_alias", "team_alias", "user_id"):
+    """The authenticated caller. The key alias as is; a team alias or user id
+    fallback is namespaced ("team:x", "user:x") so it can never collide with a
+    key alias that the identity policy pins (e.g. "odin")."""
+    for attr, prefix in (("key_alias", ""), ("team_alias", "team:"), ("user_id", "user:")):
         value = getattr(user_api_key_dict, attr, None)
         if isinstance(value, str) and value.strip():
-            cleaned = "".join(c for c in value.strip() if c.isalnum() or c in "-_.@:")[:96]
+            cleaned = "".join(c for c in value.strip() if c.isalnum() or c in "-_.@")[:80]
             if cleaned:
-                return cleaned
+                return prefix + cleaned
     return "anonymous"
+
+
+def _signed_identity(identity: str) -> dict[str, str]:
+    """X-GX-Identity plus its HMAC (GX_IDENTITY_HMAC_KEY, shared with the
+    orchestrator, which ignores an unsigned or stale identity)."""
+    out = {IDENTITY_HEADER: identity}
+    key = os.environ.get("GX_IDENTITY_HMAC_KEY", "").strip()
+    if len(key) >= 16:
+        import hashlib  # noqa: PLC0415
+        import hmac  # noqa: PLC0415
+        ts = str(int(time.time()))
+        out["X-GX-Identity-Ts"] = ts
+        out["X-GX-Identity-Sig"] = hmac.new(key.encode(), f"{identity}|{ts}".encode(),
+                                            hashlib.sha256).hexdigest()
+    return out
 #: Response header the orchestrator stamps with the queue wait in milliseconds.
 QUEUE_WAIT_HEADER = "x-gx-queue-wait-ms"
 
@@ -260,14 +281,14 @@ class GxBudgetHook(CustomLogger):
             attribution = _capture_attribution(data)
             meta = data.setdefault("metadata", {})
             if isinstance(meta, dict):
-                meta["gx_attribution"] = attribution
+                meta["gx_attribution"] = {k: v for k, v in attribution.items() if k not in _NOT_LOGGED}
             # LiteLLM forwards these headers with the upstream OpenAI call;
             # the orchestrator reads them for scheduler priority, profile and
             # reasoning (gx-auto autoroute), defaulting each to "unknown".
             # The identity is set here, from LiteLLM's own key check: a
             # client-sent X-GX-Identity is never in `attribution` (D-053).
             forwarded = dict(attribution)
-            forwarded[IDENTITY_HEADER] = _identity(user_api_key_dict)
+            forwarded.update(_signed_identity(_identity(user_api_key_dict)))
             data["forwarded_headers"] = forwarded
 
             # 2. Context guard — chat calls on the two aliases only.

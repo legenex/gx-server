@@ -2000,3 +2000,15 @@ nodes from measured idle levels (start.sh enforces it). V4.1 cannot keep
 `legenex/lifecycle/mia-dsv41.env.lowmem-proposal`.
 
 **Runbook / residual risks:** `legenex/models/dsv4-flash/README.md`.
+
+**Review fixes (APPROVE WITH FIXES on 923aa3f):** literal `<think>` text in an
+answer passes through (only the start of a reply can be reasoning); a header
+that lowers priority is always honoured and the V4.1 rollback keeps the
+header contract; landing LiteLLM config and registry aliases stay on V4.1
+(`config.dsv4-flash.yaml` and the active-deployment pointer take over at
+activation); no acquisition while a switch runs (scheduler pause + latched
+outgoing lifecycle); tri-state rank probes; RELEASING until rank-failure
+cleanup ends; explicit switch flags; lock released if a switch cannot start;
+startup reconciliation of interrupted switches; health probes the active
+runtime; validation via gx-fast plus a thinking-mode tool call; exact weights
+node; HMAC-signed identity; validation token never logged.

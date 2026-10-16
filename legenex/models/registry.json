@@ -218,39 +218,39 @@
   },
   "aliases": {
     "gx-auto": {
-      "model": "dsv4-flash-0731-abliterated",
-      "runtime": "dsv4-flash-tp2",
+      "model": "dsv41-flash-exl3-uncensored",
+      "runtime": "mia-dsv41",
       "mode": "auto",
       "logical_mode": "auto",
       "description": "Chooses fast, medium, high or max per task for the resident model"
     },
     "gx-fast": {
-      "model": "dsv4-flash-0731-abliterated",
-      "runtime": "dsv4-flash-tp2",
+      "model": "dsv41-flash-exl3-uncensored",
+      "runtime": "mia-dsv41",
       "mode": "direct",
       "logical_mode": "fast",
       "description": "Thinking off, up to 32K context, top interactive priority"
     },
     "gx-medium": {
-      "model": "dsv4-flash-0731-abliterated",
-      "runtime": "dsv4-flash-tp2",
+      "model": "dsv41-flash-exl3-uncensored",
+      "runtime": "mia-dsv41",
       "mode": "direct",
       "logical_mode": "medium",
       "description": "Thinking low, up to 128K context"
     },
     "gx-high": {
-      "model": "dsv4-flash-0731-abliterated",
-      "runtime": "dsv4-flash-tp2",
+      "model": "dsv41-flash-exl3-uncensored",
+      "runtime": "mia-dsv41",
       "mode": "direct",
       "logical_mode": "high",
       "description": "Thinking high, up to 128K context"
     },
     "gx-max": {
-      "model": "dsv4-flash-0731-abliterated",
-      "runtime": "dsv4-flash-tp2",
+      "model": "dsv41-flash-exl3-uncensored",
+      "runtime": "mia-dsv41",
       "mode": "direct",
       "logical_mode": "max",
-      "description": "Thinking max, largest tested safe context, controlled admission"
+      "description": "Thinking max (V4 Flash) / explicit DeepSeek V4.1 Flash on the rollback"
     }
   },
   "modes": {
@@ -472,5 +472,6 @@
     "tools": true,
     "structured_output": true,
     "reasoning": true
-  }
+  },
+  "_aliases_note": "Alias model/runtime bindings describe the LANDING state (the rollback deployment, still serving). The model actually behind every alias is the ACTIVE deployment's: /srv/projects/gx-cluster/state/orchestrator/active-deployment.json, else initial_active_deployment (Registry.active_model(), control-ui models.production_model_id). A typed switch moves all five aliases at once."
 }

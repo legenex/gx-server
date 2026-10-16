@@ -197,6 +197,8 @@ class ModelSpec:
     tools: bool
     max_context: int
     serving_notes: dict[str, Any] = field(default_factory=dict)
+    #: Registry node holding the weights ("" = the head, as for V4.1).
+    node: str = ""
 
 
 @dataclass(frozen=True)
@@ -303,6 +305,22 @@ class Registry:
 
     def primary_deployment(self) -> DeploymentSpec:
         return next(d for d in self.deployments.values() if d.role == "primary")
+
+    def active_deployment_name(self, state_dir: "str | os.PathLike[str] | None" = None) -> str:
+        """The ACTIVE deployment (runtime state written by the typed switch),
+        else initial_active_deployment. Never the alias binding (review L4)."""
+        root = Path(state_dir or os.environ.get("GX_STATE_ROOT") or "/srv/projects/gx-cluster/state")
+        try:
+            name = json.loads((root / "orchestrator" / "active-deployment.json").read_text("utf-8"))["deployment"]
+        except (OSError, ValueError, KeyError, TypeError):
+            name = ""
+        return name if name in self.deployments else self.initial_active_deployment
+
+    def active_model(self, state_dir: "str | os.PathLike[str] | None" = None) -> ModelSpec:
+        return self.model(self.deployment(self.active_deployment_name(state_dir)).model)
+
+    def active_runtime(self, state_dir: "str | os.PathLike[str] | None" = None) -> RuntimeSpec:
+        return self.runtime(self.deployment(self.active_deployment_name(state_dir)).runtime)
 
     def profile(self, name: str) -> ProfileSpec:
         try:
@@ -484,6 +502,7 @@ def _parse_model(model_id: str, raw: Mapping[str, Any]) -> ModelSpec:
         tools=bool(raw.get("tools")),
         max_context=_require_int(raw, "max_context", where),
         serving_notes=dict(raw.get("serving_notes") or {}),
+        node=str(raw.get("node") or ""),
     )
 
 

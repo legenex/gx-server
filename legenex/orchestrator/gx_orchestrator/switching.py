@@ -17,8 +17,8 @@ the current model was stopped rolls back to it automatically:
     validate it, record `rolled_back` (or `rollback_failed`, loudly).
 
 Disruptive switches run only in the owner's maintenance window 01:00-05:00
-SAST (UTC+2, no DST); outside it a switch needs force=true AND a non-empty
-emergency_reason, both written to the history.
+SAST (UTC+2, no DST); outside it a switch needs override_window=true AND a
+non-empty emergency_reason, both written to the history.
 
 Nothing here kills a process: stopping and starting go through the
 deployment's lifecycle, which runs the kit's own stop.sh / start.sh.
@@ -146,16 +146,72 @@ class SwitchHistory:
         out = [latest[s] for s in order][-max(1, limit):]
         return out
 
-    def mark_interrupted(self) -> int:
-        """At startup: a switch still `running` belonged to a dead process."""
-        n = 0
+    def mark_interrupted(self) -> list[dict[str, Any]]:
+        """At startup: a switch still `running` belonged to a dead process.
+        Returns the records it marked (empty list = nothing to reconcile)."""
+        marked = []
         for rec in self.read(limit=1000):
             if rec.get("state") == RUNNING:
                 rec = dict(rec, state=INTERRUPTED, ended=time.time(),
                            error="orchestrator restarted during the switch; check both nodes")
                 self.append(rec)
-                n += 1
-        return n
+                marked.append(rec)
+        return marked
+
+
+#: Each deployment's kit stop path, for the operator action text.
+def _stop_hint(registry: Any, name: str) -> str:
+    rt = registry.runtime(registry.deployment(name).runtime)
+    return f"{rt.kit_path or rt.submodule}/stop.sh"
+
+
+def reconcile_interrupted(records: list[dict[str, Any]], *, registry: Any, store: Any,
+                          running: Callable[[str], Mapping[str, "bool | None"]],
+                          history: "SwitchHistory") -> dict[str, Any]:
+    """Startup reconciliation of switches cut short by an orchestrator restart (A9).
+
+    Looks at which deployment's rank containers are actually running and
+    either completes the active pointer (exactly one deployment fully up) or
+    marks the switch ``needs_operator`` with the exact next action. It never
+    starts or stops anything. Returns {"outcome", "action", "latch"} where a
+    non-empty latch means request-driven starts must stay off.
+    """
+    if not records:
+        return {"outcome": "none", "action": "", "latch": ""}
+    observed = {name: dict(running(name)) for name in registry.deployments}
+    full = [n for n, st in observed.items() if st.get("node1") is True and st.get("node2") is True]
+    partial = [n for n, st in observed.items() if n not in full and any(v is True for v in st.values())]
+    unknown = [n for n, st in observed.items() if any(v is None for v in st.values())]
+    pointer = (store.read() or {}).get("deployment") or registry.initial_active_deployment
+    latch = ""
+    if unknown:
+        outcome = "needs_operator"
+        action = (f"rank state unknown for {unknown} (probe errors); check `docker ps` on both nodes, "
+                  "then restart gx-orchestrator")
+        latch = action
+    elif len(full) == 1 and not partial:
+        if full[0] != pointer:
+            store.write(full[0], switch_id=str(records[-1].get("id", "")), actor="startup-reconcile")
+            outcome, action = "pointer_completed", f"active pointer set to {full[0]}, which is the kit running"
+        else:
+            outcome, action = "pointer_confirmed", f"{pointer} is running and active; nothing to do"
+    elif not full and not partial:
+        outcome = "needs_operator"
+        action = (f"no model is running; the active pointer is {pointer}. Start it with "
+                  f"POST /lifecycle/gx-max/acquire, or switch with POST /models/activate")
+    else:
+        extra = [n for n in full + partial if n != pointer] or full + partial
+        outcome = "needs_operator"
+        action = ("more than one kit (or a single rank) is up: " + ", ".join(
+            f"{n} ranks={observed[n]}" for n in full + partial)
+            + "; stop the one that should not run with " + " / ".join(_stop_hint(registry, n) for n in extra)
+            + ", then restart gx-orchestrator")
+        latch = action
+    for rec in records:
+        history.append(dict(rec, reconcile={"outcome": outcome, "action": action, "observed": observed,
+                                            "pointer": pointer, "at": time.time()}))
+    log.error("interrupted model switch reconciled: %s -- %s", outcome, action)
+    return {"outcome": outcome, "action": action, "latch": latch}
 
 
 @dataclass
@@ -184,6 +240,7 @@ class SwitchRecord:
     steps: list[dict[str, Any]] = field(default_factory=list)
     checks: list[dict[str, Any]] = field(default_factory=list)
     rollback_checks: list[dict[str, Any]] = field(default_factory=list)
+    flags: dict[str, bool] = field(default_factory=dict)
     error: str = ""
 
     def step(self, name: str, ok: bool = True, detail: str = "") -> None:
@@ -244,41 +301,62 @@ class ModelSwitcher:
 
     # --------------------------------------------------------------- request
     def request(self, payload: Mapping[str, Any], *, actor: str) -> dict[str, Any]:
-        """Validate and start a switch; raises SwitchError when refused."""
+        """Validate and start a switch; raises SwitchError when refused.
+
+        Three separate, explicit overrides (D-053 A7), each audited:
+        ``override_window`` (+ ``emergency_reason``) runs outside 01:00-05:00
+        SAST; ``cut_in_flight`` proceeds when requests did not drain;
+        ``reactivate`` restarts the deployment that is already active.
+        """
+        if "force" in payload:
+            raise SwitchError(400, "force_removed",
+                              "use the explicit flags override_window (+ emergency_reason), "
+                              "cut_in_flight and reactivate instead of force")
         target = str(payload.get("target") or "").strip()
         registry_deps = self._manager_deployments()
         if target not in registry_deps:
             raise SwitchError(400, "unknown_target", f"target must be one of {sorted(registry_deps)}")
         if payload.get("confirm") is not True:
             raise SwitchError(400, "confirm_required", "a switch needs \"confirm\": true")
-        force = payload.get("force") is True
+        override = payload.get("override_window") is True
+        cut = payload.get("cut_in_flight") is True
+        reactivate = payload.get("reactivate") is True
         reason = str(payload.get("emergency_reason") or "").strip()[:500]
-        if force and not reason:
-            raise SwitchError(400, "reason_required", "force=true needs a non-empty emergency_reason (audited)")
-        if target == self._manager.active_name and not force:
-            raise SwitchError(409, "already_active", f"{target} is already the active deployment")
-        if not in_maintenance_window(self._clock()) and not force:
+        if override and not reason:
+            raise SwitchError(400, "reason_required", "override_window needs a non-empty emergency_reason (audited)")
+        if target == self._manager.active_name and not reactivate:
+            raise SwitchError(409, "already_active", f"{target} is already the active deployment "
+                                                     "(reactivate=true restarts it)")
+        in_window = in_maintenance_window(self._clock())
+        if not in_window and not override:
             raise SwitchError(423, "outside_window",
-                              "disruptive switches run only 01:00-05:00 SAST; outside it pass force=true "
-                              "with an emergency_reason")
+                              "disruptive switches run only 01:00-05:00 SAST; outside it pass "
+                              "override_window=true with an emergency_reason")
         sid = uuid.uuid4().hex[:12]
         if not self._lock.try_acquire(f"switch {sid} -> {target} by {actor}"):
             raise SwitchError(409, "switch_in_progress",
                               f"another switch holds the deployment lock ({self._lock.holder() or 'unknown'})")
-        rec = SwitchRecord(id=sid, target=target, previous=self._manager.active_name, actor=actor,
-                           forced=force, emergency_reason=reason)
-        if force and not in_maintenance_window(self._clock()):
-            rec.step("window", True, f"outside the window: FORCED by {actor}: {reason}")
-        else:
-            rec.step("window", True, "inside the 01:00-05:00 SAST maintenance window")
-        rec.step("lock", True, str(self._lock.path))
-        with self._mutex:
-            self._current = rec
-        self._token = secrets.token_urlsafe(24)
-        self._history.append(rec.as_dict())
-        if self._async:
-            threading.Thread(target=self._run, args=(rec,), name=f"gx-switch-{sid}", daemon=True).start()
-        else:
+        try:
+            rec = SwitchRecord(id=sid, target=target, previous=self._manager.active_name, actor=actor,
+                               forced=override or cut or reactivate, emergency_reason=reason)
+            rec.flags = {"override_window": override, "cut_in_flight": cut, "reactivate": reactivate}
+            if not in_window:
+                rec.step("window", True, f"outside the window: OVERRIDDEN by {actor}: {reason}")
+            else:
+                rec.step("window", True, "inside the 01:00-05:00 SAST maintenance window")
+            rec.step("lock", True, str(self._lock.path))
+            with self._mutex:
+                self._current = rec
+            self._token = secrets.token_urlsafe(24)
+            self._history.append(rec.as_dict())
+            if self._async:
+                threading.Thread(target=self._run, args=(rec,), name=f"gx-switch-{sid}", daemon=True).start()
+        except Exception as exc:
+            # Never leave the deployment lock held by a switch that did not start (A8).
+            self._token = ""
+            self._lock.release()
+            raise SwitchError(500, "switch_start_failed", f"could not start the switch: {exc!r}") from exc
+        if not self._async:
             self._run(rec)
         return rec.as_dict()
 
@@ -288,6 +366,7 @@ class ModelSwitcher:
     # ------------------------------------------------------------------- run
     def _run(self, rec: SwitchRecord) -> None:
         stopped_previous = False
+        old = None
         try:
             status = self._scheduler.status()
             rec.in_flight_at_start = {"active": int(status.get("active", 0)), "queued": int(status.get("queued", 0))}
@@ -295,17 +374,21 @@ class ModelSwitcher:
                                         f"{rec.in_flight_at_start['queued']} queued")
             self._scheduler.pause(f"model switch {rec.id} to {rec.target} in progress; retry after it")
             remaining = self._scheduler.drain(self._drain_timeout)
-            if remaining and not rec.forced:
+            if remaining and not rec.flags.get("cut_in_flight"):
                 rec.step("drain", False, f"{remaining} request(s) still active after {self._drain_timeout}s")
-                self._finish(rec, ABORTED, "in-flight requests did not drain; nothing was stopped")
+                self._finish(rec, ABORTED, "in-flight requests did not drain; nothing was stopped "
+                                           "(cut_in_flight=true cuts them)")
                 return
-            rec.step("drain", True, f"{remaining} still active (forced)" if remaining else "drained")
+            rec.step("drain", True, f"{remaining} still active (cut_in_flight)" if remaining else "drained")
 
             old = self._manager.lifecycle
+            # No request may (re)start the outgoing deployment from here on (A1).
+            if hasattr(old, "latch"):
+                old.latch(f"switch {rec.id} to {rec.target}")
             rec.previous_healthy = old.status().state.value == "ready"
             rec.step("previous", True, f"{rec.previous} healthy={rec.previous_healthy}")
+            stopped_previous = True  # from here a failure must restore the previous model
             old.release(force=bool(remaining))
-            stopped_previous = True
             st = old.status()
             if st.state.value != "down":
                 raise RuntimeError(f"previous deployment did not stop (state {st.state.value})")
@@ -333,6 +416,8 @@ class ModelSwitcher:
             log.error("switch %s failed: %r", rec.id, exc)
             rec.error = str(exc)[:1000]
             if not stopped_previous:
+                if old is not None and hasattr(old, "unlatch"):
+                    old.unlatch()
                 self._finish(rec, ABORTED, rec.error)
             else:
                 self._rollback(rec)
@@ -344,12 +429,20 @@ class ModelSwitcher:
     def _rollback(self, rec: SwitchRecord) -> None:
         rec.step("rollback", True, f"restoring {rec.previous}")
         try:
-            if self._manager.active_name != rec.previous:
-                try:
-                    self._manager.lifecycle.release(force=True)
-                except Exception as exc:  # noqa: BLE001
-                    rec.step("release_target", False, repr(exc))
+            current = self._manager.lifecycle
+            if self._manager.active_name != rec.previous or rec.flags.get("reactivate"):
+                if self._manager.active_name != rec.previous:
+                    try:
+                        current.release(force=True)
+                    except Exception as exc:  # noqa: BLE001
+                        rec.step("release_target", False, repr(exc))
+                # A fresh lifecycle object: the latched one stays dead.
                 self._manager.activate(rec.previous)
+            else:
+                # The target never started (e.g. preflight failed): reuse the
+                # previous lifecycle, which the switch latched.
+                if hasattr(current, "unlatch"):
+                    current.unlatch()
             self._manager.lifecycle.acquire(None, timeout=self._acquire_timeout, bypass_backoff=True)
             checks = self._validate(rec.previous, self._token)
             rec.rollback_checks = [c.as_dict() for c in checks]

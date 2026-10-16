@@ -39,6 +39,15 @@ from gx_orchestrator.server import Handler, RoutingJournal, TextMetrics
 API_KEY = "test-orchestrator-key"
 #: An identity the harness policy lets set X-GX-Priority (D-053).
 TRUSTED = "trusted-agent"
+#: The gateway<->orchestrator identity signing key used by the harness.
+IDENTITY_KEY = "test-identity-hmac-key-0123456789"
+
+
+def signed_identity(name: str, key: str = IDENTITY_KEY, ts: "int | None" = None) -> dict:
+    """The headers the LiteLLM hook adds for an authenticated key alias."""
+    from gx_orchestrator.identity import sign_identity
+    ts = int(time.time()) if ts is None else ts
+    return {"X-GX-Identity": name, "X-GX-Identity-Ts": str(ts), "X-GX-Identity-Sig": sign_identity(key, name, ts)}
 MODEL_ID = "DeepSeek-v4.1-Flash-EXL3"
 
 
@@ -266,6 +275,10 @@ class OrchestratorHarness(unittest.TestCase):
         self._old_key = os.environ.get("GX_ORCHESTRATOR_API_KEY")
         os.environ["GX_ORCHESTRATOR_API_KEY"] = API_KEY
         self.addCleanup(self._restore_key)
+        self._old_idkey = os.environ.get("GX_IDENTITY_HMAC_KEY")
+        os.environ["GX_IDENTITY_HMAC_KEY"] = IDENTITY_KEY
+        self.addCleanup(lambda: os.environ.pop("GX_IDENTITY_HMAC_KEY", None) if self._old_idkey is None
+                        else os.environ.__setitem__("GX_IDENTITY_HMAC_KEY", self._old_idkey))
 
         self.lifecycle = FakeLifecycle()
         self.scheduler = Scheduler(

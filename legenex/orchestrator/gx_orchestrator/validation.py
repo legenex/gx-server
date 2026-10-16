@@ -49,11 +49,15 @@ class HostFacts:
         self.ssh = ssh_target
         self.read_mem = read_mem
 
-    def container_running(self, node: str, name: str) -> bool:
+    def container_running(self, node: str, name: str) -> "bool | None":
+        """Tri-state: True / False (docker says so) / None (could not tell)."""
         if not _NAME.match(name):
-            return False
+            return None
         p = run_on(node, f"docker inspect -f '{{{{.State.Running}}}}' {name}", ssh_target=self.ssh)
-        return bool(p and p.returncode == 0 and p.stdout.strip() == "true")
+        if p is None:
+            return None
+        from .lifecycle import container_state_from  # noqa: PLC0415
+        return container_state_from(p.returncode, p.stdout, p.stderr, remote=node != "node1")
 
     def image_id(self, node: str, image: str) -> str:
         if not _IMAGE.match(image):
@@ -107,18 +111,25 @@ class GatewayValidator:
     def __call__(self, name: str, token: str) -> list[Check]:
         dep = self.registry.deployment(name)
         runtime = self.registry.runtime(dep.runtime)
-        checks = [Check(f"rank_{node}", self.facts.container_running(node, dep.containers.get(node, "")),
-                        dep.containers.get(node, "?")) for node in ("node1", "node2")]
+        checks = []
+        for node in ("node1", "node2"):
+            state = self.facts.container_running(node, dep.containers.get(node, ""))
+            checks.append(Check(f"rank_{node}", state is True,
+                                f"{dep.containers.get(node, '?')}: "
+                                + {True: "running", False: "not running", None: "unknown (probe error)"}[state]))
         if not self.key:
             return checks + [Check("gateway_key", False, "no GX_GATEWAY_KEY/LITELLM_MASTER_KEY in the environment")]
-        alias = "gx-fast" if dep.mode_routing else "gx-max"
+        # gx-fast (thinking off) on BOTH deployments: a thinking reply can spend
+        # a small budget before the answer (D-053 A4). gx-high adds a tool call
+        # with thinking on.
+        alias = "gx-fast"
         hdr = {"Authorization": f"Bearer {self.key}", "X-GX-Switch-Validation": token,
                "X-GX-Project": "model-switch", "X-GX-Agent": "switch-validator"}
         url = f"{self.base}/chat/completions"
 
         # 1. completion + served identity + fabric
         tx0 = self.facts.rdma_tx_bytes()
-        status, headers, raw = _post(url, {"model": alias, "temperature": 0, "max_tokens": 64,
+        status, headers, raw = _post(url, {"model": alias, "temperature": 0, "max_tokens": 256,
                                            "messages": [{"role": "user", "content": "17*19="}]}, hdr, self.timeout)
         tx1 = self.facts.rdma_tx_bytes()
         content = ""
@@ -135,42 +146,25 @@ class GatewayValidator:
         if tx0 is not None and tx1 is not None:
             checks.append(Check("fabric_rdma", tx1 > tx0, f"rocep1s0f0 tx +{tx1 - tx0} bytes during the completion"))
 
-        # 2. streaming
-        status, _h, raw = _post(url, {"model": alias, "stream": True, "max_tokens": 128, "temperature": 0,
+        # 2. streaming: incremental chunks, a terminating [DONE], no raw tags
+        status, _h, raw = _post(url, {"model": alias, "stream": True, "max_tokens": 256, "temperature": 0,
                                       "messages": [{"role": "user", "content": "Count from 1 to 5, comma separated."}]},
                                 hdr, self.timeout)
-        text = ""
-        for line in raw.split(b"\n"):
-            if line.startswith(b"data: {"):
-                try:
-                    for ch in json.loads(line[6:]).get("choices") or []:
-                        text += (ch.get("delta") or {}).get("content") or ""
-                except ValueError:
-                    continue
-        checks.append(Check("streaming", status == 200 and "1" in text and "5" in text and "<think>" not in text,
-                            f"HTTP {status}: {text[:80]!r}"))
+        text, pieces, done = _stream_text(raw)
+        checks.append(Check("streaming",
+                            status == 200 and pieces >= 2 and done and "1" in text and "5" in text
+                            and "<think>" not in text,
+                            f"HTTP {status}: {pieces} content chunks, [DONE]={done}: {text[:80]!r}"))
 
-        # 3. structured tool call
+        # 3. structured tool call (thinking off) and 4. tool-result continuation
         msgs = [{"role": "user", "content": "What is the weather in Paris? Use the tool."}]
-        status, _h, raw = _post(url, {"model": alias, "tools": _TOOLS, "tool_choice": "required",
-                                      "max_tokens": 256, "messages": msgs}, hdr, self.timeout)
-        call = None
-        try:
-            choice = json.loads(raw)["choices"][0]
-            call = (choice["message"].get("tool_calls") or [None])[0]
-            args = json.loads(call["function"]["arguments"]) if call else {}
-            ok = (status == 200 and call["function"]["name"] == "get_weather" and bool(args.get("city")))
-            detail = f"{call['function']['name']}({call['function']['arguments']}) finish={choice.get('finish_reason')}"
-        except (ValueError, KeyError, IndexError, TypeError) as exc:
-            ok, detail = False, f"HTTP {status}: no parsable tool call ({exc!r})"
+        ok, detail, call = self._tool_call(url, hdr, alias, msgs, 512)
         checks.append(Check("tool_call", ok, detail))
-
-        # 4. tool-result continuation
         if call:
             msgs2 = msgs + [{"role": "assistant", "content": "", "tool_calls": [call]},
                             {"role": "tool", "tool_call_id": call.get("id", "call_0"),
                              "content": json.dumps({"city": "Paris", "temp_c": 21, "sky": "clear"})}]
-            status, _h, raw = _post(url, {"model": alias, "tools": _TOOLS, "max_tokens": 256, "messages": msgs2},
+            status, _h, raw = _post(url, {"model": alias, "tools": _TOOLS, "max_tokens": 512, "messages": msgs2},
                                     hdr, self.timeout)
             try:
                 answer = json.loads(raw)["choices"][0]["message"].get("content") or ""
@@ -180,7 +174,42 @@ class GatewayValidator:
                                 f"HTTP {status}: {answer[:100]!r}"))
         else:
             checks.append(Check("tool_result_continuation", False, "skipped: no tool call to continue"))
+        # 5. a tool call in a thinking mode (reasoning must not swallow it)
+        ok, detail, _call = self._tool_call(url, hdr, "gx-high", msgs, 4096)
+        checks.append(Check("tool_call_thinking", ok, detail))
         return checks
+
+    def _tool_call(self, url: str, hdr: dict, alias: str, msgs: list, max_tokens: int):
+        status, _h, raw = _post(url, {"model": alias, "tools": _TOOLS, "tool_choice": "required",
+                                      "max_tokens": max_tokens, "messages": msgs}, hdr, self.timeout)
+        try:
+            choice = json.loads(raw)["choices"][0]
+            call = (choice["message"].get("tool_calls") or [None])[0]
+            args = json.loads(call["function"]["arguments"]) if call else {}
+            ok = status == 200 and call["function"]["name"] == "get_weather" and bool(args.get("city"))
+            return ok, (f"{alias}: {call['function']['name']}({call['function']['arguments']}) "
+                        f"finish={choice.get('finish_reason')}"), call
+        except (ValueError, KeyError, IndexError, TypeError) as exc:
+            return False, f"{alias} HTTP {status}: no parsable tool call ({exc!r})", None
+
+
+def _stream_text(raw: bytes) -> tuple[str, int, bool]:
+    """(content, number of content-bearing chunks, saw [DONE])."""
+    text, pieces, done = "", 0, False
+    for line in raw.split(b"\n"):
+        line = line.strip()
+        if line == b"data: [DONE]":
+            done = True
+        elif line.startswith(b"data: {"):
+            try:
+                for ch in json.loads(line[6:]).get("choices") or []:
+                    piece = (ch.get("delta") or {}).get("content") or ""
+                    if piece:
+                        pieces += 1
+                        text += piece
+            except ValueError:
+                continue
+    return text, pieces, done
 
 
 class HostPreflight:
@@ -223,7 +252,9 @@ def rollback_readiness(registry: Registry, facts: HostFacts, history: list[dict[
     for name, dep in registry.deployments.items():
         model = registry.model(dep.model)
         runtime = registry.runtime(dep.runtime)
-        weights_node = "node2" if getattr(model, "path", "").startswith("/srv/models/dsv4") else "node1"
+        # Exact registry fact (D-053 A5): the model's `node`, mapped to rank names.
+        worker = str(registry.cluster.get("worker", ""))
+        weights_node = "node2" if model.node and model.node == worker else "node1"
         count = facts.safetensors_count(weights_node, model.path)
         images = {n: facts.image_id(n, runtime.image) for n in ("node1", "node2")}
         tested = [h for h in history if h.get("state") == "succeeded" and h.get("target") == name]

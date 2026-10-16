@@ -108,11 +108,24 @@ class TestStreamGuard(unittest.TestCase):
         self.assertEqual(content, "Hi there!")
         self.assertEqual(text, raw)
 
-    def test_stray_tags_never_reach_content(self):
-        raw = sse([{"reasoning": "r"}, {"content": "a</think>b"}, {"content": "c<think>hidden</think>d"}])
+    def test_literal_tags_inside_an_answer_pass_through(self):
+        # Review repros (L1): answers ABOUT tags must reach content verbatim.
+        for answer in ("Use the <think> tag to wrap reasoning.",
+                       'pattern = r"<think>(.*?)</think>"',
+                       'head, tail = s.split("</think>")'):
+            for thinking, lead in ((False, []), (True, [{"reasoning": "r"}])):
+                raw = sse(lead + [answer[:9], answer[9:]])
+                content, reasoning, _, _ = run_stream(raw, thinking=thinking)
+                self.assertEqual(content, answer, (answer, thinking))
+                self.assertEqual(reasoning, "r" if lead else "", (answer, thinking))
+            out = json.loads(guard_completion_body(json.dumps({"choices": [{"index": 0, "message": {
+                "role": "assistant", "content": answer}}]}).encode(), thinking=False))
+            self.assertEqual(out["choices"][0]["message"]["content"], answer)
+
+    def test_tags_after_a_closed_block_are_answer_text(self):
+        raw = sse(["<think>plan</think>", "Use ", "<think>", " tags"])
         content, reasoning, _, _ = run_stream(raw, thinking=True)
-        self.assertEqual(content, "abcd")
-        self.assertEqual(reasoning, "rhidden")
+        self.assertEqual((content, reasoning), ("Use <think> tags", "plan"))
 
     def test_held_text_is_flushed_when_no_close_tag_ever_comes(self):
         # Thinking requested, the model answered directly, no finish_reason event.
@@ -168,7 +181,7 @@ class TestChoiceFilter(unittest.TestCase):
         self.assertEqual(f.feed("<th"), ("", ""))
         self.assertEqual(f.finish(), ("<th", ""))
 
-    def test_less_than_sign_in_code_is_kept(self):
+    def test_less_than_sign_in_code_is_kept(self):  # noqa: D102
         f = ChoiceFilter(thinking=False)
         c1, _ = f.feed("if a <")
         c2, _ = f.feed(" b: pass")

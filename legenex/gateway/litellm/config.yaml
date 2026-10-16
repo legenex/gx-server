@@ -6,8 +6,8 @@
 #
 #   gx-auto  gx-fast  gx-medium  gx-high  gx-max
 #
-# SOURCE ONLY until the activation runbook: applying this file to the live
-# gx-litellm container is a deploy step (legenex/models/dsv4-flash/README.md).
+# LANDING CONFIG: gx-max/gx-auto keep their V4.1 model_info until the V4 Flash
+# activation, which applies config.dsv4-flash.yaml instead (review L3).
 #
 # Both resolve to the lead's orchestrator on :18900, which owns the request
 # queue, profile/reasoning selection and the DeepSeek V4.1 Flash EXL3 runtime
@@ -102,20 +102,19 @@ model_list:
       drop_params: true
       include_reasoning: true
       supports_reasoning: true
-      # Reasoning stays in the separate reasoning field (D-053); it is never
-      # merged into content as <think> text.
-      merge_reasoning_content_in_choices: false
+      # V4.1 landing values (review L3); config.dsv4-flash.yaml at activation.
+      merge_reasoning_content_in_choices: true
       timeout: 3600
       num_retries: 0
     model_info:
-      max_input_tokens: 122880
-      max_output_tokens: 32768
+      max_input_tokens: 245760
+      max_output_tokens: 16384
       mode: auto
       uncensored: true
-      supports_vision: false
+      supports_vision: true
       supports_function_calling: true
       supports_reasoning: true
-      description: Chooses fast, medium, high or max per task
+      description: Profile/reasoning auto-selection
   - model_name: gx-fast
     litellm_params:
       model: openai/gx-fast
@@ -190,20 +189,20 @@ model_list:
       drop_params: true
       include_reasoning: true
       supports_reasoning: true
-      # Reasoning stays in the separate reasoning field (D-053); it is never
-      # merged into content as <think> text.
-      merge_reasoning_content_in_choices: false
+      # V4.1 landing values (review L3); config.dsv4-flash.yaml at activation.
+      merge_reasoning_content_in_choices: true
       timeout: 3600
       num_retries: 0
     model_info:
-      max_input_tokens: 65536
-      max_output_tokens: 65536
-      mode: max
+      # Registry model dsv41-flash-exl3-uncensored, max_context 262144.
+      max_input_tokens: 245760
+      max_output_tokens: 16384
+      mode: direct
       uncensored: true
-      supports_vision: false
+      supports_vision: true
       supports_function_calling: true
       supports_reasoning: true
-      description: Thinking max, largest tested safe context, controlled admission
+      description: Explicit DeepSeek V4.1 Flash (uncensored)
 
 litellm_settings:
   drop_params: true
@@ -229,8 +228,8 @@ litellm_settings:
   context_window_fallbacks: []
   content_policy_fallbacks: []
 
-  # D-053: reasoning is never merged into content (separate reasoning field).
-  merge_reasoning_content_in_choices: false
+  # Landing value (V4.1 behaviour for Open WebUI); config.dsv4-flash.yaml sets false.
+  merge_reasoning_content_in_choices: true
 
   # --- privacy-safe logging -------------------------------------------------
   # Prompts and completions are never written to logs or the spend database.

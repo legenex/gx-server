@@ -1,0 +1,68 @@
+"""gx_budget_hook (D-053 review): signed identity, namespaced fallbacks, and a
+switch-validation token that is forwarded but never logged.
+
+    python3 -m unittest discover -s legenex/gateway/litellm/tests
+"""
+from __future__ import annotations
+
+import asyncio
+import os
+import sys
+import types
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[4]
+ORCH = ROOT / "legenex" / "orchestrator"
+os.environ["GX_HOOK_LIB"] = str(ORCH)
+os.environ["GX_TEXT_METRICS_LOG"] = "/tmp/gx-hook-test-metrics.jsonl"
+# Stub the LiteLLM base class: the hook only subclasses it.
+for name in ("litellm", "litellm.integrations", "litellm.integrations.custom_logger"):
+    sys.modules.setdefault(name, types.ModuleType(name))
+sys.modules["litellm.integrations.custom_logger"].CustomLogger = type("CustomLogger", (), {})
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(ORCH))
+
+import gx_hooks.gx_budget_hook as H  # noqa: E402
+from gx_orchestrator.identity import identity_from_headers  # noqa: E402
+
+KEY = "hook-test-identity-key-0123456789"
+
+
+class Key:
+    def __init__(self, **kw):
+        self.key_alias = kw.get("key_alias")
+        self.team_alias = kw.get("team_alias")
+        self.user_id = kw.get("user_id")
+
+
+class TestIdentity(unittest.TestCase):
+    def test_fallbacks_are_namespaced(self):
+        self.assertEqual(H._identity(Key(key_alias="odin")), "odin")
+        self.assertEqual(H._identity(Key(team_alias="odin")), "team:odin")
+        self.assertEqual(H._identity(Key(user_id="odin")), "user:odin")
+        self.assertEqual(H._identity(Key()), "anonymous")
+
+    def test_signature_verifies_at_the_orchestrator(self):
+        os.environ["GX_IDENTITY_HMAC_KEY"] = KEY
+        self.addCleanup(os.environ.pop, "GX_IDENTITY_HMAC_KEY", None)
+        hdrs = H._signed_identity("open-webui")
+        self.assertEqual(identity_from_headers(hdrs, KEY), "open-webui")
+        self.assertEqual(identity_from_headers(hdrs, "x" * 32), "")
+
+    def test_pre_call_forwards_identity_and_token_but_logs_no_token(self):
+        os.environ["GX_IDENTITY_HMAC_KEY"] = KEY
+        self.addCleanup(os.environ.pop, "GX_IDENTITY_HMAC_KEY", None)
+        data = {"model": "gx-fast", "messages": [{"role": "user", "content": "hi"}],
+                "metadata": {"headers": {"X-GX-Project": "p", "X-GX-Switch-Validation": "secret-token",
+                                         "X-GX-Identity": "odin"}}}
+        out = asyncio.run(H.GxBudgetHook().async_pre_call_hook(Key(key_alias="hermes"), None, data, "acompletion"))
+        fwd = out["forwarded_headers"]
+        self.assertEqual(fwd["X-GX-Identity"], "hermes")          # the client's "odin" claim is gone
+        self.assertEqual(fwd["X-GX-Switch-Validation"], "secret-token")
+        self.assertNotIn("X-GX-Switch-Validation", out["metadata"]["gx_attribution"])
+        self.assertEqual(identity_from_headers(fwd, KEY), "hermes")
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -510,7 +510,11 @@ class Handler(BaseHTTPRequestHandler):
             if self.switcher is None:
                 self._send_error_json(503, "deployment manager not configured", "not_configured")
                 return
-            actor = f"operator@{self.client_address[0]}"
+            # The operator names themselves (X-GX-Operator or "actor"); the
+            # token proves authority, the name makes the audit trail useful.
+            claimed = str(self.headers.get("X-GX-Operator") or payload.get("actor") or "").strip()
+            claimed = "".join(c for c in claimed if c.isalnum() or c in "-_.@ ")[:64].strip()
+            actor = f"{claimed or 'operator'} (token) via {self.client_address[0]}"
             try:
                 rec = self.switcher.request(payload, actor=actor)
             except SwitchError as exc:
@@ -729,22 +733,32 @@ class Handler(BaseHTTPRequestHandler):
             return None
         return decision
 
-    def _ensure_acquired(self, profile_name: str, attr: dict[str, str], request_id: str) -> bool:
+    def _ensure_acquired(self, profile_name: str, attr: dict[str, str], request_id: str,
+                         *, bypass_pause: bool = False) -> bool:
         """Lifecycle gate. DOWN/ACQUIRING is handled by priority:
 
+        * a model switch in progress -- 503, never an acquisition (two kits
+          booting at once would exhaust both nodes, D-053 A1); only the
+          switch's own validation requests pass;
         * interactive -- trigger the acquisition (queued with an event) and
           let the request wait in the scheduler queue.
         * anything else -- a clear 503 now; no silent waits beyond the queue.
         """
+        paused = self.scheduler.paused
+        if paused and not bypass_pause:
+            self._send_error_json(503, paused, "model_switch_in_progress", {"Retry-After": "60"})
+            return False
         state = self.lifecycle.status().state
         if state is State.READY:
             return True
         if attr["priority"] != "interactive":
+            dep = self.manager.active if self.manager is not None else None
+            how = ("send it as gx-fast (interactive) to start it automatically" if dep is not None
+                   and dep.mode_routing else "raise X-GX-Priority: interactive to start it automatically")
             self._send_error_json(
                 503,
-                f"the model is {state.value} (DeepSeek V4.1 Flash is the only model and is "
-                "never substituted); retry when it is up, raise X-GX-Priority: interactive "
-                "to start it automatically, or use the lifecycle endpoint",
+                f"the model is {state.value} (the served model is never substituted); "
+                f"retry when it is up, {how}, or use the lifecycle endpoint",
                 "model_down",
                 NO_RETRY_HEADERS,
                 lifecycle_state=state.value,
@@ -778,10 +792,12 @@ class Handler(BaseHTTPRequestHandler):
         attr = _attribution(self.headers)
         # Priority comes from the AUTHENTICATED identity (D-053); a caller's
         # X-GX-Priority counts only where the policy allows it.
-        identity = identity_from_headers(self.headers)
+        identity = identity_from_headers(self.headers, self.cfg.identity_hmac_key())
+        dep_now = self.manager.active if self.manager is not None else None
         prio, prio_why = self.identity_policy.resolve(
             identity, mode_priority or SCHED.priority_from_mode(profile_name),
-            attr.pop("priority_header", ""))
+            attr.pop("priority_header", ""),
+            legacy=dep_now is None or not dep_now.mode_routing)
         attr["priority"] = prio
         bypass = bool(self.switcher is not None and self.switcher.validation_token_ok(
             (self.headers.get("X-GX-Switch-Validation") or "").strip()))
@@ -803,7 +819,7 @@ class Handler(BaseHTTPRequestHandler):
         else:
             acquire_profile = profile_name
 
-        if not self._ensure_acquired(acquire_profile, attr, request_id):
+        if not self._ensure_acquired(acquire_profile, attr, request_id, bypass_pause=bypass):
             return
 
         decision = self._scheduler_submit(request_id, attr, profile_name, reasoning, payload,
@@ -1300,17 +1316,22 @@ def build_servers(cfg: Config | None = None) -> tuple[list[ThreadingHTTPServer],
             fixed_profile=fixed_profile_for(dep),
         )
 
-    store = ActiveDeploymentStore(cfg.state_dir / "orchestrator" / "active-deployment.json")
-    manager = DeploymentManager(registry, store, make_lifecycle)
-    lifecycle = LifecycleProxy(manager)
-    history = SwitchHistory(cfg.state_dir / "orchestrator" / "model-switch-history.jsonl")
-    interrupted = history.mark_interrupted()
-    if interrupted:
-        log.error("%d model switch(es) were interrupted by an orchestrator restart; "
-                  "check both nodes (GET /models/history)", interrupted)
     from .lifecycle import _default_read_mem_gib  # noqa: PLC0415
+    from .switching import reconcile_interrupted  # noqa: PLC0415
     from .validation import GatewayValidator, HostFacts, HostPreflight  # noqa: PLC0415
     facts = HostFacts(cfg.node2_ssh, _default_read_mem_gib)
+    store = ActiveDeploymentStore(cfg.state_dir / "orchestrator" / "active-deployment.json")
+    history = SwitchHistory(cfg.state_dir / "orchestrator" / "model-switch-history.jsonl")
+    # A switch cut short by a restart is reconciled BEFORE any lifecycle
+    # exists, so the right deployment is adopted and nothing auto-starts (A9).
+    recon = reconcile_interrupted(
+        history.mark_interrupted(), registry=registry, store=store, history=history,
+        running=lambda name: {n: facts.container_running(n, c)
+                              for n, c in registry.deployment(name).containers.items()})
+    manager = DeploymentManager(registry, store, make_lifecycle)
+    if recon["latch"]:
+        manager.lifecycle.latch("interrupted switch needs an operator: " + recon["latch"])
+    lifecycle = LifecycleProxy(manager)
     switcher = ModelSwitcher(
         manager=manager, scheduler=scheduler, history=history,
         lock=SwitchLock(cfg.state_dir / "orchestrator" / "model-switch.lock"),
@@ -1320,7 +1341,12 @@ def build_servers(cfg: Config | None = None) -> tuple[list[ThreadingHTTPServer],
         drain_timeout=cfg.switch_drain_timeout,
         acquire_timeout=cfg.gxmax_acquire_timeout,
     )
-    health = ClusterHealth(cfg, registry)
+    def active_endpoint() -> tuple[str, str, str]:
+        dep = manager.active
+        rt = registry.runtime(dep.runtime)
+        return rt.api, rt.served_model_id, dep.containers.get("node2") or cfg.worker_container
+
+    health = ClusterHealth(cfg, registry, active=active_endpoint)
     journal = RoutingJournal(cfg.log_dir / "gx-auto-routing.jsonl")
     metrics = TextMetrics()
     metrics.seed(journal.find(limit=200))

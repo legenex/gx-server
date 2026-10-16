@@ -18,6 +18,7 @@ fabricated.
 from __future__ import annotations
 
 import json
+import os
 import threading
 import time
 from pathlib import Path
@@ -74,8 +75,32 @@ def cluster_nodes(reg: dict) -> dict[str, dict]:
     return nodes if isinstance(nodes, dict) else {}
 
 
-def production_model_id(reg: dict) -> str | None:
-    """The model id the gx-max alias points at (the production pack)."""
+def active_deployment(reg: dict, state_root: "str | None" = None) -> "str | None":
+    """The orchestrator's ACTIVE deployment (D-053): the typed switch writes
+    state/orchestrator/active-deployment.json; without it the registry's
+    initial_active_deployment. None on a registry without deployments."""
+    deps = reg.get("deployments")
+    if not isinstance(deps, dict) or not deps:
+        return None
+    root = Path(state_root or os.environ.get("GX_STATE_ROOT") or "/srv/projects/gx-cluster/state")
+    try:
+        name = json.loads((root / "orchestrator" / "active-deployment.json").read_text("utf-8"))["deployment"]
+    except (OSError, ValueError, KeyError, TypeError):
+        name = None
+    if name in deps:
+        return name
+    initial = reg.get("initial_active_deployment")
+    return initial if initial in deps else None
+
+
+def production_model_id(reg: dict, state_root: "str | None" = None) -> str | None:
+    """The model pack actually serving: the active deployment's model, else
+    (pre-D-053 registry) the one the gx-max alias points at."""
+    dep = active_deployment(reg, state_root)
+    if dep:
+        mid = ((reg.get("deployments") or {}).get(dep) or {}).get("model")
+        if isinstance(mid, str) and mid:
+            return mid
     spec = (reg.get("aliases") or {}).get("gx-max") or {}
     mid = spec.get("model")
     if isinstance(mid, str) and mid and not mid.startswith("<"):
@@ -206,8 +231,10 @@ def live_state(cluster, reg: dict) -> list[dict]:
         out.append({
             "id": alias, "alias": alias, "kind": "alias", "state": astate, "state_detail": adetail,
             "mode": spec.get("mode"), "description": spec.get("description"),
-            "model": spec.get("model") or production_model_id(reg),
-            "runtime": spec.get("runtime"),
+            # The ACTIVE deployment decides what every alias serves (D-053).
+            "model": production_model_id(reg) or spec.get("model"),
+            "runtime": ((reg.get("deployments") or {}).get(active_deployment(reg) or "") or {}).get("runtime")
+                       or spec.get("runtime"),
             "uncensored": True,
         })
     return out

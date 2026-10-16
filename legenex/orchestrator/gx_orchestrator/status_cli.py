@@ -142,9 +142,12 @@ def registry_model_facts(cfg: Config) -> dict[str, Any]:
         registry = load_registry(cfg.registry_path)
     except (RegistryError, OSError) as exc:
         return {"error": str(exc)}
-    model = registry.production_model()
-    runtime = registry.runtime(registry.alias("gx-max").runtime)
+    # The ACTIVE deployment's model (active-deployment.json), not the alias
+    # binding, which only describes the landing state (D-053 review L4).
+    model = registry.active_model(cfg.state_dir)
+    runtime = registry.active_runtime(cfg.state_dir)
     return {
+        "deployment": registry.active_deployment_name(cfg.state_dir),
         "model_id": runtime.served_model_id,
         "uncensored": model.uncensored,
         "quant": model.quant,

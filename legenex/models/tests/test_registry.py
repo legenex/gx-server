@@ -107,7 +107,10 @@ class ShippedRegistryTest(unittest.TestCase):
             self.assertIn(alias["runtime"], self.reg["runtimes"], f"{name}: unknown runtime")
             self.assertIn(alias["mode"], ("direct", "auto"))
             self.assertTrue(alias["description"])
-            self.assertEqual(alias["model"], "dsv4-flash-0731-abliterated")
+            # Landing state: still bound to the serving rollback (review L4);
+            # the active deployment, not this binding, decides at runtime.
+            self.assertEqual(alias["model"], "dsv41-flash-exl3-uncensored")
+            self.assertEqual(alias["runtime"], "mia-dsv41")
             self.assertEqual(alias["logical_mode"], name.removeprefix("gx-"))
         self.assertEqual(self.reg["aliases"]["gx-auto"]["mode"], "auto")
 
