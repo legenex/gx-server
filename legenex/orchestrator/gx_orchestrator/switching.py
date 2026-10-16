@@ -287,6 +287,7 @@ class ModelSwitcher:
         acquire_timeout: "float | None" = None,
         clock: Callable[[], dt.datetime] = lambda: dt.datetime.now(dt.timezone.utc),
         run_async: bool = True,
+        configure_gateway: "Callable[[str], None] | None" = None,
     ) -> None:
         self._manager = manager
         self._scheduler = scheduler
@@ -298,6 +299,7 @@ class ModelSwitcher:
         self._acquire_timeout = acquire_timeout
         self._clock = clock
         self._async = run_async
+        self._configure_gateway = configure_gateway
         self._current: "SwitchRecord | None" = None
         self._mutex = threading.Lock()
         self._token = ""
@@ -420,6 +422,10 @@ class ModelSwitcher:
             lc.acquire(None, timeout=self._acquire_timeout, bypass_backoff=True)
             rec.step("start_target", True, f"{rec.target} READY")
 
+            if self._configure_gateway is not None:
+                self._configure_gateway(rec.target)
+                rec.step("gateway_config", True, f"{rec.target} loaded metadata and identity verified")
+
             checks = self._validate(rec.target, self._token)
             rec.checks = [c.as_dict() for c in checks]
             failed = [c for c in checks if not c.ok]
@@ -460,6 +466,9 @@ class ModelSwitcher:
                 if hasattr(current, "unlatch"):
                     current.unlatch()
             self._manager.lifecycle.acquire(None, timeout=self._acquire_timeout, bypass_backoff=True)
+            if self._configure_gateway is not None:
+                self._configure_gateway(rec.previous)
+                rec.step("rollback_gateway_config", True, f"{rec.previous} loaded metadata and identity verified")
             checks = self._validate(rec.previous, self._token)
             rec.rollback_checks = [c.as_dict() for c in checks]
             failed = [c for c in checks if not c.ok]

@@ -94,6 +94,9 @@ def node_check(worker: bool) -> dict:
     command(['modinfo', 'nfsd' if worker else 'nfs'])
     if worker:
         info['weights'] = verify_weights()
+    else:
+        import yaml
+        info['gateway_yaml_version'] = yaml.__version__
     return info
 
 

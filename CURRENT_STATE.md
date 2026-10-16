@@ -1381,3 +1381,19 @@ legenex/tests/gx-max-validate.sh               # full two-node lifecycle, unveri
 # gx-reason: do NOT re-attempt the same diagnostic — B-011 is already isolated.
 # Next step there is a human decision (upstream issue, new quant, or a bisect).
 ```
+# Owner model-control gateway reconciliation
+
+The existing native switch controller now reconciles the selected deployment's
+gateway configuration before its gateway validation, and reconciles the previous
+configuration before reporting successful automatic rollback. Failed gateway
+restoration remains `rollback_failed`. The same helper verifies loaded alias
+metadata, context limits, route parameters and HMAC identity before skipping a
+repeat recreation. The window runner can safely verify the already completed
+native step without recreating LiteLLM twice. No second switch controller exists.
+
+`/models/status` carries a source receipt captured once when the service starts
+(Git SHA, code/registry fingerprint, PID, UTC time), independent of later checkout
+changes. The current window release must be replaced with the exact reviewed
+commit before these changes are deployed; execution and rollback remain pending
+the approved maintenance window. The head's existing PyYAML dependency is now
+checked during preflight.

@@ -29,10 +29,22 @@ if [ -z "$have" ] || [ "$(realpath -m "$have")" != "$want" ]; then
     exit 3
 fi
 case "$target" in
-    dsv4)    cp "$GW/litellm/config.dsv4-flash.yaml" "$GW/litellm/config.yaml" ;;
-    landing) cp "$GW/litellm/config.dsv41.yaml" "$GW/litellm/config.yaml" ;;
+    dsv4)    desired="$GW/litellm/config.dsv4-flash.yaml" ;;
+    landing) desired="$GW/litellm/config.dsv41.yaml" ;;
     *) echo "usage: $0 dsv4|landing" >&2; exit 2 ;;
 esac
+verify="$(dirname "$0")/gateway_state.py"
+# A native switch now reconciles the gateway before validation. The window
+# runner may repeat this step after reconciling a lost acknowledgement; verify
+# actual LOADED metadata/parameters and signing before skipping any recreation.
+if cmp -s "$desired" "$GW/litellm/config.yaml" \
+    && python3 -I "$verify" --repo "$REPO" --target "$target" --gateway-url "$GATEWAY_URL" \
+    && "$GW/identity-hmac.sh" verify; then
+    trap - ERR
+    echo "gateway config '$target' already loaded and identity signing verified"
+    exit 0
+fi
+cp "$desired" "$GW/litellm/config.yaml"
 $DOCKER compose -p gx-gateway -f "$GW/docker-compose.gateway.yml" --env-file "$GW/.env" \
     up -d --no-deps --force-recreate litellm
 for _ in $(seq 1 $(( ${GX_LIVE_WAIT:-120} / 2 ))); do
@@ -41,5 +53,6 @@ for _ in $(seq 1 $(( ${GX_LIVE_WAIT:-120} / 2 ))); do
 done
 curl -fsS -m 3 "${GATEWAY_URL%/v1}/health/liveliness" >/dev/null || { echo "gx-litellm is not live" >&2; false; }
 "$GW/identity-hmac.sh" verify
+python3 -I "$verify" --repo "$REPO" --target "$target" --gateway-url "$GATEWAY_URL"
 trap - ERR
 echo "gateway config '$target' applied, gx-litellm recreated, identity signing verified"

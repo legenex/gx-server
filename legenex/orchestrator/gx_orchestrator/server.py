@@ -265,6 +265,7 @@ class Handler(BaseHTTPRequestHandler):
     identity_nonces: "NonceCache" = NonceCache()
     manager: "DeploymentManager | None" = None
     switcher: "ModelSwitcher | None" = None
+    runtime_receipt: "dict[str, Any] | None" = None
 
     # ------------------------------------------------- per-request state
     #: Attributes that describe ONE request. HTTP/1.1 keep-alive reuses this
@@ -360,7 +361,8 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/models/status":
             st = self.lifecycle.status()
             self._send_json(200, {"active": mgr.active_name, "lifecycle": st.as_dict(),
-                                  "switch": sw.current(), "scheduler_paused": self.scheduler.paused})
+                                  "switch": sw.current(), "scheduler_paused": self.scheduler.paused,
+                                  "runtime_receipt": self.runtime_receipt})
         elif path == "/models/rollback-readiness":
             from .validation import rollback_readiness  # noqa: PLC0415
             facts = getattr(self, "host_facts", None)
@@ -1417,6 +1419,7 @@ def build_servers(cfg: Config | None = None) -> tuple[list[ThreadingHTTPServer],
     from .lifecycle import _default_read_mem_gib  # noqa: PLC0415
     from .switching import reconcile_interrupted  # noqa: PLC0415
     from .validation import GatewayValidator, HostFacts, HostPreflight  # noqa: PLC0415
+    from .gateway_config import GatewayConfigurator, source_snapshot  # noqa: PLC0415
     facts = HostFacts(cfg.node2_ssh, _default_read_mem_gib)
     store = ActiveDeploymentStore(cfg.state_dir / "orchestrator" / "active-deployment.json")
     history = SwitchHistory(cfg.state_dir / "orchestrator" / "model-switch-history.jsonl")
@@ -1439,7 +1442,9 @@ def build_servers(cfg: Config | None = None) -> tuple[list[ThreadingHTTPServer],
         preflight=HostPreflight(registry=registry, facts=facts, guard_dir=cfg.state_dir / "guard"),
         drain_timeout=cfg.switch_drain_timeout,
         acquire_timeout=cfg.gxmax_acquire_timeout,
+        configure_gateway=GatewayConfigurator(cfg.repo_root, cfg.log_dir),
     )
+    runtime_receipt = source_snapshot(cfg.repo_root)
     def active_endpoint() -> tuple[str, str, str]:
         dep = manager.active
         rt = registry.runtime(dep.runtime)
@@ -1464,6 +1469,7 @@ def build_servers(cfg: Config | None = None) -> tuple[list[ThreadingHTTPServer],
             "manager": manager,
             "switcher": switcher,
             "host_facts": facts,
+            "runtime_receipt": runtime_receipt,
         },
     )
     servers: list[ThreadingHTTPServer] = []
