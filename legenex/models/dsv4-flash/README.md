@@ -195,6 +195,27 @@ Preflight run 2026-10-16 ~16:00 SAST, read-only (V4.1 resident, untouched):
 | memory model | today's idle after V4.1 release: head 113.4-115.8, worker 116.8-117.0 GiB -> after load at 0.74: head ~19-22, worker ~23 GiB (floor 15). Below 110 GiB on the head the start refuses |
 | tools | `tools/accept.sh` (overlay digests, refusal, bench c=1,2,8 + memory watcher), `tools/bench.py` (the V4.1 baseline method), `tools/refusal_check.py`, `tools/mem_watch.sh` |
 
+The installed unattended runner is the single activation controller. Its reviewed
+owner-control drill has these cutoffs: initial Flash native readiness 01:50,
+first full acceptance 02:30, AI OS owner V4.1 restoration plus real Hermes and
+LibreChat inference 02:50, AI OS owner Flash restoration/native validation 03:30,
+final full acceptance 04:15, and safety V4.1 recovery 04:45. Failure to fit any
+stage causes recovery rather than a success claim. This retains fifteen minutes
+before the authorized window closes. Both full acceptance passes include the
+1/2/4/6/8 benchmark and all five aliases, overlay/ranks/memory and real clients.
+
+Each owner drill leg carries a unique durable operation UUID and an integer
+`not_after` epoch ninety seconds ahead. The owner API and enrolled agent preserve
+that binding; the native controller rejects expired requests and checks again
+after drain, before disruption. Recovery waits out all submitted owner expiries
+and verifies the native switch lock is free, then reconciles/recovers V4.1.
+A queued or claimed owner action cannot later undo that recovery. An interrupted
+runner never resumes forward drill actions or repeats uncertain POSTs.
+
+The table below documents manual inspection of the same native operations; do
+not execute it concurrently with the installed runner. The reviewed unattended
+cutoffs above govern this mission's complete owner-control drill.
+
 Timed plan (all on gx10-01, in ONE operator shell started with
 `HF=$(legenex/models/dsv4-flash/tools/op_headers.sh <name>); trap 'rm -f "$HF"' EXIT`;
 every call `curl -s -H @"$HF" ...`; `tools/op_headers.sh --cleanup` if the shell was lost):

@@ -256,7 +256,7 @@ class SwitchRecord:
     steps: list[dict[str, Any]] = field(default_factory=list)
     checks: list[dict[str, Any]] = field(default_factory=list)
     rollback_checks: list[dict[str, Any]] = field(default_factory=list)
-    flags: dict[str, bool] = field(default_factory=dict)
+    flags: dict[str, Any] = field(default_factory=dict)
     error: str = ""
 
     def step(self, name: str, ok: bool = True, detail: str = "") -> None:
@@ -336,6 +336,11 @@ class ModelSwitcher:
             raise SwitchError(400, "unknown_target", f"target must be one of {sorted(registry_deps)}")
         if payload.get("confirm") is not True:
             raise SwitchError(400, "confirm_required", "a switch needs \"confirm\": true")
+        expiry = payload.get("not_after")
+        if expiry is not None:
+            now = self._clock().timestamp()
+            if type(expiry) is not int or not now < expiry <= now + 120:
+                raise SwitchError(400, "expired_action", "not_after must be an unexpired integer epoch within 120 seconds")
         override = payload.get("override_window") is True
         cut = payload.get("cut_in_flight") is True
         reactivate = payload.get("reactivate") is True
@@ -358,6 +363,8 @@ class ModelSwitcher:
             rec = SwitchRecord(id=sid, target=target, previous=self._manager.active_name, actor=actor,
                                forced=override or cut or reactivate, emergency_reason=reason)
             rec.flags = {"override_window": override, "cut_in_flight": cut, "reactivate": reactivate}
+            if expiry is not None:
+                rec.flags['not_after'] = expiry
             if not in_window:
                 rec.step("window", True, f"outside the window: OVERRIDDEN by {actor}: {reason}")
             else:
@@ -398,6 +405,13 @@ class ModelSwitcher:
                                            "(cut_in_flight=true cuts them)")
                 return
             rec.step("drain", True, f"{remaining} still active (cut_in_flight)" if remaining else "drained")
+
+            # Re-check immediately before any disruption, after queue/drain waits.
+            # A queued owner action cannot wake after recovery's expiry fence.
+            expiry = rec.flags.get('not_after')
+            if expiry is not None and self._clock().timestamp() >= expiry:
+                self._finish(rec, ABORTED, 'owner action expired before disruption; previous model untouched')
+                return
 
             old = self._manager.lifecycle
             # No request may (re)start the outgoing deployment from here on (A1).

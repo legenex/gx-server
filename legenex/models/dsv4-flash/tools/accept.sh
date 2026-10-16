@@ -83,6 +83,11 @@ for alias in gx-auto gx-medium gx-high gx-max; do
         && msg="$($EVAL bench "$OUT/$alias.log")"; then result "$alias" PASS "$msg"
     else result "$alias" FAIL "stream/tool/continuation failed; see $alias.log"; fi
 done
+if python3 -I "$KIT/tools/client_accept.py" "$OUT/clients" > "$OUT/clients.log" 2>&1; then
+    result clients PASS "production Hermes five profiles and LibreChat five aliases"
+else
+    result clients FAIL "production client acceptance failed; see clients.log"
+fi
 cleanup
 if msg="$($EVAL mem "$OUT/mem.tsv" --floor "$FLOOR" --min-samples 10)"; then result memory PASS "$msg"
 else result memory FAIL "$msg"; fi

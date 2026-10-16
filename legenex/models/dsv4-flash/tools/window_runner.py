@@ -18,6 +18,8 @@ import sys
 import time
 import urllib.error
 import urllib.request
+import uuid
+import shlex
 
 SAST = dt.timezone(dt.timedelta(hours=2))
 TARGET = 'dsv4-flash-primary'
@@ -95,6 +97,42 @@ class Operations:
             raise ValueError('orchestrator returned a non-object')
         return data
 
+    def owner_api(self, path: str, body: dict | None = None) -> dict:
+        # Existing owner credential remains inside its existing portal container.
+        # Only the enrolled GX agent and native ModelSwitcher enact the change.
+        if path not in ('/api/gx-models', '/api/gx-models/activate'):
+            raise ValueError('unsupported owner control path')
+        script = """
+import json,os,urllib.request
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+ def redirect_request(self,*args,**kwargs):return None
+p=json.load(__import__('sys').stdin)
+opener=urllib.request.build_opener(urllib.request.ProxyHandler({}),NoRedirect())
+r=urllib.request.Request('http://127.0.0.1:8101'+p['path'],data=None if p['body'] is None else json.dumps(p['body']).encode(),headers={'Authorization':'Bearer '+os.environ['AI_OS_ADMIN_TOKEN'],'Content-Type':'application/json'})
+with opener.open(r,timeout=55) as response:
+ raw=response.read(1024*1024+1)
+ if len(raw)>1024*1024:raise ValueError('owner response exceeds limit')
+ print(raw.decode())
+"""
+        value = json.loads(execute(['ssh', '-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10',
+                                    'dashflo', shlex.join(['docker', 'exec', '-i', 'ai-os-portal', 'python', '-c', script])],
+                                   70, stdin=json.dumps({'path': path, 'body': body})))
+        if not isinstance(value, dict):
+            raise ValueError('owner response is not an object')
+        return value
+
+    def native_switch_settled(self) -> bool:
+        # After expiry, also exclude a request accepted just before its cutoff
+        # but not yet visible in /models/status. Native request takes this lock
+        # before publishing a running record or starting any lifecycle work.
+        path = Path('/srv/projects/gx-cluster/state/orchestrator/model-switch.lock')
+        try:
+            with path.open('r') as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return True
+        except BlockingIOError:
+            return False
+
     def preflight(self) -> dict:
         status = self.api('/models/status')
         if status.get('active') != ROLLBACK or (status.get('switch') or {}).get('state') == 'running':
@@ -145,19 +183,29 @@ class Operations:
         with urllib.request.urlopen('http://127.0.0.1:4000/health/liveliness', timeout=5) as response:
             if response.status != 200:
                 raise ValueError('gateway not live')
-        return {'nodes': nodes, 'rollback_readiness': ready, 'queue': queue, 'work_orders': orders}
+        owner = self.owner_api('/api/gx-models')
+        if (not owner.get('ok') or owner.get('checks', {}).get('status', {}).get('active') != ROLLBACK
+                or owner.get('action_expiry_seconds') != 120 or status.get('action_expiry_seconds') != 120):
+            raise ValueError('AI OS owner model inventory unavailable or deployment changed')
+        return {'owner_inventory': owner, 'nodes': nodes, 'rollback_readiness': ready, 'queue': queue, 'work_orders': orders}
 
     def gateway(self, target: str, seconds: float) -> None:
         env = {**os.environ, 'GX_REPO_ROOT': str(LIVE)}
         output = execute(['/bin/bash', str(TOOLS / 'gateway_config.sh'), target], seconds, env=env)
         (self.run / f'gateway-{target}.log').write_text(output)
 
-    def accept(self, seconds: float) -> None:
+    def accept(self, seconds: float, label: str = 'accept') -> None:
         env = {**os.environ, 'GX_GATEWAY_ENV': str(LIVE / 'legenex/gateway/.env')}
-        output = execute(['/bin/bash', str(TOOLS / 'accept.sh'), str(self.run / 'accept')], seconds, env=env)
-        (self.run / 'accept.log').write_text(output)
+        output = execute(['/bin/bash', str(TOOLS / 'accept.sh'), str(self.run / label)], seconds, env=env)
+        (self.run / (label + '.log')).write_text(output)
         if 'ACCEPTANCE: GO' not in output.splitlines():
             raise ValueError('acceptance did not explicitly return GO')
+
+    def clients(self, seconds: float, label: str) -> None:
+        output = execute(['/usr/bin/python3', '-I', str(TOOLS / 'client_accept.py'), str(self.run / label)], seconds)
+        (self.run / (label + '.log')).write_text(output)
+        if 'CLIENT ACCEPTANCE: GO' not in output.splitlines():
+            raise ValueError('production clients did not explicitly return GO')
 
 
 class Runner:
@@ -219,12 +267,47 @@ class Runner:
         self.save(key + '_waiting', **{key + '_switch': ident})
         return ident
 
+    def owner_switch(self, phase: str, target: str, expected: str, deadline: dt.datetime) -> None:
+        if self.ops.now() >= deadline or not self.end('01:00:00') <= self.ops.now() < self.end('04:15:00'):
+            raise TimeoutError('owner drill deadline reached before intent')
+        if self.progress.get(phase + '_requested'):
+            raise ValueError('owner drill intent already exists; never repeat a POST')
+        operation = str(uuid.uuid5(uuid.NAMESPACE_URL, 'legenex/gx-window/' + self.window + '/' + phase))
+        expiry = int(self.ops.now().timestamp()) + 90
+        self.save(phase + '_requested', **{phase + '_requested': True, phase + '_operation': operation, phase + '_not_after': expiry})
+        response = self.ops.owner_api('/api/gx-models/activate', {
+            'target': target, 'expected_active': expected, 'operation_id': operation, 'confirm': target, 'not_after': expiry})
+        atomic(self.run / (phase + '-owner-receipt.json'), response)
+        receipt = response.get('receipt') or {}
+        if (response.get('ok') is not True or response.get('accepted') is not True
+                or receipt.get('operation_id') != operation or receipt.get('target') != target
+                or receipt.get('expected_active') != expected or receipt.get('not_after') != expiry):
+            raise ValueError('owner drill receipt does not match its durable intent')
+        ident = receipt['result']['switch']['id']
+        self.progress['switch_ids'].append(ident)
+        self.save(phase + '_waiting', **{phase + '_switch': ident})
+        status = self.poll_switch(ident, deadline)
+        if ((status.get('switch') or {}).get('state') != 'succeeded'
+                or status.get('active') != target or status['lifecycle']['state'] != 'ready'
+                or status['switch'].get('target') != target or status['switch'].get('previous') != expected
+                or status['switch'].get('actor') != 'ai-os-owner-' + operation + ' (token) via 127.0.0.1'):
+            raise ValueError('owner drill switch did not reach validated readiness')
+        left = (deadline - self.ops.now()).total_seconds()
+        if left <= 0:
+            raise TimeoutError('owner drill gateway deadline')
+        self.ops.gateway('dsv4' if target == TARGET else 'landing', min(180, left))
+        self.save(phase + '_verified', **{phase + '_verified': True})
+
     def restore(self, reason: str) -> int:
         self.step('recovery', reason)
-        # Reserve the last half hour for a human intervention; no new typed
+        # Reserve the last fifteen minutes for a human intervention; no new typed
         # operation is ever sent outside the authorized 01:00-05:00 window.
-        deadline = self.end('04:30:00')
+        deadline = self.end('04:45:00')
         while self.end('01:00:00') <= self.ops.now() < deadline:
+            expiry = max((self.progress.get(p + '_not_after', 0) for p in ('drill_v41','drill_flash')), default=0)
+            if self.ops.now().timestamp() <= expiry or not self.ops.native_switch_settled():
+                self.ops.sleep(5)
+                continue
             status = self.ops.api('/models/status')
             switch = status.get('switch') or {}
             if switch.get('state') == 'running':
@@ -291,19 +374,34 @@ class Runner:
             if status.get('active') != ROLLBACK or (status.get('switch') or {}).get('state') == 'running':
                 return self.finish('not_started', 'deployment changed after preflight; no activation', 4)
             ident = self.activate(TARGET)
-            status = self.poll_switch(ident, self.end('02:35:00'))
+            status = self.poll_switch(ident, self.end('01:50:00'))
             switch = status.get('switch') or {}
             if switch.get('state') != 'succeeded' or status.get('active') != TARGET or status['lifecycle']['state'] != 'ready':
                 return self.restore('Flash switch did not reach validated readiness')
-            self.ops.gateway('dsv4', min(180, (self.end('03:30:00') - self.ops.now()).total_seconds()))
-            left = (self.end('03:30:00') - self.ops.now()).total_seconds()
+            self.ops.gateway('dsv4', min(180, (self.end('02:30:00') - self.ops.now()).total_seconds()))
+            left = (self.end('02:30:00') - self.ops.now()).total_seconds()
             if left <= 0:
                 raise TimeoutError('acceptance hard stop')
             self.save('acceptance')
             self.ops.accept(left)
-            if self.ops.now() >= self.end('03:30:00'):
+            if self.ops.now() >= self.end('02:30:00'):
                 raise TimeoutError('acceptance passed the hard stop')
-            return self.finish('activated', 'V4 Flash switch, gateway and real acceptance passed', 0)
+            # The successful rollback drill uses the real AI OS owner controls,
+            # within this same locked controller. Interrupted runs recover only.
+            self.owner_switch('drill_v41', ROLLBACK, TARGET, self.end('02:50:00'))
+            left = (self.end('02:50:00') - self.ops.now()).total_seconds()
+            if left <= 0:raise TimeoutError('V4.1 client validation deadline')
+            self.ops.clients(left, 'drill-v41-clients')
+            self.save('drill_v41_clients_verified', drill_v41_clients_verified=True)
+            self.owner_switch('drill_flash', TARGET, ROLLBACK, self.end('03:30:00'))
+            left = (self.end('04:15:00') - self.ops.now()).total_seconds()
+            if left <= 0:
+                raise TimeoutError('final acceptance deadline')
+            self.save('final_acceptance')
+            self.ops.accept(left, 'accept-final')
+            if self.ops.now() >= self.end('04:15:00'):
+                raise TimeoutError('final acceptance hard stop')
+            return self.finish('activated', 'Flash acceptance, AI OS owner V4.1→Flash drill and final acceptance passed', 0)
         except Exception as exc:
             reason = f'{type(exc).__name__}: {exc}'
             try:

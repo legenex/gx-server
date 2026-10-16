@@ -362,7 +362,7 @@ class Handler(BaseHTTPRequestHandler):
             st = self.lifecycle.status()
             self._send_json(200, {"active": mgr.active_name, "lifecycle": st.as_dict(),
                                   "switch": sw.current(), "scheduler_paused": self.scheduler.paused,
-                                  "runtime_receipt": self.runtime_receipt})
+                                  "runtime_receipt": self.runtime_receipt, "action_expiry_seconds": 120})
         elif path == "/models/rollback-readiness":
             from .validation import rollback_readiness  # noqa: PLC0415
             facts = getattr(self, "host_facts", None)

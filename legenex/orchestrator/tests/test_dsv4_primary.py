@@ -342,6 +342,26 @@ class TestSwitchStateMachine(SwitchTestBase):
     def test_initial_active_is_the_rollback_until_a_switch(self):
         self.assertEqual(self.mgr.active_name, "dsv41-rollback")
 
+    def test_expired_and_malformed_action_never_acquires_switch_lock(self):
+        for expiry in (True, 'soon', IN_WINDOW.timestamp() - 1, int(IN_WINDOW.timestamp()) - 1, int(IN_WINDOW.timestamp()) + 121):
+            with self.subTest(expiry=expiry), self.assertRaises(SwitchError):
+                self.switcher().request({'target':'dsv4-flash-primary','confirm':True,'not_after':expiry}, actor='owner')
+            self.assertEqual(self.hist.read(), [])
+            self.assertEqual(self.lcs['dsv41-rollback'][0].released, 0)
+
+    def test_expiry_during_queue_drain_aborts_before_disruption(self):
+        now = [IN_WINDOW]
+        sw = self.switcher()
+        sw._clock = lambda: now[0]
+        def drain(timeout):
+            now[0] += dt.timedelta(seconds=61)
+            return 0
+        self.sched.drain = drain
+        rec = sw.request({'target':'dsv4-flash-primary','confirm':True,'not_after':int(IN_WINDOW.timestamp())+60}, actor='owner')
+        self.assertEqual(rec['state'], ABORTED)
+        self.assertEqual(self.lcs['dsv41-rollback'][0].released, 0)
+        self.assertEqual(self.mgr.active_name, 'dsv41-rollback')
+
     def test_successful_switch(self):
         rec = self.switcher().request({"target": "dsv4-flash-primary", "confirm": True}, actor="op")
         last = self.hist.read()[-1]
