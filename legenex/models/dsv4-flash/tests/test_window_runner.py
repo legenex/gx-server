@@ -78,7 +78,7 @@ class FakeOperations:
         response = self.api('/models/activate', {'target': body['target'], 'confirm': True})
         self.current['actor'] = 'ai-os-owner-' + body['operation_id'] + ' (token) via 127.0.0.1'
         if self.failure == 'owner_wrong_actor':self.current['actor']='wrong'
-        if self.failure == 'owner_lost_ack':
+        if self.failure == 'owner_lost_ack' or (self.failure == 'owner_flash_lost_ack' and body['target'] == W.TARGET):
             raise TimeoutError('owner response lost after native accepted')
         if self.failure == 'owner_identity':
             body = {**body, 'operation_id': 'wrong'}
@@ -178,6 +178,42 @@ class TestWindow(unittest.TestCase):
                 self.runner.save('drill_flash_requested', activation_requested=True, drill_flash_requested=True)
                 self.assertEqual(self.runner.run_window(recover=True), 5)
                 self.assertEqual(self.ops.owner_posts, [])
+
+    def test_native_publication_lock_blocks_recovery_final_receipt(self):
+        self.ops.clock=self.runner.end('02:00:00')
+        self.runner.save('activation_requested',activation_requested=True)
+        probes=[]
+        def settled():
+            probes.append(self.ops.now())
+            return len(probes)>=3
+        self.ops.native_switch_settled=settled
+        self.assertEqual(self.runner.run_window(recover=True),5)
+        self.assertEqual(len(probes),3)
+        self.assertGreater(probes[-1],probes[0])
+        self.assertFalse(self.ops.posts)
+
+    def test_lost_flash_owner_ack_waits_then_restores_once(self):
+        self.ops.failure='owner_flash_lost_ack'
+        self.assertEqual(self.runner.run_window(),5)
+        self.assertEqual([p['target'] for p in self.ops.posts],[W.TARGET,W.ROLLBACK,W.TARGET,W.ROLLBACK])
+        self.assertEqual(len(self.ops.owner_posts),2)
+        self.assertEqual(self.result(),'rolled_back')
+
+    def test_restart_every_durable_drill_phase_only_recovers(self):
+        phases=('drill_v41_requested','drill_v41_waiting','drill_v41_verified','drill_v41_clients_verified',
+                'drill_flash_requested','drill_flash_waiting','drill_flash_verified','final_acceptance')
+        for phase in phases:
+            with self.subTest(phase=phase):
+                self.runner.final.unlink(missing_ok=True)
+                self.ops=FakeOperations();self.ops.clock=self.runner.end('03:00:00')
+                self.ops.active=W.ROLLBACK if phase.startswith('drill_v41') else W.TARGET
+                self.runner=W.Runner(self.ops,'2026-10-17',self.state,self.run)
+                self.runner.save(phase,activation_requested=True,drill_v41_requested=True,
+                    drill_v41_not_after=int(self.ops.now().timestamp())-1)
+                self.assertEqual(self.runner.run_window(recover=True),5)
+                self.assertEqual(self.ops.owner_posts,[])
+                self.assertTrue(all(p['target']==W.ROLLBACK for p in self.ops.posts))
+                self.assertEqual(self.result(),'rolled_back')
 
     def test_initial_native_lost_ack_before_lock_publication_expires_before_recovery(self):
         original = self.ops.api
