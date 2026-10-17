@@ -25,7 +25,7 @@ def install(window: dt.date, replace_reviewed: bool = False) -> dict:
     now = dt.datetime.now(dt.timezone(dt.timedelta(hours=2)))
     if now >= dt.datetime.combine(window, dt.time(0, 57), now.tzinfo):
         raise ValueError('preflight trigger has passed; never install a catch-up switch')
-    if checked(['git', 'status', '--porcelain', '--untracked-files=all']):
+    if checked(['git', 'status', '--porcelain', '--untracked-files=all', '--ignore-submodules=untracked']):
         raise ValueError('install only from a clean reviewed commit')
     sha = checked(['git', 'rev-parse', 'HEAD'])
     if checked(['git', '-C', str(LIVE), 'rev-parse', 'HEAD']) != sha:
