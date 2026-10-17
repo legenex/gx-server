@@ -180,5 +180,16 @@ class TestCache(unittest.TestCase):
         self.assertLessEqual(snap["checked"], time.time() + 1)
 
 
+class TestGatewayKey(unittest.TestCase):
+    def test_prefers_master_key_over_stale_virtual_key(self):
+        import os
+        from unittest.mock import patch
+
+        with patch.dict(os.environ, {"LITELLM_MASTER_KEY": "master-key-value", "GX_GATEWAY_KEY": "stale"}):
+            self.assertEqual(Config().gateway_key(), "master-key-value")
+        with patch.dict(os.environ, {"GX_GATEWAY_KEY": "stale"}, clear=True):
+            self.assertEqual(Config().gateway_key(), "stale")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

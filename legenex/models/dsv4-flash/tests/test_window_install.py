@@ -37,7 +37,10 @@ class TestInstaller(unittest.TestCase):
         self.calls = []
         self.active = 'inactive'
         self.fail_verify = False
+        self.used = self.root/'used'
+        self.used.mkdir()
         self.patches = [patch.object(I,'REPO',self.repo),patch.object(I,'LIVE',self.live),
+                        patch.object(I,'USED_DIR',self.used),
                         patch.object(I.Path,'home',return_value=self.home),
                         patch.object(I,'checked',side_effect=self.checked),patch.object(I.dt,'datetime',Clock)]
         for p in self.patches:
@@ -93,6 +96,11 @@ class TestInstaller(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'differs from reviewed'):
             I.install(dt.date(2026,10,17),True)
         self.assertFalse(any('stop' in c for c in self.calls))
+
+    def test_october_18_window_is_authorized(self):
+        receipt = I.install(dt.date(2026, 10, 18), True)
+        self.assertIn('2026-10-18 00:57:00 Africa/Johannesburg', self.timer.read_text())
+        self.assertEqual(receipt['window'], '2026-10-18')
 
     def test_failed_candidate_validation_leaves_previous_timer_enabled(self):
         self.fail_verify = True

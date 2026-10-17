@@ -12,6 +12,7 @@ import tempfile
 REPO = Path(__file__).resolve().parents[4]
 KIT = 'legenex/models/dsv4-flash'
 LIVE = Path('/home/legenex/Documents/Projects/Server/gx-cluster')
+USED_DIR = Path('/srv/projects/gx-cluster/state/dsv4f-window')
 
 
 def checked(args):
@@ -19,8 +20,8 @@ def checked(args):
 
 
 def install(window: dt.date, replace_reviewed: bool = False) -> dict:
-    if window != dt.date(2026, 10, 17):
-        raise ValueError('only the owner-approved 2026-10-17 window is authorized')
+    if window not in {dt.date(2026, 10, 17), dt.date(2026, 10, 18)}:
+        raise ValueError('only the owner-approved 2026-10-17 or 2026-10-18 00:57 SAST window is authorized')
     now = dt.datetime.now(dt.timezone(dt.timedelta(hours=2)))
     if now >= dt.datetime.combine(window, dt.time(0, 57), now.tzinfo):
         raise ValueError('preflight trigger has passed; never install a catch-up switch')
@@ -43,10 +44,10 @@ def install(window: dt.date, replace_reviewed: bool = False) -> dict:
             raise ValueError('existing units require explicit reviewed replacement')
         if checked(['systemctl', '--user', 'show', service.name, '-p', 'ActiveState', '--value']) not in ('inactive', 'failed'):
             raise ValueError('activation service is executing; never replace an active controller')
-        if 'OnCalendar=2026-10-17 00:57:00 Africa/Johannesburg' not in timer.read_text():
+        if '00:57:00 Africa/Johannesburg' not in timer.read_text():
             raise ValueError('existing timer is not this approved maintenance window')
         previous = {service.name: service.read_text(), timer.name: timer.read_text()}
-    if Path('/srv/projects/gx-cluster/state/dsv4f-window/2026-10-17.used.json').exists():
+    if (USED_DIR / f'{window.isoformat()}.used.json').exists():
         raise ValueError('maintenance window already consumed; never replace/replay')
     os.umask(0o077)
     root.mkdir(parents=True)
@@ -73,7 +74,8 @@ def install(window: dt.date, replace_reviewed: bool = False) -> dict:
     (root / 'LIVE.SHA256SUMS').write_text(live_sums)
     receipt = {'source_sha': sha, 'window': str(window), 'installed': now.isoformat(),
                'release': str(root), 'live_source': str(LIVE), 'timer': 'gx-dsv4f-window.timer',
-               'service': 'gx-dsv4f-window.service', 'trigger': '2026-10-17 00:57:00 Africa/Johannesburg'}
+                'service': 'gx-dsv4f-window.service',
+                'trigger': f'{window.isoformat()} 00:57:00 Africa/Johannesburg'}
     (root / 'RELEASE.json').write_text(json.dumps(receipt, indent=2))
     if previous:
         (root / 'PREVIOUS_UNITS.json').write_text(json.dumps(previous, indent=2))
@@ -114,11 +116,13 @@ StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=gx-dsv4f-window
 '''
-    timer_text = '''[Unit]
-Description=V4 Flash preflight 2026-10-17 00:57 SAST (one approved window)
+    trigger = f'{window.isoformat()} 00:57:00 Africa/Johannesburg'
+    receipt['trigger'] = trigger
+    timer_text = f'''[Unit]
+Description=V4 Flash preflight {window.isoformat()} 00:57 SAST (one approved window)
 
 [Timer]
-OnCalendar=2026-10-17 00:57:00 Africa/Johannesburg
+OnCalendar={trigger}
 AccuracySec=1s
 RandomizedDelaySec=0
 Persistent=false
@@ -141,7 +145,7 @@ WantedBy=timers.target
                 raise ValueError('controller became active during staging; refuse replacement')
             checked(['systemctl', '--user', 'stop', timer.name])
             if (checked(['systemctl', '--user', 'show', service.name, '-p', 'ActiveState', '--value']) not in ('inactive','failed')
-                    or Path('/srv/projects/gx-cluster/state/dsv4f-window/2026-10-17.used.json').exists()):
+                    or (USED_DIR / f'{window.isoformat()}.used.json').exists()):
                 raise ValueError('controller started during replacement; original units retained')
         service.write_text(service_text)
         timer.write_text(timer_text)

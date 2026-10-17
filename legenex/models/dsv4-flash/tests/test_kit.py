@@ -213,6 +213,14 @@ class TestStaticLaunchRules(unittest.TestCase):
         self.assertIn("DSV4F_HEAD_GID=4", out.stdout)
 
 
+class TestNfsEntrypoint(unittest.TestCase):
+    def test_rpc_nfsd_does_not_hard_fail_disabling_compiled_out_v2(self):
+        text = (KIT / "nfs/entrypoint.sh").read_text()
+        self.assertNotIn("rpc.nfsd --no-nfs-version 2", text)
+        self.assertIn("rpc.nfsd --no-nfs-version 3 --no-udp --host", text)
+        self.assertIn("nfsd did not enable NFSv4", text)
+
+
 class TestPinsAndBuild(unittest.TestCase):
     def test_dockerfile_base_is_the_pinned_digest_and_offline(self):
         pins = dict(l.split("=", 1) for l in (KIT / "pins.conf").read_text().splitlines()

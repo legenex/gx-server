@@ -203,8 +203,14 @@ class Config:
         return key if len(key) >= 16 else None
 
     def gateway_key(self) -> str | None:
-        """API key for the LiteLLM gateway, from the environment only."""
-        return os.environ.get("GX_GATEWAY_KEY") or os.environ.get("LITELLM_MASTER_KEY")
+        """API key for the LiteLLM gateway, from the environment only.
+
+        Prefer LITELLM_MASTER_KEY. GX_GATEWAY_KEY is a stale virtual key
+        limited to retired aliases (gx-mini/gx-code*) and returns HTTP 403
+        on gx-fast/gx-high/gx-max, which made 2026-10-17 rollback checks
+        report rollback_failed after V4.1 was actually serving.
+        """
+        return os.environ.get("LITELLM_MASTER_KEY") or os.environ.get("GX_GATEWAY_KEY")
 
     def orchestrator_key(self) -> str | None:
         """Bearer key this service requires on every non-health route (D-044).
